@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 8] = [
+const PREPARED_PENDING_STEPS: [&str; 14] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -20,6 +20,12 @@ const PREPARED_PENDING_STEPS: [&str; 8] = [
     "0026_content_snapshots_outdated",
     "0027_land_authz_cleared_legs",
     "0028_shop_items_search_text",
+    "0029_explore_parity",
+    "0030_explore_read_columns",
+    "0032_shop_sales_index",
+    "0033_explore_recurrence_one_pass",
+    "0034_shop_bid_invalidated",
+    "0035_explore_mirror_adopted_at",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -348,6 +354,19 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
             || name == "social.private_voice_chats_callee_idx")),
         "migrate preserves the address access paths already created by the release"
+    );
+    // An index added to an existing table is created by the object pass (a step may not CREATE).
+    assert!(done.created.iter().any(|object| matches!(object,
+        schema_migrate::Object::Index(name) if name == "social.notification_deliveries_terminal_idx")));
+    let terminal_idx: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'social' AND indexname = 'notification_deliveries_terminal_idx'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        terminal_idx.contains("(updated_at) WHERE (state <> 'pending'::text)"),
+        "{terminal_idx}"
     );
     assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
     assert!(has_column(pool, "social.notifications", "in_app").await);
@@ -732,6 +751,58 @@ async fn release_result(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
     result
 }
 
+const TELEMETRY_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/telemetry-retired.sql"
+));
+
+#[tokio::test]
+async fn the_telemetry_release_waits_for_the_migrated_layout_and_a_quiet_sink_then_drops_the_schema()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(TELEMETRY_RETIRED.matches(stop_on_error).count(), 1);
+    let release = TELEMETRY_RETIRED.replace(stop_on_error, "");
+    let sink_schema = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, bool>("SELECT to_regnamespace('telemetry') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert!(
+        has_relation(pool, "telemetry.events").await,
+        "the fixture carries the sink's schema"
+    );
+    // Before the steps the release refuses and changes nothing.
+    assert!(release_result(pool, &release).await.is_err());
+    assert!(has_relation(pool, "telemetry.events").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // A row the sink took minutes ago means an old serve still writes.
+    sqlx::query("INSERT INTO telemetry.events (source, body) VALUES ('segment', '{}')")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(release_result(pool, &release).await.is_err());
+    assert!(has_relation(pool, "telemetry.events").await);
+    sqlx::query("UPDATE telemetry.events SET received_at = received_at - interval '1 hour'")
+        .execute(pool)
+        .await
+        .unwrap();
+    release_result(pool, &release).await.unwrap();
+    assert!(!sink_schema(pool.clone()).await);
+    assert!(has_relation(pool, "ops.admin_audit").await);
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the schema is gone");
+    old.drop().await;
+}
+
 #[tokio::test]
 async fn private_voice_release_retains_rows_and_indexes_before_stamp_then_migrate_replays_nothing()
 {
@@ -1002,13 +1073,18 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap();
-    // Model the actual earlier development layout: buckets already existed,
-    // but creator throttling and prioritized claim ordering did not.
-    sqlx::raw_sql("ALTER TABLE explore.event_moderation_hooks DROP COLUMN creator_address CASCADE;
-        DROP INDEX explore.event_moderation_hooks_due_idx;
+    // Model the actual earlier development layout: the events-only outbox
+    // (no longer declared, so the object pass never creates it) as its first
+    // version laid it out, with a submission still queued in it, and the
+    // event-hook steps still to run.
+    sqlx::raw_sql("CREATE TABLE explore.event_moderation_hooks (id uuid PRIMARY KEY, event_id text NOT NULL, kind text NOT NULL, event jsonb NOT NULL, \
+            created_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), next_attempt_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), \
+            attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6), claim uuid, completed_at timestamp without time zone);
         CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
-        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority');
-        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
+        CREATE TABLE explore.event_moderation_hook_activation (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), activated_at timestamp without time zone NOT NULL);
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority','0029_explore_parity');
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}'); \
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,claim,attempts,next_attempt_at) VALUES(gen_random_uuid(),'claimed-submission','submitted','{}',gen_random_uuid(),1,(now() AT TIME ZONE 'UTC') + interval '1 minute')")
         .execute(pool).await.unwrap();
     let result =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -1021,22 +1097,61 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
             .any(|step| step == "0018_event_hook_compatibility")
     );
     assert!(has_column(pool, "explore.event_moderation_hooks", "creator_address").await);
-    assert!(has_column(pool, "explore.event_moderation_hooks", "edit_bucket").await);
+    assert!(has_column(pool, "explore.event_moderation_hooks", "subject").await);
+    assert!(
+        has_column(pool, "explore.moderation_hooks", "channel").await,
+        "the object pass creates the outbox that replaced the events table"
+    );
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='retained-submission' AND event->>'name'='Retained intent'")
-        .fetch_one(pool).await.unwrap(),1);
-    let due:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_due_idx'")
-        .fetch_one(pool).await.unwrap();
-    assert!(
-        due.contains("CASE") && due.contains("THEN 1") && due.contains("ELSE 2"),
-        "the object pass replaces the old due ordering: {due}"
+        .fetch_one(pool).await.unwrap(),1, "the steps never touch the queued intent");
+    // The worker's first pass moves it where the new binary reads.
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        1
     );
-    let creator:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_creator_idx'")
-        .fetch_one(pool).await.unwrap();
-    assert!(
-        creator.contains("kind = 'edited'"),
-        "the creator index covers only throttled edits: {creator}"
+    let adopted: (String, String, serde_json::Value) = sqlx::query_as(
+        "SELECT channel, kind, payload FROM explore.moderation_hooks WHERE subject='retained-submission'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        adopted,
+        (
+            "events".into(),
+            "submitted".into(),
+            serde_json::json!({"name":"Retained intent"})
+        )
     );
-    sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,creator_address,edit_bucket) VALUES(gen_random_uuid(),'new-edit','edited','{}','creator',timezone('UTC',now()))")
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        1,
+        "the row an older worker claimed waits for its retry minute"
+    );
+    sqlx::query("UPDATE explore.event_moderation_hooks SET next_attempt_at = (now() AT TIME ZONE 'UTC') - interval '1 second'")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        1,
+        "due, it moves"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("INSERT INTO explore.moderation_hooks(id,channel,subject,kind,payload,creator_address,edit_bucket) VALUES(gen_random_uuid(),'events','new-edit','edited','{}','creator',timezone('UTC',now()))")
         .execute(pool).await.unwrap();
     assert!(
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -1162,5 +1277,124 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap();
+    old.drop().await;
+}
+
+const RETIRED_HOOK_TABLES_RELEASE: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/explore-retired-hook-tables.sql"
+));
+
+/// The release as SQLx runs it: psql owns the `\set` line.
+fn retired_hook_tables_release() -> String {
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(
+        RETIRED_HOOK_TABLES_RELEASE.matches(stop_on_error).count(),
+        1
+    );
+    RETIRED_HOOK_TABLES_RELEASE.replace(stop_on_error, "")
+}
+
+async fn has_relation(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_retired_hook_tables_release_adopts_the_pending_rows_then_drops_the_tables() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // The earlier layouts: the events-only outbox with its activation row and
+    // the upcoming-notice queue, none of which the bootstrap declares now.
+    sqlx::raw_sql("CREATE TABLE explore.event_moderation_hooks (id uuid PRIMARY KEY, event_id text NOT NULL, kind text NOT NULL, event jsonb NOT NULL, \
+            created_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), next_attempt_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), \
+            attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6), claim uuid, completed_at timestamp without time zone); \
+        CREATE TABLE explore.event_moderation_hook_activation (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), activated_at timestamp without time zone NOT NULL); \
+        CREATE TABLE explore.event_upcoming_hooks (event_id text NOT NULL, occurrence_start timestamp without time zone NOT NULL, name text NOT NULL, PRIMARY KEY (event_id, occurrence_start)); \
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority','0029_explore_parity'); \
+        INSERT INTO explore.event_moderation_hook_activation (activated_at) VALUES ('2026-01-01 00:00:00'); \
+        INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event) VALUES (gen_random_uuid(),'pending-submission','submitted','{\"name\":\"Pending\"}'); \
+        INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,completed_at) VALUES (gen_random_uuid(),'delivered-submission','submitted','{}',now() AT TIME ZONE 'UTC'); \
+        INSERT INTO explore.event_upcoming_hooks (event_id,occurrence_start,name) VALUES ('e','2026-01-01 00:00:00','')")
+        .execute(pool).await.unwrap();
+    // Before the steps the release refuses and changes nothing.
+    assert!(
+        release_result(pool, &retired_hook_tables_release())
+            .await
+            .is_err()
+    );
+    assert!(has_relation(pool, "explore.event_moderation_hooks").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &retired_hook_tables_release())
+        .await
+        .unwrap();
+    for name in [
+        "explore.event_moderation_hooks",
+        "explore.event_moderation_hook_activation",
+        "explore.event_upcoming_hooks",
+    ] {
+        assert!(!has_relation(pool, name).await, "{name} is dropped");
+    }
+    let adopted: (String, String, serde_json::Value) = sqlx::query_as(
+        "SELECT channel, kind, payload FROM explore.moderation_hooks WHERE subject='pending-submission'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        adopted,
+        (
+            "events".into(),
+            "submitted".into(),
+            serde_json::json!({"name":"Pending"})
+        )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='delivered-submission'"
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        0,
+        "a delivered row is not kept"
+    );
+    let activated: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT activated_at FROM explore.moderation_hook_activation")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        activated,
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+        "the outbox keeps the earlier activation"
+    );
+    // The job finds nothing to adopt and the object pass creates nothing back.
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     old.drop().await;
 }

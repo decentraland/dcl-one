@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { isPolygon } from "../../model/chain";
+import { isPolygon } from "@shop/model/chain";
 import { shopPath } from "../../routes";
 import { patchManageCaches } from "../../seller/lib/manage-cache";
 import { useShopWallet } from "../../wallet/context";

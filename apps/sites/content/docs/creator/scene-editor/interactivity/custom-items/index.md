@@ -15,15 +15,15 @@ Define a Custom Item to reuse it easily on any of your scenes, or share it with 
 
 Right-click on an entity on the [Entity Tree](/docs/creator/scene-editor/get-started/scene-editor-essentials/#the-entity-tree), or select several entities and then right-click on them. Select **Create Custom Item**.
 
-![](/docs/creator/images/editor/create-custom-item.webp)
+![](/docs/creator/images/editor/create-custom-item.webp)
 
 On the lower section of the screen you are then asked to give your new Custom Item a name.
 
-![](/docs/creator/images/editor/name-custom-item.webp)
+![](/docs/creator/images/editor/name-custom-item.webp)
 
 The item is now listed on the **Custom Items** tab, at the bottom of your screen. This tab is only displayed if at least one Custom Item exists in your workspace.
 
-![](/docs/creator/images/editor/custom-items.webp)
+![](/docs/creator/images/editor/custom-items.webp)
 
 When defining a custom item, you can select several entities at a same hierarchical level, but not entities from separate parents if they don't share a common ancestor. Any nested entities are automatically included as part of the custom item, they don't need to be selected.
 
@@ -32,7 +32,7 @@ The original entities in your scene aren't affected by the action of defining a 
 
 > [!WARNING]
 > **📔 Note**: When defining a Custom Item, you take a snapshot of the state of every component on the selected entities (except for the root entity's position, rotation, and scale). This includes **Actions**, **Triggers**, **Multiplayer**, **Scripts**, **Visibility**, and any other component.
-> 
+>
 > Any smart item actions and triggers will self-reference their own copy. For example, if you define a Custom Item that includes an elevator and buttons, the buttons on each copy of the elevator will control the copy of the elevator that they belong to, not the original copy of the elevator.
 
 

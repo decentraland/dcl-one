@@ -23,6 +23,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.git('init', '-q')
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
+        self.write('.gitignore', 'target/\n')
         self.write(mtimes.TREE + '/crates/bevy_scene/src/lib.rs', 'pub fn spawn() {}\n')
         self.write(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs', 'pub fn world() {}\n')
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'fn main() {}\n')
@@ -64,7 +65,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.set_mtime(scene, 1_700_000_000 * SECOND + 750_000_000)
         mtimes.record(self.root, self.target)
         self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (2, 0))
+        self.assertEqual(mtimes.restore(self.root, self.target), (3, 0))
         self.assertEqual(self.mtime(scene), 1_700_000_000 * SECOND)
 
     def test_changed_files_keep_their_checkout_time(self):
@@ -74,7 +75,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.write(scene, 'pub fn spawn_sliced() {}\n')
         self.commit()
         now = self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (1, 1))
+        self.assertEqual(mtimes.restore(self.root, self.target), (2, 1))
         self.assertEqual(self.mtime(scene), now)
         self.assertEqual(self.mtime(ecs), 1_700_000_000 * SECOND)
 
@@ -93,16 +94,30 @@ class BevyMtimesTest(unittest.TestCase):
 
     def test_restore_without_a_manifest_changes_nothing(self):
         now = self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (0, 2))
+        self.assertEqual(mtimes.restore(self.root, self.target), (0, 3))
         self.assertEqual(self.mtime(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs'), now)
 
-    def test_files_outside_the_vendored_tree_are_untouched(self):
+    def test_unchanged_engine_sources_keep_their_cached_time(self):
         source = 'rendering/bevy-explorer/source/src/lib.rs'
         self.set_mtime(source, 1_700_000_000 * SECOND)
         mtimes.record(self.root, self.target)
         now = self.checkout_now()
         mtimes.restore(self.root, self.target)
-        self.assertEqual(self.mtime(source), now)
+        self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
+
+    def test_changed_engine_and_protocol_sources_keep_the_checkout_time(self):
+        engine = 'rendering/bevy-explorer/source/src/lib.rs'
+        proto = 'library/protocol/proto/example.proto'
+        self.write(proto, 'message Example {}\n')
+        self.commit()
+        mtimes.record(self.root, self.target)
+        self.write(engine, 'fn changed() {}\n')
+        self.write(proto, 'message Changed {}\n')
+        self.commit()
+        now = self.checkout_now()
+        self.assertEqual(mtimes.restore(self.root, self.target), (2, 2))
+        self.assertEqual(self.mtime(engine), now)
+        self.assertEqual(self.mtime(proto), now)
 
     def test_the_manifest_survives_rust_cache_pruning(self):
         # rust-cache keeps a .fingerprint entry only if its name, up to the last '-', is a

@@ -52,11 +52,15 @@ When using the [**System-based**](/docs/creator/sdk7/interactivity/button-events
 
 Both the entity highlight and the hover hint can be disabled via properties in these methods and components.
 
+The edge highlight outlines the entity whose collider the cursor is on, plus all of that entity's children. It never outlines the entity's parent or its siblings. Only shapes from a `MeshRenderer` and models from a `GltfContainer` get an outline, `TextShape` text doesn't. If you use an invisible box as a bigger clickable area, make the visible parts children of that box entity, otherwise nothing is outlined.
+
 You could also implement [advanced custom hints](/docs/creator/sdk7/interactivity/button-events/system-based-events/#advanced-custom-hints), for example you could play a sound, making the entity change color, spin or enlarge while being pointed at, etc. Whatever you do, make sure that it's a clear signifier.
 
 ## Obstacles
 
 Button events cast rays that only interact with the first entity on their path that is subscribed to the pointer events collision layer. This is true as long as the entity is within its distance limits. If the entity defines distance limits for both the camera and the avatar, it's enough for either one of the two to be close enough.
+
+Register the pointer event on the same entity that has the collider. A pointer event registered on a parent entity, or on a child entity that has no collider of its own, never fires.
 
 For an entity to be intercepted by the ray of a pointer event, either:
 
@@ -113,10 +117,10 @@ The following inputs can be handled by any of the approaches to detect input eve
 * `InputAction.IA_POINTER`: **left-mouse button** on a computer, **interaction button** on mobile.
 * `InputAction.IA_PRIMARY`: **E** key on a computer, **E button** on mobile.
 * `InputAction.IA_SECONDARY`: **F** key on a computer, **F button** on mobile.
-* `InputAction.IA_ACTION_3`: **1** key on a computer, **1 button** on mobile. _Not easily reachable on mobile — not recommended for mobile interaction._
-* `InputAction.IA_ACTION_4`: **2** key on a computer, **2 button** on mobile. _Not easily reachable on mobile — not recommended for mobile interaction._
-* `InputAction.IA_ACTION_5`: **3** key on a computer, **3 button** on mobile. _Not easily reachable on mobile — not recommended for mobile interaction._
-* `InputAction.IA_ACTION_6`: **4** key on a computer, **4 button** on mobile. _Not easily reachable on mobile — not recommended for mobile interaction._
+* `InputAction.IA_ACTION_3`: **1** key on a computer, **1 button** on mobile. _Hidden by default on mobile (SDK 7.32.0+) — only use it if your scene shows it with `TouchScreenControls`._
+* `InputAction.IA_ACTION_4`: **2** key on a computer, **2 button** on mobile. _Hidden by default on mobile (SDK 7.32.0+) — only use it if your scene shows it with `TouchScreenControls`._
+* `InputAction.IA_ACTION_5`: **3** key on a computer, **3 button** on mobile. _Hidden by default on mobile (SDK 7.32.0+) — only use it if your scene shows it with `TouchScreenControls`._
+* `InputAction.IA_ACTION_6`: **4** key on a computer, **4 button** on mobile. _Hidden by default on mobile (SDK 7.32.0+) — only use it if your scene shows it with `TouchScreenControls`._
 * `InputAction.IA_JUMP`: **Space** key on a computer, **jump button** on mobile.
 * `InputAction.IA_FORWARD`: **W** key on a computer.
 * `InputAction.IA_LEFT`: **A** key on a computer.
@@ -129,7 +133,7 @@ Each `InputAction` is abstracted away from the literal input in the keyboard so 
 
 
 > [!WARNING]
-> **📱 Mobile**: On the [mobile client](/docs/creator/build-for-mobile/mobile-client/overview/), all input actions are available, but `IA_ACTION_3`–`IA_ACTION_6` (the `1`/`2`/`3`/`4` buttons) are tucked away behind a secondary menu and are not easily reachable during gameplay. When designing for mobile, prefer `IA_POINTER` (interaction button), `IA_PRIMARY` (E button), and `IA_SECONDARY` (F button) for your key actions. See [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
+> **📱 Mobile**: On the [mobile client](/docs/creator/build-for-mobile/mobile-client/overview/), every input action can be routed to an on-screen button, but by default only three buttons are shown: `IA_POINTER` (interaction button), `IA_PRIMARY` (E button) and `IA_JUMP`. `IA_SECONDARY` (F) and `IA_ACTION_3`–`IA_ACTION_6` (the `1`/`2`/`3`/`4` buttons) start hidden (SDK 7.32.0 and later; older SDKs show all eight, with the lowest ones behind a "+" overflow). When designing for mobile, prefer `IA_POINTER`, `IA_PRIMARY` and `IA_JUMP` for your key actions. If you need F or a numbered button, show it with [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/). See [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
 
 
 ## Types of pointer events

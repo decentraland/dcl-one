@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use catalyst::comms::gatekeeper::admission::cluster::ClusterConfig;
-use catalyst::comms::gatekeeper::admission::cluster::fence::{AssignmentFence, TokenFence};
+use catalyst::comms::gatekeeper::admission::cluster::fence::TokenFence;
 use catalyst::comms::gatekeeper::admission::cluster::peer_state::ClusterPeerState;
 use catalyst::comms::gatekeeper::admission::cluster::sockets::{IslandDelivery, IslandSockets};
 use catalyst::comms::gatekeeper::admission::cluster::subscriber::{

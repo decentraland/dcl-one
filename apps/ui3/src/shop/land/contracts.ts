@@ -5,8 +5,9 @@
 // MANA-only surface except the NAME registrar controller, which is the direct-MANA registration route
 // the payment rule offers a web3 wallet second, after credits.
 
-import { evmAddress, type EvmAddress } from "../model/address";
-import { CHAIN, type ChainId } from "../model/chain";
+import { evmAddress, type EvmAddress } from "@shop/model/address";
+import { ethereumChainId } from "../checkout/chain/config";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 export type LandNetwork = {
   chainId: ChainId;
@@ -48,11 +49,13 @@ export const RENTALS_DOMAIN = { name: "Rentals", version: "1" } as const;
 
 type ShopEnvWindow = Window & typeof globalThis & { __SHOP_ETHEREUM_CHAIN_ID__?: number };
 
-/** The Ethereum network the Shop's LAND and NAME flows run on: mainnet unless the host says Sepolia. */
+/**
+ * The Ethereum network the Shop's LAND and NAME flows run on: the host's choice, else the Shop's own
+ * (`ethereumChainId`: VITE_SHOP_ETHEREUM_CHAIN_ID, or Sepolia when the Shop settles on Amoy, mainnet otherwise).
+ */
 export function landChainId(): ChainId {
   const fromWindow = typeof window !== "undefined" ? (window as ShopEnvWindow).__SHOP_ETHEREUM_CHAIN_ID__ : undefined;
-  const fromEnv = typeof import.meta !== "undefined" ? Number(import.meta.env?.VITE_SHOP_ETHEREUM_CHAIN_ID ?? NaN) : NaN;
-  const chosen = fromWindow ?? (Number.isFinite(fromEnv) ? fromEnv : CHAIN.ETHEREUM);
+  const chosen = fromWindow ?? ethereumChainId();
   return LAND_NETWORKS[chosen] ? chosen : CHAIN.ETHEREUM;
 }
 

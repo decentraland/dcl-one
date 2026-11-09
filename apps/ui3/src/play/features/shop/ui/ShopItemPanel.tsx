@@ -3,13 +3,14 @@
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
 // sale) is offered on the web Shop's item page.
 
-import type { CardPrice } from '../../../../shop/discovery/cardPrice'
+import type { CardPrice } from '@shop/discovery/cardPrice'
 import { Close, MaskIcon, rarityPanel } from '../../../design'
 import hiddenIcon from '../../../assets/backpack/icon-hidden.webp'
 import cartIcon from '../../../assets/shop/cart.svg'
 import favoriteIcon from '../../../assets/shop/favorite.svg'
 import externalIcon from '../../../assets/shop/external.svg'
 import { buyableInWorld, PriceTag } from './PriceTag'
+import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopItemPanel.module.css'
 
 /** A part the item hides on the avatar, as its chip shows it. */
@@ -36,8 +37,8 @@ export interface ShopItemPanelProps {
   onClose: () => void
   /** Offers the item on the web Shop (resales, MANA-only, not for sale); absent when it has no page there. */
   onOpenOnWeb?: () => void
-  /** Buying in-world (the next flow); without them the buttons are shown but do nothing yet. */
-  onBuy?: () => void
+  /** BUY ITEM, with how it was pressed. Without it, or without ADD TO CART, that button is shown off. */
+  onBuy?: (input: PressedWith) => void
   onAddToCart?: () => void
 }
 
@@ -104,7 +105,7 @@ export function ShopItemPanel({ name, thumbnail, rarity, icon, price, stock, cre
               <MaskIcon src={cartIcon} size={22} />
               Add to cart
             </button>
-            <button type="button" className={styles.buy} disabled={onBuy == null} onClick={onBuy}>
+            <button type="button" className={styles.buy} disabled={onBuy == null} onClick={onBuy && ((e) => onBuy(pressedWith(e)))}>
               Buy item
             </button>
           </>

@@ -91,9 +91,6 @@
 .shop-subnav .shop-search input { font-family: revert; font-size: 17px; letter-spacing: -0.2px; color: #fff; }
 .shop-subnav .shop-search input::placeholder { color: #cfcdd4; opacity: 1; }
 .shop-subnav .shop-search__icon { color: #fcfcfc; }
-@media (pointer: coarse) {
-  .shop-subnav .shop-search input { font-size: 16px; }
-}
 
 .shop-subnav__credits {
   position: relative;
@@ -126,6 +123,14 @@
   border-radius: 8px;
   color: #ecebed;
   transition: background 0.12s ease, color 0.12s ease;
+}
+/* The cart icon is a button (it opens the cart drawer): the same box as the links beside it. */
+button.shop-subnav__icon {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
 }
 .shop-subnav__icon:hover { background: rgba(255, 255, 255, 0.12); }
 .shop-subnav__icon[data-active] { color: #fff; }
@@ -184,6 +189,11 @@
     letter-spacing: 0.038em;
     padding: 8px 0 12px;
   }
+}
+/* After the width rules, as upstream's NavBar.styles.ts: a touch device keeps 16px at any width, below which
+   iOS zooms the page on focus. */
+@media (pointer: coarse) {
+  .shop-subnav .shop-search input { font-size: 16px; }
 }
 
 .shop-subnav__tabs a[data-mobile-only] { display: none; }

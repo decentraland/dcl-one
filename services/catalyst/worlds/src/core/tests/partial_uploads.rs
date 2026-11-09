@@ -73,11 +73,10 @@ impl<'a> Batch<'a> {
 
 async fn send(app: &Router, u: &Upload, b: Batch<'_>) -> (StatusCode, HeaderMap, Value) {
     let over = b.chain_over.clone().unwrap_or_else(|| u.entity_id.clone());
-    let chain = serde_json::to_string(&b.signer.chain(&over).await).unwrap();
-    let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![
-        ("entityId", None, u.entity_id.as_bytes()),
-        ("authChain", None, chain.as_bytes()),
-    ];
+    let chain = chain_fields(&b.signer.chain(&over).await);
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, u.entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
     if b.partial_field {
         parts.push(("partial", None, b"true"));
     }
@@ -267,17 +266,19 @@ async fn every_batch_is_authenticated_and_only_the_starter_resumes_without_the_m
         "{body}"
     );
     // A chain over another id does not authenticate a batch of this entity.
+    let other_id = hash_bytes_v1(b"another entity");
     let forged = Batch {
-        chain_over: Some(hash_bytes_v1(b"another entity")),
+        chain_over: Some(other_id.clone()),
         ..Batch::of(&owner, false, &[0])
     };
     let body = expect_batch(&f.app, &u, forged, 400).await;
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("Deployment failed: The auth chain is invalid"),
-        "{body}"
+    // Upstream `authenticateRequest` with `@dcl/crypto`'s final-authority text.
+    assert_eq!(
+        body["message"],
+        format!(
+            "Invalid auth chain: ERROR: Invalid final authority. Expected: {}. Current {other_id}.",
+            u.entity_id
+        )
     );
     let staged: i64 =
         sqlx::query_scalar("SELECT count(*) FROM worlds.pending_scene_files WHERE entity_id = $1")
@@ -334,6 +335,184 @@ async fn malformed_batches_are_refused() {
         body,
         json!({ "missing": hashes(&u, &[0, 1]) }),
         "the repeated file was not staged"
+    );
+}
+
+/// Upstream `test/contracts/partial-deployment.ts` ("already published") and
+/// `scene-deployments/component.ts`: a single-request publish answers the stored publication
+/// time, and a later batch of that entity, from any signer, answers the same.
+#[tokio::test]
+async fn a_batch_of_an_entity_published_in_one_request_answers_its_publication_time() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    let regular = Batch {
+        partial_field: false,
+        ..Batch::of(&owner, true, &[0])
+    };
+    let published = expect_batch(&f.app, &u, regular, 200).await;
+    let created: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM worlds.world_scenes WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(published["creationTimestamp"], json!(created));
+    for signer in [&owner, &Wallet::random()] {
+        let replay = expect_batch(&f.app, &u, Batch::of(signer, false, &[0]), 200).await;
+        assert_eq!(replay, published);
+    }
+}
+
+/// Upstream `deployScene` upserts `(world_name, entity_id)`: publishing the same entity again
+/// in one request keeps its row, so both publishes answer the first publication time and the
+/// entity is never retired by its own redeploy.
+#[tokio::test]
+async fn publishing_the_same_entity_twice_keeps_its_publication_time() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    let regular = || Batch {
+        partial_field: false,
+        ..Batch::of(&owner, true, &[0])
+    };
+    let first = expect_batch(&f.app, &u, regular(), 200).await;
+    let second = expect_batch(&f.app, &u, regular(), 200).await;
+    assert_eq!(second["creationTimestamp"], first["creationTimestamp"]);
+    let created: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM worlds.world_scenes WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(first["creationTimestamp"], json!(created));
+    let retired: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM worlds.retired_world_scenes WHERE entity_id = $1")
+            .bind(&u.entity_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        retired, 0,
+        "a redeploy does not retire the entity it republishes"
+    );
+    let replay = expect_batch(&f.app, &u, Batch::of(&owner, false, &[0]), 200).await;
+    assert_eq!(replay["creationTimestamp"], first["creationTimestamp"]);
+}
+
+/// Upstream `validateUploadedFiles`: a part named by anything but a CIDv1 (here a CIDv0) is
+/// refused with `Only CIDv1 are allowed for content files` (WD-06).
+#[tokio::test]
+async fn a_part_not_named_by_a_cidv1_is_refused() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let mut u = upload(&world, 1);
+    let cidv0 = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_string();
+    u.files[0].0 = cidv0.clone();
+    let regular = Batch {
+        partial_field: false,
+        ..Batch::of(&owner, true, &[0])
+    };
+    let body = expect_batch(&f.app, &u, regular, 400).await;
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&format!(
+            "Only CIDv1 are allowed for content files: {cidv0}"
+        )),
+        "{body}"
+    );
+    assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+}
+
+/// Upstream dates a partial upload when its first batch arrives (WD-12): the pending row's
+/// time is the request's arrival, not when its body finished.
+#[tokio::test]
+async fn a_first_batch_is_dated_when_it_arrives() {
+    use futures::StreamExt;
+    const STALL_MS: i64 = 500;
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    let chain = chain_fields(&owner.chain(&u.entity_id).await);
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, u.entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+    parts.push(("partial", None, b"true"));
+    parts.push((&u.entity_id, Some("entity.json"), &u.entity_bytes));
+    let (body, content_type) = multipart_body(&parts);
+    let (head, tail) = body.split_at(body.len() / 2);
+    let (head, tail) = (
+        bytes::Bytes::copy_from_slice(head),
+        bytes::Bytes::copy_from_slice(tail),
+    );
+    // Half the body, a stall, then the rest.
+    let stream = futures::stream::iter([Ok::<_, std::io::Error>(head)]).chain(
+        futures::stream::once(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(STALL_MS as u64)).await;
+            Ok(tail)
+        }),
+    );
+    let sent_ms = chrono::Utc::now().timestamp_millis();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/entities")
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let response = f.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let dated_ms: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM worlds.pending_scenes WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        dated_ms >= sent_ms - 5 && dated_ms < sent_ms + STALL_MS,
+        "dated {} ms after the request was sent",
+        dated_ms - sent_ms
+    );
+}
+
+/// Upstream `validateUploadedFiles` and `validateEntityId`: a part is named by the CIDv1 of its
+/// bytes (test `partial-deploy.spec.ts` "a file that doesn't match its hash").
+#[tokio::test]
+async fn a_part_not_named_by_its_hash_is_refused() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let mut u = upload(&world, 2);
+    let named = u.files[0].0.clone();
+    u.files[0].1 = b"tampered".to_vec();
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 400).await;
+    assert_eq!(
+        body["message"],
+        format!("Deployment failed: The hashed file doesn't match the provided content: {named}")
+    );
+    let regular = Batch {
+        partial_field: false,
+        ..Batch::of(&owner, true, &[0, 1])
+    };
+    let body = expect_batch(&f.app, &u, regular, 400).await;
+    assert_eq!(
+        body["message"],
+        format!("Deployment failed: The hashed file doesn't match the provided content: {named}")
+    );
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert!(!f.storage.exist(&hash_bytes_v1(b"tampered")).await.unwrap());
+
+    let mut v = upload(&world, 1);
+    v.entity_bytes.push(b' ');
+    let actual = hash_bytes_v1(&v.entity_bytes);
+    let body = expect_batch(&f.app, &v, Batch::of(&owner, true, &[]), 400).await;
+    assert_eq!(
+        body["message"],
+        format!(
+            "Deployment failed: Invalid entity hash: expected {actual} but got {}",
+            v.entity_id
+        )
     );
 }
 
@@ -468,6 +647,7 @@ async fn the_cleanup_keeps_files_something_else_names() {
 #[tokio::test]
 async fn the_collector_keeps_a_pending_uploads_files() {
     let Some(f) = fixture().await else { return };
+    let _gc_runs = GC_RUNS.lock().await;
     let (world, owner) = owned(&f).await;
     let u = upload(&world, 2);
     expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
@@ -514,6 +694,7 @@ async fn the_collector_keeps_a_pending_uploads_files() {
 #[tokio::test]
 async fn gc_reports_the_expired_upload_cleanup() {
     let Some(f) = fixture().await else { return };
+    let _gc_runs = GC_RUNS.lock().await;
     let _cleanup = CLEANUP.lock().await;
     let body = gc(&f.app, "/gc").await;
     assert!(
@@ -1191,6 +1372,85 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
         vec![u.entity_id.clone()]
     );
     assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+}
+
+#[tokio::test]
+async fn a_resume_landing_after_another_replica_completed_replays_the_receipt() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+
+    let mut held = f.pool.begin().await.unwrap();
+    let key = format!("worlds-partial-deployer:{}", owner.address.as_str());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let racer = async {
+        blocked_by(&f.pool, holder, "pg_advisory_xact_lock", 1).await;
+        completed_elsewhere(&f.pool, &u, &owner, &world).await;
+        held.commit().await.unwrap();
+    };
+    let ((status, _, body), ()) =
+        tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[0])), racer);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["creationTimestamp"], 7);
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+}
+
+#[tokio::test]
+async fn a_grantee_resuming_after_the_owner_completed_never_gets_the_receipt() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+    let grantee = Wallet::random();
+    grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
+
+    let mut held = f.pool.begin().await.unwrap();
+    let key = format!("worlds-partial-deployer:{}", grantee.address.as_str());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let racer = async {
+        blocked_by(&f.pool, holder, "pg_advisory_xact_lock", 1).await;
+        completed_elsewhere(&f.pool, &u, &owner, &world).await;
+        held.commit().await.unwrap();
+    };
+    let ((status, _, body), ()) =
+        tokio::join!(send(&f.app, &u, Batch::of(&grantee, true, &[0])), racer);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["message"],
+        "This upload expired. Create a new entity with a fresh timestamp."
+    );
+    assert!(body.get("creationTimestamp").is_none(), "{body}");
+}
+
+/// Another replica finished `u`: its pending row is gone and `owner` holds the receipt with creation timestamp 7.
+async fn completed_elsewhere(pool: &PgPool, u: &Upload, owner: &Wallet, world: &WorldName) {
+    sqlx::query("DELETE FROM worlds.pending_scenes WHERE entity_id = $1")
+        .bind(&u.entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.completed_scene_uploads \
+           (entity_id, deployer, world_name, parcels, creation_timestamp, completed_at) \
+         VALUES ($1, $2, $3, '{}', 7, timezone('UTC', now()))",
+    )
+    .bind(&u.entity_id)
+    .bind(owner.address.as_str())
+    .bind(world.key())
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

@@ -96,4 +96,4 @@ If you're not familiar with how to do this, see [Quickstart for repositories](ht
 - [Making any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/)
 - [SDK Quick start](/docs/creator/sdk7/getting-started/sdk-101/): follow this mini tutorial for a quick crash course.
 - [Development workflow](/docs/creator/sdk7/getting-started/dev-workflow/): read this to understand scene creation from end to end.
-- [Examples](https://studios.decentraland.org/resources?sdk_version=SDK7): dive right into working example scenes.
+- [Examples](/docs/creator/tutorials/examples/): dive right into working example scenes.

@@ -1,0 +1,443 @@
+import {
+  Entity,
+  IEngine,
+  InputAction,
+  PointerEventsSystem,
+  PointerEventType,
+  PBUiInputResult,
+  PBUiDropdownResult
+} from '@dcl/ecs'
+import * as components from '@dcl/ecs/dist/components'
+import Reconciler, { HostConfig } from 'react-reconciler'
+import { Callback, isListener, Listeners } from '../components'
+import { CANVAS_ROOT_ENTITY } from '../components/uiTransform'
+import { ReactEcs } from '../react-ecs'
+import {
+  Changes,
+  Container,
+  EngineComponents,
+  HostContext,
+  HydratableInstance,
+  Instance,
+  NoTimeout,
+  OpaqueHandle,
+  Props,
+  PublicInstance,
+  SuspenseInstance,
+  TextInstance,
+  TimeoutHandle,
+  Type,
+  UpdatePayload,
+  _ChildSet
+} from './types'
+import { componentKeys, isNotUndefined, noopConfig, propsChanged } from './utils'
+
+function getPointerEnum(pointerKey: keyof Listeners): PointerEventType {
+  const pointers: { [key in keyof Required<Listeners>]: PointerEventType } = {
+    onMouseDown: PointerEventType.PET_DOWN,
+    onMouseUp: PointerEventType.PET_UP,
+    onMouseEnter: PointerEventType.PET_HOVER_ENTER,
+    onMouseLeave: PointerEventType.PET_HOVER_LEAVE
+  }
+  return pointers[pointerKey]
+}
+
+type OnChangeState<T = string | number> = {
+  onChangeCallback?: (val?: T) => void
+  onSubmitCallback?: (val?: T) => void
+  value?: T
+  isSubmit?: boolean
+}
+export function createReconciler(
+  engine: Pick<
+    IEngine,
+    'getComponent' | 'addEntity' | 'removeEntity' | 'defineComponentFromSchema' | 'getEntitiesWith'
+  >,
+  pointerEvents: PointerEventsSystem
+) {
+  // Store all the entities so when we destroy the UI we can also destroy them
+  const entities = new Set<Entity>()
+  // Store the onChange callbacks to be runned every time a Result has changed
+  const changeEvents = new Map<Entity, Map<number, OnChangeState | undefined>>()
+  const clickEvents = new Map<Entity, Map<PointerEventType, Callback>>()
+  // Track the last value reported by the renderer for each input entity,
+  // so we can avoid echoing it back and causing keystroke drops.
+  const lastInputResultValues = new Map<Entity, string | undefined>()
+  // Initialize components
+  const UiTransform = components.UiTransform(engine)
+  const UiText = components.UiText(engine)
+  const UiBackground = components.UiBackground(engine)
+  const UiInput = components.UiInput(engine)
+  const UiInputResult = components.UiInputResult(engine)
+  const UiDropdown = components.UiDropdown(engine)
+  const UiDropdownResult = components.UiDropdownResult(engine)
+  const UiInputBinding = components.UiInputBinding(engine)
+
+  // Component ID Helper
+  const getComponentId: {
+    [key in keyof EngineComponents]: number
+  } = {
+    uiTransform: UiTransform.componentId,
+    uiText: UiText.componentId,
+    uiBackground: UiBackground.componentId,
+    uiInput: UiInput.componentId,
+    uiDropdown: UiDropdown.componentId,
+    uiInputBinding: UiInputBinding.componentId
+  }
+
+  function pointerEventCallback(entity: Entity, pointerEvent: PointerEventType) {
+    const callback = clickEvents.get(entity)?.get(pointerEvent)
+    if (callback) callback()
+    return
+  }
+
+  function updateTree(instance: Instance, props: Partial<{ rightOf: Entity; parent: Entity }>) {
+    // `rightOf` is a required int32 where 0 means "first sibling". A missing left
+    // neighbour is written as 0 so the first child of any parent (the canvas root
+    // included) serializes the same way as an explicit `rightOf: 0`.
+    upsertComponent(
+      instance,
+      { ...props, rightOf: props.rightOf ?? 0 } as { rightOf: number; parent: number },
+      'uiTransform'
+    )
+  }
+
+  function upsertListener(
+    instance: Instance,
+    update: Changes<keyof Pick<Listeners, 'onMouseDown' | 'onMouseUp' | 'onMouseEnter' | 'onMouseLeave'>>
+  ) {
+    if (update.type === 'delete' || !update.props) {
+      clickEvents.get(instance.entity)?.delete(getPointerEnum(update.component))
+      if (update.component === 'onMouseDown') {
+        pointerEvents.removeOnPointerDown(instance.entity)
+      } else if (update.component === 'onMouseUp') {
+        pointerEvents.removeOnPointerUp(instance.entity)
+      } else if (update.component === 'onMouseEnter') {
+        pointerEvents.removeOnPointerHoverEnter(instance.entity)
+      } else if (update.component === 'onMouseLeave') {
+        pointerEvents.removeOnPointerHoverLeave(instance.entity)
+      }
+      return
+    }
+
+    if (update.props) {
+      const pointerEvent = getPointerEnum(update.component)
+      const entityEvent =
+        clickEvents.get(instance.entity) || clickEvents.set(instance.entity, new Map()).get(instance.entity)!
+      const alreadyHasPointerEvent = entityEvent.get(pointerEvent)
+      entityEvent.set(pointerEvent, update.props as Callback)
+
+      if (alreadyHasPointerEvent) return
+
+      const pointerEventSystem =
+        update.component === 'onMouseDown'
+          ? pointerEvents.onPointerDown
+          : update.component === 'onMouseUp'
+            ? pointerEvents.onPointerUp
+            : update.component === 'onMouseEnter'
+              ? pointerEvents.onPointerHoverEnter
+              : update.component === 'onMouseLeave' && pointerEvents.onPointerHoverLeave
+
+      if (pointerEventSystem) {
+        pointerEventSystem(
+          {
+            entity: instance.entity,
+            opts: {
+              button: InputAction.IA_POINTER,
+              // We add this showFeedBack so the pointerEventSystem creates a PointerEvent component with our entity
+              // This is needed for the renderer to know which entities are clickeables
+              showFeedback: true
+            }
+          },
+          () => pointerEventCallback(instance.entity, pointerEvent)
+        )
+      }
+    }
+  }
+
+  function removeComponent(instance: Instance, component: keyof EngineComponents) {
+    const componentId = getComponentId[component]
+    const Component = engine.getComponent(componentId) as components.LastWriteWinElementSetComponentDefinition<any>
+    Component.deleteFrom(instance.entity)
+  }
+
+  function upsertComponent<K extends keyof EngineComponents>(
+    instance: Instance,
+    props: Partial<EngineComponents[K]> = {},
+    componentName: K
+  ) {
+    const componentId = getComponentId[componentName]
+
+    const onChangeExists = 'onChange' in props
+    const onSubmitExists = 'onSubmit' in props
+    const entityState = changeEvents.get(instance.entity)?.get(componentId)
+    const onChange = onChangeExists
+      ? (props['onChange'] as OnChangeState['onChangeCallback'])
+      : entityState?.onChangeCallback
+    const onSubmit = onSubmitExists
+      ? (props['onSubmit'] as OnChangeState['onSubmitCallback'])
+      : entityState?.onSubmitCallback
+
+    if (onChangeExists || onSubmitExists) {
+      updateOnChange(instance.entity, componentId, {
+        onChangeCallback: onChange,
+        onSubmitCallback: onSubmit
+      })
+      delete (props as any).onChange
+      delete (props as any).onSubmit
+    }
+
+    // Prevent keystroke drops: when React echoes back the same value the renderer
+    // reported, strip it from the props so the component isn't marked dirty for it.
+    // This avoids sending a stale value that overwrites what the user is currently typing.
+    if (
+      componentName === 'uiInput' &&
+      'value' in props &&
+      lastInputResultValues.has(instance.entity) &&
+      (props as any).value === lastInputResultValues.get(instance.entity)
+    ) {
+      delete (props as any).value
+    }
+
+    // We check if there is any key pending to be changed to avoid updating the existing component
+    if (!Object.keys(props).length) {
+      return
+    }
+    const ComponentDef = engine.getComponent(componentId) as components.LastWriteWinElementSetComponentDefinition<
+      EngineComponents[K]
+    >
+    const component = ComponentDef.getMutableOrNull(instance.entity) || ComponentDef.create(instance.entity)
+    for (const key in props) {
+      const keyProp = key as keyof EngineComponents[K]
+      component[keyProp] = props[keyProp]!
+    }
+  }
+
+  function removeChildEntity(instance: Instance) {
+    entities.delete(instance.entity)
+    changeEvents.delete(instance.entity)
+    clickEvents.delete(instance.entity)
+    lastInputResultValues.delete(instance.entity)
+    engine.removeEntity(instance.entity)
+    for (const child of instance._child) {
+      removeChildEntity(child)
+    }
+  }
+
+  function appendChild(parent: Instance, child: Instance): void {
+    const isReorder = parent._child.find((c) => c.entity === child.entity)
+    // If its a reorder its seems that its a mutation of an array with key prop
+    // We need to move the child to the end of the array
+    // And update the order of the parent_.child array
+    // child.rightOf => Latest entity of the array
+    // childThatWasAtRightOfEntity = childEntity.rightOf
+    if (isReorder) {
+      const rightOfChild = parent._child.find((c) => c.rightOf === child.entity)
+      if (rightOfChild) {
+        rightOfChild.rightOf = child.rightOf
+        updateTree(rightOfChild, { rightOf: rightOfChild.rightOf })
+      }
+      // Always remove from old position and push to end for reorders.
+      // Previously, filter/push was inside the if(rightOfChild) block, so when
+      // rightOfChild was not found (child was last), the child stayed at its old
+      // position. This caused _child[length-2] to potentially be the child itself,
+      // producing a self-referencing rightOf.
+      parent._child = parent._child.filter((c) => c.entity !== child.entity)
+      parent._child.push(child)
+      // Its a re-order. We are the last element, so we need to fetch the element before us.
+      child.rightOf = parent._child[parent._child.length - 2]?.entity
+    } else {
+      // Its an append. Put it at the end
+      child.rightOf = parent._child[parent._child.length - 1]?.entity
+      parent._child.push(child)
+    }
+    child.parent = parent.entity
+    updateTree(child, { rightOf: child.rightOf, parent: parent.entity })
+  }
+
+  function removeChild(parentInstance: Instance, child: Instance): void {
+    const childIndex = parentInstance._child.findIndex((c) => c.entity === child.entity)
+
+    if (childIndex !== -1) {
+      const childToModify = parentInstance._child[childIndex + 1]
+
+      if (childToModify) {
+        childToModify.rightOf = child.rightOf
+        updateTree(childToModify, { rightOf: child.rightOf })
+      }
+
+      parentInstance._child.splice(childIndex, 1)
+    }
+
+    removeChildEntity(child)
+  }
+
+  function insertBefore(parentInstance: Instance, child: Instance, beforeChild: Instance): void {
+    // Handle reorder: if child already exists in this parent, remove it from its old position
+    // and fix up the old neighbor's rightOf before inserting at the new position.
+    const existingIndex = parentInstance._child.findIndex((c) => c.entity === child.entity)
+    if (existingIndex !== -1) {
+      // If beforeChild.rightOf already points to child, child is already in the correct
+      // position in the rightOf chain. Setting child.rightOf = beforeChild.rightOf would
+      // produce a self-cycle (child.rightOf = child.entity).
+      if (beforeChild.rightOf === child.entity) {
+        return
+      }
+      const oldNextSibling = parentInstance._child[existingIndex + 1]
+      if (oldNextSibling) {
+        oldNextSibling.rightOf = child.rightOf
+        updateTree(oldNextSibling, { rightOf: oldNextSibling.rightOf })
+      }
+      parentInstance._child.splice(existingIndex, 1)
+    }
+
+    const beforeChildIndex = parentInstance._child.findIndex((c) => c.entity === beforeChild.entity)
+    parentInstance._child = [
+      ...parentInstance._child.slice(0, beforeChildIndex),
+      child,
+      ...parentInstance._child.slice(beforeChildIndex)
+    ]
+
+    child.rightOf = beforeChild.rightOf
+    beforeChild.rightOf = child.entity
+    child.parent = parentInstance.entity
+
+    updateTree(child, { rightOf: child.rightOf, parent: child.parent })
+    updateTree(beforeChild, { rightOf: beforeChild.rightOf })
+  }
+
+  function updateOnChange(entity: Entity, componentId: number, state?: OnChangeState) {
+    const hasEvent = changeEvents.has(entity)
+    const event = changeEvents.get(entity) || changeEvents.set(entity, new Map()).get(entity)!
+    const onChangeCallback = state?.onChangeCallback
+    const onSubmitCallback = state?.onSubmitCallback
+    event.set(componentId, { onChangeCallback, onSubmitCallback })
+    // Create onChange callback if its the first callback event for this entity
+    if (!hasEvent) {
+      const resultComponentId =
+        componentId === UiDropdown.componentId ? UiDropdownResult.componentId : UiInputResult.componentId
+      engine.getComponent<PBUiInputResult | PBUiDropdownResult>(resultComponentId).onChange(entity, (value) => {
+        if (resultComponentId === UiInputResult.componentId) {
+          lastInputResultValues.set(entity, value?.value as string | undefined)
+        }
+        if ((value as PBUiInputResult)?.isSubmit) {
+          const onSubmit = changeEvents.get(entity)?.get(componentId)?.onSubmitCallback
+          onSubmit && onSubmit(value?.value)
+        }
+        const onChange = changeEvents.get(entity)?.get(componentId)?.onChangeCallback
+        onChange && onChange(value?.value)
+      })
+    }
+  }
+
+  const hostConfig: HostConfig<
+    Type,
+    Props,
+    Container,
+    Instance,
+    TextInstance,
+    SuspenseInstance,
+    HydratableInstance,
+    PublicInstance,
+    HostContext,
+    UpdatePayload,
+    _ChildSet,
+    TimeoutHandle,
+    NoTimeout
+  > = {
+    ...noopConfig,
+
+    createInstance(type: Type, props: Props): Instance {
+      const entity = engine.addEntity()
+      entities.add(entity)
+      const instance: Instance = {
+        entity,
+        _child: [],
+        parent: CANVAS_ROOT_ENTITY as Entity,
+        rightOf: undefined
+      }
+
+      for (const key in props) {
+        const keyTyped: keyof Props = key as keyof Props
+        if (keyTyped === 'children' || keyTyped === 'key') {
+          continue
+        }
+        if (isListener(keyTyped)) {
+          upsertListener(instance, {
+            type: 'add',
+            props: props[keyTyped],
+            component: keyTyped
+          })
+        } else {
+          upsertComponent(instance, props[keyTyped], keyTyped)
+        }
+      }
+
+      return instance
+    },
+    appendChild,
+    appendChildToContainer: appendChild,
+    appendInitialChild: appendChild,
+    insertInContainerBefore: insertBefore,
+
+    removeChild: removeChild,
+
+    prepareUpdate(_instance: Instance, _type: Type, oldProps: Props, newProps: Props): UpdatePayload {
+      return componentKeys
+        .map((component) => propsChanged(component, oldProps[component], newProps[component]))
+        .filter(isNotUndefined)
+    },
+
+    commitUpdate(
+      instance: Instance,
+      updatePayload: UpdatePayload,
+      _type: Type,
+      _prevProps: Props,
+      _nextProps: Props,
+      _internalHandle: OpaqueHandle
+    ): void {
+      for (const update of updatePayload) {
+        if (isListener(update.component)) {
+          upsertListener(instance, update as Changes<keyof Listeners>)
+          continue
+        }
+        if (update.type === 'delete') {
+          removeComponent(instance, update.component)
+        } else if (update.props) {
+          upsertComponent(instance, update.props, update.component)
+        }
+      }
+    },
+    insertBefore,
+    removeChildFromContainer: removeChild
+  }
+
+  const reconciler = Reconciler(hostConfig)
+  // The container is a real Instance standing in for the canvas root, so
+  // top-level elements get the same parent/rightOf bookkeeping as any other
+  // sibling group. It is never rendered itself.
+  const containerInstance: Instance = {
+    entity: CANVAS_ROOT_ENTITY as Entity,
+    _child: [],
+    parent: undefined,
+    rightOf: undefined
+  }
+  const root: Container = reconciler.createContainer(
+    containerInstance,
+    0,
+    null,
+    false,
+    null,
+    '',
+    /* istanbul ignore next */
+    function () {},
+    null
+  )
+
+  return {
+    update: function (component: ReactEcs.JSX.ReactNode) {
+      return reconciler.updateContainer(component as any, root, null)
+    },
+    getEntities: () => Array.from(entities)
+  }
+}

@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Chat } from '../features/chat/Chat'
 import type { ChatState, CommunityConversation } from '../features/session/useEngineSession'
@@ -83,7 +83,7 @@ describe('community chat panel', () => {
     expect(pingModeFor('community:c1')).toBe('mentions')
     expect(screen.queryByRole('menu')).toBeNull()
     // back to the default from the menu, whatever the default is
-    setPingDefault('none')
+    act(() => setPingDefault('none'))
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Notification Ping'))
     expect(screen.getByRole('menuitemradio', { name: 'Mentions Only' })).toHaveAttribute('aria-checked', 'true')

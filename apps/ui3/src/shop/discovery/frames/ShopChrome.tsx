@@ -12,7 +12,9 @@ import { Link, useLocation } from "react-router";
 
 import ChromeShell from "../../../components/ChromeShell";
 import DclTopBar from "../../../web/frames/DclTopBar";
+import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
+import CartDrawer from "../../checkout/components/CartDrawer";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { LAND_NETWORKS } from "../../land/contracts";
@@ -20,9 +22,11 @@ import SearchDropdown from "../components/SearchDropdown";
 import Icon from "../components/Icon";
 import { isIapMode } from "../flags";
 import { useCampaign } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
+import { useMarketplace } from "../../market/access";
+import ShopCreditsChip, { ShopHeldCredits } from "./ShopCreditsChip";
 import ShopFooter from "./ShopFooter";
 import "./shoptheme.css";
 import "./shopchrome.css";
@@ -36,7 +40,7 @@ type Tab = { id: ShopSection; label: string; href: string; mobileOnly?: boolean 
 const COLLECTIBLES = /^\/shop\/(items|item|token|collection|names)(\/|$)/;
 const TOKEN_ACTION = /^\/shop\/(token|item)\/[^/]+\/[^/]+\/(transfer|bid|bids|sell|cancel|manage|rent)\/?$/;
 const TOKEN = /^\/shop\/token\/([^/]+)\/[^/]+(\/|$)/;
-const MARKETPLACE_ONLY = /^\/shop\/(lands|rankings|settings|accounts?)(\/|$)/;
+const MARKETPLACE_ONLY = /^\/shop\/(lands|rankings|accounts?)(\/|$)/;
 
 export function isLandTokenPath(pathname: string): boolean {
   const c = TOKEN.exec(pathname)?.[1]?.toLowerCase();
@@ -122,6 +126,7 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
       </nav>
       <hr className="shop-subnav__divider" aria-hidden="true" />
       {hidesSearch || market ? null : <SearchDropdown />}
+      {signedIn ? <ShopHeldCredits /> : null}
       {!creditsCta ? null : (
         <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`}>
           <Icon name="credits" size={20} />
@@ -137,11 +142,15 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
         </Link>
       ) : null}
       {market ? null : (
-        <Link
+        // As upstream's NavBar: the cart icon opens the cart drawer over the page (no banner); the
+        // drawer's Go to cart is the way to the cart page.
+        <button
+          type="button"
           className="shop-subnav__icon"
           data-kind="cart"
-          to={`${SHOP_BASE}/cart`}
+          onClick={() => shopCartDrawer.open()}
           aria-label={count > 0 ? t("nav.cartCount", { count }) : t("nav.cart")}
+          aria-haspopup="dialog"
           data-testid="subnav-cart"
         >
           <Icon name={count > 0 ? "cart-solid" : "cart"} size={28} />
@@ -150,8 +159,10 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
               {count}
             </span>
           ) : null}
-        </Link>
+        </button>
       )}
+      {/* Mounted for every nav set: a card adds to the cart (and opens it) on a marketplace page too. */}
+      <CartDrawer />
     </div>
   );
 }
@@ -189,7 +200,10 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
   const iap = isIapMode();
   const { campaign } = useCampaign();
   const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en")) ?? campaign.name ?? null) : null;
-  const set = navSetFor(pathname);
+  // The Marketplace's tabs (LAND, ...) only for a visitor who has it (market/access.tsx): anyone else stays on the
+  // Shop's, and its pages send them to the overview anyway.
+  const marketplace = useMarketplace();
+  const set = marketplace ? navSetFor(pathname) : "shop";
   const tabs = useMemo(() => shopTabs({ iap, eventLabel, set }), [iap, eventLabel, set]);
   const signedIn = wallet.session.kind !== "signedOut";
 
@@ -197,7 +211,7 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
     <ChromeShell
       className="shop-chrome"
       ariaLabel="Shop"
-      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} />}
+      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} balances={<ShopCreditsChip />} />}
       subnav={false}
       right={
         <>

@@ -20,6 +20,7 @@ libc.workspace = true
 # The shared throwaway test database (`scratch`), for dependents' tests.
 [features]
 scratch = []
+test-support = ["scratch"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

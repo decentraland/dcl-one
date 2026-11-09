@@ -20,10 +20,10 @@ import { keccak256, parseAbi, stringToHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { isShopApiError } from "../api/client";
-import { shopClient, type ShopClient } from "../api/shop";
-import type { AuthorizedCredit, CreditAuthorization } from "../api/types";
-import { CHAIN, type ChainId } from "../model/chain";
-import { manaUsdCentsCeil, type ManaUsdRate, type ManaWei, type UsdCents } from "../model/money";
+import { type ShopClient } from "../api/shop";
+import type { AuthorizedCredit, CreditAuthorization } from "@shop/api/types";
+import { CHAIN, type ChainId } from "@shop/model/chain";
+import { manaUsdCentsCeil, type ManaUsdRate, type ManaWei, type UsdCents } from "@shop/model/money";
 import { requireChain } from "../wallet/chain";
 import { requireContracts } from "../checkout/chain/contracts";
 import { isGaslessUnavailable, relayMetaTransaction } from "../checkout/chain/metatx";
@@ -41,6 +41,7 @@ import {
   walletReader,
   type ChainReader,
 } from "../land/evm";
+import { shopClient } from "../api/host";
 
 /** 100 MANA: DCLControllerV2's `PRICE` and the useCredits `maxCreditedValue` of a NAME. */
 export const NAME_PRICE_IN_WEI = "100000000000000000000";
@@ -74,9 +75,12 @@ export const NAME_INVALID_TEXT: Record<Exclude<NameInvalidReason, "empty">, stri
   "has-spaces": "NAMEs can't contain spaces.",
 };
 
-/** Keeps a typed value registrable: drops anything but letters and digits and caps the length. */
-export function sanitizeNameInput(raw: string): string {
-  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, NAME_MAX_LENGTH);
+/** How long typing rests before a NAME is checked. */
+export const NAME_CHECK_DEBOUNCE_MS = 400;
+
+/** Keeps a typed value registrable: drops anything but letters and digits and caps the length (at `max`). */
+export function sanitizeNameInput(raw: string, max: number = NAME_MAX_LENGTH): string {
+  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, max);
 }
 
 /** The registrar token of a NAME: `uint256(keccak256(lower(label)))`, decimal. */

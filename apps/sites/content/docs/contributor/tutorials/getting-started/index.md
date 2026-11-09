@@ -77,8 +77,8 @@ Once the LiveKit cluster is available you will need to set the specific LiveKit 
 
 ```
 LIVEKIT_HOST=wss://livekit-1.mydomain.org
-LIVEKIT_API_KEY=APIxxxxxxxxxxxx
-LIVEKIT_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+LIVEKIT_API_KEY=API-JjHuvM
+LIVEKIT_API_SECRET=J7YSHmNzkNCEfT2
 ROOM_PREFIX=my-prefix
 ```
 

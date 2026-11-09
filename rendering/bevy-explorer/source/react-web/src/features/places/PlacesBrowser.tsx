@@ -143,7 +143,7 @@ export function PlacesBrowser({
         {headExtra}
       </BrowseToolbar>
 
-      <BrowsePanel>
+      <BrowsePanel label="Places results" busy={loading || draft !== search}>
         {loading ? (
           <BrowseLoading />
         ) : error ? (

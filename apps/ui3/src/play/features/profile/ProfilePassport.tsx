@@ -1,6 +1,6 @@
 // Passport — the full-screen profile view opened from the chat profile menu's
 // "View Profile" (Figma node 8337-…). Header (name/address/copy/mutuals + FRIEND /
-// ADD FRIEND), OVERVIEW / BADGES / PHOTOS tabs, the avatar as the catalyst full-body
+// ADD FRIEND), OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar as the catalyst full-body
 // snapshot (2D, falling back to the face), then badges + about-me + fields + links.
 // (No engine/3D render here — that's only the Backpack's avatar preview.)
 //
@@ -8,7 +8,9 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, Button, ColorPicker, EquippedItemCard, Icon, Pencil, Tabs, Tooltip, showConfirm, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { registerCancelLayer } from '../../lib/cancelLayers'
+import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '../shop/shopApi'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
 import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '../../engine/protocol'
@@ -17,8 +19,8 @@ import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
 import styles from './ProfilePassport.module.css'
 
-type Tab = 'overview' | 'badges' | 'photos'
-const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
+type Tab = 'overview' | 'badges' | 'photos' | 'creations'
+const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
 const EDIT_TAB: TabItem<'edit'>[] = [{ id: 'edit', label: 'EDIT PROFILE', disabled: true }]
 // unity-explorer's name colour presets (UI/ColorPicker/NameColors.asset), in its order.
@@ -208,6 +210,86 @@ function EquippedRow({ tiles }: { tiles: EquippedTile[] }): React.JSX.Element {
   )
 }
 
+// The Creations tab's tiles, after unity-explorer's CreationsDetailsPassportModuleController: an item
+// on primary sale offers Buy with its Credits price, any other item View. Both open the item's shop
+// page, as unity-explorer does whenever it can't buy in-world. The button stays on the card, as in
+// unity-explorer, so a hovered card doesn't cover the row below.
+const creationTile = (item: CreationItem, emote: boolean): EquippedTile => ({
+  key: item.urn || item.id,
+  thumbnail: item.thumbnail,
+  name: item.name,
+  rarity: item.rarity,
+  shopUrl: item.url ? marketplaceUrl(item) : undefined,
+  shopLabel: item.isOnSale ? 'Buy' : 'View',
+  pinShop: true,
+  price: item.isOnSale && (item.priceCredits ?? 0) > 0 ? `${item.priceCredits} Credits` : undefined,
+  categoryIcon: emote ? <Icon name="emotes" size={15} /> : <CategoryIcon category={item.data?.wearable?.category ?? item.category} size={15} />
+})
+
+type CreationsLoad = { status: 'loading' } | { status: 'ready'; creations: Creations } | { status: 'error' }
+
+/** The Creations tab. Mounted only while the tab is open, so each visit loads afresh, like
+ *  unity-explorer's passport. */
+function CreationsSection({ address }: { address: string }): React.JSX.Element {
+  const [load, setLoad] = useState<CreationsLoad>({ status: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const ctl = new AbortController()
+    setLoad({ status: 'loading' })
+    // A reply that lands after the address changed (or the tab closed) belongs to the old request.
+    fetchCreations(address, ctl.signal).then(
+      (creations) => {
+        if (!ctl.signal.aborted) setLoad({ status: 'ready', creations })
+      },
+      () => {
+        if (!ctl.signal.aborted) setLoad({ status: 'error' })
+      }
+    )
+    return () => ctl.abort()
+  }, [address, attempt])
+
+  if (load.status === 'loading') {
+    return (
+      <section className={styles.card}>
+        <div className={styles.empty}>
+          <Spinner size={34} />
+        </div>
+      </section>
+    )
+  }
+  if (load.status === 'error') {
+    return (
+      <section className={styles.card}>
+        <EmptyState
+          variant="inline"
+          tone="error"
+          title="Couldn't load the creations"
+          subtitle="Please try again."
+          actions={[{ label: 'Retry', onClick: () => setAttempt((n) => n + 1) }]}
+        />
+      </section>
+    )
+  }
+  const { wearables, emotes } = load.creations
+  return (
+    <section className={styles.card}>
+      {wearables.length === 0 && emotes.length === 0 && <div className={styles.empty}>There are no creations to show yet.</div>}
+      {wearables.length > 0 && (
+        <>
+          <h2 className={styles.cardTitle}>Wearables</h2>
+          <EquippedRow tiles={wearables.map((w) => creationTile(w, false))} />
+        </>
+      )}
+      {emotes.length > 0 && (
+        <>
+          <h2 className={styles.cardTitle}>Emotes</h2>
+          <EquippedRow tiles={emotes.map((e) => creationTile(e, true))} />
+        </>
+      )}
+    </section>
+  )
+}
+
 /** Everything the own-profile edit mode needs. Absent = view only, which is every OTHER user's
  *  passport and your own until the session has a profile to edit. */
 export interface PassportEditing {
@@ -225,6 +307,7 @@ export interface PassportEditing {
 export function ProfilePassport({
   profile,
   relationship = 'none',
+  blockedBy = false,
   isSelf = false,
   editing,
   onAddFriend,
@@ -233,12 +316,17 @@ export function ProfilePassport({
   onCancelRequest,
   onAcceptRequest,
   onUnblock,
+  onBlock,
+  onReport,
   onClose,
   onDirtyChange
 }: {
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
   relationship?: Relationship
+  /** This user has blocked you. As in the reference client, the passport then offers neither CHAT
+   *  nor a friendship button; Block and Report stay in the options menu. */
+  blockedBy?: boolean
   /** Your own passport — hides the friend action (you can't friend yourself). */
   isSelf?: boolean
   /** Own-profile edit mode. Only offered when this is your passport. */
@@ -250,6 +338,8 @@ export function ProfilePassport({
   onCancelRequest?: (address: string) => void
   onAcceptRequest?: (address: string) => void
   onUnblock?: (address: string) => void
+  onBlock?: (address: string) => void
+  onReport?: (address: string) => void
   onClose: () => void
   /** Announce unsaved edits, so the popup layer can refuse to close on a stray backdrop click. */
   onDirtyChange?: (dirty: boolean) => void
@@ -264,6 +354,32 @@ export function ProfilePassport({
   const selectedTier = selectedBadge?.tiers?.some((t) => t.id === picked.tier) ? picked.tier : selectedBadge != null ? defaultTier(selectedBadge) : undefined
   const [editMode, setEditMode] = useState(false)
   const canEdit = isSelf && editing != null
+  // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
+  const theyBlockedYou = blockedBy && relationship !== 'blocked'
+  const [menuOpen, setMenuOpen] = useState(false)
+  // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
+  const options: ContextMenuItem[] = []
+  const pick = (fn: (address: string) => void) => (): void => {
+    setMenuOpen(false)
+    fn(profile.address)
+  }
+  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
+    options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
+  }
+  if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (menuRef.current != null && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    const off = registerCancelLayer(() => setMenuOpen(false))
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      off()
+    }
+  }, [menuOpen])
   // SAVE sits in the header rather than at the end of the form: the form is taller than the panel,
   // so a footer button is below the fold and easy to miss entirely.
   const saveRef = useRef<(() => void) | null>(null)
@@ -357,12 +473,13 @@ export function ProfilePassport({
             )}
           </div>
           <div className={styles.headActions}>
-            {!isSelf && relationship !== 'blocked' && onMessage != null && (
+            {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT
               </button>
             )}
             {!isSelf &&
+              !theyBlockedYou &&
               (relationship === 'friend' ? (
                 <button type="button" className={`${styles.headBtn} ${styles.headBtnSwap}`} onClick={() => onUnfriend?.(profile.address)}>
                   <span className={styles.idle}>FRIEND</span>
@@ -385,6 +502,18 @@ export function ProfilePassport({
                   ADD FRIEND
                 </button>
               ))}
+            {options.length > 0 && (
+              <div ref={menuRef} className={styles.menuWrap}>
+                <ControlButton variant="faint" aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} aria-pressed={undefined} active={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+                  <Kebab size={18} r={2} />
+                </ControlButton>
+                {menuOpen && (
+                  <div className={styles.menu}>
+                    <ContextMenu items={options} />
+                  </div>
+                )}
+              </div>
+            )}
             {canEdit && editMode && (
               <Button variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
                 {editing.saving ? 'SAVING…' : 'SAVE'}
@@ -546,6 +675,10 @@ export function ProfilePassport({
                 )}
               </section>
             )}
+
+            {/* Keyed on the lowercased address: the passport opens with the address it was given, then
+                switches to the stored profile's lowercase one, which is the same creator. */}
+            {tab === 'creations' && <CreationsSection key={profile.address.toLowerCase()} address={profile.address.toLowerCase()} />}
           </div>
         </div>
       </div>

@@ -1,10 +1,11 @@
-// ShopItemCard — a Shop grid tile: the rarity texture with the thumbnail, a rarity-coloured corner flap
-// with the category glyph and an optional discount tag, then on a dark caption the name, the creator and
-// a row with the rarity tag and the price. Hovering or focusing the card swaps that row for its actions
-// (TRY ON, BUY…); clicking the card selects it.
+// ShopItemCard — a Shop grid tile, the design system's ExplorerShopCard (DCL-ONE UI Style Guide, Shop page):
+// on a dark card, the ItemCard thumbnail (the rarity glow over Brand/Purple, its shine border, a
+// rarity-coloured corner flap with the category glyph and an optional discount tag), then the name, the
+// creator and a row with the rarity label and the price. Hovering or focusing the card swaps the creator
+// and that row for its actions (BUY…); clicking the card selects it. Hovered, focused or selected, it
+// takes the design's ring. Its width is the grid's column: the design's 203px, never stretched.
 
 import { useState } from 'react'
-import { rarityTile } from '../../../design'
 import styles from './ShopItemCard.module.css'
 
 export interface ShopItemCardProps {
@@ -23,7 +24,7 @@ export interface ShopItemCardProps {
   selected?: boolean
   /** Without it the tile is not selectable. */
   onSelect?: () => void
-  /** Shown in place of the rarity and price while the card is hovered or holds focus. */
+  /** Shown in place of the creator, rarity and price while the card is hovered or holds focus. */
   actions?: React.ReactNode
 }
 
@@ -44,7 +45,7 @@ export function ShopItemCard({
   return (
     <div className={`${styles.card} ${selected ? styles.selected : ''} ${actions != null ? styles.hasActions : ''}`.trim()} data-rarity={rarity ?? 'base'}>
       {onSelect != null && <button type="button" className={styles.hit} aria-label={name} aria-pressed={selected} onClick={onSelect} />}
-      <span className={styles.thumb} style={{ backgroundImage: `url(${rarityTile(rarity)})` }}>
+      <span className={styles.thumb}>
         {thumbnail && !failed && <img className={styles.image} src={thumbnail} alt="" onError={() => setFailed(true)} />}
         {categoryIcon != null && (
           <span className={styles.flap}>
@@ -53,7 +54,7 @@ export function ShopItemCard({
         )}
         {discount != null && <span className={styles.discount}>{discount}</span>}
       </span>
-      <span className={styles.caption}>
+      <span className={styles.info}>
         <span className={styles.name} title={name}>
           {name}
         </span>
@@ -73,14 +74,15 @@ export function ShopItemCard({
   )
 }
 
-/** A ShopItemCard's place while the grid loads: the tile and two caption bars. */
+/** A ShopItemCard's place while the grid loads: the design's loading card, its thumbnail and two bars
+ *  swept by the Skeleton's band. */
 export function ShopItemSkeleton(): React.JSX.Element {
   return (
     <span className={styles.skeleton} aria-hidden="true">
-      <span className={styles.skeletonTile} />
-      <span className={styles.skeletonCaption}>
-        <span className={styles.skeletonBar} />
-        <span className={`${styles.skeletonBar} ${styles.skeletonBarShort}`} />
+      <span className={`${styles.sheen} ${styles.skeletonTile}`} />
+      <span className={styles.skeletonInfo}>
+        <span className={`${styles.sheen} ${styles.skeletonBar}`} />
+        <span className={`${styles.sheen} ${styles.skeletonBar} ${styles.skeletonBarShort}`} />
       </span>
     </span>
   )

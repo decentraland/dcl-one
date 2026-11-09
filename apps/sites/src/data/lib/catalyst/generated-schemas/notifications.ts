@@ -6,7 +6,6 @@ import type { CommunityOptOutStatus } from "@catalyst-api/notifications/Communit
 import type { MarkReadResponse } from "@catalyst-api/notifications/MarkReadResponse";
 import type { NotificationItem } from "@catalyst-api/notifications/NotificationItem";
 import type { NotificationsListResponse } from "@catalyst-api/notifications/NotificationsListResponse";
-import type { OptOutResponse } from "@catalyst-api/notifications/OptOutResponse";
 import type { Subscription } from "@catalyst-api/notifications/Subscription";
 
 export const BroadcastResponseSchema = z.object({
@@ -29,7 +28,7 @@ export const MarkReadResponseSchema = z.object({
 export const NotificationItemSchema = z.object({
   id: z.string(),
   type: z.string(),
-  address: z.string(),
+  address: z.string().nullable(),
   timestamp: z.string(),
   read: z.boolean(),
   created_at: z.string(),
@@ -41,13 +40,9 @@ export const NotificationsListResponseSchema = z.object({
   notifications: z.array(NotificationItemSchema),
 });
 
-export const OptOutResponseSchema = z.object({
-  ok: z.boolean(),
-});
-
 export const SubscriptionSchema = z.object({
   address: z.string(),
-  email: z.string().nullable(),
+  email: z.string().optional(),
   unconfirmedEmail: z.string().optional(),
   details: z.record(z.string(), z.unknown()),
 });
@@ -61,5 +56,4 @@ export type _AssertCommunityOptOutStatus = Assert<Mutual<CommunityOptOutStatus, 
 export type _AssertMarkReadResponse = Assert<Mutual<MarkReadResponse, z.infer<typeof MarkReadResponseSchema>>>;
 export type _AssertNotificationItem = Assert<Mutual<NotificationItem, z.infer<typeof NotificationItemSchema>>>;
 export type _AssertNotificationsListResponse = Assert<Mutual<NotificationsListResponse, z.infer<typeof NotificationsListResponseSchema>>>;
-export type _AssertOptOutResponse = Assert<Mutual<OptOutResponse, z.infer<typeof OptOutResponseSchema>>>;
 export type _AssertSubscription = Assert<Mutual<Subscription, z.infer<typeof SubscriptionSchema>>>;

@@ -558,8 +558,9 @@ pub async fn status(pool: &PgPool) -> Value {
 }
 
 /// Attaches `rentals-index` when `enabled` (`SHOP_RENTALS_INDEX_ENABLED`)
-/// and an Ethereum JSON-RPC endpoint is configured (`TRADE_RPC_URLS` 1= or
-/// `ETH_RPC_URL`), on the market indexes' cadence and budget.
+/// and a chain-1 JSON-RPC endpoint is configured (`TRADE_RPC_URLS` 1=, or
+/// `ETH_RPC_URL` on mainnet), on the market indexes' cadence and budget.
+/// Run by `catalyst index`; a fresh cursor walks from the contract's deployment.
 pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
     if !enabled {
         tracing::info!(
@@ -567,9 +568,10 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
         );
         return;
     }
-    let Some(url) = market.chain_rpc_url(ChainNet::Ethereum) else {
+    // The venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
+    let Some(url) = market.venue_rpc_url(1) else {
         tracing::warn!(
-            "rentals index enabled but no Ethereum JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= or ETH_RPC_URL): it stays off"
+            "rentals index enabled but no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet): it stays off"
         );
         return;
     };
@@ -584,6 +586,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
             let (market, url, settings) = (market.clone(), url.clone(), settings.clone());
             async move {
                 let rpc = crate::land_authz::indexer::Rpc::at(&market.http, &url);
+                crate::market::ensure_chain(&rpc, 1).await?;
                 let progress = |m: String| ctx.progress(m);
                 let outcome = chain_walk::run_pass(
                     &market.pool,

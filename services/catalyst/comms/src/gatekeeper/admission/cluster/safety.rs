@@ -236,6 +236,7 @@ impl SafetyStore {
         lease.commit().await?;
         Ok(result)
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn insert_dispatch(
         &self,
         lease: &mut SafetyLease,
@@ -397,6 +398,360 @@ impl SafetyStore {
         sqlx::query("UPDATE social.island_takeover_receipts r SET retired_by_source=$2,claim_id=NULL,claim_until=NULL FROM social.island_cleanup_dispatches d,social.island_admission_fences f WHERE r.wallet=$1 AND r.source_incarnation<>$2 AND NOT r.acknowledged AND r.retired_by_source IS NULL AND r.latest_dispatch=d.dispatch_id AND d.wallet=r.wallet AND d.purpose='pulse_takeover' AND d.pulse_source=r.source_incarnation AND d.pulse_takeover_id=r.takeover_id AND d.room_name='island-'||r.predecessor_cluster AND d.participant_identity=r.wallet AND d.state='confirmed' AND d.settled_at IS NOT NULL AND f.wallet=r.wallet AND f.token_floor>=d.cutoff")
             .bind(wallet).bind(source).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         lease.commit().await
+    }
+}
+impl SafetyStore {
+    /// Wallet lock first, then the optimistic realm owner row. No network wait
+    /// is allowed while this lease lives.
+    pub(crate) async fn authorize_stamp(
+        &self,
+        stamp: &super::fence::PulseAdmissionStamp,
+        audience: Option<&str>,
+        fence: Option<&super::fence::TokenFence>,
+        require_unowned: bool,
+    ) -> Result<SafetyLease, GatewayError> {
+        if !stamp.valid() {
+            return Err(GatewayError::Unknown);
+        }
+        let expected = stamp.safety_snapshot().ok_or(GatewayError::Unknown)?;
+        let mut lease = self
+            .authorize(&stamp.wallet, Some(expected), stamp.credential_not_before)
+            .await?;
+        // Read-only replicas and final queue consumers also observe source
+        // identity. Retained local retirement forbids its old origin everywhere.
+        let retired_origin:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.island_takeover_receipts WHERE wallet=$1 AND source_incarnation=$2 AND retired_by_source IS NOT NULL)")
+            .bind(&stamp.wallet).bind(&stamp.source_incarnation).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        if retired_origin {
+            return Err(GatewayError::Unknown);
+        }
+        if let Some(audience) = audience {
+            let row=sqlx::query("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,updated_at>=clock_timestamp()-interval '90 seconds' AS fresh FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm' FOR UPDATE")
+                .bind(audience).bind(&stamp.wallet).fetch_optional(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+            if let Some(row) = row {
+                if require_unowned
+                    || row.get::<String, _>("owner_session") != stamp.session
+                    || !row.get::<bool, _>("fresh")
+                {
+                    return Err(GatewayError::Unknown);
+                }
+                if let Some(fence) = fence {
+                    let epoch: i64 = row.get("owner_epoch");
+                    let revision: i64 = row.get("assignment_revision");
+                    let token: i64 = row.get("fencing_token");
+                    if epoch <= 0
+                        || revision <= 0
+                        || token <= 0
+                        || fence.audience != audience
+                        || fence.lane != "realm"
+                        || fence.owner_session != stamp.session
+                        || fence.owner_epoch != epoch as u64
+                        || fence.fencing_token != token as u64
+                        || !(fence.assignment_revision == revision as u64
+                            || fence.assignment_revision == (revision as u64).saturating_add(1))
+                    {
+                        return Err(GatewayError::Unknown);
+                    }
+                }
+            } else if fence.is_some() {
+                return Err(GatewayError::Unknown);
+            }
+        } else if fence.is_some() {
+            return Err(GatewayError::Unknown);
+        }
+        // Ban writes use their own policy lock. Read after the last possibly
+        // blocking owner-row acquisition so a lock wait cannot stale policy.
+        // A SELECT projection can precede its FOR UPDATE wait. Re-evaluate
+        // expiry after locking, on the database clock, alongside final bans.
+        let denied:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans b WHERE (b.banned_address=$1 OR b.banned_device_id=(SELECT NULLIF(device_id,'') FROM social.player_connections WHERE address=$1)) AND b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at>timezone('UTC',clock_timestamp()))) OR EXISTS(SELECT 1 FROM social.archipelago_v4_assignments WHERE deployment_audience=$2 AND owner_address=$1 AND lane_key='realm' AND updated_at<clock_timestamp()-interval '90 seconds')")
+            .bind(&stamp.wallet).bind(audience).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        if denied {
+            return Err(GatewayError::Unknown);
+        }
+        Ok(lease)
+    }
+
+    /// A final self-hosted removal is authorized only by this exact positively
+    /// settled quarantine UUID. Unknown dispatched attempts are never eligible.
+    pub(crate) async fn begin_quarantine_final(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<Dispatch>, GatewayError> {
+        const FULL_MAX_ISSUER_WAIT_SECONDS: u64 = super::MAX_ISLAND_TOKEN_TTL_SECONDS + 60 + 2;
+        let wallet: Option<String> = sqlx::query_scalar(
+            "SELECT wallet FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| GatewayError::Unknown)?;
+        let Some(wallet) = wallet else {
+            return Ok(None);
+        };
+        let mut lease = self.lock(&wallet).await?;
+        let eligible:bool=sqlx::query_scalar("SELECT state='quarantine' AND settled_at IS NOT NULL AND quarantine_until IS NOT NULL FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$2")
+            .bind(id).bind(&wallet).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        if !eligible {
+            return Ok(None);
+        }
+        let previous = Self::dispatch(&mut lease.tx, id).await?;
+        let first_seen = *self
+            .quarantines
+            .lock()
+            .unwrap()
+            .entry(id)
+            .or_insert_with(tokio::time::Instant::now);
+        let durable_due:bool=sqlx::query_scalar("SELECT quarantine_until<=timezone('UTC',clock_timestamp()) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1")
+            .bind(id).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        // A fresh process observes a full maximum issuer lifetime, leeway and
+        // allowance; it cannot derive a monotonic clock from an old wall time.
+        if !durable_due || first_seen.elapsed().as_secs() < FULL_MAX_ISSUER_WAIT_SECONDS {
+            return Ok(None);
+        }
+        let now: i64 = sqlx::query_scalar(
+            "SELECT floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint",
+        )
+        .fetch_one(&mut *lease.tx)
+        .await
+        .map_err(|_| GatewayError::Unknown)?;
+        let cutoff = (now as u64)
+            .checked_add(5)
+            .ok_or(GatewayError::Unknown)?
+            .max(
+                previous
+                    .cutoff
+                    .checked_add(1)
+                    .ok_or(GatewayError::Unknown)?,
+            )
+            .max(
+                lease
+                    .snapshot
+                    .token_floor
+                    .checked_add(1)
+                    .ok_or(GatewayError::Unknown)?,
+            );
+        if cutoff > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+            || cutoff.saturating_sub(now as u64) >= 59
+        {
+            return Err(GatewayError::Unknown);
+        }
+        let changed=sqlx::query("UPDATE social.island_cleanup_dispatches SET state='superseded',quarantine_until=NULL WHERE dispatch_id=$1 AND wallet=$2 AND state='quarantine' AND settled_at IS NOT NULL")
+            .bind(id).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?.rows_affected();
+        if changed != 1 {
+            return Err(GatewayError::Unknown);
+        }
+        let next = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,cutoff,fence_generation,phase,state) SELECT $2,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,$3,$4,'quarantine_final','dispatched' FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$5 AND state='superseded' AND settled_at IS NOT NULL")
+            .bind(id).bind(next).bind(cutoff as i64).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        sqlx::query("UPDATE social.island_takeover_receipts SET latest_dispatch=$2 WHERE wallet=$3 AND latest_dispatch=$1")
+            .bind(id).bind(next).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        Self::advance(&mut lease.tx, &wallet, None).await?;
+        lease.commit().await?;
+        self.quarantines.lock().unwrap().remove(&id);
+        Ok(Some(Dispatch {
+            dispatch_id: next,
+            cutoff,
+            state: "dispatched".into(),
+            quarantine_until: None,
+            phase: "quarantine_final".into(),
+            fresh: true,
+        }))
+    }
+
+    pub(crate) async fn due_takeovers(&self) -> Result<Vec<(String, String)>, GatewayError> {
+        let claim = Uuid::new_v4();
+        sqlx::query_as("WITH due AS (SELECT r.wallet,r.source_incarnation,r.takeover_id FROM social.island_takeover_receipts r LEFT JOIN social.island_cleanup_dispatches d ON d.dispatch_id=r.latest_dispatch AND d.wallet=r.wallet WHERE NOT r.acknowledged AND r.retired_by_source IS NULL AND r.next_attempt_at<=timezone('UTC',clock_timestamp()) AND (r.claim_until IS NULL OR r.claim_until<=timezone('UTC',clock_timestamp())) AND (d.dispatch_id IS NULL OR d.state IN ('confirmed','rejected','settled_late') OR (d.state='quarantine' AND d.quarantine_until<=timezone('UTC',clock_timestamp()))) ORDER BY r.next_attempt_at,r.wallet,r.source_incarnation,r.takeover_id FOR UPDATE OF r SKIP LOCKED LIMIT 16) UPDATE social.island_takeover_receipts r SET claim_id=$1,claim_until=timezone('UTC',clock_timestamp())+interval '15 seconds',next_attempt_at=timezone('UTC',clock_timestamp())+interval '1 second' FROM due WHERE r.wallet=due.wallet AND r.source_incarnation=due.source_incarnation AND r.takeover_id=due.takeover_id RETURNING r.wallet,r.last_successor_session")
+            .bind(claim).fetch_all(&self.pool).await.map_err(|_|GatewayError::Unknown)
+    }
+
+    /// Resume an established positive closure after its scheduling intent has
+    /// disappeared. Initial definite rejection is deliberately ineligible.
+    pub(crate) async fn resume_settled_enforcement(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<Dispatch>, GatewayError> {
+        let wallet:Option<String>=sqlx::query_scalar("SELECT wallet FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND purpose='island_enforcement' AND state='settled_late' AND settled_at IS NOT NULL")
+            .bind(id).fetch_optional(&self.pool).await.map_err(|_|GatewayError::Unknown)?;
+        let Some(wallet) = wallet else {
+            return Ok(None);
+        };
+        let mut lease = self.lock(&wallet).await?;
+        let row=sqlx::query("SELECT room_name,participant_identity,enforcement_cause,intent_root_key,intent_target_key,intent_generation FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$2 AND purpose='island_enforcement' AND state='settled_late' AND settled_at IS NOT NULL")
+            .bind(id).bind(&wallet).fetch_optional(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let room: String = row.get("room_name");
+        let identity: String = row.get("participant_identity");
+        let cause: String = row.get("enforcement_cause");
+        let root: String = row.get("intent_root_key");
+        let target: String = row.get("intent_target_key");
+        let generation: Uuid = row.get("intent_generation");
+        let next = self
+            .insert_dispatch(
+                &mut lease,
+                &wallet,
+                &room,
+                &identity,
+                0,
+                Some(id),
+                "island_enforcement",
+                None,
+                None,
+                Some((&cause, &root, &target, generation)),
+            )
+            .await?;
+        lease.commit().await?;
+        Ok(next)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn elapse_quarantine_for_test(&self, id: Uuid, seconds: u64) {
+        self.quarantines.lock().unwrap().insert(
+            id,
+            tokio::time::Instant::now() - std::time::Duration::from_secs(seconds),
+        );
+    }
+}
+
+impl crate::gatekeeper::CommsState {
+    pub(crate) async fn verify_island_stamp(
+        self: &std::sync::Arc<Self>,
+        stamp: &super::fence::PulseAdmissionStamp,
+    ) -> bool {
+        use super::subscriber::ClusterGateway;
+        use prost::Message;
+        #[cfg(test)]
+        if stamp.safety_generation == 0 {
+            return match self.island_subscriber().upgrade() {
+                Some(subscriber) => subscriber.verify_stamp(stamp).await,
+                None => false,
+            };
+        }
+        if !stamp.valid() || stamp.safety_snapshot().is_none() {
+            return false;
+        }
+        if !matches!(
+            super::gateway::StateGateway::new(self.clone())
+                .is_denied(&stamp.wallet)
+                .await,
+            Ok(false)
+        ) {
+            return false;
+        }
+        let lookup = crate::protocol::bus::cluster::ClusterLookup {
+            wallet: stamp.wallet.clone(),
+            session: stamp.session.clone(),
+        };
+        let Ok(payload) = self.bus.request(&lookup.subject(), lookup.encode()).await else {
+            return false;
+        };
+        let Ok(snapshot) = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot::decode(
+            payload.as_slice(),
+        ) else {
+            return false;
+        };
+        if !crate::protocol::bus::cluster::valid_reply(&lookup, &snapshot)
+            || !stamp.matches_snapshot(&snapshot)
+        {
+            return false;
+        }
+        self.island_stamp_ready_sql(stamp).await
+    }
+    pub(crate) async fn island_stamp_ready_sql(
+        self: &std::sync::Arc<Self>,
+        stamp: &super::fence::PulseAdmissionStamp,
+    ) -> bool {
+        #[cfg(test)]
+        if stamp.safety_generation == 0 {
+            return match self.island_subscriber().upgrade() {
+                Some(subscriber) => subscriber.stamp_ready(stamp).await,
+                None => false,
+            };
+        }
+        let Ok(lease) = self
+            .island_safety
+            .authorize_stamp(
+                stamp,
+                self.cluster.control_v4_audience.as_deref(),
+                None,
+                false,
+            )
+            .await
+        else {
+            return false;
+        };
+        if lease.commit().await.is_err() {
+            return false;
+        }
+        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
+            && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
+    }
+    pub(crate) async fn island_fenced_stamp_ready_sql(
+        self: &std::sync::Arc<Self>,
+        stamp: &super::fence::PulseAdmissionStamp,
+        fence: &super::fence::TokenFence,
+        presented_device: Option<&str>,
+    ) -> bool {
+        let Ok(mut lease) = self
+            .island_safety
+            .authorize_stamp(
+                stamp,
+                self.cluster.control_v4_audience.as_deref(),
+                Some(fence),
+                false,
+            )
+            .await
+        else {
+            return false;
+        };
+        let exact:Result<bool,_>=sqlx::query_scalar("SELECT assignment_revision=$4 AND owner_epoch=$5 AND fencing_token=$6 AND owner_session=$3 FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(&fence.audience).bind(&stamp.wallet).bind(&fence.owner_session).bind(i64::try_from(fence.assignment_revision).unwrap_or(-1)).bind(i64::try_from(fence.owner_epoch).unwrap_or(-1)).bind(i64::try_from(fence.fencing_token).unwrap_or(-1)).fetch_one(&mut *lease.tx).await;
+        if !matches!(exact, Ok(true)) {
+            return false;
+        }
+        if let Some(device) = presented_device {
+            let banned:Result<bool,_>=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans WHERE banned_device_id=$1 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at>timezone('UTC',clock_timestamp())))")
+                .bind(device).fetch_one(&mut *lease.tx).await;
+            if !matches!(banned, Ok(false)) {
+                return false;
+            }
+        }
+        if lease.commit().await.is_err() {
+            return false;
+        }
+        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
+            && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
+    }
+}
+
+impl SafetyStore {
+    /// Bounded primary maintenance also visits inactive settled wallets. Each
+    /// wallet is locked separately; no cross-wallet deletion occurs while
+    /// another wallet lock is held. Persistent fences/floors are never deleted.
+    pub(crate) async fn compact_settled(&self) -> Result<(), GatewayError> {
+        let wallets:Vec<String>=sqlx::query_scalar("SELECT d.wallet FROM social.island_cleanup_dispatches d JOIN social.island_admission_fences f ON f.wallet=d.wallet WHERE d.state IN ('confirmed','rejected','superseded') AND d.settled_at IS NOT NULL AND (d.state<>'confirmed' OR f.token_floor>=d.cutoff) AND d.cutoff+$1<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$1*interval '1 second'<timezone('UTC',clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM social.island_takeover_receipts r WHERE r.wallet=d.wallet AND r.latest_dispatch=d.dispatch_id AND NOT r.acknowledged AND r.retired_by_source IS NULL) GROUP BY d.wallet ORDER BY min(d.settled_at),d.wallet LIMIT 16")
+            .bind(SETTLED_RETENTION_SECONDS).fetch_all(&self.pool).await.map_err(|_|GatewayError::Unknown)?;
+        for wallet in wallets {
+            let result=async {
+            let mut lease = self.lock(&wallet).await?;
+            sqlx::query("WITH due AS (SELECT r.wallet,r.source_incarnation,r.takeover_id FROM social.island_takeover_receipts r JOIN social.island_cleanup_dispatches d ON d.wallet=r.wallet AND d.dispatch_id=r.latest_dispatch JOIN social.island_admission_fences f ON f.wallet=r.wallet WHERE r.wallet=$1 AND (r.acknowledged OR r.retired_by_source IS NOT NULL) AND d.state='confirmed' AND d.settled_at IS NOT NULL AND f.token_floor>=d.cutoff AND d.cutoff+$2<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$2*interval '1 second'<timezone('UTC',clock_timestamp()) ORDER BY r.created_at,r.source_incarnation,r.takeover_id FOR UPDATE OF r SKIP LOCKED LIMIT 64) DELETE FROM social.island_takeover_receipts r USING due WHERE r.wallet=due.wallet AND r.source_incarnation=due.source_incarnation AND r.takeover_id=due.takeover_id")
+                .bind(&wallet).bind(SETTLED_RETENTION_SECONDS).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+            // A known rejection never advanced a floor and had no remote
+            // effect. Superseded attempts are positively settled, while the
+            // immutable logical receipt/newer attempt retains the obligation.
+            // Confirmed attempts additionally require their durable floor.
+            sqlx::query("WITH due AS (SELECT d.dispatch_id FROM social.island_cleanup_dispatches d JOIN social.island_admission_fences f ON f.wallet=d.wallet WHERE d.wallet=$1 AND d.state IN ('confirmed','rejected','superseded') AND d.settled_at IS NOT NULL AND (d.state<>'confirmed' OR f.token_floor>=d.cutoff) AND d.cutoff+$2<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$2*interval '1 second'<timezone('UTC',clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM social.island_takeover_receipts r WHERE r.latest_dispatch=d.dispatch_id) ORDER BY d.settled_at,d.dispatch_id FOR UPDATE OF d SKIP LOCKED LIMIT 64) DELETE FROM social.island_cleanup_dispatches d USING due WHERE d.dispatch_id=due.dispatch_id")
+                .bind(&wallet).bind(SETTLED_RETENTION_SECONDS).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+            lease.commit().await
+            }.await;
+            if result.is_err() {
+                metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+                tracing::warn!(%wallet,"island compaction wallet unavailable; retaining all evidence");
+            }
+        }
+        Ok(())
     }
 }
 #[cfg(test)]
@@ -1062,7 +1417,7 @@ mod durable_tests {
         assert!(store.authorize(&wallet, None, d.cutoff - 1).await.is_err());
         assert!(
             store
-                .acknowledge(&wallet, "source-a", &[op.clone()])
+                .acknowledge(&wallet, "source-a", std::slice::from_ref(&op))
                 .await
                 .is_err(),
             "observed retired origin requires maintenance"
@@ -1427,359 +1782,5 @@ mod durable_tests {
                 .await
                 .is_err()
         );
-    }
-}
-impl SafetyStore {
-    /// Wallet lock first, then the optimistic realm owner row. No network wait
-    /// is allowed while this lease lives.
-    pub(crate) async fn authorize_stamp(
-        &self,
-        stamp: &super::fence::PulseAdmissionStamp,
-        audience: Option<&str>,
-        fence: Option<&super::fence::TokenFence>,
-        require_unowned: bool,
-    ) -> Result<SafetyLease, GatewayError> {
-        if !stamp.valid() {
-            return Err(GatewayError::Unknown);
-        }
-        let expected = stamp.safety_snapshot().ok_or(GatewayError::Unknown)?;
-        let mut lease = self
-            .authorize(&stamp.wallet, Some(expected), stamp.credential_not_before)
-            .await?;
-        // Read-only replicas and final queue consumers also observe source
-        // identity. Retained local retirement forbids its old origin everywhere.
-        let retired_origin:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.island_takeover_receipts WHERE wallet=$1 AND source_incarnation=$2 AND retired_by_source IS NOT NULL)")
-            .bind(&stamp.wallet).bind(&stamp.source_incarnation).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        if retired_origin {
-            return Err(GatewayError::Unknown);
-        }
-        if let Some(audience) = audience {
-            let row=sqlx::query("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,updated_at>=clock_timestamp()-interval '90 seconds' AS fresh FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm' FOR UPDATE")
-                .bind(audience).bind(&stamp.wallet).fetch_optional(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-            if let Some(row) = row {
-                if require_unowned
-                    || row.get::<String, _>("owner_session") != stamp.session
-                    || !row.get::<bool, _>("fresh")
-                {
-                    return Err(GatewayError::Unknown);
-                }
-                if let Some(fence) = fence {
-                    let epoch: i64 = row.get("owner_epoch");
-                    let revision: i64 = row.get("assignment_revision");
-                    let token: i64 = row.get("fencing_token");
-                    if epoch <= 0
-                        || revision <= 0
-                        || token <= 0
-                        || fence.audience != audience
-                        || fence.lane != "realm"
-                        || fence.owner_session != stamp.session
-                        || fence.owner_epoch != epoch as u64
-                        || fence.fencing_token != token as u64
-                        || !(fence.assignment_revision == revision as u64
-                            || fence.assignment_revision == (revision as u64).saturating_add(1))
-                    {
-                        return Err(GatewayError::Unknown);
-                    }
-                }
-            } else if fence.is_some() {
-                return Err(GatewayError::Unknown);
-            }
-        } else if fence.is_some() {
-            return Err(GatewayError::Unknown);
-        }
-        // Ban writes use their own policy lock. Read after the last possibly
-        // blocking owner-row acquisition so a lock wait cannot stale policy.
-        // A SELECT projection can precede its FOR UPDATE wait. Re-evaluate
-        // expiry after locking, on the database clock, alongside final bans.
-        let denied:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans b WHERE (b.banned_address=$1 OR b.banned_device_id=(SELECT NULLIF(device_id,'') FROM social.player_connections WHERE address=$1)) AND b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at>timezone('UTC',clock_timestamp()))) OR EXISTS(SELECT 1 FROM social.archipelago_v4_assignments WHERE deployment_audience=$2 AND owner_address=$1 AND lane_key='realm' AND updated_at<clock_timestamp()-interval '90 seconds')")
-            .bind(&stamp.wallet).bind(audience).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        if denied {
-            return Err(GatewayError::Unknown);
-        }
-        Ok(lease)
-    }
-
-    /// A final self-hosted removal is authorized only by this exact positively
-    /// settled quarantine UUID. Unknown dispatched attempts are never eligible.
-    pub(crate) async fn begin_quarantine_final(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<Dispatch>, GatewayError> {
-        const FULL_MAX_ISSUER_WAIT_SECONDS: u64 = super::MAX_ISLAND_TOKEN_TTL_SECONDS + 60 + 2;
-        let wallet: Option<String> = sqlx::query_scalar(
-            "SELECT wallet FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|_| GatewayError::Unknown)?;
-        let Some(wallet) = wallet else {
-            return Ok(None);
-        };
-        let mut lease = self.lock(&wallet).await?;
-        let eligible:bool=sqlx::query_scalar("SELECT state='quarantine' AND settled_at IS NOT NULL AND quarantine_until IS NOT NULL FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$2")
-            .bind(id).bind(&wallet).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        if !eligible {
-            return Ok(None);
-        }
-        let previous = Self::dispatch(&mut lease.tx, id).await?;
-        let first_seen = *self
-            .quarantines
-            .lock()
-            .unwrap()
-            .entry(id)
-            .or_insert_with(tokio::time::Instant::now);
-        let durable_due:bool=sqlx::query_scalar("SELECT quarantine_until<=timezone('UTC',clock_timestamp()) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1")
-            .bind(id).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        // A fresh process observes a full maximum issuer lifetime, leeway and
-        // allowance; it cannot derive a monotonic clock from an old wall time.
-        if !durable_due || first_seen.elapsed().as_secs() < FULL_MAX_ISSUER_WAIT_SECONDS {
-            return Ok(None);
-        }
-        let now: i64 = sqlx::query_scalar(
-            "SELECT floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint",
-        )
-        .fetch_one(&mut *lease.tx)
-        .await
-        .map_err(|_| GatewayError::Unknown)?;
-        let cutoff = (now as u64)
-            .checked_add(5)
-            .ok_or(GatewayError::Unknown)?
-            .max(
-                previous
-                    .cutoff
-                    .checked_add(1)
-                    .ok_or(GatewayError::Unknown)?,
-            )
-            .max(
-                lease
-                    .snapshot
-                    .token_floor
-                    .checked_add(1)
-                    .ok_or(GatewayError::Unknown)?,
-            );
-        if cutoff > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
-            || cutoff.saturating_sub(now as u64) >= 59
-        {
-            return Err(GatewayError::Unknown);
-        }
-        let changed=sqlx::query("UPDATE social.island_cleanup_dispatches SET state='superseded',quarantine_until=NULL WHERE dispatch_id=$1 AND wallet=$2 AND state='quarantine' AND settled_at IS NOT NULL")
-            .bind(id).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?.rows_affected();
-        if changed != 1 {
-            return Err(GatewayError::Unknown);
-        }
-        let next = Uuid::new_v4();
-        sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,cutoff,fence_generation,phase,state) SELECT $2,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,$3,$4,'quarantine_final','dispatched' FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$5 AND state='superseded' AND settled_at IS NOT NULL")
-            .bind(id).bind(next).bind(cutoff as i64).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        sqlx::query("UPDATE social.island_takeover_receipts SET latest_dispatch=$2 WHERE wallet=$3 AND latest_dispatch=$1")
-            .bind(id).bind(next).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        Self::advance(&mut lease.tx, &wallet, None).await?;
-        lease.commit().await?;
-        self.quarantines.lock().unwrap().remove(&id);
-        Ok(Some(Dispatch {
-            dispatch_id: next,
-            cutoff,
-            state: "dispatched".into(),
-            quarantine_until: None,
-            phase: "quarantine_final".into(),
-            fresh: true,
-        }))
-    }
-
-    pub(crate) async fn due_takeovers(&self) -> Result<Vec<(String, String)>, GatewayError> {
-        let claim = Uuid::new_v4();
-        sqlx::query_as("WITH due AS (SELECT r.wallet,r.source_incarnation,r.takeover_id FROM social.island_takeover_receipts r LEFT JOIN social.island_cleanup_dispatches d ON d.dispatch_id=r.latest_dispatch AND d.wallet=r.wallet WHERE NOT r.acknowledged AND r.retired_by_source IS NULL AND r.next_attempt_at<=timezone('UTC',clock_timestamp()) AND (r.claim_until IS NULL OR r.claim_until<=timezone('UTC',clock_timestamp())) AND (d.dispatch_id IS NULL OR d.state IN ('confirmed','rejected','settled_late') OR (d.state='quarantine' AND d.quarantine_until<=timezone('UTC',clock_timestamp()))) ORDER BY r.next_attempt_at,r.wallet,r.source_incarnation,r.takeover_id FOR UPDATE OF r SKIP LOCKED LIMIT 16) UPDATE social.island_takeover_receipts r SET claim_id=$1,claim_until=timezone('UTC',clock_timestamp())+interval '15 seconds',next_attempt_at=timezone('UTC',clock_timestamp())+interval '1 second' FROM due WHERE r.wallet=due.wallet AND r.source_incarnation=due.source_incarnation AND r.takeover_id=due.takeover_id RETURNING r.wallet,r.last_successor_session")
-            .bind(claim).fetch_all(&self.pool).await.map_err(|_|GatewayError::Unknown)
-    }
-
-    /// Resume an established positive closure after its scheduling intent has
-    /// disappeared. Initial definite rejection is deliberately ineligible.
-    pub(crate) async fn resume_settled_enforcement(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<Dispatch>, GatewayError> {
-        let wallet:Option<String>=sqlx::query_scalar("SELECT wallet FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND purpose='island_enforcement' AND state='settled_late' AND settled_at IS NOT NULL")
-            .bind(id).fetch_optional(&self.pool).await.map_err(|_|GatewayError::Unknown)?;
-        let Some(wallet) = wallet else {
-            return Ok(None);
-        };
-        let mut lease = self.lock(&wallet).await?;
-        let row=sqlx::query("SELECT room_name,participant_identity,enforcement_cause,intent_root_key,intent_target_key,intent_generation FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$2 AND purpose='island_enforcement' AND state='settled_late' AND settled_at IS NOT NULL")
-            .bind(id).bind(&wallet).fetch_optional(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let room: String = row.get("room_name");
-        let identity: String = row.get("participant_identity");
-        let cause: String = row.get("enforcement_cause");
-        let root: String = row.get("intent_root_key");
-        let target: String = row.get("intent_target_key");
-        let generation: Uuid = row.get("intent_generation");
-        let next = self
-            .insert_dispatch(
-                &mut lease,
-                &wallet,
-                &room,
-                &identity,
-                0,
-                Some(id),
-                "island_enforcement",
-                None,
-                None,
-                Some((&cause, &root, &target, generation)),
-            )
-            .await?;
-        lease.commit().await?;
-        Ok(next)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn elapse_quarantine_for_test(&self, id: Uuid, seconds: u64) {
-        self.quarantines.lock().unwrap().insert(
-            id,
-            tokio::time::Instant::now() - std::time::Duration::from_secs(seconds),
-        );
-    }
-}
-
-impl crate::gatekeeper::CommsState {
-    pub(crate) async fn verify_island_stamp(
-        self: &std::sync::Arc<Self>,
-        stamp: &super::fence::PulseAdmissionStamp,
-    ) -> bool {
-        use super::subscriber::ClusterGateway;
-        use prost::Message;
-        #[cfg(test)]
-        if stamp.safety_generation == 0 {
-            return match self.island_subscriber().upgrade() {
-                Some(subscriber) => subscriber.verify_stamp(stamp).await,
-                None => false,
-            };
-        }
-        if !stamp.valid() || stamp.safety_snapshot().is_none() {
-            return false;
-        }
-        if !matches!(
-            super::gateway::StateGateway::new(self.clone())
-                .is_denied(&stamp.wallet)
-                .await,
-            Ok(false)
-        ) {
-            return false;
-        }
-        let lookup = crate::protocol::bus::cluster::ClusterLookup {
-            wallet: stamp.wallet.clone(),
-            session: stamp.session.clone(),
-        };
-        let Ok(payload) = self.bus.request(&lookup.subject(), lookup.encode()).await else {
-            return false;
-        };
-        let Ok(snapshot) = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot::decode(
-            payload.as_slice(),
-        ) else {
-            return false;
-        };
-        if !crate::protocol::bus::cluster::valid_reply(&lookup, &snapshot)
-            || !stamp.matches_snapshot(&snapshot)
-        {
-            return false;
-        }
-        self.island_stamp_ready_sql(stamp).await
-    }
-    pub(crate) async fn island_stamp_ready_sql(
-        self: &std::sync::Arc<Self>,
-        stamp: &super::fence::PulseAdmissionStamp,
-    ) -> bool {
-        #[cfg(test)]
-        if stamp.safety_generation == 0 {
-            return match self.island_subscriber().upgrade() {
-                Some(subscriber) => subscriber.stamp_ready(stamp).await,
-                None => false,
-            };
-        }
-        let Ok(lease) = self
-            .island_safety
-            .authorize_stamp(
-                stamp,
-                self.cluster.control_v4_audience.as_deref(),
-                None,
-                false,
-            )
-            .await
-        else {
-            return false;
-        };
-        if lease.commit().await.is_err() {
-            return false;
-        }
-        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
-            && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
-    }
-    pub(crate) async fn island_fenced_stamp_ready_sql(
-        self: &std::sync::Arc<Self>,
-        stamp: &super::fence::PulseAdmissionStamp,
-        fence: &super::fence::TokenFence,
-        presented_device: Option<&str>,
-    ) -> bool {
-        let Ok(mut lease) = self
-            .island_safety
-            .authorize_stamp(
-                stamp,
-                self.cluster.control_v4_audience.as_deref(),
-                Some(fence),
-                false,
-            )
-            .await
-        else {
-            return false;
-        };
-        let exact:Result<bool,_>=sqlx::query_scalar("SELECT assignment_revision=$4 AND owner_epoch=$5 AND fencing_token=$6 AND owner_session=$3 FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
-            .bind(&fence.audience).bind(&stamp.wallet).bind(&fence.owner_session).bind(i64::try_from(fence.assignment_revision).unwrap_or(-1)).bind(i64::try_from(fence.owner_epoch).unwrap_or(-1)).bind(i64::try_from(fence.fencing_token).unwrap_or(-1)).fetch_one(&mut *lease.tx).await;
-        if !matches!(exact, Ok(true)) {
-            return false;
-        }
-        if let Some(device) = presented_device {
-            let banned:Result<bool,_>=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans WHERE banned_device_id=$1 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at>timezone('UTC',clock_timestamp())))")
-                .bind(device).fetch_one(&mut *lease.tx).await;
-            if !matches!(banned, Ok(false)) {
-                return false;
-            }
-        }
-        if lease.commit().await.is_err() {
-            return false;
-        }
-        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
-            && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
-    }
-}
-
-impl SafetyStore {
-    /// Bounded primary maintenance also visits inactive settled wallets. Each
-    /// wallet is locked separately; no cross-wallet deletion occurs while
-    /// another wallet lock is held. Persistent fences/floors are never deleted.
-    pub(crate) async fn compact_settled(&self) -> Result<(), GatewayError> {
-        let wallets:Vec<String>=sqlx::query_scalar("SELECT d.wallet FROM social.island_cleanup_dispatches d JOIN social.island_admission_fences f ON f.wallet=d.wallet WHERE d.state IN ('confirmed','rejected','superseded') AND d.settled_at IS NOT NULL AND (d.state<>'confirmed' OR f.token_floor>=d.cutoff) AND d.cutoff+$1<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$1*interval '1 second'<timezone('UTC',clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM social.island_takeover_receipts r WHERE r.wallet=d.wallet AND r.latest_dispatch=d.dispatch_id AND NOT r.acknowledged AND r.retired_by_source IS NULL) GROUP BY d.wallet ORDER BY min(d.settled_at),d.wallet LIMIT 16")
-            .bind(SETTLED_RETENTION_SECONDS).fetch_all(&self.pool).await.map_err(|_|GatewayError::Unknown)?;
-        for wallet in wallets {
-            let result=async {
-            let mut lease = self.lock(&wallet).await?;
-            sqlx::query("WITH due AS (SELECT r.wallet,r.source_incarnation,r.takeover_id FROM social.island_takeover_receipts r JOIN social.island_cleanup_dispatches d ON d.wallet=r.wallet AND d.dispatch_id=r.latest_dispatch JOIN social.island_admission_fences f ON f.wallet=r.wallet WHERE r.wallet=$1 AND (r.acknowledged OR r.retired_by_source IS NOT NULL) AND d.state='confirmed' AND d.settled_at IS NOT NULL AND f.token_floor>=d.cutoff AND d.cutoff+$2<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$2*interval '1 second'<timezone('UTC',clock_timestamp()) ORDER BY r.created_at,r.source_incarnation,r.takeover_id FOR UPDATE OF r SKIP LOCKED LIMIT 64) DELETE FROM social.island_takeover_receipts r USING due WHERE r.wallet=due.wallet AND r.source_incarnation=due.source_incarnation AND r.takeover_id=due.takeover_id")
-                .bind(&wallet).bind(SETTLED_RETENTION_SECONDS).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-            // A known rejection never advanced a floor and had no remote
-            // effect. Superseded attempts are positively settled, while the
-            // immutable logical receipt/newer attempt retains the obligation.
-            // Confirmed attempts additionally require their durable floor.
-            sqlx::query("WITH due AS (SELECT d.dispatch_id FROM social.island_cleanup_dispatches d JOIN social.island_admission_fences f ON f.wallet=d.wallet WHERE d.wallet=$1 AND d.state IN ('confirmed','rejected','superseded') AND d.settled_at IS NOT NULL AND (d.state<>'confirmed' OR f.token_floor>=d.cutoff) AND d.cutoff+$2<floor(extract(epoch FROM timezone('UTC',clock_timestamp()))) AND d.settled_at+$2*interval '1 second'<timezone('UTC',clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM social.island_takeover_receipts r WHERE r.latest_dispatch=d.dispatch_id) ORDER BY d.settled_at,d.dispatch_id FOR UPDATE OF d SKIP LOCKED LIMIT 64) DELETE FROM social.island_cleanup_dispatches d USING due WHERE d.dispatch_id=due.dispatch_id")
-                .bind(&wallet).bind(SETTLED_RETENTION_SECONDS).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-            lease.commit().await
-            }.await;
-            if result.is_err() {
-                metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
-                tracing::warn!(%wallet,"island compaction wallet unavailable; retaining all evidence");
-            }
-        }
-        Ok(())
     }
 }

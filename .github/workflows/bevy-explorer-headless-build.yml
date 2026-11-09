@@ -23,7 +23,7 @@ jobs:
     concurrency:
       group: headless-build-${{ github.event_name }}-${{ github.ref }}-${{ matrix.platform }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
       cancel-in-progress: true
-    runs-on: ${{ matrix.runner == 'windows-2025' && 'windows-2025-16core' || matrix.runner }}
+    runs-on: ${{ matrix.runner == 'windows-2025' && 'windows-2025-16core' || matrix.runner == 'macos-15' && 'macos-15-xlarge' || matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -46,7 +46,7 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
@@ -59,6 +59,7 @@ jobs:
         with:
           key: bevy-explorer-headless-${{ matrix.platform }}
           workspaces: rendering/bevy-explorer/source -> target
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
       - name: Restore the vendored Bevy's cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build the local headless app

@@ -8,6 +8,7 @@ use super::EditCommand;
 use super::client_handler::IpcEventRaw;
 use super::display_handler::SystemCursorIconSenderInner;
 use super::localhost::Requester;
+use crate::components::WebviewSize;
 use async_channel::Sender;
 use bevy::prelude::*;
 
@@ -15,7 +16,7 @@ pub(crate) enum CefCommand {
     CreateBrowser {
         webview: Entity,
         uri: String,
-        size: Vec2,
+        size: WebviewSize,
         requester: Requester,
         ipc_event_sender: Sender<IpcEventRaw>,
         cursor_icon_sender: SystemCursorIconSenderInner,
@@ -57,7 +58,7 @@ pub(crate) enum CefCommand {
     },
     Resize {
         webview: Entity,
-        size: Vec2,
+        size: WebviewSize,
     },
     Close {
         webview: Entity,

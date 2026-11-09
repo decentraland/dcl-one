@@ -103,6 +103,46 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42', deadline=10)
             get.assert_not_called()
 
+    def test_bare_http_status_lines_are_transient_too(self):
+        failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: HTTP 503\n')
+        with patch.object(play.subprocess, 'check_output', side_effect=[failure, '{"jobs": []}']), \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
+        sleep.assert_called_once_with(2)
+
+    def test_artifact_download_retries_a_transient_failure_from_a_clean_file(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        archive = Path(temporary.name) / 'web.zip'
+        command = ['gh', 'api', f'repos/{play.REPO}/actions/artifacts/9/zip']
+        # A 5xx, a dropped connection and a stalled transfer each get a second attempt with a full 300 s.
+        for failure in (subprocess.CalledProcessError(1, command, stderr=b'gh: HTTP 503\n'),
+                        subprocess.CalledProcessError(1, command, stderr=b'error reading response body: unexpected EOF\n'),
+                        subprocess.TimeoutExpired(command, 300)):
+            calls = []
+
+            def gh(args, **kwargs):
+                calls.append((args, kwargs['timeout']))
+                kwargs['stdout'].write(b'partial' if len(calls) == 1 else b'archive')
+                if len(calls) == 1:
+                    raise failure
+                return subprocess.CompletedProcess(args, 0)
+
+            errors = io.StringIO()
+            with patch.object(play.subprocess, 'run', side_effect=gh), patch.object(play.time, 'sleep') as sleep, \
+                    patch('sys.stderr', errors):
+                play.download({'id': 9}, archive)
+            self.assertEqual(archive.read_bytes(), b'archive')
+            self.assertEqual(calls, [(command, 300)] * 2)
+            sleep.assert_called_once_with(2)
+            self.assertEqual(errors.getvalue(), (failure.stderr or b'').decode())
+        # Any other failure is reported at once.
+        missing = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=b'gh: HTTP 404\n')
+        with patch.object(play.subprocess, 'run', side_effect=missing), patch.object(play.time, 'sleep') as sleep, \
+                self.assertRaises(subprocess.CalledProcessError):
+            play.download({'id': 9}, archive)
+        sleep.assert_not_called()
+
 
 class PlayImportTests(unittest.TestCase):
     def setUp(self):
@@ -273,6 +313,43 @@ class PlayImportTests(unittest.TestCase):
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
+    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+        # react-web compiles these through its aliases (react-web/vite.shared.ts).
+        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
+        for shared in contract.HUD_SHARED:
+            with self.subTest(shared=shared):
+                self.write(shared + 'changed.ts', 'export const changed = true;\n')
+                with self.assertRaisesRegex(ValueError, 'inputs differ'):
+                    play.install(self.build)
+                self.assertEqual(engine, contract.engine_inputs(self.root))
+                self.assertEqual(hud, contract.hud_inputs(self.root))
+                contract.pack(self.build, self.root)
+                play.install(self.build)
+
+    def test_shared_hud_sources_are_inputs_in_git_and_in_the_nix_contract(self):
+        shared = contract.HUD_SHARED[0] + 'model/money.ts'
+        self.write(shared, 'export const zero = 0n;\n')
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        self.assertIn(shared, contract.input_files(self.root))
+        self.assertNotIn(shared, contract.input_files(self.root, engine_only=True))
+        key = contract.inputs(self.root)
+        self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
+        filtered = self.root / 'nix-contract'
+        for name in git('ls-files').splitlines():
+            target = filtered / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / name, target)
+        self.assertEqual(key, contract.inputs(filtered))
+        self.write(shared, 'export const zero = 1n;\n')
+        self.assertNotEqual(key, contract.inputs(self.root))
+
     def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
@@ -344,6 +421,17 @@ class PlayImportTests(unittest.TestCase):
         self.assertIn(f'http://sites:5212/play/bridge-scene/static/{entity}', requested)
         self.assertIn(f'Sites serves verified Bevy producer {SHA}', output.getvalue())
         self.assertIn('Image smoke passed:', output.getvalue())
+
+    def test_tooling_only_async_edits_do_not_invalidate_shipped_web_inputs(self):
+        artifact = contract.inputs(self.root)
+        engine = contract.engine_inputs(self.root)
+        hud = contract.hud_inputs(self.root)
+        for source in ('export const retry = 1;', 'export const retry = 2;'):
+            self.write('library/async/index.ts', source)
+            self.assertEqual(contract.inputs(self.root), artifact)
+            self.assertEqual(contract.engine_inputs(self.root), engine)
+            self.assertEqual(contract.hud_inputs(self.root), hud)
+            play.install(self.build, production=True)
 
     def test_removed_source_input_invalidates_the_artifact(self):
         (self.root / contract.SOURCE / 'src/lib.rs').unlink()
@@ -606,6 +694,61 @@ class PlayImportTests(unittest.TestCase):
             destination = play.fetch()
         self.assertEqual(api.call_count, 3)
         self.assertEqual(json.loads((destination / contract.MANIFEST).read_text())['build_revision'], SHA)
+
+    def test_a_finished_run_of_this_commit_that_cannot_supply_it_is_named_for_a_rerun(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        own = run(id=51, event='pull_request', head_branch='feature', pull_requests=[{'number': 7}], conclusion='failure')
+        other = run(id=50, head_sha='d' * 40, conclusion='cancelled')
+        with patch.object(play, 'api', return_value={'workflow_runs': [own, other]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(contract, 'inputs', return_value='ours'), \
+                patch.object(play, 'download_run') as download, \
+                self.assertRaisesRegex(RuntimeError, r'did not succeed: 51 \(failure\)\. Rerun it, then this job') as failure:
+            play.fetch()
+        download.assert_not_called()
+        self.assertNotIn('50', str(failure.exception))
+        # A main push whose own run was replaced by a newer push names that run.
+        superseded = run(id=52, conclusion='cancelled')
+        with patch.object(play, 'api', return_value={'workflow_runs': [superseded, other]}), \
+                patch.object(play, 'current_pr', return_value=None), \
+                patch.object(contract, 'inputs', return_value='ours'), \
+                patch.dict(play.os.environ, {'GITHUB_SHA': SHA}), \
+                self.assertRaisesRegex(RuntimeError, r'did not succeed: 52 \(cancelled\)') as failure:
+            play.fetch()
+        self.assertNotIn('50', str(failure.exception))
+
+    def test_only_the_newest_run_of_this_commit_decides_the_rerun_hint(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+
+        def own(**changes):
+            return run(event='pull_request', head_branch='feature', pull_requests=[{'number': 7}], **changes)
+
+        older = own(id=51, conclusion='failure')
+        cases = [
+            # A newer run under way, as inside the Bevy CI run itself: nothing to rerun.
+            ([own(id=53, status='in_progress', conclusion=None), older], None),
+            # Two failures, after a close and reopen: the newest is the one to rerun.
+            ([own(id=53, conclusion='cancelled'), older], r'did not succeed: 53 \(cancelled\)\. Rerun it'),
+            # A success whose web artifact is gone: rerunning it is the fix.
+            ([own(id=53), older], r'succeeded, but its web artifact is unavailable: 53\. Rerun it'),
+        ]
+        for runs, named in cases:
+            with self.subTest(runs=[candidate['id'] for candidate in runs]), \
+                    patch.object(play, 'api', return_value={'workflow_runs': runs}), \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'engine_changed', return_value=True), \
+                    patch.object(contract, 'inputs', return_value='ours'), \
+                    patch.object(play, 'inputs_at', return_value='ours'), \
+                    patch.object(play, 'download_run', return_value=None), \
+                    self.assertRaises(RuntimeError) as failure:
+                play.fetch()
+            message = str(failure.exception)
+            self.assertNotIn('51', message)
+            if named is None:
+                self.assertNotIn('Rerun it', message)
+            else:
+                self.assertRegex(message, named)
 
     def test_pr_without_engine_changes_still_requires_a_trusted_successful_run(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
@@ -939,7 +1082,7 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(contract, 'inputs', return_value='match') as inputs, \
                 patch.object(play, 'download_run', return_value=self.build) as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
             self.assertEqual(play.fetch(wait=180, production=True), self.build)
         requests = [call.args[0] for call in api.call_args_list]
         self.assertEqual(len(requests), 17)  # 11 initial pages + 3 * (recent page + pending ID).
@@ -950,7 +1093,8 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(inputs.call_count, 2)  # Current input key and one producer revision.
         git.assert_called_once()
         download.assert_called_once_with(run(), None, True, None, 180, producer=None)
-        self.assertEqual(clock[0], 90)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+        self.assertEqual(clock[0], 14)
 
     def test_pending_run_on_recent_page_is_not_fetched_twice(self):
         with patch.object(play, 'api', side_effect=[
@@ -998,14 +1142,15 @@ class PlayImportTests(unittest.TestCase):
                         patch.object(play, 'download_run',
                                      side_effect=lambda r, *_, **__: self.build if r['run_attempt'] == 2 else None) as download, \
                         patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                        patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+                        patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
                     self.assertEqual(play.fetch(wait=180, production=True), self.build)
                 attempts = [call.args[0]['run_attempt'] for call in download.call_args_list]
                 self.assertEqual(attempts, [1, 2] if conclusion == 'success' else [2])
                 download.assert_called_with(retry, None, True, None, 180, producer=None)
                 self.assertEqual(api.call_count, 4)
                 self.assertEqual(inputs.call_count, 2)
-                self.assertEqual(clock[0], 90)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+                self.assertEqual(clock[0], 14)
 
     def test_a_new_attempt_still_requires_a_trusted_run(self):
         with patch.object(play, 'api', side_effect=[
@@ -1042,12 +1187,34 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(contract, 'inputs', return_value='match'), \
                 patch.object(play, 'download_run') as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
                 self.assertRaisesRegex(RuntimeError, 'Refresh main with:'):
             play.fetch(wait=60, production=True)
-        self.assertEqual(api.call_count, 3)
+        self.assertEqual(api.call_count, 6)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
         self.assertEqual(clock[0], 60)
         download.assert_not_called()
+
+
+class HudSharedSourcesTests(unittest.TestCase):
+    """The libraries the web HUD aliases are inputs everywhere its build is fingerprinted or selected."""
+
+    def test_the_hud_aliases_and_the_build_inputs_name_the_same_libraries(self):
+        root = Path(__file__).resolve().parents[2]
+        web = root / contract.SOURCE / 'react-web'
+        expected = {path.rstrip('/') for path in contract.HUD_SHARED}
+        aliased = set(re.findall(r"'\.\./\.\./\.\./\.\./(library/[^']+)'", (web / 'vite.shared.ts').read_text()))
+        mapped = set(re.findall(r'"\.\./\.\./\.\./\.\./(library/[^"*]+)/\*"', (web / 'tsconfig.json').read_text()))
+        self.assertEqual(aliased, expected, 'react-web/vite.shared.ts aliases a library the build inputs miss')
+        self.assertEqual(mapped, expected, 'react-web/tsconfig.json maps a library the build inputs miss')
+        nix = (root / 'infra/packages/play.nix').read_text()
+        spec = importlib.util.spec_from_file_location('bevy_ci', root / 'tooling/bevy-ci.py')
+        ci = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ci)
+        for library in sorted(expected):
+            with self.subTest(library=library):
+                self.assertIn(library, ci.INPUTS)
+                self.assertRegex(nix, rf'/{re.escape(library)}(\s|$)')
 
 
 if __name__ == '__main__':

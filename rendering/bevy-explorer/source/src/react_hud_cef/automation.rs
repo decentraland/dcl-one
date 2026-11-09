@@ -290,8 +290,8 @@ fn hud_read_cmd(
 
 /// Wait until the HUD control a selector names is in a state, then describe it as JSON
 /// (`{"found": false}` for hidden). The selector is as /hud_read takes it, plus "state" (visible,
-/// hidden, enabled or actionable; default visible) and "timeout" in ms (default 10000); fails if
-/// the timeout passes first
+/// hidden, enabled, actionable or ready; default visible) and "timeout" in ms (default 10000);
+/// fails if the timeout passes first
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/hud_wait")]
 struct HudWaitCommand {

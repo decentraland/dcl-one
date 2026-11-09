@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { MANA, sale } from "../../market/fixtures";
-import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "../../market/lib/contracts";
+import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "@shop/market/lib/contracts";
 import { fakeChain, fakeWallet, type FakeRoute } from "../../market/testing";
 import { mountShop, StoryShell } from "../../market/testHarness";
 import { CreatorSaleForm, salePrice } from "../components/CreatorSales";
@@ -15,6 +15,10 @@ import { ImportListingsView } from "../components/ImportListings";
 import type { PublishableItem } from "../lib/builder";
 import type { ImportItem } from "../lib/import";
 import { setShopCapabilities } from "../lib/featureFlags";
+import { marketplaceOn } from "../../market/testing-flags";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
+
+const MY_STORE_FLAG = "dapps-shop-my-store";
 
 const MARKET = latestOffChainMarketplace(CHAIN.POLYGON).address;
 const originalFetch = globalThis.fetch;
@@ -106,6 +110,9 @@ const storeRoutes = (over: FakeRoute[] = []): FakeRoute[] => [
 ];
 
 describe("My store", () => {
+  // As upstream, the dashboard opens only while decentraland.org's `dapps-shop-my-store` rollout is on.
+  beforeEach(() => primeRemoteFlags({ [MY_STORE_FLAG]: true }));
+
   it("shows sales and MANA earnings, the collections with each item's Shop state, and lists an unlisted item for credits", async () => {
     const wallet = fakeWallet();
     const posted: unknown[] = [];
@@ -167,6 +174,14 @@ describe("My store", () => {
     expect(await screen.findByTestId("shop-order-from-link")).toHaveTextContent("The listing from your link is no longer open");
   });
 
+  it("without the Marketplace an old cancel link opens nothing and says why, and the public store is not linked", async () => {
+    const { PENDING } = await import("../../market/testing");
+    const view = mountShop({ path: "/shop/my-store?order=o-12", who: "web3", marketplace: false, routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("shop-order-from-link")).toHaveTextContent("Resale listings can't be managed in the Shop right now.");
+    expect(view.shop.requests.some((r) => r.url.pathname.endsWith("/v1/orders"))).toBe(false);
+    expect(screen.queryByText("View your public store")).toBeNull();
+  });
+
   it("signed out: the gate; a store dashboard narrowed to other addresses sends the visitor to the overview", async () => {
     const view = mountShop({ path: "/shop/my-store", who: "signedOut" });
     expect(await screen.findByTestId("shop-signin-gate")).toHaveTextContent("Sign in to view your store");
@@ -176,6 +191,36 @@ describe("My store", () => {
     mountShop({ path: "/shop/my-store", who: "web3", routes: [{ method: "GET", path: /./, reply: PENDING }] });
     expect(await screen.findByTestId("overview")).toBeInTheDocument();
     expect(screen.queryByTestId("shop-signin-gate")).toBeNull();
+  });
+
+  it("with decentraland.org's rollout off, as in production, sends even its creator to the overview, as upstream", async () => {
+    primeRemoteFlags({});
+    const { PENDING } = await import("../../market/testing");
+    mountShop({ path: "/shop/my-store", who: "web3", routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("store-tile-sold")).toBeNull();
+  });
+
+  it("a rollout naming accounts opens the dashboard to them alone, whatever their address's case", async () => {
+    const { PENDING } = await import("../../market/testing");
+    const wallet = fakeWallet();
+    primeRemoteFlags({ [MY_STORE_FLAG]: true }, { [MY_STORE_FLAG]: `0x${"1".repeat(40)},\n${wallet.address.toUpperCase().replace("0X", "0x")}` });
+    const allowed = mountShop({ path: "/shop/my-store", who: "web3", wallet, routes: storeRoutes([]) });
+    expect(await screen.findByTestId("store-tile-sold")).toBeInTheDocument();
+    allowed.unmount();
+    primeRemoteFlags({ [MY_STORE_FLAG]: true }, { [MY_STORE_FLAG]: `0x${"1".repeat(40)}` });
+    mountShop({ path: "/shop/my-store", who: "web3", wallet, routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("overview")).toBeInTheDocument();
+  });
+
+  it("a host's declared switch stands for the rollout, without the file's list", async () => {
+    primeRemoteFlags({}, { [MY_STORE_FLAG]: `0x${"1".repeat(40)}` });
+    window.__SHOP_FLAGS__ = { myStore: true };
+    onTestFinished(() => {
+      delete window.__SHOP_FLAGS__;
+    });
+    mountShop({ path: "/shop/my-store", who: "web3", routes: storeRoutes([]) });
+    expect(await screen.findByTestId("store-tile-sold")).toBeInTheDocument();
   });
 });
 
@@ -213,7 +258,7 @@ const publishable: PublishableItem = {
 
 describe("Discounts, issuance and the listing import", () => {
   it("previews a discount in whole credits and refuses to publish on a node without its coupons index", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     setShopClient(fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]).client);
     try {
@@ -236,7 +281,7 @@ describe("Discounts, issuance and the listing import", () => {
   });
 
   it("signs and publishes a discount on the Shop's settlement chain, not always Polygon", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     const shop = fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]);
     setShopClient(shop.client);
@@ -274,6 +319,12 @@ describe("Discounts, issuance and the listing import", () => {
   it("the import tool lists creations for credits and shows owned resales staying in MANA, never importable", async () => {
     const creation: ImportItem = { oldTradeId: "o1", listingType: "primary", contractAddress: BOOK.collection, itemId: "7", tokenId: null, name: "Neon Jacket", thumbnail: "", rarity: "rare", category: "wearable", wearableCategory: null, manaWei: MANA(3), available: 25, network: "MATIC", chainId: 137, suggestedCredits: 15 };
     const owned: ImportItem = { ...creation, oldTradeId: "o2", listingType: "secondary", itemId: null, tokenId: "42", name: "Resold Visor", suggestedCredits: null };
+    // Without the Marketplace the resales are not shown at all; the creations are.
+    const without = await renderAlone(<ImportListingsView creations={[creation]} owned={[owned]} />);
+    expect(screen.getAllByTestId("shop-import-row")).toHaveLength(1);
+    expect(screen.queryByTestId("shop-import-owned")).toBeNull();
+    without.unmount();
+    onTestFinished(marketplaceOn());
     await renderAlone(<ImportListingsView creations={[creation]} owned={[owned]} />);
     expect(screen.getAllByTestId("shop-import-row")).toHaveLength(1);
     expect(screen.getByLabelText("Include Neon Jacket")).toBeChecked();

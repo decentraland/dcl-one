@@ -873,17 +873,16 @@ pub async fn update_community(
         }) || description.as_deref().is_some_and(|description| {
             current.is_some_and(|old| super::compliance::changed(description, &old.3))
         }) || thumbnail.is_some();
-    if content_changed {
-        if let Err(error) = state
+    if content_changed
+        && let Err(error) = state
             .validate_content(super::compliance::Content {
                 name: name.as_deref(),
                 description: description.as_deref(),
                 thumbnail: thumbnail.as_deref(),
             })
             .await
-        {
-            return error.into_response();
-        }
+    {
+        return error.into_response();
     }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
     try_resp!(map_db(

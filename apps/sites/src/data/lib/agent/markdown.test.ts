@@ -289,7 +289,7 @@ describe("shopPageToMarkdown", () => {
       queries: [
         [["item-meta", "0xabc", "7"], { name: "Pirate Hat", rarity: "rare", category: "wearable", creator: "0x1", network: "MATIC", available: 3, isSmart: false, utility: null }, 1],
         [["collection-meta", "0xabc"], { name: "Sea Things", contractAddress: "0xabc", creator: "0x1" }, 1],
-        [["shop-item", "0xabc", "7"], { priceCredits: 12, manaWei: "1000000000000000000" }, 1],
+        [["shop-item", "0xabc", "7", "primary"], { priceCredits: 12, manaWei: "1000000000000000000" }, 1],
       ],
     });
     expect(md).toContain("# Pirate Hat");

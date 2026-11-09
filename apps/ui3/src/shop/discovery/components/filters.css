@@ -324,6 +324,17 @@
   .shop-filters__smart { width: 16px; height: 16px; }
 }
 
+/* from: shop@3a322cf9:app/src/components/CategoryFilter/CategoryFilter.styles.ts (Title) */
+.shop-cats__title {
+  margin: 0 0 4px;
+  padding: 8px 16px 0;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shop-gray-4, #cfcdd4);
+}
+
 .shop-cats,
 .shop-cats__group,
 .shop-cats__subsinner {

@@ -4,8 +4,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { t } from "../intl";
-import type { CatalogItem } from "../lib/catalogItem";
+import { t } from "@shop/discovery/intl";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { listingKey } from "../lib/listingKey";
 import { railPageCount, railPageFromScroll } from "../lib/pagedRail";
 import AssetCard, { type CardSource } from "./AssetCard";

@@ -75,8 +75,9 @@ describe('system-action menu shortcuts', () => {
     expect(h.session().places.open).toBe(false)
   })
 
-  it('does nothing outside the world phase', () => {
+  it('does nothing outside the world phase', async () => {
     const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
     h.driver.emit(action('Places'))
     expect(h.session().places.open).toBe(false)
   })
@@ -96,7 +97,7 @@ describe('system-action menu shortcuts', () => {
     const h = await world()
     const input = document.createElement('input')
     document.body.appendChild(input)
-    input.focus()
+    act(() => input.focus())
     h.driver.emit(action('Places'))
     expect(h.session().places.open).toBe(false)
   })
@@ -146,22 +147,42 @@ describe('system-action menu shortcuts', () => {
     unregister()
   })
 
+  it("a leaf layer opened inside a popup (the passport's options menu) closes before the popup", async () => {
+    const h = await world()
+    render(<PopupHost />)
+    act(() => {
+      openPopup(() => <div>a popup</div>)
+    })
+    const closed = vi.fn()
+    const unregister = registerCancelLayer(() => {
+      closed()
+      unregister()
+    })
+    act(() => h.driver.emit(action('Cancel')))
+    expect(closed).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('a popup')).toBeTruthy() // one layer per press — the popup survives
+    act(() => h.driver.emit(action('Cancel')))
+    expect(screen.queryByText('a popup')).toBeNull()
+  })
+
   it("a 'Cancel' action is ignored while the input lock is held (crash modal)", async () => {
     const h = await world()
     render(<PopupHost />)
     act(() => {
       openPopup(() => <div>a popup</div>)
     })
-    const unlock = lockInput()
+    let unlock!: () => void
+    act(() => { unlock = lockInput() })
     act(() => h.driver.emit(action('Cancel')))
     expect(screen.getByText('a popup')).toBeTruthy() // frozen — nothing closes invisibly
-    unlock()
+    act(() => unlock())
     act(() => h.driver.emit(action('Cancel')))
     expect(screen.queryByText('a popup')).toBeNull()
   })
 
-  it('pre-world, the cancel key closes popups straight from the DOM (no stream exists yet)', () => {
-    renderSession({ userId: null }) // login phase — installs the fallback handler
+  it('pre-world, the cancel key closes popups straight from the DOM (no stream exists yet)', async () => {
+    const h = renderSession({ userId: null }) // login phase — installs the fallback handler
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
     render(<PopupHost />)
     act(() => {
       openPopup(() => <div>realm error</div>)

@@ -17,6 +17,7 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -n "${GH_FAIL_EXIT:-}" ]; then exit "$GH_FAIL_EXIT"; fi
 [ "$1" = api ] || { echo "gh stub: unsupported subcommand $1" >&2; exit 64; }
 path="$2"
 case "$path" in
@@ -35,6 +36,11 @@ done
 if [ "${3:-}" = "--jq" ]; then jq -r "$4" < "$file"; else cat "$file"; fi
 STUB
 chmod +x "$WORK/bin/gh"
+cat > "$WORK/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$SCENARIO/.sleeps"
+STUB
+chmod +x "$WORK/bin/sleep"
 export PATH="$WORK/bin:$PATH"
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -65,7 +71,7 @@ new_scenario() {
 # expect <name> <expected-stdout> <expected-exit>
 expect() {
   local name="$1" want="$2" want_code="$3" got code=0
-  got=$(RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=0 \
+  got=$(RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=5 \
         bash "$PROBE" 2>"$SCENARIO/stderr") || code=$?
   if [ "$got" = "$want" ] && [ "$code" -eq "$want_code" ]; then
     echo "  ok   $name"
@@ -119,6 +125,10 @@ echo '{"status":"queued"}' > "$SCENARIO/run.1.json"
 jobs_json 'Changes:in_progress:' > "$SCENARIO/jobs.2.json"
 jobs_json 'Changes:completed:success' 'Headless Smoke:queued:' > "$SCENARIO/jobs.3.json"
 WAIT=60 expect "waits through an empty job list and a running Changes => true" true 0
+if [ "$(cat "$SCENARIO/.sleeps")" != $'1\n2' ]; then
+  echo 'FAIL: selection backoff changed'
+  exit 1
+fi
 
 # 7. Asked before the run started, and the run turns out to be backend-only.
 new_scenario waits-then-nothing
@@ -137,6 +147,11 @@ expect "jobs but no Changes => hard error" "" 2
 new_scenario queued-past-deadline
 jobs_json 'Changes:queued:' > "$SCENARIO/jobs.1.json"
 expect "queued past deadline => false" false 0
+
+new_scenario github-read-failed
+export GH_FAIL_EXIT=41
+expect "unexpected GitHub read failure remains a hard error" "" 41
+unset GH_FAIL_EXIT
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

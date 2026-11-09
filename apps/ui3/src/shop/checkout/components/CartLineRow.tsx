@@ -3,25 +3,26 @@
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
+import { needsMarketplace, useMarketplaceAccess } from "../../market/access";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
 import { categoryIcon } from "../../discovery/lib/itemIcons";
-import { rarityCardPalette } from "../../discovery/lib/rarity";
+import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import { DetailCreator } from "../../detail/components/DetailBadges";
 import { fetchCatalogByIds } from "../../market/lib/catalog";
 import { shopFavorites, useFavorites } from "../../market/store/favorites";
 import { useShopWallet } from "../../wallet/context";
 import { ManaAmount } from "../../credits/components/Amount";
 import type { LineChange } from "../../cart/revalidate";
-import type { LineRefusal } from "../../cart/partition";
-import { lineUnits } from "../../cart/partition";
-import { creditsCeil, creditsFloor, formatMana, mulCents, mulMana, type ManaWei } from "../../model/money";
-import type { CartLine, PurchaseOffer } from "../../model/purchase";
-import type { PaymentMethod, Quote } from "../../model/settlement";
-import type { PaymentPresentation } from "../../payment/present";
-import { manaChainOf } from "../../payment/rule";
-import { outageText } from "../../payment/copy";
+import type { LineRefusal } from "@shop/cart/partition";
+import { lineUnits } from "@shop/cart/partition";
+import { creditsCeil, creditsFloor, formatMana, mulCents, mulMana, type ManaWei } from "@shop/model/money";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import type { PaymentMethod, Quote } from "@shop/model/settlement";
+import type { PaymentPresentation } from "@shop/payment/present";
+import { manaChainOf } from "@shop/payment/rule";
+import { outageText } from "@shop/payment/copy";
 import ManaGuidance, { type ManaGuidanceProps } from "../../wallet/ManaGuidance";
 import PaymentChoice from "./PaymentChoice";
 import "./cartline.css";
@@ -137,6 +138,12 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   const quantity = lineUnits(line);
   const isMint = line.asset.token.kind === "item";
   const max = offer?.available ?? null;
+  // The Creator tag tells a creator's sale from a resale: only drawn where resales show (market/access.tsx).
+  const access = useMarketplaceAccess();
+  const marketplace = access === "on";
+  // A resale saved before, while the Marketplace is off for this visitor: never priced, only removable (useCheckout).
+  // While access is pending the line waits, as "Checking the price…".
+  const offMarket = access === "off" && needsMarketplace(line);
   const manaChain = offer ? manaChainOf(offer) : line.asset.chainId;
   const manaQuote = view?.options.find((o) => o.method === "mana")?.quote;
   const required = manaQuote?.method === "mana" ? mulMana(manaQuote.amount, quantity) : null;
@@ -166,9 +173,9 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   // One ready way to pay needs no chooser (upstream shows none). It stays for MANA-only lines (their reasons and
   // guidance), for a real choice, for any option with something to say, and when the line's saved method is no
   // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again, or has no price to show.
-  const showChoice =
-    !!view &&
-    (view.manaOnly || view.options.length > 1 || !option || !price || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
+  // Upstream's cart line has no chooser: the summary's rail buttons pay the whole cart. A line the rule
+  // restricts to MANA keeps it, for its reasons and wallet guidance, as does a line with no price to show.
+  const showChoice = !!view && (view.manaOnly || !option || !price);
   const choicePriced = !!view && view.options.length > 1;
   const favKey = favoriteKeyOf(line);
   // As upstream's rarityTileStyle: a line without a rarity gets the neutral tile and its grey outline.
@@ -201,7 +208,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
             </span>
           )}
           {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className="shop-cartline__creator" /> : null}
-          {isMint && offer?.sale === "primaryMint" ? (
+          {marketplace && isMint && offer?.sale === "primaryMint" ? (
             <span className="shop-cartline__tag" data-testid="cart-creator-tag">
               <CreatorLeaf />
               Creator
@@ -209,10 +216,10 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
           ) : null}
         </div>
         <div className="shop-cartline__foot">
-          {unavailable || soldOut ? (
-            <span className="shop-cartline__unavailable">
+          {unavailable || soldOut || offMarket ? (
+            <span className="shop-cartline__unavailable" data-kind={offMarket ? "off-market" : undefined}>
               <Icon name="warning-fill" size={24} className="shop-cartline__warn" />
-              {gone ? changeText(gone) : "Out of stock"}
+              {offMarket ? "Resales can't be bought in the Shop right now. Remove it to continue." : gone ? changeText(gone) : "Out of stock"}
             </span>
           ) : (
             <>

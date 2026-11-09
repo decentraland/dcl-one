@@ -545,8 +545,6 @@ async fn an_owner_that_expires_while_waiting_for_a_lock_is_not_revived() {
             .claim_lanes(&owner, std::slice::from_ref(&realm))
             .await
             .unwrap();
-        sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at = clock_timestamp() - interval '89.8 seconds' WHERE owner_address = $1")
-            .bind(&owner.address).execute(&fixture.pool).await.unwrap();
         let mut lock = fixture.pool.begin().await.unwrap();
         sqlx::query(
             "SELECT 1 FROM social.archipelago_v4_assignments WHERE owner_address = $1 FOR UPDATE",
@@ -555,6 +553,10 @@ async fn an_owner_that_expires_while_waiting_for_a_lock_is_not_revived() {
         .execute(&mut *lock)
         .await
         .unwrap();
+        let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *lock)
+            .await
+            .unwrap();
         let waiting_authority = authority.clone();
         let waiting_owner = owner.clone();
         let waiting_realm = realm.clone();
@@ -576,7 +578,12 @@ async fn an_owner_that_expires_while_waiting_for_a_lock_is_not_revived() {
                 _ => waiting_authority.release(&waiting_owner).await,
             }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(catalyst::shared::test_wait::until(async || {
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))")
+                .bind(blocker).fetch_one(&fixture.pool).await.unwrap()
+        }).await);
+        sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-interval '91 seconds' WHERE owner_address=$1")
+            .bind(&owner.address).execute(&mut *lock).await.unwrap();
         assert!(
             !pending.is_finished(),
             "operation must wait for the row lock"

@@ -154,7 +154,7 @@ async fn concurrent_ip_creates_enforce_the_cap_and_keep_rejected_retry_receipts(
         .await
         .unwrap();
     let mut tasks = tokio::task::JoinSet::new();
-    for invited in invited.iter().cloned() {
+    for invited in invited {
         let referral = referral.clone();
         let referrer = referrer.clone();
         tasks.spawn(async move { referral.create(&referrer, &invited, "192.0.2.1").await });

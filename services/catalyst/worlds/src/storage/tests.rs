@@ -4011,7 +4011,14 @@ async fn genesis_collaboration_requires_redeployment_after_any_parcel_ownership_
     let owner_key = random_key();
     let owner = address_of(&owner_key);
     let collab = address_of(&key);
-    let pointers = vec![genesis_parcel(), genesis_parcel()];
+    let first = genesis_parcel();
+    let second = loop {
+        let parcel = genesis_parcel();
+        if parcel != first {
+            break parcel;
+        }
+    };
+    let pointers = vec![first, second];
     fixture.parcel(&pointers[0], &owner, 1).await;
     fixture.parcel(&pointers[1], &owner, 2).await;
     let old = format!("bafyCollabEpoch{}", Uuid::new_v4().simple());
@@ -4208,14 +4215,15 @@ async fn malformed_logs_permissions_grant_nothing() {
     }
 }
 
-/// Resolve export fixtures through the same deployment as the request. The
-/// optional conversion also supports the per-scene identity migration (#90).
+/// Resolve export fixtures through the same deployment as the request.
 async fn export_namespace(pool: &PgPool, world: &WorldName) -> SceneNamespace {
     let deployment = crate::rooms::world_scene_at(pool, world, Parcel::parse(PARCEL).unwrap())
         .await
         .unwrap()
         .unwrap();
-    Option::<SceneNamespace>::from(deployment.namespace).expect("fixture has a storage identity")
+    deployment
+        .namespace
+        .expect("fixture has a storage identity")
 }
 
 fn export_state(
@@ -4815,9 +4823,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         settings,
     )
     .await;
-    let error = result
-        .err()
-        .expect("exhausted pool must refuse export setup");
+    let error = result.expect_err("exhausted pool must refuse export setup");
     assert!(matches!(error, super::errors::ApiError::Unavailable(_)));
     let response = error.into_response();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

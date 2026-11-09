@@ -330,9 +330,50 @@
   background: rgba(255, 255, 255, 0.05);
 }
 .placeCover {
+  position: relative;
   aspect-ratio: 16 / 10;
   border-radius: 10px;
   overflow: hidden;
+}
+/* Delete on a place the user owns (owners and moderators): over the cover's top-right corner. */
+.placeDelete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--panel);
+}
+.placeDelete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* ADD PLACE: the grid's first tile for owners and moderators, opening the Edit Community form. */
+.addPlace {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  padding: 12px;
+  border: 2px dashed var(--white-10);
+  border-radius: 14px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: transparent;
 }
 .placeCover img {
   width: 100%;
@@ -468,4 +509,14 @@
 .close:hover {
   background: rgba(0, 0, 0, 0.65);
   transform: scale(1.08);
+}
+
+/* The community's picture in the delete confirmation, as unity-explorer's. */
+.confirmThumb {
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 4px auto 0;
+  border-radius: var(--r-control);
+  object-fit: cover;
 }

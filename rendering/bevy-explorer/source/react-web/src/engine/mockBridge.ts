@@ -5,6 +5,7 @@
 
 import {
   bridgeChannelName,
+  type AppNotification,
   type Badge,
   type BadgeTier,
   type BindingEntry,
@@ -17,6 +18,7 @@ import {
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
+  type PhotoModeSnapshot,
   type Profile,
   type ProfileEdit,
   type SceneToPage,
@@ -116,6 +118,15 @@ const MOCK_NEARBY = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat' },
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
+
+// The places the mock user can link to a community, and what each community links.
+const MOCK_OWNED_PLACES = [
+  { id: 'place-land-1', isWorld: false, label: 'Mock Plaza (12,-34)', ownerName: 'You' },
+  { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
+]
+const mockLinkedPlaces = new Map<string, string[]>()
+// The card places unlinked per community.
+const mockRemovedPlaces = new Map<string, Set<string>>()
 
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
@@ -257,6 +268,12 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'HideNames' }, ['KeyN']],
   [{ System: 'RollLeft' }, []],
   [{ System: 'RollRight' }, []],
+  [{ System: 'PhotoMode' }, ['KeyC']],
+  [{ System: 'TakePhoto' }, ['Space', 'Gamepad South']],
+  [{ System: 'PhotoCameraUp' }, ['KeyR', 'Gamepad DPadUp']],
+  [{ System: 'PhotoCameraDown' }, ['KeyF', 'Gamepad DPadDown']],
+  [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
+  [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
   [{ System: 'Microphone' }, ['KeyV']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
@@ -326,7 +343,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
   // under metadata.sender (name + avatar), with no metadata.title.
-  const mockNotifications = [
+  let mockPolled = false
+  const mockNotifications: AppNotification[] = [
     { id: 'n1', type: 'social_service_friendship_accepted', read: false, timestamp: new Date(mockNow).toISOString(), metadata: { sender: { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' } } },
     { id: 'n2', type: 'social_service_friendship_request', read: false, timestamp: new Date(mockNow - 1800_000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } } },
     { id: 'n3', type: 'item_sold', read: false, timestamp: new Date(mockNow - 3600_000).toISOString(), metadata: { title: 'Item sold', description: 'Your “Sunset Hoodie” sold for 120 MANA.', image: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } },
@@ -345,6 +363,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     isPublic: i % 2 === 0,
     dateTime: String(Math.floor((mockNow - i * 3 * DAY) / 1000))
   }))
+  let mockPhotoMode: PhotoModeSnapshot = {
+    active: false,
+    hudHidden: false,
+    cursorLocked: true,
+    phase: 'idle',
+    storageCurrent: 0,
+    storageMax: 500,
+    storageLoaded: true,
+    event: 'none',
+    eventSeq: 0,
+    previewJpegBase64: '',
+    message: ''
+  }
   // Stateful saved outfits so save/delete persist across reopens (mirrors the real store).
   const mockOutfits: OutfitsMetadata = {
     outfits: [
@@ -562,7 +593,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
@@ -855,8 +888,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
-    // No engine in mock mode — the Shop's stage and emote try-on have no avatar to show on.
-    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
@@ -920,18 +953,82 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
       return
     }
+    if (msg.kind === 'removeCommunityPlace') {
+      // unlinked from this community; the card reads its places again
+      const removed = mockRemovedPlaces.get(msg.id) ?? new Set<string>()
+      removed.add(msg.placeId)
+      mockRemovedPlaces.set(msg.id, removed)
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'getCommunityPlaceOptions') {
+      // one LAND and one World the user owns, and what each community links
+      const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), hiddenLinkedIds: [], linkedFailed: false, errors: [] }
+      setTimeout(() => reply(options), 300)
+      return
+    }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
+      mockLinkedPlaces.set(id, msg.placeIds)
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 300)
+      return
+    }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+        if (msg.placeIds != null) mockLinkedPlaces.set(c.id, msg.placeIds)
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {
@@ -985,9 +1082,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
           { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
         ],
+        // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1 }
-        ],
+          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+        ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
           url: `https://picsum.photos/seed/dclph${i}/600/600`,
@@ -1004,11 +1102,49 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getNotifications') {
       reply({ kind: 'notifications', notifications: mockNotifications })
+      // Once per session, a poll result a few seconds later, so ?mock=1 shows the new-notification
+      // toasts (one at a time) and the list growing.
+      if (!mockPolled) {
+        mockPolled = true
+        setTimeout(() => {
+          const fresh: AppNotification[] = [
+            { id: 'n7', type: 'community_invite_received', read: false, timestamp: new Date().toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
+            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } },
+            // Opens the reward popup as well as its toast.
+            { id: 'n9', type: 'reward_in_progress', read: false, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { title: 'New item unlocked', description: 'Your reward is being processed', tokenName: 'Mock Reward Hat', tokenImage: 'https://picsum.photos/seed/reward/256/256', tokenRarity: 'epic', tokenCategory: 'hat' } }
+          ]
+          mockNotifications.unshift(...fresh)
+          reply({ kind: 'notificationsNew', notifications: fresh })
+        }, 4000)
+      }
       return
     }
     if (msg.kind === 'markNotificationsRead') {
       // Persist read state in the mock so reopening reflects it (mirrors the real service).
       for (const n of mockNotifications) if (msg.ids.includes(n.id)) n.read = true
+      return
+    }
+    if (msg.kind === 'setPhotoMode') {
+      mockPhotoMode = { ...mockPhotoMode, active: msg.enable, event: 'none', previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      return
+    }
+    if (msg.kind === 'takePhoto') {
+      if (!mockPhotoMode.active) return
+      mockPhotoMode = { ...mockPhotoMode, event: 'captured', eventSeq: mockPhotoMode.eventSeq + 1, previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      setTimeout(() => {
+        const id = `mock-photo-${mockPhotoMode.eventSeq}`
+        mockGallery.unshift({ id, url: mockGallery[0]?.url ?? '', thumbnailUrl: mockGallery[0]?.thumbnailUrl, dateTime: String(Math.floor(Date.now() / 1000)), isPublic: false })
+        mockPhotoMode = {
+          ...mockPhotoMode,
+          event: 'uploaded',
+          eventSeq: mockPhotoMode.eventSeq + 1,
+          storageCurrent: mockGallery.length,
+          message: id
+        }
+        reply({ kind: 'photoMode', state: mockPhotoMode })
+      }, 800)
       return
     }
     if (msg.kind === 'getGallery') {

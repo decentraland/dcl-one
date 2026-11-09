@@ -88,11 +88,21 @@ const POINTER_SCROLL_ACTIONS: [ActionWire, string][] = [
   [{ System: 'ScrollRight' }, 'Scroll Right']
 ]
 
+const PHOTO_ACTIONS: [ActionWire, string][] = [
+  [{ System: 'PhotoMode' }, 'Photo Mode'],
+  [{ System: 'TakePhoto' }, 'Take Photo'],
+  [{ System: 'PhotoCameraUp' }, 'Photo Camera Up'],
+  [{ System: 'PhotoCameraDown' }, 'Photo Camera Down'],
+  [{ System: 'PhotoTiltLeft' }, 'Photo Tilt Left'],
+  [{ System: 'PhotoTiltRight' }, 'Photo Tilt Right']
+]
+
 const GROUPS: [string, [ActionWire, string][]][] = [
   ['Gameplay', GAMEPLAY_ACTIONS],
   ['Interface', INTERFACE_ACTIONS],
   ['Emotes', EMOTE_ACTIONS],
   ['Camera', CAMERA_ACTIONS],
+  ['Photo mode', PHOTO_ACTIONS],
   ['Pointer & Scroll', POINTER_SCROLL_ACTIONS]
 ]
 
@@ -114,7 +124,9 @@ const OPPOSITE_PAIRS: [ActionWire, ActionWire][] = [
   [{ System: 'ScrollUp' }, { System: 'ScrollDown' }],
   [{ System: 'ScrollLeft' }, { System: 'ScrollRight' }],
   [{ System: 'CameraZoomIn' }, { System: 'CameraZoomOut' }],
-  [{ System: 'RollLeft' }, { System: 'RollRight' }]
+  [{ System: 'RollLeft' }, { System: 'RollRight' }],
+  [{ System: 'PhotoCameraUp' }, { System: 'PhotoCameraDown' }],
+  [{ System: 'PhotoTiltLeft' }, { System: 'PhotoTiltRight' }]
 ]
 
 const OPPOSITE_DIR: Record<Direction, Direction> = { Up: 'Down', Down: 'Up', Left: 'Right', Right: 'Left' }

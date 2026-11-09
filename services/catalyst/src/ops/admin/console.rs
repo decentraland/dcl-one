@@ -18,7 +18,7 @@
 //!    the domain's handler function itself, presented with the credential
 //!    the domain's own check expects: the bearer this node configured for
 //!    that domain, exactly what the old proxy sent, plus the
-//!    `x-catalyrst-admin` operator header the price and telemetry routes
+//!    `x-catalyrst-admin` operator header the price routes
 //!    record. The handler's validation, response shape and own audit run
 //!    unchanged; a domain whose bearer is unset answers the old
 //!    `<domain>-admin-token-not-configured` 403 without being called.
@@ -54,8 +54,8 @@ use super::{SharedState, audit};
 
 pub use super::create::Abgen;
 
-/// The largest domain answer the console relays (a telemetry export or a
-/// CRDT dump are the big ones); a larger one answers 502 instead.
+/// The largest domain answer the console relays (a CRDT dump is the big
+/// one); a larger one answers 502 instead.
 pub(crate) const MAX_ANSWER_BYTES: usize = 32 << 20;
 
 /// The module states the console calls into, cloned from `serve` before
@@ -64,7 +64,6 @@ pub(crate) const MAX_ANSWER_BYTES: usize = 32 << 20;
 /// old unconfigured-service envelope.
 #[derive(Clone, Default)]
 pub struct Domains {
-    pub telemetry: Option<crate::ops::telemetry::SharedState>,
     pub credits: Option<crate::shop::credits::SharedState>,
     pub price: Option<crate::price::SharedState>,
     pub comms: Option<crate::comms::gatekeeper::SharedState>,
@@ -246,8 +245,8 @@ pub(crate) fn service_headers(token: Option<&str>, operator: &str) -> HeaderMap 
     h
 }
 
-/// Runs an extractor-typed credential check (`RequireAdmin`,
-/// `TelemetryAdmin`) against `headers`, the way the router would.
+/// Runs an extractor-typed credential check (`RequireAdmin`) against
+/// `headers`, the way the router would.
 pub(crate) async fn present<T, S>(state: &S, headers: HeaderMap) -> Result<T, T::Rejection>
 where
     T: FromRequestParts<S>,
@@ -362,34 +361,6 @@ pub(crate) fn body_as<T: DeserializeOwned>(body: Value) -> Result<T, Response> {
 pub(super) fn routes() -> axum::Router<SharedState> {
     use axum::routing::post;
     axum::Router::new()
-        .route(
-            "/admin/api/telemetry/issue-state",
-            post(super::telemetry::issue_state),
-        )
-        .route("/admin/api/telemetry/sql", post(super::telemetry::sql))
-        .route("/admin/api/telemetry/purge", post(super::telemetry::purge))
-        .route(
-            "/admin/api/telemetry/ingest",
-            post(super::telemetry::ingest),
-        )
-        .route("/admin/api/telemetry/quota", post(super::telemetry::quota))
-        .route(
-            "/admin/api/telemetry/bulk-delete",
-            post(super::telemetry::bulk_delete),
-        )
-        .route(
-            "/admin/api/telemetry/export",
-            post(super::telemetry::export),
-        )
-        .route("/admin/api/telemetry/audit", post(super::telemetry::audit))
-        .route(
-            "/admin/api/telemetry/regroup",
-            post(super::telemetry::regroup),
-        )
-        .route(
-            "/admin/api/telemetry/release",
-            post(super::telemetry::release),
-        )
         .route(
             "/admin/api/credits/grant",
             post(super::economy::credits_grant),
@@ -691,16 +662,6 @@ pub(super) fn routes() -> axum::Router<SharedState> {
 
 /// Every path [`routes`] mounts, for the gating tests.
 pub const CONSOLE_ROUTES: &[&str] = &[
-    "/admin/api/telemetry/issue-state",
-    "/admin/api/telemetry/sql",
-    "/admin/api/telemetry/purge",
-    "/admin/api/telemetry/ingest",
-    "/admin/api/telemetry/quota",
-    "/admin/api/telemetry/bulk-delete",
-    "/admin/api/telemetry/export",
-    "/admin/api/telemetry/audit",
-    "/admin/api/telemetry/regroup",
-    "/admin/api/telemetry/release",
     "/admin/api/credits/grant",
     "/admin/api/credits/revoke",
     "/admin/api/credits/user-block",

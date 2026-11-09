@@ -26,8 +26,22 @@ use super::settings_policy::{
     text_len,
 };
 
-pub const MAX_ACCESS_WALLETS: i64 = 1000;
-pub const MAX_ACCESS_COMMUNITIES: i64 = 50;
+/// The allow-list caps (`ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`;
+/// upstream's defaults 1000 and 50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessCaps {
+    pub wallets: i64,
+    pub communities: i64,
+}
+
+impl Default for AccessCaps {
+    fn default() -> Self {
+        Self {
+            wallets: 1000,
+            communities: 50,
+        }
+    }
+}
 
 /// The world's access setting as the wire carries it (the old JSONB
 /// document): the typed columns plus the `access` grants and communities.
@@ -162,6 +176,9 @@ pub struct WorldsListFilters {
     pub authorized_deployer: Option<String>,
     pub search: Option<String>,
     pub has_deployed_scenes: Option<bool>,
+    /// The deny list with each entry's first `.eth` and `.dcl` removed
+    /// (upstream `getBannedNames`), compared with the stored name as is.
+    pub banned_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -422,27 +439,41 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
     Ok(row.as_ref().map(world_from_row))
 }
 
-/// Upstream's `isWorldValid`: the world has scenes and is neither disabled
-/// nor its owner quota-blocked past the grace.
+/// Whether upstream's `getRawWorldRecords` leaves `world` out:
+/// `name != ALL(<deny-list entries without the first .eth and .dcl>)`, so
+/// only a world named exactly like a stripped entry (a bare name) is left out.
+pub async fn raw_records_exclude(
+    pool: &PgPool,
+    names: &super::names::NameDenyList,
+    world: &WorldName,
+) -> bool {
+    let banned = names.snapshot(pool).await.banned_names();
+    banned.iter().any(|n| n == world.key())
+}
+
+/// Upstream's `isWorldValid`: the `worlds` row exists, `getRawWorldRecords`
+/// keeps it ([`raw_records_exclude`]), and it is neither disabled nor its
+/// owner quota-blocked past the grace. A deployed scene is not required.
 pub async fn world_is_valid(
     pool: &PgPool,
     policy: &crate::policy::Policy,
+    names: &super::names::NameDenyList,
     world: &WorldName,
 ) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>)> = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
-                w.blocked_since \
-           FROM worlds.worlds w WHERE w.name = $1",
-    )
-    .bind(world.key())
-    .fetch_optional(pool)
-    .await?;
-    let Some((has_scenes, disabled)) = row else {
+    let disabled: Option<Option<NaiveDateTime>> =
+        sqlx::query_scalar("SELECT blocked_since FROM worlds.worlds WHERE name = $1")
+            .bind(world.key())
+            .fetch_optional(pool)
+            .await?;
+    let Some(disabled) = disabled else {
         return Ok(false);
     };
+    if raw_records_exclude(pool, names, world).await {
+        return Ok(false);
+    }
     let quota = policy.quota_blocked_since(world).await?;
     let now = chrono::Utc::now().naive_utc();
-    Ok(has_scenes && !crate::comms::access::world_blocked(disabled, quota, now))
+    Ok(!crate::comms::access::world_blocked(disabled, quota, now))
 }
 
 pub async fn ensure_world(
@@ -684,7 +715,7 @@ pub async fn deploy_scene_with(
         world,
         &parcels,
         entity_id,
-        entity_timestamp(entity)?,
+        entity_timestamp_value(entity)?,
     )
     .await?;
     if newer_deployed {
@@ -738,34 +769,39 @@ pub async fn deploy_scene_with(
         }
     }
 
+    // The scene's own row is never part of the overlap: a redeploy of the same
+    // entity keeps its row (and its `created_at`) through the upsert below.
     match replacement {
         Deploy::Owner => {
             sqlx::query(retiring!(
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[]"
+                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3"
             ))
             .bind(world.key())
             .bind(&parcels)
+            .bind(entity_id)
             .execute(&mut *tx)
             .await?;
         }
         Deploy::Scoped(ids) => {
             let ids: Vec<&str> = ids.iter().map(SceneId::as_str).collect();
-            sqlx::query(retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[])"))
+            sqlx::query(retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[]) AND entity_id <> $4"))
                 .bind(world.key())
                 .bind(&parcels)
                 .bind(&ids)
+                .bind(entity_id)
                 .execute(&mut *tx)
                 .await?;
             let leftover: Option<String> =
-                sqlx::query_scalar("SELECT entity_id FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] LIMIT 1")
+                sqlx::query_scalar("SELECT entity_id FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3 LIMIT 1")
                     .bind(world.key())
                     .bind(&parcels)
+                    .bind(entity_id)
                     .fetch_optional(&mut *tx)
                     .await?;
             if leftover.is_some() {
                 return Err(ApiError::conflict(format!(
                     "Scene replacement authorization changed while deploying to world \"{}\". Please retry.",
-                    world.key()
+                    world.display()
                 )));
             }
         }
@@ -894,25 +930,27 @@ pub async fn deploy_scene_with(
 
 /// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
 /// timestamp counts no later than its row's write (a future-dated entity cannot lock the
-/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks.
+/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks. Both
+/// timestamps are compared as doubles, as upstream compares JS numbers: a `numeric` cast of a
+/// double keeps only 15 significant digits, two decimals of an epoch-ms value.
 pub async fn newer_scene_deployed(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     parcels: &[String],
     entity_id: &str,
-    timestamp: i64,
+    timestamp: f64,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         r#"WITH stored AS (
              SELECT entity_id,
                     CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
-                         THEN LEAST((entity->>'timestamp')::numeric,
-                                    extract(epoch FROM updated_at) * 1000)
+                         THEN LEAST((entity->>'timestamp')::float8,
+                                    (extract(epoch FROM updated_at) * 1000)::float8)
                     END AS ts
              FROM worlds.world_scenes
              WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
            SELECT EXISTS (SELECT 1 FROM stored
-             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+             WHERE ts > $4::float8 OR (ts = $4::float8 AND entity_id COLLATE "C" > $3))"#,
     )
     .bind(world.key())
     .bind(parcels)
@@ -939,11 +977,34 @@ pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool,
     .await?)
 }
 
-/// The entity's integer `timestamp`; the deploy route already required it.
-pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+/// The entity's `timestamp` as the number it is: any finite JSON number, as upstream reads it.
+pub fn entity_timestamp_number(entity: &Value) -> Option<f64> {
     entity
         .get("timestamp")
-        .and_then(Value::as_i64)
+        .and_then(Value::as_f64)
+        .filter(|ts| ts.is_finite())
+}
+
+/// The entity's `timestamp` in whole milliseconds: an integer as it is, a fractional one taken
+/// down to its millisecond.
+pub fn entity_timestamp_ms(entity: &Value) -> Option<i64> {
+    let value = entity.get("timestamp");
+    value.and_then(Value::as_i64).or_else(|| {
+        entity_timestamp_number(entity)
+            .filter(|ts| ts.abs() < i64::MAX as f64)
+            .map(|ts| ts.floor() as i64)
+    })
+}
+
+/// [`entity_timestamp_ms`], refused as upstream's schema would when missing.
+pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+    entity_timestamp_ms(entity)
+        .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
+}
+
+/// [`entity_timestamp_number`], refused as upstream's schema would when missing.
+pub(super) fn entity_timestamp_value(entity: &Value) -> Result<f64, ApiError> {
+    entity_timestamp_number(entity)
         .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
 }
 
@@ -1137,7 +1198,8 @@ pub async fn scene_base_parcel(
 }
 
 /// `POST /entities/active`: the newest scene of each named world, with the
-/// entity id and the world owner folded into the entity as the old route did.
+/// entity id and the world owner (`null` when the row has none) folded into
+/// the entity as the old route did.
 pub async fn entities_for_worlds(
     pool: &PgPool,
     worlds: &[WorldName],
@@ -1167,8 +1229,8 @@ pub async fn entities_for_worlds(
                 let metadata = obj
                     .entry("metadata")
                     .or_insert_with(|| Value::Object(serde_json::Map::new()));
-                if let (Some(meta_obj), Some(owner)) = (metadata.as_object_mut(), owner) {
-                    meta_obj.insert("owner".into(), Value::String(owner));
+                if let Some(meta_obj) = metadata.as_object_mut() {
+                    meta_obj.insert("owner".into(), owner.map_or(Value::Null, Value::String));
                 }
             }
             entity
@@ -1576,11 +1638,12 @@ pub async fn store_access_for_owner(
 }
 
 /// One allow-list edit under the world row's lock: refused unless the row
-/// exists and is an allow-list, capped at 1000 wallets / 50 communities; the
+/// exists and is an allow-list, capped at `caps` wallets / communities; the
 /// settings version bumps on every applied edit, as the old upsert did.
 pub async fn modify_allow_list_access(
     pool: &PgPool,
     world: &WorldName,
+    caps: AccessCaps,
     edit: AllowListEdit<'_>,
 ) -> Result<AllowListEditOutcome, ApiError> {
     let mut tx = pool.begin().await?;
@@ -1603,7 +1666,7 @@ pub async fn modify_allow_list_access(
             .fetch_one(&mut *tx)
             .await?;
             if !present {
-                if count >= MAX_ACCESS_WALLETS {
+                if count >= caps.wallets {
                     return Ok(AllowListEditOutcome::CapExceeded);
                 }
                 sqlx::query("INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'access', $2)")
@@ -1630,7 +1693,7 @@ pub async fn modify_allow_list_access(
             .fetch_one(&mut *tx)
             .await?;
             if !present {
-                if count >= MAX_ACCESS_COMMUNITIES {
+                if count >= caps.communities {
                     return Ok(AllowListEditOutcome::CapExceeded);
                 }
                 sqlx::query("INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)")
@@ -1917,6 +1980,7 @@ pub async fn list_worlds_public(
                 OR w.title ILIKE $4
                 OR w.description ILIKE $4
                 {similarity})
+          AND w.name <> ALL($5::text[])
     "#
     );
     let dir = match options.order_direction {
@@ -1938,7 +2002,7 @@ pub async fn list_worlds_public(
                   count(*) OVER () AS total
            {base_from}
            {order_clause}
-           LIMIT $5 OFFSET $6"#
+           LIMIT $6 OFFSET $7"#
     );
     let deployer = filters
         .authorized_deployer
@@ -1950,6 +2014,7 @@ pub async fn list_worlds_public(
         .bind(filters.has_deployed_scenes)
         .bind(&filters.search)
         .bind(&pattern)
+        .bind(&filters.banned_names)
         .bind(options.limit)
         .bind(options.offset)
         .fetch_all(pool)
@@ -1964,6 +2029,7 @@ pub async fn list_worlds_public(
             .bind(filters.has_deployed_scenes)
             .bind(&filters.search)
             .bind(&pattern)
+            .bind(&filters.banned_names)
             .fetch_one(pool)
             .await?
         }
@@ -2277,6 +2343,15 @@ pub async fn active_content_keys(pool: &PgPool) -> Result<HashSet<String>, ApiEr
     Ok(keys)
 }
 
+async fn queue_access_recheck(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO social.world_access_rechecks(world_name,changed_at) VALUES($1,timezone('UTC',clock_timestamp())) ON CONFLICT(world_name) DO UPDATE SET revision=gen_random_uuid(),changed_at=timezone('UTC',clock_timestamp()),next_attempt_at=timezone('UTC',now())")
+        .bind(world.key()).execute(conn).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2427,13 +2502,4 @@ mod tests {
             AccessType::Unrestricted
         );
     }
-}
-
-async fn queue_access_recheck(
-    conn: &mut sqlx::PgConnection,
-    world: &WorldName,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO social.world_access_rechecks(world_name,changed_at) VALUES($1,timezone('UTC',clock_timestamp())) ON CONFLICT(world_name) DO UPDATE SET revision=gen_random_uuid(),changed_at=timezone('UTC',clock_timestamp()),next_attempt_at=timezone('UTC',now())")
-        .bind(world.key()).execute(conn).await?;
-    Ok(())
 }

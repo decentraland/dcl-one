@@ -3,6 +3,7 @@ import SitesChrome from "../frames/SitesChrome";
 import { asset } from "../../asset";
 import { publicThumbnail } from "../../data/thumbnail";
 import CoverImage from "../../components/CoverImage";
+import HeroVideo from "../../components/HeroVideo";
 import "./siteshome.css";
 import { Chevron } from "../../atoms/icons";
 
@@ -81,6 +82,7 @@ export default function SitesHome({
       <div className="sh">
         <section className="sh__hero">
           <img className="sh__heroimg" src={asset("assets/home-hero.webp")} alt="" aria-hidden="true" fetchPriority="high" />
+          <HeroVideo />
           <div className="sh__heroinner">
             <h1 className="sh__title">Hang Out From Anywhere</h1>
             <p className="sh__sub">Close the Feed. Come Hang Out.</p>

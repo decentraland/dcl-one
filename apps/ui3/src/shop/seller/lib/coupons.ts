@@ -9,13 +9,14 @@
 import { encodeAbiParameters, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { shopClient, type ShopClient } from "../../api/shop";
-import type { ChainId } from "../../model/chain";
-import { COLLECTION_DISCOUNT_COUPON, COUPON_MANAGER_ABI, COUPON_MANAGERS, type ContractData } from "../../market/lib/contracts";
+import { type ShopClient } from "../../api/shop";
+import type { ChainId } from "@shop/model/chain";
+import { COLLECTION_DISCOUNT_COUPON, COUPON_MANAGER_ABI, COUPON_MANAGERS, type ContractData } from "@shop/market/lib/contracts";
 import { readContract } from "../../market/lib/rpc";
 import { networkOf, OFFCHAIN_MARKETPLACE_TYPES, randomSalt, type TradeChecks } from "../../market/lib/trades";
 import { chainSalt, sendCall, signTypedData, waitForReceipt, walletAccount, type WaitOptions } from "../../market/lib/tx";
 import { standardMerkleRoot } from "./merkle";
+import { shopClient } from "../../api/host";
 
 /** Percentage discount, in parts per million on chain: 30% is 300_000. The only type the Shop signs. */
 export const DISCOUNT_TYPE_RATE = 1;

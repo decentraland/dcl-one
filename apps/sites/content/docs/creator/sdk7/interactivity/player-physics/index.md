@@ -45,6 +45,14 @@ Physics.applyImpulseToPlayer(Vector3.create(0, 1, 0), 50)
 
 If you call `applyImpulseToPlayer()` multiple times within the same frame, the impulses are accumulated — they are added together and applied as a single combined impulse.
 
+### How strong an impulse is
+
+The avatar has a mass of 1, so the magnitude of an impulse is the change in the avatar's speed, in meters per second. An impulse of `50` adds 50 m/s in that direction.
+
+* The speed an impulse adds fades over time. In the air it fades at a rate of 1.5 per second, so about a fifth of it is left after one second. It fades faster while the avatar is on the ground.
+* The speed added by impulses and forces is capped at 50 m/s.
+* An upward impulse first cancels any downward speed the avatar has from falling, so a launch pad works the same whether the player walks onto it or lands on it from above.
+
 ### Trigger an impulse on player entry
 
 A common pattern is to trigger an impulse when the player steps into an area. Use a trigger area to detect when the player enters:

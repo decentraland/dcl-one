@@ -92,22 +92,45 @@ export function loadAllowlist(root, rev) {
   return allowlist
 }
 
+/** The oid and size a Git LFS pointer names, or null when it names none. */
+export function parseLfsPointer(buffer) {
+  const text = buffer.toString('utf8')
+  const oid = /^oid sha256:([0-9a-f]{64})$/m.exec(text)?.[1]
+  const size = /^size ([0-9]+)$/m.exec(text)?.[1]
+  return oid && size !== undefined ? { oid, size: Number(size) } : null
+}
+
 const lfsStores = new Map()
+/** The local LFS object store of `root`, located through Git alone: the LFS client is never run here. */
+export function lfsStore(root) {
+  if (!lfsStores.has(root)) {
+    const common = git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+      .toString()
+      .trim()
+    let storage = ''
+    try {
+      storage = git(root, ['config', '--get', 'lfs.storage']).toString().trim()
+    } catch {
+      // unset: the default store under the common Git directory
+    }
+    lfsStores.set(
+      root,
+      storage ? resolve(common, storage, 'objects') : join(common, 'lfs', 'objects')
+    )
+  }
+  return lfsStores.get(root)
+}
+
 function materializeLfs(root, pointer) {
   // Only the explicitly prefetched local store is read. Neither a historical pointer nor a missing object
   // may initiate a network request from the scan step, where credentials are deliberately absent.
   try {
-    const oid = /^oid sha256:([0-9a-f]{64})$/m.exec(pointer.toString('utf8'))?.[1]
-    const size = /^size ([0-9]+)$/m.exec(pointer.toString('utf8'))?.[1]
-    if (!oid || size === undefined) return null
-    if (!lfsStores.has(root)) {
-      const store = /^LocalMediaDir=(.+)$/m.exec(git(root, ['lfs', 'env']).toString('utf8'))?.[1]
-      lfsStores.set(root, store)
-    }
-    const store = lfsStores.get(root)
-    if (!store) return null
+    const parsed = parseLfsPointer(pointer)
+    if (!parsed) return null
+    const { oid, size } = parsed
+    const store = lfsStore(root)
     const file = join(store, oid.slice(0, 2), oid.slice(2, 4), oid)
-    if (statSync(file).size !== Number(size)) return null
+    if (statSync(file).size !== size) return null
     const content = readFileSync(file)
     return createHash('sha256').update(content).digest('hex') === oid ? content : null
   } catch {
@@ -117,9 +140,13 @@ function materializeLfs(root, pointer) {
 
 function scanContent(root, buffer, key, allowedIds, materialize = false) {
   if (!isLfsPointer(buffer)) return scanBuffer(buffer, key, allowedIds)
-  if (!materialize) return ['lfs']
+  // The pointer bytes are scanned too: a valid pointer line may be followed by any text.
+  const pointer = scanBuffer(buffer, key, allowedIds)
+  if (!materialize) return [...pointer, 'lfs']
   const content = materializeLfs(root, buffer)
-  return content && !isLfsPointer(content) ? scanBuffer(content, key, allowedIds) : ['lfs']
+  return content && !isLfsPointer(content)
+    ? [...new Set([...pointer, ...scanBuffer(content, key, allowedIds)])]
+    : [...pointer, 'lfs']
 }
 
 function scanWorktree(root, key, allowed, report) {
@@ -142,7 +169,8 @@ function scanWorktree(root, key, allowed, report) {
   return scanned
 }
 
-function scanRange(root, range, key, allowed, report) {
+// Every blob a commit of `range` adds or changes, merges included, with the commit and path it came from.
+function rangeBlobs(root, range) {
   const log = git(root, [
     'log',
     '--root',
@@ -177,45 +205,62 @@ function scanRange(root, range, key, allowed, report) {
     if (/^0+$/.test(sha)) continue
     blobs.push({ commit, path, sha })
   }
+  return { commits: commits.size, blobs }
+}
+
+// A pointer anywhere in the range is read from the prefetched local store (lfs-prefetch.mjs), whatever its
+// path: a payload the store does not hold fails `lfs` rather than going unscanned.
+function scanRange(root, range, key, allowed, report) {
+  const { commits, blobs } = rangeBlobs(root, range)
   for (const { commit: sha, path, sha: blob } of blobs) {
     const buffer = git(root, ['cat-file', 'blob', blob])
-    for (const check of scanContent(
-      root,
-      buffer,
-      key,
-      allowed(path),
-      path.startsWith('library/ui/')
-    ))
+    for (const check of scanContent(root, buffer, key, allowed(path), true))
       report(check, path, sha)
   }
-  return { commits: commits.size, blobs: blobs.length }
+  return { commits, blobs: blobs.length }
 }
 
 // Every blob under `prefix` at `rev`, read with cat-file: no checkout, no filters, no hooks.
-function scanTree(root, rev, prefix, key, allowed, report) {
+function treeBlobs(root, rev, prefix) {
   const commit = git(root, ['rev-parse', '--verify', `${rev}^{commit}`])
     .toString()
     .trim()
-  const entries = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', prefix])
+  const blobs = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', prefix])
     .toString('utf8')
     .split('\0')
-    .filter(Boolean)
-  let scanned = 0
-  for (const entry of entries) {
-    const match = /^\d+ blob ([0-9a-f]+)\t(.*)$/s.exec(entry)
-    if (!match) continue // a submodule commit: nothing to read
-    scanned += 1
-    const buffer = git(root, ['cat-file', 'blob', match[1]])
-    for (const check of scanContent(
-      root,
-      buffer,
-      key,
-      allowed(match[2]),
-      match[2].startsWith('library/ui/')
-    ))
-      report(check, match[2], commit)
+    .flatMap((entry) => {
+      const match = /^\d+ blob ([0-9a-f]+)\t(.*)$/s.exec(entry)
+      return match ? [{ sha: match[1], path: match[2] }] : [] // a submodule commit: nothing to read
+    })
+  return { commit, blobs }
+}
+
+function scanTree(root, rev, prefix, key, allowed, report) {
+  const { commit, blobs } = treeBlobs(root, rev, prefix)
+  for (const { sha, path } of blobs) {
+    const buffer = git(root, ['cat-file', 'blob', sha])
+    for (const check of scanContent(root, buffer, key, allowed(path), true))
+      report(check, path, commit)
   }
-  return { commit, scanned }
+  return { commit, scanned: blobs.length }
+}
+
+/**
+ * The distinct LFS objects the range and trees of a scan point to, as { oid, size }: the list lfs-prefetch.mjs
+ * downloads before the scan. Nothing but object ids leaves here, never a path or a payload.
+ */
+export function listLfsObjects({ root, range, trees = [] }) {
+  const shas = [
+    ...(range ? rangeBlobs(root, range).blobs : []),
+    ...trees.flatMap(({ rev, prefix }) => treeBlobs(root, rev, prefix).blobs)
+  ].map((blob) => blob.sha)
+  const objects = new Map()
+  for (const sha of new Set(shas)) {
+    const buffer = git(root, ['cat-file', 'blob', sha])
+    const pointer = isLfsPointer(buffer) ? parseLfsPointer(buffer) : null
+    if (pointer) objects.set(pointer.oid, pointer)
+  }
+  return [...objects.values()]
 }
 
 function scanPath(root, target, key, allowed, report) {
@@ -314,7 +359,8 @@ function parseArgs(argv) {
     trees: [],
     artifacts: [],
     allowlistRev: undefined,
-    root: undefined
+    root: undefined,
+    lfsObjects: false
   }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -330,6 +376,7 @@ function parseArgs(argv) {
       if (colon <= 0 || colon === value.length - 1) throw new Error('--tree takes <rev>:<path>')
       options.trees.push({ rev: value.slice(0, colon), prefix: value.slice(colon + 1) })
     } else if (arg === '--allowlist-from') options.allowlistRev = argv[++i]
+    else if (arg === '--lfs-objects') options.lfsObjects = true
     else throw new Error(`unknown argument: ${arg}`)
   }
   return options
@@ -394,6 +441,13 @@ export function main(argv) {
     const options = parseArgs(argv)
     const root =
       options.root ?? git(process.cwd(), ['rev-parse', '--show-toplevel']).toString().trim()
+    // Lists, one JSON object per line, the LFS objects the same scan would read; scans nothing.
+    if (options.lfsObjects) {
+      const objects = listLfsObjects({ root, range: options.range, trees: options.trees })
+      if (objects.length)
+        output('stdout', objects.map((item) => JSON.stringify(item)).join('\n'), key)
+      return 0
+    }
     const { findings, lines } = runGuard({
       ...options,
       root,

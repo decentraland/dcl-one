@@ -9,7 +9,7 @@
 //!
 //! Every control posts to a route of this module (`api`, `console`), with the
 //! field names those routes take. The families are the old console's groups
-//! (`content`, `telemetry`, `data`, `social`, `social-rpc`, `explore` for the
+//! (`content`, `data`, `social`, `social-rpc`, `explore` for the
 //! worlds operator routes, `scene-state`, `create`), each at
 //! `/admin/{family}`; the keys avoid the static `/admin/*` routes other
 //! modules answer at the root (`/admin/worlds`, `/admin/blocked`,
@@ -40,11 +40,6 @@ pub const FAMILIES: &[(&str, &str, &str)] = &[
         "content",
         "Content core",
         "Synchronization, the deployments cache and the failed-deployments backlog",
-    ),
-    (
-        "telemetry",
-        "Telemetry",
-        "Issue triage, read-only SQL, quotas, ingest, export, purge",
     ),
     (
         "data",
@@ -370,167 +365,6 @@ fn content_cards(n: &mut usize) -> String {
                     "/admin/api/content/failed-deployments/retry",
                     "Re-arm",
                     &[Field("id", "Failed entity id", Input::Text("bafy\u{2026}"))],
-                )
-            },
-        ],
-        n,
-    )
-}
-
-fn telemetry_cards(n: &mut usize) -> String {
-    card(
-        "Telemetry",
-        "Issue triage and the read-only SQL console (the telemetry reader role, READ ONLY, 1000 rows).",
-        &[
-            Form {
-                confirm: "Update this issue's state?",
-                ..form(
-                    "/admin/api/telemetry/issue-state",
-                    "Set issue state",
-                    &[
-                        Field(
-                            "fingerprint",
-                            "Fingerprint",
-                            Input::Text("issue fingerprint"),
-                        ),
-                        Field(
-                            "status",
-                            "Status",
-                            Input::Select(&["resolved", "ignored", "unresolved"]),
-                        ),
-                        Field(
-                            "assignee",
-                            "Assignee",
-                            Input::Text("address / handle (optional)"),
-                        ),
-                        Field("note", "Note", Input::Text("optional note")),
-                    ],
-                )
-            },
-            Form {
-                pre: true,
-                ..form(
-                    "/admin/api/telemetry/sql",
-                    "Run query",
-                    &[Field("sql", "Ad-hoc SQL", Input::Area("select ..."))],
-                )
-            },
-        ],
-        n,
-    ) + &card(
-        "Telemetry operations",
-        "Quota, the ingest toggle, regroup/release, export/audit, and the destructive purge/bulk-delete.",
-        &[
-            Form {
-                num: "daily_limit",
-                confirm: "Set this project's daily quota (blank: remove it)?",
-                ..form(
-                    "/admin/api/telemetry/quota",
-                    "Set quota",
-                    &[
-                        Field("project", "Project", Input::Text("project")),
-                        Field(
-                            "daily_limit",
-                            "Daily limit",
-                            Input::Text("events/day (blank removes)"),
-                        ),
-                    ],
-                )
-            },
-            Form {
-                confirm: "Change the ingest toggle?",
-                extras: &[Extra(
-                    "Ingest report",
-                    "/admin/api/telemetry/ingest",
-                    "",
-                    "",
-                )],
-                pre: true,
-                ..form(
-                    "/admin/api/telemetry/ingest",
-                    "Set ingest",
-                    &[Field(
-                        "enabled",
-                        "Ingest",
-                        Input::Select(&["true", "false"]),
-                    )],
-                )
-            },
-            Form {
-                list: "sources",
-                confirm: "Merge these fingerprints into the canonical one?",
-                ..form(
-                    "/admin/api/telemetry/regroup",
-                    "Regroup",
-                    &[
-                        Field("sources", "Source fingerprints", Input::Text("fp1, fp2")),
-                        Field("canonical", "Canonical", Input::Text("fingerprint")),
-                    ],
-                )
-            },
-            Form {
-                confirm: "Record this release state?",
-                ..form(
-                    "/admin/api/telemetry/release",
-                    "Mark release",
-                    &[
-                        Field("release", "Release", Input::Text("release id")),
-                        Field("state", "State", Input::Text("state")),
-                        Field("note", "Note", Input::Text("optional")),
-                    ],
-                )
-            },
-            Form {
-                num: "limit",
-                pre: true,
-                extras: &[Extra(
-                    "Audit log",
-                    "/admin/api/telemetry/audit",
-                    "fingerprint,action,limit",
-                    "",
-                )],
-                ..form(
-                    "/admin/api/telemetry/export",
-                    "Export",
-                    &[
-                        Field("project", "Project", Input::Text("project (export)")),
-                        Field("fingerprint", "Fingerprint", Input::Text("fingerprint")),
-                        Field("action", "Action", Input::Text("action (audit)")),
-                        Field("limit", "Limit", Input::Text("limit")),
-                    ],
-                )
-            },
-            Form {
-                num: "older_than_days",
-                danger: true,
-                confirm: "PURGE telemetry data? This permanently deletes stored events.",
-                extras: &[Extra(
-                    "Bulk delete",
-                    "/admin/api/telemetry/bulk-delete",
-                    "project,fingerprint,before",
-                    "BULK-DELETE the matching events? This is irreversible.",
-                )],
-                ..form(
-                    "/admin/api/telemetry/purge",
-                    "Purge",
-                    &[
-                        Field(
-                            "older_than_days",
-                            "\u{26A0} Older than (days)",
-                            Input::Text("purge: days"),
-                        ),
-                        Field("project", "Project", Input::Text("project")),
-                        Field(
-                            "fingerprint",
-                            "Fingerprint",
-                            Input::Text("bulk-delete: fingerprint"),
-                        ),
-                        Field(
-                            "before",
-                            "Before",
-                            Input::Text("bulk-delete: ISO timestamp"),
-                        ),
-                    ],
                 )
             },
         ],
@@ -1327,7 +1161,6 @@ fn controls(family: Option<&str>) -> String {
     let mut b = String::new();
     for (key, render) in [
         ("content", content_cards as fn(&mut usize) -> String),
-        ("telemetry", telemetry_cards),
         ("data", data_cards),
         ("social", social_cards),
         ("social-rpc", social_rpc_cards),

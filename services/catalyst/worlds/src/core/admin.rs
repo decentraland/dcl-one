@@ -27,7 +27,7 @@ use crate::shared::identity::Address;
 
 use super::SharedState;
 use super::auth::authorize_admin;
-use super::http::{ApiError, clamp_limit};
+use super::http::{ApiError, QueryPairs, clamp_limit, query_param};
 use super::metrics;
 use super::permissions::parse_world;
 use super::store;
@@ -58,20 +58,42 @@ fn admin(state: &SharedState, headers: &HeaderMap) -> Result<(), ApiError> {
     authorize_admin(state.settings.admin_token.as_deref(), headers)
 }
 
-#[derive(Debug, Deserialize)]
+/// `/gc`'s own query (upstream reads none): `dry_run`, `min_age_secs` and
+/// `allow_empty_active_set`, read after the bearer. A value that does not
+/// parse answers the worlds 400 envelope.
+#[derive(Debug, Default, PartialEq)]
 pub struct GcQuery {
-    #[serde(default)]
     pub dry_run: Option<bool>,
-    #[serde(default)]
     pub min_age_secs: Option<u64>,
-    #[serde(default)]
     pub allow_empty_active_set: Option<bool>,
+}
+
+impl GcQuery {
+    fn parse(q: &QueryPairs) -> Result<Self, ApiError> {
+        fn read<T: std::str::FromStr>(q: &QueryPairs, key: &str) -> Result<Option<T>, ApiError> {
+            query_param(q, key)
+                .map(|v| {
+                    v.parse().map_err(|_| {
+                        ApiError::bad_request(format!("Invalid query parameter {key}: {v}"))
+                    })
+                })
+                .transpose()
+        }
+        Ok(Self {
+            dry_run: read(q, "dry_run")?,
+            min_age_secs: read(q, "min_age_secs")?,
+            allow_empty_active_set: read(q, "allow_empty_active_set")?,
+        })
+    }
 }
 
 /// Retry hint when a run is already going or publishes keep the store lock busy, as upstream.
 pub const GC_DEFERRED_RETRY_AFTER_SECONDS: u64 = 60;
 
 pub const GC_IN_PROGRESS_MESSAGE: &str = "A garbage collection run is already in progress.";
+
+/// Upstream's `ContentLockBusyError` text (`src/adapters/content-locks/errors.ts`).
+pub const GC_LOCK_BUSY_MESSAGE: &str = "The content lock is still busy, please retry shortly.";
 
 fn gc_deferred(message: &str) -> Response {
     (
@@ -90,9 +112,10 @@ fn gc_deferred(message: &str) -> Response {
 pub async fn garbage_collect(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Query(q): Query<GcQuery>,
+    Query(q): Query<QueryPairs>,
 ) -> Result<Response, ApiError> {
     admin(&state, &headers)?;
+    let q = GcQuery::parse(&q)?;
     let limits = &state.settings.upload_limits;
     let floor = catalyst_storage::gc::orphan_age_floor(
         limits.multipart_upload_timeout_ms,
@@ -147,9 +170,7 @@ pub async fn garbage_collect(
         }
         Err(catalyst_storage::gc::GcError::LockTimeout) => {
             metrics::gc_run("deferred", elapsed, 0, 0);
-            return Ok(gc_deferred(
-                "Garbage collection deferred: deployments kept the content lock busy.",
-            ));
+            return Ok(gc_deferred(GC_LOCK_BUSY_MESSAGE));
         }
         Err(catalyst_storage::gc::GcError::EmptyReferenceSet) => {
             metrics::gc_run("error", elapsed, 0, 0);
@@ -443,4 +464,40 @@ pub async fn world_ban_status(
         "parcel": q.parcel,
         "sceneBanned": scene_banned,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GcQuery;
+
+    fn pairs(raw: &[(&str, &str)]) -> super::QueryPairs {
+        raw.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn gc_query_reads_its_three_keys_and_ignores_the_rest() {
+        assert_eq!(
+            GcQuery::parse(&pairs(&[
+                ("dry_run", "true"),
+                ("min_age_secs", "7200"),
+                ("other", "x")
+            ]))
+            .unwrap(),
+            GcQuery {
+                dry_run: Some(true),
+                min_age_secs: Some(7200),
+                allow_empty_active_set: None,
+            }
+        );
+        assert_eq!(GcQuery::parse(&pairs(&[])).unwrap(), GcQuery::default());
+    }
+
+    #[test]
+    fn an_unparsable_gc_query_value_is_a_worlds_400() {
+        let err = GcQuery::parse(&pairs(&[("dry_run", "yes")])).unwrap_err();
+        let response = axum::response::IntoResponse::into_response(err);
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
 }

@@ -10,11 +10,15 @@ nix develop                        # FOUNDATION_DEV_AUTOSTART=0: no services
 nix develop --command make check   # non-interactive: never starts services
 ```
 
+`flake.nix` pins nixpkgs to a nixos-unstable commit. The Update nixpkgs workflow
+proposes the current tip on the first of each month; `python3
+tooling/nixpkgs-update.py` does the same locally.
+
 `nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
 Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
-`.cache/dev/settings.json`): API and `/ws` +0, Sites and Pulse WebTransport +2,
+`.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. An occupied saved port fails startup.
 
@@ -69,6 +73,9 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
+
+CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
+start and the build tools, without the web and media tools.
 
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
