@@ -773,6 +773,126 @@ class WebPreviewTests(unittest.TestCase):
                         preview.main()
                 package.assert_not_called()
 
+    def test_workflow_preflights_protections_before_scheduling_the_environment_job(self):
+        workflow = (
+            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        ).read_text()
+        jobs = dict(
+            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
+        )
+        source = jobs['source']
+        step = '      - name: Validate publication protections before approval\n'
+        self.assertIn(step, source)
+        preflight = source.split(step)[1]
+        self.assertNotRegex(source, r'(?m)^    environment:')
+        self.assertLess(
+            source.index('web-preview.py resolve'), source.index('web-preview.py check-environment')
+        )
+        self.assertIn('GH_TOKEN: ${{ github.token }}', preflight)
+        self.assertIn('run: python3 tooling/web-preview.py check-environment', preflight)
+        self.assertNotIn('continue-on-error', preflight)
+        guard = re.search(r'^        if: (.+)$', preflight, re.M).group(1)
+        expression = guard.replace('&&', 'and')
+        for enabled, publish, reviewer in (
+            ('true', 'true', 'true'),
+            ('false', 'true', 'true'),
+            ('', 'true', 'true'),
+            ('true', 'false', 'true'),
+            ('true', 'true', 'false'),
+        ):
+            with self.subTest(enabled=enabled, publish=publish, reviewer=reviewer):
+                context = {
+                    'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED=enabled),
+                    'steps': SimpleNamespace(
+                        source=SimpleNamespace(
+                            outputs=SimpleNamespace(publish=publish, reviewer=reviewer)
+                        )
+                    ),
+                }
+                self.assertEqual(
+                    bool(eval(expression, {'__builtins__': {}}, context)),
+                    (enabled, publish, reviewer) == ('true', 'true', 'true'),
+                )
+        self.assertIn('    needs: source\n', jobs['pending'])
+        self.assertIn('    needs: [source, pending]\n', jobs['reviewer'])
+        guard = re.search(r'^    if: \$\{\{ (.+) \}\}$', jobs['reviewer'], re.M).group(1)
+        expression = guard.replace('&&', 'and').replace('!cancelled()', 'not cancelled()')
+        for result in ('success', 'failure', 'cancelled', 'skipped', ''):
+            with self.subTest(preflight_result=result):
+                context = {
+                    'needs': SimpleNamespace(
+                        source=SimpleNamespace(
+                            result=result, outputs=SimpleNamespace(publish='true', reviewer='true')
+                        ),
+                        pending=SimpleNamespace(result='success'),
+                    ),
+                    'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED='true'),
+                    'cancelled': lambda: False,
+                }
+                self.assertEqual(
+                    bool(eval(expression, {'__builtins__': {}}, context)), result == 'success'
+                )
+
+    def test_environment_preflight_cli_fails_closed_on_missing_denied_or_unavailable_api(self):
+        for status in (404, 403, 500):
+            response = subprocess.CompletedProcess(
+                ['gh'], 1, '', f'gh: unavailable (HTTP {status})'
+            )
+            with (
+                self.subTest(status=status),
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'check-environment']),
+                patch.dict(os.environ, {'GITHUB_REPOSITORY': 'example/one'}),
+                patch.object(preview.subprocess, 'run', return_value=response) as request,
+                patch.object(preview.time, 'sleep'),
+                patch('sys.stderr', new_callable=io.StringIO),
+            ):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    preview.main()
+                for call in request.call_args_list:
+                    self.assertIn('repos/example/one/environments/web-preview', call.args[0])
+                    self.assertNotIn('POST', call.args[0])
+                    self.assertNotIn('PATCH', call.args[0])
+
+    def test_environment_preflight_cli_accepts_only_verified_protections(self):
+        environment = {
+            'can_admins_bypass': False,
+            'protection_rules': [
+                {
+                    'type': 'required_reviewers',
+                    'reviewers': [
+                        {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}}
+                    ],
+                }
+            ],
+            'deployment_branch_policy': {
+                'custom_branch_policies': True,
+                'protected_branches': False,
+            },
+        }
+        for candidate, valid in (
+            (environment, True),
+            ({}, False),
+            ({**environment, 'can_admins_bypass': True}, False),
+            ({**environment, 'protection_rules': []}, False),
+            ({**environment, 'deployment_branch_policy': None}, False),
+        ):
+            responses = [
+                candidate,
+                {'default_branch': 'main'},
+                {'total_count': 1, 'branch_policies': [{'name': 'main', 'type': 'branch'}]},
+            ]
+            with (
+                self.subTest(environment=candidate),
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'check-environment']),
+                patch.dict(os.environ, {'GITHUB_REPOSITORY': 'example/one'}),
+                patch.object(preview, 'api', side_effect=responses),
+            ):
+                if valid:
+                    preview.main()
+                else:
+                    with self.assertRaises(ValueError):
+                        preview.main()
+
     def test_reviewer_approval_requires_a_successful_pending_comment(self):
         workflow = (
             Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
