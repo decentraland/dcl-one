@@ -15,10 +15,10 @@ let app: Window
 let nextId = 1
 
 /** Posts a request from the app's frame, as the app does, and returns the response the shell posts back to it. */
-async function ask(method: string): Promise<unknown> {
+async function ask(method: string, params: unknown = {}): Promise<unknown> {
   const posted = vi.spyOn(app, 'postMessage').mockImplementation(() => {})
   const id = nextId++
-  window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:request', id, method, params: {} }, origin: location.origin, source: app }))
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:request', id, method, params }, origin: location.origin, source: app }))
   await vi.waitFor(() => expect(posted).toHaveBeenCalled())
   const [response, origin] = posted.mock.calls[0]
   expect(origin).toBe(location.origin)
@@ -45,6 +45,14 @@ describe('the shell’s answers to the app', () => {
   it('posts back what a shop request came to', async () => {
     shop.request.mockResolvedValue({ v: 1, credits: 700 })
     expect(await ask('shop.balance')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), result: { v: 1, credits: 700 } })
+  })
+
+  it('hands a shop request to the shop as the app sent it: its method and its params', async () => {
+    const params = { v: 1, items: [{ contract: '0x' + '11'.repeat(20), itemId: '1', quantity: 2 }], method: 'credits', cart: true }
+    shop.request.mockResolvedValue({ v: 1, operation: 'op', state: 'reviewing' })
+    await ask('shop.buy', params)
+    expect(shop.request).toHaveBeenCalledTimes(1)
+    expect(shop.request).toHaveBeenCalledWith('shop.buy', params)
   })
 
   it('posts back a busy shop’s code with its message', async () => {
