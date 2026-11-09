@@ -130,7 +130,33 @@ matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
 carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
 can fail an insert through an index. A database stamped before it keeps the
-superseded `worlds.logs_permissions` and its two indexes until dropped by hand.
+superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
+status` does not report, until their release drops them. Run it once, with the
+administrative role, after `catalyst schema migrate` created the decoded function
+and every replica runs a binary that queries it (an older `serve` calls the old
+function from its storage grant and `GET /collaborator`, which fail after the
+drop); it refuses a database without the decoded function and both its indexes:
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
+```
+
+The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+`content.deployments` in the migrate transaction, not concurrently, so writes to
+that table wait for the build (unmeasured on production). To build it outside
+that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
+(the function first, then the index, which the object pass then skips):
+
+```sql
+CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
+CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+    ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
+```
+
+A failed concurrent build leaves an invalid index of that name: drop it before
+retrying.
 Expected traffic is low; measured dataset sizes, query timings and index write
 costs must be recorded in the task report.
 
