@@ -192,10 +192,14 @@ State, in every build:
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
-  waits for it to grow with `inWorld`.
+  waits for it to grow with `inWorld`. `keyboardClaimed` is whether a text field (the HUD's or a
+  scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
+  waits for it to turn true after filling a field and false after leaving one (null where the
+  client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
-  each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
+  each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
+  movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
@@ -242,13 +246,22 @@ State, in every build:
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
 
+- `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
+  they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
+  scenarios hold them still for their frames.
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role
   and accessible name. The selector is JSON `{"name", "role", "index", "exact"}` or just the name;
   `/hud_fill` adds `"text"`, and `/hud_wait` adds `"state"` (`visible`, `hidden`, `enabled`,
-  `actionable`) and `"timeout"` in ms (10000 by default). A click needs the control visible,
-  enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
+  `actionable`, `ready`) and `"timeout"` in ms (10000 by default). A click needs the control
+  `actionable`: visible, enabled, not covered, no longer moving (a running CSS animation or
+  transition on it or a box around it; `"reason"` says `still moving`) and no pointer lock taking
+  the click (photo mode's camera holds the pointer until the right button frees it), and several
+  matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
+  the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
+  control out of every such region. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it

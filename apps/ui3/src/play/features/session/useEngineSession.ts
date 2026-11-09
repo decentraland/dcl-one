@@ -184,6 +184,8 @@ export interface BackpackState {
   outfits: OutfitSlot[]
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
+  /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
+  outfitsLoaded: boolean
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
@@ -1147,6 +1149,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const catalogItemsRef = useRef<Wearable[]>([])
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
+  const [outfitsLoaded, setOutfitsLoaded] = useState(false)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -1656,6 +1659,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'outfits':
           setOutfits(msg.metadata)
+          setOutfitsLoaded(true)
           break
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
@@ -3951,7 +3955,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
+      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },

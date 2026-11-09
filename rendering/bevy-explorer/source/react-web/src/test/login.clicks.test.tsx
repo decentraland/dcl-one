@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BootProgress } from '../features/engine/BootProgress'
 import { GuestStartPage } from '../features/login/GuestStartPage'
 import { LoadingAndLogin } from '../features/login/LoadingAndLogin'
 import { SessionProvider } from '../features/session/SessionContext'
 import type { EngineSession, LoginFlow } from '../features/session/useEngineSession'
-import { fakeSession } from './harness'
+import { renderSettled, fakeSession } from './harness'
 
 function flow(over: Partial<LoginFlow>): LoginFlow {
   return { ...fakeSession().login, ...over }
@@ -39,7 +39,7 @@ describe('login screen clicks', () => {
   it('no session: ACCEPT AND PLAY plays as a guest with the picked name and look, CONTINUE WITH AN ACCOUNT signs in', async () => {
     const f = flow({ status: 'sign-in-or-guest' })
     const session = fakeSession()
-    render(guestStart(f, session))
+    await renderSettled(guestStart(f, session))
     const field = screen.getByRole('textbox', { name: 'Name' })
     const play = screen.getByRole('button', { name: /ACCEPT AND PLAY/i })
     await userEvent.click(play)
@@ -87,7 +87,7 @@ describe('login screen clicks', () => {
   })
 
   it('a name that can not be claimed can not play', async () => {
-    render(guestStart(flow({ status: 'sign-in-or-guest' })))
+    await renderSettled(guestStart(flow({ status: 'sign-in-or-guest' })))
     const field = screen.getByRole('textbox', { name: 'Name' })
     await userEvent.clear(field)
     await userEvent.type(field, 'no spaces allowed')
@@ -95,25 +95,25 @@ describe('login screen clicks', () => {
   })
 
   it('reuse-login-or-new: the splash covers the way to the lobby; after a failed sign-in, JUMP IN / USE A DIFFERENT ACCOUNT', async () => {
-    const { unmount } = render(<LoadingAndLogin flow={flow({ status: 'reuse-login-or-new', account: '0xabc' })} />)
+    const { unmount } = await renderSettled(<LoadingAndLogin flow={flow({ status: 'reuse-login-or-new', account: '0xabc' })} />)
     expect(screen.queryByRole('button', { name: /JUMP INTO DECENTRALAND/i })).toBeNull()
     unmount()
     const f = flow({ status: 'reuse-login-or-new', account: '0xabc', error: 'Login failed' })
-    render(<LoadingAndLogin flow={f} />)
+    await renderSettled(<LoadingAndLogin flow={f} />)
     await userEvent.click(screen.getByRole('button', { name: /JUMP INTO DECENTRALAND/i }))
     expect(vi.mocked(f.jumpIn)).toHaveBeenCalledTimes(1)
     await userEvent.click(screen.getByRole('button', { name: /USE A DIFFERENT ACCOUNT/i }))
     expect(vi.mocked(f.useDifferentAccount)).toHaveBeenCalledTimes(1)
   })
 
-  it('CTAs are disabled while busy', () => {
-    render(guestStart(flow({ status: 'sign-in-or-guest', busy: true })))
+  it('CTAs are disabled while busy', async () => {
+    await renderSettled(guestStart(flow({ status: 'sign-in-or-guest', busy: true })))
     expect(screen.getByRole('button', { name: /ACCEPT AND PLAY/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /CONTINUE WITH AN ACCOUNT/i })).toBeDisabled()
   })
 
   it('shows the engine boot progress while loading; ACCEPT AND PLAY takes the click and shows the progress until the engine runs it', async () => {
-    const { rerender: rerenderBar, unmount } = render(<BootProgress flow={flow({ status: 'loading', engineReady: false, avatarLoaded: false, loadProgress: 42, loadStep: 'download' })} />)
+    const { rerender: rerenderBar, unmount } = await renderSettled(<BootProgress flow={flow({ status: 'loading', engineReady: false, avatarLoaded: false, loadProgress: 42, loadStep: 'download' })} />)
     const bar = screen.getByRole('progressbar')
     expect(bar).toHaveTextContent(/Downloading engine · 42%/i)
     expect(bar).toHaveAttribute('aria-valuenow', '42')
@@ -127,7 +127,7 @@ describe('login screen clicks', () => {
     unmount()
 
     const f = flow({ status: 'sign-in-or-guest', engineReady: false, loadProgress: 42, loadStep: 'download' })
-    const { rerender } = render(guestStart(f))
+    const { rerender } = await renderSettled(guestStart(f))
     const play = screen.getByRole('button', { name: /ACCEPT AND PLAY/i })
     expect(play).toBeEnabled()
     await userEvent.click(play)
@@ -143,10 +143,10 @@ describe('login screen clicks', () => {
     expect(screen.getByRole('button', { name: /ACCEPT AND PLAY/i })).toBeEnabled()
   })
 
-  it("the look's dice waits for the look it asked for to land on the live stage; the name's never waits", () => {
+  it("the look's dice waits for the look it asked for to land on the live stage; the name's never waits", async () => {
     const session = fakeSession()
     session.welcome = { ...session.welcome, lookPending: true }
-    const { rerender } = render(guestStart(flow({ status: 'sign-in-or-guest' }), session))
+    const { rerender } = await renderSettled(guestStart(flow({ status: 'sign-in-or-guest' }), session))
     // the snapshot stage swaps instantly, so nothing waits before the live stage is up
     expect(screen.getByRole('button', { name: 'Random look' })).toBeEnabled()
     rerender(guestStart(flow({ status: 'sign-in-or-guest' }), { ...session, lobbyStageReady: true }))

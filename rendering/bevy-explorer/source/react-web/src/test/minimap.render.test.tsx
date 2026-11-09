@@ -1,25 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { Minimap } from '../features/minimap/Minimap'
-import { fakeSession } from './harness'
+import { fakeSession, renderSettled } from './harness'
+
+vi.mock('../features/minimap/minimapPlaces', async (original) => ({
+  ...await original<typeof import('../features/minimap/minimapPlaces')>(),
+  loadMinimapPlaces: vi.fn(async () => [])
+}))
 
 // The minimap header: the scene name comes from the sceneInfo stream (see world.test.tsx for
 // the wiring); this covers what the header actually renders, including the empty-parcel case.
-function renderMinimap(sceneTitle: string): void {
+async function renderMinimap(sceneTitle: string): Promise<void> {
   const session = fakeSession()
-  render(<Minimap minimap={session.minimap} map={session.map} sceneTitle={sceneTitle} setEngineViewport={vi.fn()} />)
+  await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle={sceneTitle} setEngineViewport={vi.fn()} />)
 }
 
 beforeEach(() => localStorage.clear())
 
 describe('minimap header', () => {
-  it('shows the scene the player is standing in', () => {
-    renderMinimap('Genesis Plaza')
+  it('shows the scene the player is standing in', async () => {
+    await renderMinimap('Genesis Plaza')
     expect(screen.getByText('Genesis Plaza')).toBeInTheDocument()
   })
 
-  it('says the parcel is empty where nothing is deployed, not that the place is unknown', () => {
-    renderMinimap('')
+  it('says the parcel is empty where nothing is deployed, not that the place is unknown', async () => {
+    await renderMinimap('')
     expect(screen.getByText('Empty parcel')).toBeInTheDocument()
   })
 })

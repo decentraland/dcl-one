@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import type { Wearable } from '../engine/protocol'
@@ -31,6 +32,7 @@ describe('backpack deploy on close', () => {
   })
 
   it('a failed deploy says so and keeps the look', async () => {
+    expectConsoleOutput('error', [['[backpack] deploy failed:', 'failed to deploy to server.']])
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.session().backpack.toggle())
@@ -43,6 +45,7 @@ describe('backpack deploy on close', () => {
   })
 
   it('Retry deploys again; Revert asks the bridge for the last deployed look', async () => {
+    expectConsoleOutput('error', [['[backpack] deploy failed:', 'x'], ['[backpack] deploy failed:', 'x']])
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.driver.emit({ kind: 'avatarSaveFailed', message: 'x' }))
