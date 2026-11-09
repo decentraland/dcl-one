@@ -8,7 +8,7 @@ const WINDOWS_OPERA = WINDOWS_CHROME + ' OPR/120.0.0.0'
 const MAC_CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 const LINUX_CHROME = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 
-const adapter = (vendor: string, description: string): GpuAdapterInfo => ({ vendor, architecture: '', device: '', description })
+const adapter = (vendor: string, description: string, architecture = ''): GpuAdapterInfo => ({ vendor, architecture, device: '', description })
 
 describe('integratedGpuOnWindows', () => {
   it('is an Intel adapter on Windows, by vendor or by the driver string', () => {
@@ -21,6 +21,14 @@ describe('integratedGpuOnWindows', () => {
     expect(integratedGpuOnWindows(adapter('nvidia', 'NVIDIA GeForce RTX 4060 Laptop GPU'), WINDOWS_CHROME)).toBe(false)
     expect(integratedGpuOnWindows(adapter('amd', 'AMD Radeon RX 7600'), WINDOWS_CHROME)).toBe(false)
     expect(integratedGpuOnWindows(adapter('intel', 'Intel(R) Arc(TM) A770 Graphics'), WINDOWS_CHROME)).toBe(false)
+    // Chrome leaves the description empty by default: the architecture alone tells a discrete Arc
+    expect(integratedGpuOnWindows(adapter('intel', '', 'gen-12hp'), WINDOWS_CHROME)).toBe(false)
+    expect(integratedGpuOnWindows(adapter('intel', '', 'xe-2hpg'), WINDOWS_CHROME)).toBe(false)
+  })
+
+  it('is an Arc-branded integrated GPU (Core Ultra): the brand alone is not the discrete line', () => {
+    expect(integratedGpuOnWindows(adapter('intel', 'Intel(R) Arc(TM) Graphics', 'xe-lpg'), WINDOWS_CHROME)).toBe(true)
+    expect(integratedGpuOnWindows(adapter('intel', '', 'xe-2lpg'), WINDOWS_CHROME)).toBe(true)
   })
 
   it('is Windows only: elsewhere the browser already picks the GPU, and an "Intel Mac" is the CPU', () => {

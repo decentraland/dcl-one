@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BridgeClient } from './engine/bridge'
 import { EngineDriver } from './engine/EngineDriver'
@@ -132,7 +132,7 @@ export function App(): React.JSX.Element {
   // 'checking' shows a brief spinner.
   const gpu = useGpuProbe(GATE_REASON != null || MODE === 'mock' || MODE === 'native' || SHOWCASE)
   // The one GPU finding the player can act on: a Windows browser on its integrated GPU (the
-  // engine's probe path only; native renders through the host's own wgpu). Told once the HUD is up.
+  // engine's probe path only; native renders through the host's own wgpu). Told once signed in.
   const integratedGpu = GPU_GUIDE_FORCED
     ? SAMPLE_INTEGRATED_GPU
     : MODE === 'engine' && integratedGpuOnWindows(gpu.adapter)
@@ -238,13 +238,19 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
   }, [])
 
   // A Windows browser on its integrated GPU: how to move it to the dedicated one, as an ordinary
-  // dialog once per device ("Don't show again"; "Later" asks again next launch). Not where something
-  // else owns the UI (the embed), and always when forced for a look.
+  // dialog once the player is signed in and in the lobby or the world (never over the sign-in
+  // screen), once per device ("Don't show again"; "Later" asks again next launch) and once per
+  // launch. Not where something else owns the UI (the embed) and not on an unattended or
+  // auto-signed-in run (the benchmark, which nobody would close it on; `?guest=1` previews); always
+  // when forced for a look.
+  const gpuGuideDue = integratedGpu != null && (GPU_GUIDE_FORCED || session.phase === 'lobby' || session.phase === 'world')
+  const gpuGuideOffered = useRef(false)
   useEffect(() => {
-    if (integratedGpu == null || HIDE_HUD) return
-    if (!GPU_GUIDE_FORCED && getPref(PREF.gpuGuideSeen) === '1') return
+    if (integratedGpu == null || !gpuGuideDue || gpuGuideOffered.current || HIDE_HUD) return
+    if (!GPU_GUIDE_FORCED && (bootMode().autoLogin != null || getPref(PREF.gpuGuideSeen) === '1')) return
+    gpuGuideOffered.current = true
     return openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
-  }, [integratedGpu])
+  }, [gpuGuideDue, integratedGpu])
 
   // A world that doesn't exist, or a HUD bridge that never answered, isn't a crash — it's an ordinary
   // dialog on the popup layer, so it gets Escape/scrim-click for free and freezes nothing behind it

@@ -1,20 +1,23 @@
 // DOMAIN: the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) — the dialog a Windows
-// player on an Intel adapter gets once the HUD is up, with both ways to move the browser to the
+// player on an Intel adapter gets once signed in, with both ways to move the browser to the
 // dedicated GPU, and the two ways out of it (lib/integratedGpu.ts decides when it opens).
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PopupHost, closeTopPopup, resetPopups } from '../design'
 import { openIntegratedGpuGuide, WINDOWS_GRAPHICS_SETTINGS } from '../features/gate/IntegratedGpuGuide'
 import { isInputLocked } from '../lib/inputLock'
 
+// One host per test: a second `render(<PopupHost />)` would show every popup twice.
+beforeEach(() => {
+  render(<PopupHost />)
+})
 afterEach(resetPopups)
 
 const adapter = { vendor: 'intel', architecture: 'gen-12lp', device: '', description: 'Intel(R) Iris(R) Xe Graphics' }
 
 function open(onDontShowAgain = vi.fn()): ReturnType<typeof vi.fn> {
-  render(<PopupHost />)
   act(() => {
     openIntegratedGpuGuide({ adapter, onDontShowAgain })
   })

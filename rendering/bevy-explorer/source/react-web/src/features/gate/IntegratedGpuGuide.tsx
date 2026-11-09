@@ -1,8 +1,9 @@
 // "Your browser is on the integrated GPU" — an ordinary dialog on the popup layer, opened once the
-// HUD is up when the pre-boot probe found an Intel adapter on Windows (lib/integratedGpu.ts). Nothing
-// is broken: the world runs, only slower than the machine allows, and only the player can move the
-// browser to the dedicated GPU. Both fixes are pasted, never linked: Chromium blocks web pages from
-// opening chrome:// and ms-settings: targets (see FlagStep).
+// player is signed in when the pre-boot probe found an Intel adapter on Windows (lib/integratedGpu.ts).
+// Nothing is broken: the world runs, only slower than the machine allows, and only the player can
+// move the browser to the dedicated GPU. WebGPU cannot tell whether a second GPU exists at all, so
+// the copy hedges: an Intel-only machine qualifies too. Both fixes are pasted, never linked:
+// Chromium blocks web pages from opening chrome:// and ms-settings: targets (see FlagStep).
 
 import { openPopup, ModalShell, Button } from '../../design'
 import type { GpuAdapterInfo } from '../../lib/gpu'
@@ -55,8 +56,9 @@ export function openIntegratedGpuGuide({ adapter, onDontShowAgain }: IntegratedG
             (<span className={styles.adapter}>{adapter.description}</span>)
           </>
         )}
-        . Decentraland renders on the same GPU as the browser and cannot pick the dedicated one by itself.
-        Moving {browser.name} over makes the world run noticeably smoother. Either way works:
+        . If your computer also has a dedicated graphics card, Decentraland cannot pick it by itself: it renders
+        on the same GPU as the browser. Moving {browser.name} over makes the world run noticeably smoother.
+        Either way works:
       </p>
       <ol className={styles.steps}>
         <FlagStep
