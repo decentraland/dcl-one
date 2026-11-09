@@ -97,7 +97,7 @@ jobs:
     # A closed PR runs only preview-cleanup: this job, the format jobs and Changes skip it, and every build job needs Changes.
     if: github.event.action != 'closed'
     name: Integration guards
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
       - name: Reject a custom dist-tag from main
@@ -122,7 +122,7 @@ jobs:
     # them when a guard or a format check fails.
     if: github.event.action != 'closed'
     name: Changes
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     permissions:
       contents: read
       actions: read
@@ -161,7 +161,10 @@ jobs:
       matrix:
         os: ${{ (needs.changes.outputs.native-matrix == 'true' && github.actor != 'dependabot[bot]') && fromJSON('["windows-2025",
           "ubuntu-24.04", "macos-15"]') || fromJSON('["ubuntu-24.04"]') }}
-    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os == 'macos-15' && 'macos-15-xlarge' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (vars.RUNNER_WINDOWS_16CORE || 'windows-2025-16core')
+      || matrix.os == 'ubuntu-24.04' && (vars.RUNNER_LINUX_X86_UBUNTU_24_04_16CORE || 'ubuntu-24.04-16core')
+      || matrix.os == 'macos-15' && (vars.RUNNER_MACOS_XLARGE || 'macos-15-xlarge')
+      || matrix.os }}
     concurrency:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
@@ -174,7 +177,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
           avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
@@ -406,14 +409,14 @@ jobs:
   headless-smoke:
     if: needs.changes.outputs.headless == 'true'
     name: Headless Smoke
-    runs-on: ubuntu-22.04-16core
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_22_04_16CORE || 'ubuntu-22.04-16core' }}
     concurrency:
       group: ${{ github.workflow }}-headless-${{ github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
           avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
@@ -529,7 +532,7 @@ jobs:
   fmt:
     if: github.event.action != 'closed'
     name: Rustfmt
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
@@ -549,7 +552,7 @@ jobs:
     if: failure() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     name: Stop the build jobs after a failed guard or format check
     needs: [source, fmt, toml]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       actions: write
@@ -560,11 +563,11 @@ jobs:
   clippy:
     if: needs.changes.outputs.clippy == 'true'
     name: Clippy
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
@@ -605,7 +608,7 @@ jobs:
       - changes
   toml:
     if: github.event.action != 'closed'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -626,7 +629,7 @@ jobs:
   build-deploy-web:
     if: needs.changes.outputs.web == 'true'
     name: Web engine, HUD and bridge scene
-    runs-on: ubuntu-24.04-16core
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04_16CORE || 'ubuntu-24.04-16core' }}
     env:
       # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
@@ -666,7 +669,7 @@ jobs:
         working-directory: .
         run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}
       - name: Reserve disk space on the hosted Linux runner
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
           avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
@@ -808,7 +811,7 @@ jobs:
   publish-web:
     if: needs.build-deploy-web.outputs.publish == 'true'
     name: Publish the web package
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.web.outputs.version }}
     permissions:
@@ -875,7 +878,7 @@ jobs:
   rollout-web:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Roll out at decentraland.zone/play
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       id-token: write
       contents: read
@@ -929,7 +932,7 @@ jobs:
   preview-cleanup:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     name: Remove the PR preview tag
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       id-token: write
     steps:

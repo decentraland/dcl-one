@@ -427,7 +427,7 @@ def scene_summary(suite, outcome, log):
 
 def image_matrix(products):
     return {'include': [
-        {'product': product, 'arch': arch, 'runner': 'ubuntu-24.04' + ('-arm' if arch == 'arm64' else '')}
+        {'product': product, 'arch': arch, 'runner': 'ubuntu-26.04' + ('-arm' if arch == 'arm64' else '')}
         for product in products for arch in (('amd64', 'arm64') if product == 'web' else ('amd64',))]}
 
 

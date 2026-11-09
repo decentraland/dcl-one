@@ -79,7 +79,7 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('needs.changes.outputs.macos', workflow)
         self.assertEqual(workflow.count(
             "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos')"
-            " && '[\"ubuntu-26.04\"]' || '[\"ubuntu-26.04\", \"macos-26\"]'"), 2)
+            " && '[\"ubuntu-26.04\"]' || '[\"ubuntu-26.04\", \"macos-15\"]'"), 2)
 
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         # PRs test source on Linux only; finished main runs are its macOS check.

@@ -181,3 +181,72 @@ builds, and `ci:preview` publishes the Explorer web preview that the CI status
 comment links. `release:creator-hub` is read after the merge: the push to
 `main` publishes the Creator Hub installers as a pre-release only when its PR
 has the label.
+
+Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav natively or
+test what they compiled. Those run on `ubuntu-24.04`, the image the uuav binaries lock
+records. The headless server package for Linux and the headless smoke test build on
+`ubuntu-22.04`, so that package needs glibc 2.35 or newer. macOS jobs run on `macos-15`,
+Windows jobs on `windows-2025`; `xlarge` and `16core` where the explorer's test suite and
+headless packages need them. The Creator Hub jobs that hold a write permission or a secret
+keep `ubuntu-latest`, `macos-latest` and `windows-latest`. Its other Linux jobs run on
+`ubuntu-26.04`, and its inspector end-to-end job runs on `ubuntu-24.04`.
+
+## CI runners
+
+A job that holds only read permissions and no secret resolves `runs-on` through a repository
+variable `RUNNER_{OS}_{ARCH}_{VERSION}_{SIZE}` that falls back to the GitHub-hosted label
+written next to it. Defaults are left out of the
+name: ARCH for Windows (x86) and macOS (arm), while Linux always writes `X86` or `ARM`;
+VERSION for Ubuntu 26.04, macOS 15 and Windows 2025; SIZE for the standard runner, otherwise
+the label's own word (`16CORE`, `XLARGE`). So `ubuntu-26.04` is `RUNNER_LINUX_X86`,
+`ubuntu-24.04-16core` is `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` and `macos-15-xlarge` is
+`RUNNER_MACOS_XLARGE`. Unset, the job runs on the hosted label. Set to one of a fork's own
+runner labels, every job of that class runs there with the same workflow files, so a fork
+chooses per OS, architecture, version and size which jobs it hosts and which stay on GitHub.
+
+Set a `RUNNER_*` variable only to a label whose runners serve one job and are then
+discarded. This is a precondition, and the workflows do not check it. The jobs on the
+variables run pull request code, a fork's included. The same jobs build what the publishing
+jobs release: the web package, the headless packages and the explorer, gateway, APIs and
+Sites images go to the package registry, the CDN and the image registry as the artifacts
+and outputs of those jobs. A runner that keeps state from one job to the next lets a pull
+request change what a later run on `main` publishes. Require approval for the workflow runs
+of outside contributors too.
+
+A job that holds a write permission, an `environment` or a secret never follows a variable:
+it names its GitHub-hosted label, so its token and its secrets stay off the runners that the
+variables name. A job with no permissions block counts as one that holds a write permission.
+`tooling/tests/test_dev_workflow.py` fails on a job that breaks this rule.
+
+A step that removes the SDK directories of the hosted image to free disk space runs only on a
+GitHub-hosted runner (`runner.environment == 'github-hosted'`).
+
+`BEVY_E2E_WINDOWS_RUNNER` stays the separate switch for the GPU scenarios job, the one
+privileged job on a variable because GitHub hosts no such machine; its runner must serve no
+`RUNNER_*` label. The benchmark legs keep their laptop labels from
+`tooling/benchmark-inputs.py`. The job that holds the UI library's Figma file key (`key-scan`
+in `ui-library-key-scan.yml`) follows the same rule under its own check, the key reader
+policy (`library/ui/figma/test/workflows.test.ts`).
+
+| Variable | Hosted label | Jobs | Workflows |
+| --- | --- | ---: | --- |
+| `RUNNER_LINUX_X86_UBUNTU_22_04` | `ubuntu-22.04` | 1 | bevy-explorer-headless-build |
+| `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
+| `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
+| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 2 | bevy-explorer-ci (2) |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 43 | apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status, bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 3 | apis-sites-images, bevy-explorer-images, gateway-images |
+| `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
+| `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
+| `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
+| `RUNNER_MACOS_XLARGE` | `macos-15-xlarge` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
+
+A runner named by a variable with an Ubuntu version in its name must run that version: the
+explorer and uuav binaries built there need at least the glibc of the build host, so a newer
+host raises the floor above 2.35 for the Linux headless package and above 2.39 for the
+binaries built on Ubuntu 24.04.
+
+```bash
+gh variable set RUNNER_LINUX_X86 --body my-linux-runner
+gh variable set RUNNER_LINUX_X86_UBUNTU_24_04 --body my-ubuntu-24-04-runner
+```
