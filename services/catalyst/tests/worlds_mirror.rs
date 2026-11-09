@@ -52,6 +52,12 @@ struct Upstream {
     hold_token: Option<CancellationToken>,
     /// While set, `/scenes` answers this status instead of the listing.
     scenes_status: Option<StatusCode>,
+    /// `/scenes` faults: every page from the start (a proxy that drops `offset`), a page without
+    /// its `scenes`, and a scene left out of the pages and the total but listed by id (a listing
+    /// that moved while it was read).
+    scenes_ignore_offset: bool,
+    scenes_without_rows: bool,
+    scenes_hide: Option<String>,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -176,6 +182,7 @@ async fn fake_about(
 struct Page {
     limit: Option<usize>,
     offset: Option<usize>,
+    entity_id: Option<String>,
 }
 
 /// Every scene of the world, oldest first and paged, as upstream's `/scenes` answers.
@@ -188,10 +195,26 @@ async fn fake_scenes(
     if let Some(status) = st.scenes_status {
         return status.into_response();
     }
-    let all = st.worlds.get(&name).map(Vec::as_slice).unwrap_or(&[]);
+    if st.scenes_without_rows {
+        return Json(json!({"total": 1})).into_response();
+    }
+    let all: Vec<&Scene> = st
+        .worlds
+        .get(&name)
+        .into_iter()
+        .flatten()
+        .filter(|sc| match &page.entity_id {
+            Some(wanted) => *wanted == sc.id,
+            None => st.scenes_hide.as_ref() != Some(&sc.id),
+        })
+        .collect();
+    let offset = match st.scenes_ignore_offset {
+        true => 0,
+        false => page.offset.unwrap_or(0),
+    };
     let scenes: Vec<Value> = all
         .iter()
-        .skip(page.offset.unwrap_or(0))
+        .skip(offset)
         .take(page.limit.unwrap_or(100))
         .map(|sc| {
             json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
@@ -1080,19 +1103,44 @@ async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
     expected.sort();
     assert_eq!(held, expected, "every scene, not only the one /about names");
 
-    // A listing that fails retires nothing: the world waits for the next pass.
-    let mut more = specs.clone();
-    more.push(("S25".into(), "25,0".into(), b"s25".to_vec()));
-    {
-        let mut st = fake.state.lock();
-        add(&mut st, &more);
-        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    // A new scene upstream, and a listing that cannot be trusted: nothing is retired and the
+    // world waits for the next pass. A refusal (503, or 404 from a source without the route), a
+    // proxy that drops `offset`, a page without its rows, or a listing that moved while it was
+    // read (a held scene left out of the pages that the source still lists by id).
+    add_scene(
+        &mut fake.state.lock(),
+        world,
+        "S25",
+        "25,0",
+        &[("s.txt", b"s25")],
+    );
+    let held_before = node.scene_rows(world).await;
+    let hidden = ids[3].clone();
+    let faults: Vec<Box<dyn Fn(&mut Upstream)>> = vec![
+        Box::new(|st| st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE)),
+        Box::new(|st| st.scenes_status = Some(StatusCode::NOT_FOUND)),
+        Box::new(|st| st.scenes_ignore_offset = true),
+        Box::new(|st| st.scenes_without_rows = true),
+        Box::new(move |st| st.scenes_hide = Some(hidden.clone())),
+    ];
+    let clear = |st: &mut Upstream| {
+        st.scenes_status = None;
+        st.scenes_ignore_offset = false;
+        st.scenes_without_rows = false;
+        st.scenes_hide = None;
+    };
+    for (i, fault) in faults.iter().enumerate() {
+        {
+            let mut st = fake.state.lock();
+            clear(&mut st);
+            fault(&mut st);
+        }
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.synced, 0, "fault {i}");
+        assert_eq!(node.scene_rows(world).await, held_before, "fault {i}");
     }
-    let summary = node.pass(&ctx).await;
-    assert_eq!(summary.scenes.synced, 0);
-    assert_eq!(node.scene_rows(world).await.len(), 25);
 
-    fake.state.lock().scenes_status = None;
+    clear(&mut fake.state.lock());
     let summary = node.pass(&ctx).await;
     assert_eq!(summary.scenes.synced, 1);
     assert_eq!(node.scene_rows(world).await.len(), 26);

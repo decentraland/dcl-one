@@ -705,10 +705,13 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
       scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
     - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
-      (`listed_scene_ids`, `worlds/src/mirror.rs:1558`) and keeps `/about` for the world configuration and the
-      content `baseUrl`. A source without the route (404 or 405) keeps `/about`'s set; any other refusal stops
-      that world's sync, so nothing is retired. The read-through fill takes the same path. Pinned by
-      `tests/worlds_mirror.rs:1039` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      (`listed_scene_ids`, `worlds/src/mirror.rs:1565`) and keeps `/about` for the world configuration and the
+      content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
+      next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
+      a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
+      listing moved while it was read). A world over 2,000 scenes is refused on every pass. The read-through
+      fill takes the same path and stores the world only when every listed scene verifies. Pinned by
+      `tests/worlds_mirror.rs:1062` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
       in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
     - Severity: none (closed).
 
