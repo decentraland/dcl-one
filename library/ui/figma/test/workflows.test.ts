@@ -83,7 +83,9 @@ type Job = {
   container?: unknown
   services?: unknown
   defaults?: unknown
-  steps: WorkflowStep[]
+  uses?: string
+  secrets?: string | Record<string, unknown>
+  steps?: WorkflowStep[]
 }
 type Workflow = {
   on: Record<string, unknown> | string | string[]
@@ -92,6 +94,8 @@ type Workflow = {
   defaults?: unknown
   jobs: Record<string, Job>
 }
+// A reusable-workflow call has no steps.
+const stepsOf = (job: Job | undefined) => job?.steps ?? []
 const workflowFiles = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))
 const load = (file: string) => parse(readFileSync(path.join(workflows, file), 'utf8')) as Workflow
 const triggers = (workflow: Workflow) =>
@@ -112,19 +116,26 @@ const referencesKey = (value: unknown) =>
   KEY_REFERENCE.test(JSON.stringify(value ?? null)) || readsWholeSecrets(value)
 const environmentName = (job: Job) =>
   String(typeof job.environment === 'string' ? job.environment : (job.environment?.name ?? ''))
-// FIGMA_FILE_KEY is a repository secret, so a key reader is any job that references it in any form.
-const isKeyReaderJob = (job: Job) => referencesKey(job)
-const isKeyReader = (workflow: Workflow) => referencesKey(workflow)
+// FIGMA_FILE_KEY is a repository secret, so a key reader is any job that references it in any form, including
+// a call that passes every secret (secrets: inherit) or names the key in its secrets map.
+const passesKey = (job: Job) =>
+  typeof job.secrets === 'string'
+    ? job.secrets.trim().toLowerCase() === 'inherit'
+    : Object.keys(job.secrets ?? {}).some((name) => /^figma_file_key$/i.test(name))
+const isKeyReaderJob = (job: Job) => referencesKey(job) || passesKey(job)
+const isKeyReader = (workflow: Workflow) =>
+  referencesKey(workflow) || Object.values(workflow.jobs ?? {}).some(isKeyReaderJob)
 // Environments a key-holding job may declare. None for now: the key needs no environment, so a reader that
 // declares one is reported for a decision rather than accepted.
 const KEY_ENVIRONMENTS: string[] = []
-// A reader may only be started by events that run the default branch's copy of the workflow.
+// A reader may only be started by events that run the default branch's copy of the workflow: workflow_run and
+// push to main. deployment_status and deployment run the file at the deployed commit, so they are rejected.
 const DEFAULT_BRANCH = 'main'
 const PUSH_FILTERS = ['branches', 'paths', 'paths-ignore']
 function triggerViolations(workflow: Workflow): string[] {
   const problems: string[] = []
   for (const name of triggers(workflow)) {
-    if (name === 'workflow_run' || name === 'deployment_status') continue
+    if (name === 'workflow_run') continue
     if (name === 'push') {
       const push =
         typeof workflow.on === 'object' && !Array.isArray(workflow.on)
@@ -148,6 +159,8 @@ function triggerViolations(workflow: Workflow): string[] {
 // The only workflows that may read the key. web-previews-publish.yml is the CDN reviewer publisher; it is
 // allowed before it exists on main, and it must pass the same rules as the key scan once it does.
 const KEY_READERS = ['ui-library-key-scan.yml', 'web-previews-publish.yml']
+// github.workflow_sha is the commit of the running workflow file. It is trusted only because the trigger rule
+// admits only workflow_run and push to main, where that file is main's copy.
 const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ github.workflow_sha }}']
 // Actions a key-holding job may use, each pinned by a full commit sha.
 const TRUSTED_ACTIONS =
@@ -217,7 +230,8 @@ function keyReaderViolations(workflow: Workflow): string[] {
     const environment = environmentName(job)
     if (environment !== '' && !KEY_ENVIRONMENTS.includes(environment.toLowerCase()))
       problems.push(`${id}: declares environment ${environment}`)
-    const { steps: jobSteps, ...jobRest } = job
+    if (job.uses !== undefined) problems.push(`${id}: calls a reusable workflow`)
+    const { steps: jobSteps = [], ...jobRest } = job
     if (referencesKey(jobRest)) problems.push(`${id}: key outside a step env`)
     if (job.container !== undefined) problems.push(`${id}: runs in a container`)
     if (job.services !== undefined) problems.push(`${id}: starts service containers`)
@@ -278,7 +292,7 @@ function keyReaderViolations(workflow: Workflow): string[] {
 
 describe('the ui-library.yml url scan', () => {
   const workflow = load('ui-library.yml')
-  const guardSteps = workflow.jobs['key-guard']!.steps
+  const guardSteps = stepsOf(workflow.jobs['key-guard'])
 
   it('should prefetch every LFS object of the outgoing range, unfiltered, before scanning it', () => {
     const prefetch = guardSteps.findIndex((step) => step.run?.includes('lfs-prefetch.mjs'))
@@ -379,8 +393,9 @@ jobs:
 
   // A reader that passes every rule; each case below breaks exactly one.
   const PINNED = '3d3c42e5aac5ba805825da76410c181273ba90b1'
-  const reader = (change: (job: Job, workflow: Workflow) => void = () => {}): Workflow => {
-    const job: Job = {
+  type StepJob = Job & { steps: WorkflowStep[] }
+  const reader = (change: (job: StepJob, workflow: Workflow) => void = () => {}): Workflow => {
+    const job: StepJob = {
       steps: [
         {
           uses: `actions/checkout@${PINNED}`,
@@ -436,13 +451,57 @@ jobs:
     expect(isKeyReader(workflow)).toBe(true)
   })
 
+  it("should reject a reader that runs on deployment_status, which uses the deployed commit's workflow", () => {
+    const deployed = reader((_, workflow) => (workflow.on = { deployment_status: null }))
+    expect(keyReaderViolations(deployed)).toContain('triggered by deployment_status')
+  })
+
+  it('should flag a pull request job that passes every secret to a reusable workflow', () => {
+    const inherited = parse(`
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    secrets: inherit
+`) as Workflow
+    expect(isKeyReader(inherited)).toBe(true)
+    expect(keyReaderViolations(inherited)).toEqual(
+      expect.arrayContaining(['triggered by pull_request', 'call: calls a reusable workflow'])
+    )
+  })
+
+  it.each([
+    ['inherit', 'inherit'],
+    ['a secrets map that names the key', { figma_file_key: '${{ secrets.OTHER }}' }]
+  ] as [string, Job['secrets']][])(
+    'should treat a call passing %s as a key reader',
+    (_, secrets) => {
+      const call: Workflow = {
+        on: { workflow_run: null },
+        jobs: { call: { uses: 'owner/repo/.github/workflows/x.yml@main', secrets } }
+      }
+      expect(isKeyReader(call)).toBe(true)
+      expect(keyReaderViolations(call)).toContain('call: calls a reusable workflow')
+    }
+  )
+
+  it('should not treat a reusable workflow call that passes no key as a reader, nor throw on it', () => {
+    const call: Workflow = {
+      on: { workflow_run: null },
+      jobs: {
+        call: { uses: './.github/workflows/x.yml', secrets: { OTHER: '${{ secrets.OTHER }}' } }
+      }
+    }
+    expect(isKeyReader(call)).toBe(false)
+    expect(() => keyReaderViolations(call)).not.toThrow()
+  })
+
   it('should not treat a job that never names the key as a reader', () => {
     expect(isKeyReader(reader((job) => (job.steps = [{ run: 'true' }])))).toBe(false)
   })
 
   it.each([
     { on: { workflow_run: { workflows: ['x'] } } },
-    { on: { deployment_status: null } },
     { on: { push: { branches: ['main'] } } },
     { on: { push: { branches: ['main'], paths: ['library/ui/**'] }, workflow_run: null } }
   ])('should accept a reader triggered by %j', ({ on }) => {
@@ -453,6 +512,8 @@ jobs:
     [{ pull_request: null }, 'triggered by pull_request'],
     [{ pull_request_target: null }, 'triggered by pull_request_target'],
     [{ workflow_dispatch: null }, 'triggered by workflow_dispatch'],
+    [{ deployment_status: null }, 'triggered by deployment_status'],
+    [{ deployment: null }, 'triggered by deployment'],
     ['push', 'triggered by push beyond main'],
     [{ push: null }, 'triggered by push beyond main'],
     [{ push: { branches: ['feature'] } }, 'triggered by push beyond main'],
@@ -641,7 +702,7 @@ jobs:
 
 describe('ui-library-key-scan.yml', () => {
   const workflow = load('ui-library-key-scan.yml')
-  const allSteps = Object.values(workflow.jobs).flatMap((job) => job.steps)
+  const allSteps = Object.values(workflow.jobs).flatMap(stepsOf)
   const runs = allSteps.flatMap((step) => (step.run ? [step.run] : []))
 
   it('should run only from workflow_run, with the least permissions it needs', () => {
@@ -867,10 +928,10 @@ describe('ui-library-key-scan.yml', () => {
 
 describe('when the Figma capture lives in figma-design-system', () => {
   const ui = () => load('ui-library.yml')
-  const runs = (job: string) => ui().jobs[job]!.steps.map((step) => step.run ?? '')
+  const runs = (job: string) => stepsOf(ui().jobs[job]).map((step) => step.run ?? '')
 
   it('should require the port verification record on every pull request and push, before any install', () => {
-    const step = ui().jobs['key-guard']!.steps.find((item) =>
+    const step = stepsOf(ui().jobs['key-guard']).find((item) =>
       item.run?.includes('port-verification.mjs')
     )!
     expect(step.run).toContain('--base "$base" --head "$HEAD_SHA"')
@@ -921,7 +982,7 @@ describe('the controller-owned push boundary', () => {
   })
 
   it('should accept metadata only from a successful job of the triggering run and head', () => {
-    const script = load('ui-library-key-scan.yml').jobs['key-scan']!.steps[0]!.run!
+    const script = stepsOf(load('ui-library-key-scan.yml').jobs['key-scan'])[0]!.run!
 
     expect(script).toContain('actions/runs/$RUN_ID/jobs')
     expect(script).toContain('.run_id == $RUN_ID')
@@ -948,10 +1009,10 @@ describe('when key scanning covers the whole repository', () => {
   })
   it('should run the key guard from the merge commit so a branch older than the scripts still has them', () => {
     const job = load('ui-library.yml').jobs['key-guard']!
-    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))!
+    const checkout = stepsOf(job).find((step) => step.uses?.startsWith('actions/checkout@'))!
     expect(checkout.with).toMatchObject({ ref: '${{ github.sha }}', 'fetch-depth': 0 })
     expect(JSON.stringify(checkout.with)).not.toContain('pull_request.head')
-    const scope = job.steps.find((step) => step.run?.includes('range="$base..$HEAD_SHA"'))!
+    const scope = stepsOf(job).find((step) => step.run?.includes('range="$base..$HEAD_SHA"'))!
     expect(scope.env).toMatchObject({
       HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}',
       PR_BASE: '${{ github.event.pull_request.base.sha }}'
@@ -961,7 +1022,7 @@ describe('when key scanning covers the whole repository', () => {
   it('should let checkout use its temporary global config while isolating the Git run steps', () => {
     const ui = load('ui-library-key-scan.yml')
     expect(ui.env?.GIT_CONFIG_GLOBAL).toBeUndefined()
-    const all = ui.jobs['key-scan']!.steps
+    const all = stepsOf(ui.jobs['key-scan'])
     expect(all.find((step) => step.uses?.includes('actions/checkout'))!.with).toMatchObject({
       'set-safe-directory': false
     })

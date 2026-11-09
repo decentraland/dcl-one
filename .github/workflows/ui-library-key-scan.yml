@@ -2,8 +2,11 @@ name: Shared UI library key scan
 
 # The Figma file key check. It runs from the default branch, never from a pull request: workflow_run always
 # uses main's copy of this file, the only checkout is main (trusted/), and the pull request's commits and its
-# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. No pull request
-# file is ever executed while FIGMA_FILE_KEY is set. ui-library.yml itself holds no secret.
+# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. This workflow
+# executes no pull request file while FIGMA_FILE_KEY is mapped. ui-library.yml itself holds no secret. The key
+# is a repository secret, so other workflows run on same-repository branches can also read it; the policy in
+# library/ui/figma/test/workflows.test.ts reports any workflow that references it, but cannot prevent that
+# (an accepted risk).
 on:
   workflow_run:
     workflows: ["Shared UI library"]
