@@ -36,7 +36,7 @@ jobs:
       || (github.event.action == 'labeled' && github.event.label.name == 'ci:uuav-native')
       || (github.event.action != 'labeled' && github.event.action != 'unlabeled'
           && contains(github.event.pull_request.labels.*.name, 'ci:uuav-native'))
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     steps:
       - run: 'true'
 
@@ -362,7 +362,7 @@ jobs:
   publish:
     name: Publish manifest
     needs: [macos, windows, linux]
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

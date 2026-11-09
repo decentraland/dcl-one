@@ -87,7 +87,7 @@ jobs:
     # Every build job needs this one, so a closed PR runs only preview-cleanup.
     if: github.event.action != 'closed'
     name: Integration guards
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
       - name: Reject a custom dist-tag from main
@@ -108,7 +108,7 @@ jobs:
         run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
   changes:
     name: Changes
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     permissions:
       contents: read
       actions: read
@@ -478,7 +478,7 @@ jobs:
       - changes
   fmt:
     name: Rustfmt
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
@@ -542,7 +542,7 @@ jobs:
       - source
       - changes
   toml:
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -773,7 +773,7 @@ jobs:
   preview-cleanup:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     name: Remove the PR preview tag
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     permissions:
       id-token: write
     steps:

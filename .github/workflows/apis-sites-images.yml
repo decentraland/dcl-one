@@ -21,7 +21,7 @@ jobs:
       github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     outputs:
       sha: ${{ steps.source.outputs.sha }}
       run_id: ${{ steps.source.outputs.run_id }}
