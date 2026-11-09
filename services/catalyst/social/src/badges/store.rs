@@ -1,13 +1,14 @@
 //! The SQL and the assembly of the badges routes over `social.badge_*` and
 //! `social.user_*`. The published catalog (active and archived badges, in
-//! `created_at, id` order) is reference data, so every read shares one 300 s
-//! snapshot; a wallet's two tables come in one statement. Timestamps are
+//! `created_at, id` order) is read on every request, as upstream reads it:
+//! one statement of ~0.3 ms over the 34-badge, 84-tier catalog, so a
+//! backfill, an import or a console edit shows at once; a wallet's two
+//! tables come in one statement. Timestamps are
 //! `timestamp without time zone` in UTC and go out as epoch ms. The
 //! assembly follows upstream's `badge-service.ts` and `get-user-badges.ts`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::NaiveDateTime;
 use serde_json::Value;
@@ -21,7 +22,6 @@ use super::types::{
 };
 use crate::identity::Address;
 use crate::notifications::errors::ApiError;
-use crate::shared::cache::TtlMap;
 
 /// Upstream's production `CDN_HOST`: the default base every asset path
 /// resolves against, so the URLs are upstream's.
@@ -31,7 +31,6 @@ pub const DEFAULT_ASSET_BASE_URL: &str = "https://assets-cdn.decentraland.org";
 pub const LEGACY_ASSET_PREFIX: &str = "https://badges.decentraland.org/assets/";
 /// Upstream's category enum, in its order (`GET /categories`).
 pub const CATEGORIES: [&str; 5] = ["Explorer", "Collector", "Creator", "Socializer", "Builder"];
-const CATALOG_TTL: Duration = Duration::from_secs(300);
 const BADGE_NOTIFICATION_NS: uuid::Uuid =
     uuid::Uuid::from_u128(0x3b1e_6f0a_92c4_4d57_8e21_b6a0_c9d3_7f14);
 
@@ -104,7 +103,6 @@ pub(super) fn badge_granted_notification(
 pub struct BadgesStore {
     pool: PgPool,
     public_asset_base_url: String,
-    catalog: TtlMap<(), Arc<Catalog>>,
 }
 
 struct Catalog {
@@ -196,7 +194,6 @@ impl BadgesStore {
         Self {
             pool,
             public_asset_base_url,
-            catalog: TtlMap::new(CATALOG_TTL),
         }
     }
 
@@ -210,17 +207,12 @@ impl BadgesStore {
         &self.public_asset_base_url
     }
 
-    /// Drops the catalog snapshot (a test that inserts a definition).
-    pub fn invalidate_catalog(&self) {
-        self.catalog.clear();
-    }
+    /// Nothing to drop: the catalog is read per request. Kept for callers
+    /// written against the earlier snapshot.
+    pub fn invalidate_catalog(&self) {}
 
     async fn catalog(&self) -> Result<Arc<Catalog>, ApiError> {
-        self.catalog
-            .get_or_fetch((), || async {
-                Ok::<_, ApiError>(Arc::new(self.load_catalog().await?))
-            })
-            .await
+        Ok(Arc::new(self.load_catalog().await?))
     }
 
     /// One statement, so a publish or archive never splits the snapshot. A
