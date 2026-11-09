@@ -170,11 +170,15 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
 - its scene boundaries (`showSceneBoundaries`, `showAnimationReference`): the translucent cylinder,
   1 m round and 3 m tall, on its 4 m grid floor, which stands in for the shadow and glow; the
   avatar's framing grows to take it in.
+- its profile mode: the profile's avatar as it is (`default1` without a `profile`; urns and items
+  are not worn), from the renderer's fixed profile camera: 7 m in front at a 20 degree lens, looking
+  8.3 degrees down at 0.9 m, never fitted to the avatar. A drag still turns it; no zoom, pan or
+  auto-rotation.
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: profile, authentication and jesus modes, social emotes, spring bones, and
+Still to come: authentication and jesus modes, social emotes, spring bones, and
 configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds

@@ -146,6 +146,9 @@ pub enum Command {
         /// frame the avatar's measured bounds whatever their size, as the renderer's builder view
         /// does (otherwise the default view stands, and only an avatar too big for it is fitted)
         fit_subject: Option<bool>,
+        /// stand where the command puts it and never fit the avatar, as the Unity renderer's
+        /// profile, authentication and jesus cameras do
+        fixed: Option<bool>,
     },
     /// Background colour `#rrggbb`, or none for a transparent canvas.
     Background {
@@ -304,6 +307,8 @@ pub struct OrbitCamera {
     pub item_ready: bool,
     /// fit the avatar's measured bounds whatever their size (the builder view)
     pub fit_subject: bool,
+    /// never fit the avatar: the view stands as set (the profile modes)
+    pub fixed: bool,
     /// the scene boundaries are shown, and framed with the avatar
     pub boundaries: bool,
     pub lock_beta: bool,
@@ -346,6 +351,7 @@ impl Default for OrbitCamera {
             item_floor: 0.0,
             item_ready: false,
             fit_subject: false,
+            fixed: false,
             boundaries: false,
             lock_beta: false,
             tilt: 0.0,
@@ -656,12 +662,16 @@ fn apply_commands(
                 zoom_max,
                 reset,
                 fit_subject,
+                fixed,
             } => {
                 if reset == Some(true) {
                     orbit.reset_view();
                 }
                 if let Some(v) = fit_subject {
                     orbit.fit_subject = v;
+                }
+                if let Some(v) = fixed {
+                    orbit.fixed = v;
                 }
                 if let Some(v) = drag_speed {
                     orbit.drag_speed = v;
@@ -1279,7 +1289,10 @@ fn fit_to_bounds(
         tall.max(wide)
     };
     let ordinary = needs(0.0, ORDINARY_TOP, ORDINARY_REACH, orbit.target.y);
-    if orbit.fit_subject {
+    if orbit.fixed {
+        orbit.fit = 1.0;
+        orbit.fit_target = Vec3::ZERO;
+    } else if orbit.fit_subject {
         // the builder view, as the renderer fits it: centred on the bounds' middle, its height and
         // its widest turn across (the circumradius of its footprint) in view, with a margin. The
         // renderer's is 5% over its renderers' bounds, which run looser than the skinned surface

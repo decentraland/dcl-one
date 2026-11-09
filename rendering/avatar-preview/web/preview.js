@@ -39,6 +39,7 @@ const BODY = {
 // of the panel's height, seen from slightly above
 const DEFAULT_RADIUS = 4.6; // metres at the default 26.2 degree field of view
 const DEFAULT_TARGET_Y = 0.95;
+const DEFAULT_FOV = 26.2;
 const DEFAULT_BETA = 0.12;
 const DEFAULT_BACKGROUND = '#1a1720';
 // wearable-preview's emote names (PreviewEmote) that the catalyst's base-emotes collection has;
@@ -390,9 +391,29 @@ async function resolveBuilder(o, peer) {
   };
 }
 
+// the profile modes, as the Unity renderer loads them: the profile's avatar as it is, whatever
+// urns or item the page also names (`default1` when it names no profile)
+async function resolveProfile(o, peer) {
+  const avatar = await fetchProfile(peer, o.profile || 'default1');
+  const color = (c) => (c?.color ? hex(c.color) : null);
+  return {
+    outfit: {
+      op: 'outfit',
+      bodyShape: avatar.bodyShape || BODY.female,
+      wearables: [...(avatar.wearables || [])],
+      skin: color(avatar.skin), hair: color(avatar.hair), eyes: color(avatar.eyes),
+      hideFace: !!o.disableFace,
+    },
+    itemEmote: null,
+    solo: null,
+    locked: false,
+  };
+}
+
 async function resolveOutfit(o) {
   const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
   if (modeOf(o) === 'builder') return resolveBuilder(o, peer);
+  if (PROFILE_MODES.includes(modeOf(o))) return resolveProfile(o, peer);
   const outfit = { op: 'outfit', bodyShape: o.bodyShape || null, wearables: [], skin: o.skin, hair: o.hair, eyes: o.eyes };
   let itemEmote = null;
   // looked up first, added after the profile, which replaces the outfit's wearables
@@ -478,6 +499,27 @@ function cameraFrom(o) {
     c.radius = (DEFAULT_RADIUS / zoomFactor(o.zoom)) * (o.zoomScale || 1);
   }
   const mode = modeOf(o);
+  if (PROFILE_MODES.includes(mode)) {
+    // the Unity renderer's profile camera: 7 m in front, at a fixed 20 degree lens, looking 8.3
+    // degrees down at 0.9 m (the jesus camera stands 0.32 m higher); never fitted to the avatar,
+    // zoomed or panned, but the avatar still turns under a drag
+    const lift = mode === 'jesus' ? 0.32 : 0;
+    return {
+      op: 'camera',
+      alpha: c.alpha, beta: PROFILE_PITCH, radius: 7 / Math.cos(PROFILE_PITCH), fov: 20,
+      target: [0, 0.903 + lift, 0],
+      orthographic: o.projection === 'orthographic',
+      autoRotate: false,
+      interactive: o.camera !== 'static',
+      dragSpeed: (0.5 * Math.PI) / 180,
+      lockAlpha: !!o.lockAlpha,
+      lockRadius: true,
+      panning: false,
+      fitSubject: false,
+      fixed: true,
+      reset: true,
+    };
+  }
   // the Unity renderer: input in marketplace and builder only; auto-rotation in marketplace, and
   // there only when no emote item plays; a builder avatar turns four times faster under the drag
   const interactive = o.camera !== 'static' && (mode === 'marketplace' || mode === 'builder');
@@ -496,6 +538,8 @@ function cameraFrom(o) {
     wheelPrecision: o.wheelPrecision ?? 100,
     // the builder view fits the avatar whatever its size, as the renderer's builder camera does
     fitSubject: mode === 'builder',
+    fixed: false,
+    fov: DEFAULT_FOV,
     reset: true,
   };
 }
@@ -526,6 +570,10 @@ function showView(o, item) {
 // the Unity renderer's modes; an unknown or missing one is marketplace, as the wrapper sends
 const MODES = ['marketplace', 'builder', 'profile', 'authentication', 'jesus', 'configurator'];
 const modeOf = (o) => (MODES.includes(o.mode) ? o.mode : 'marketplace');
+// the modes that show a profile's avatar as it is, from the Unity renderer's fixed camera
+const PROFILE_MODES = ['profile', 'authentication', 'jesus'];
+// that camera's pitch: its rotation in the Unity scene looks 8.26 degrees down
+const PROFILE_PITCH = Math.asin(0.1436);
 
 // the wrapper hid the Unity renderer's controls whenever the host frames the canvas itself
 const hidesControls = (o) => !!o.hideControls || o.zoom != null || o.wheelZoom != null
