@@ -27,9 +27,10 @@ pub enum BanBlockEvent {
     SceneRoomChanged,
 }
 
-/// What the previous frame answered, so a change can be named.
+/// The ban and block status as of the last events written; the next frame's diff is taken
+/// against it.
 #[derive(Default)]
-pub(crate) struct Previous {
+pub(crate) struct LastEmittedBlockStatus {
     blocks: Option<(HashSet<Address>, HashSet<Address>)>,
     admission: SceneAdmission,
     room: Option<(String, HashSet<Address>, HashSet<Address>)>,
@@ -37,7 +38,7 @@ pub(crate) struct Previous {
 
 pub(crate) fn emit_ban_block_events(
     ban_block: BanBlock,
-    mut previous: Local<Previous>,
+    mut last_emitted: Local<LastEmittedBlockStatus>,
     mut events: EventWriter<BanBlockEvent>,
 ) {
     let current = match ban_block.blocks() {
@@ -47,15 +48,15 @@ pub(crate) fn emit_ban_block_events(
         } => Some((blocked, blocked_by)),
         Blocks::Unavailable { .. } => None,
     };
-    let mut changed = diff_blocks(previous.blocks.as_ref(), current);
+    let mut changed = diff_blocks(last_emitted.blocks.as_ref(), current);
     if !changed.is_empty() {
-        previous.blocks =
+        last_emitted.blocks =
             current.map(|(blocked, blocked_by)| (blocked.clone(), blocked_by.clone()));
     }
 
     let admission = ban_block.scene_admission();
-    if *admission != previous.admission {
-        previous.admission = admission.clone();
+    if *admission != last_emitted.admission {
+        last_emitted.admission = admission.clone();
         changed.push(BanBlockEvent::SceneAdmissionChanged);
     }
 
@@ -67,7 +68,7 @@ pub(crate) fn emit_ban_block_events(
         } => Some((scene_id, banned_addresses, scene_admins)),
         SceneRoomView::NotConnected => None,
     };
-    let same_room = match (&previous.room, room) {
+    let same_room = match (&last_emitted.room, room) {
         (None, None) => true,
         (Some((id, banned, admins)), Some((cur_id, cur_banned, cur_admins))) => {
             id == cur_id && banned == cur_banned && admins == cur_admins
@@ -75,7 +76,7 @@ pub(crate) fn emit_ban_block_events(
         _ => false,
     };
     if !same_room {
-        previous.room =
+        last_emitted.room =
             room.map(|(id, banned, admins)| (id.to_owned(), banned.clone(), admins.clone()));
         changed.push(BanBlockEvent::SceneRoomChanged);
     }
