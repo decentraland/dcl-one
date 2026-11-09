@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 15] = [
+const PREPARED_PENDING_STEPS: [&str; 16] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -27,6 +27,7 @@ const PREPARED_PENDING_STEPS: [&str; 15] = [
     "0034_shop_bid_invalidated",
     "0035_explore_mirror_adopted_at",
     "0036_social_badges_catalog_parity",
+    "0037_social_badge_processor",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -287,6 +288,58 @@ async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
     assert!(refused.is_err(), "a tier target is positive");
 }
 
+/// `social.client_events` as a database that kept explorer events before
+/// `0037_social_badge_processor` holds it: no `seq`, two rows.
+const CLIENT_EVENTS_BEFORE_SEQ: &str = "
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT client_events_pkey PRIMARY KEY (key)
+);
+INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at) VALUES
+  ('m1', 'client', 'used-emote', '0x' || repeat('c', 40), '2026-11-01', '2026-11-01'),
+  ('m2', 'client', 'used-emote', '0x' || repeat('c', 40), '2026-11-02', '2026-11-02');
+";
+
+/// `0037_social_badge_processor`: the kept events are numbered, a new one
+/// takes the next number, and the object pass adds the cursor table and the
+/// sequence's index.
+async fn assert_client_events_sequenced(pool: &PgPool) {
+    let seqs: Vec<(String, i64)> =
+        sqlx::query_as("SELECT key, seq FROM social.client_events ORDER BY seq")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(seqs, [("m1".to_string(), 1), ("m2".to_string(), 2)]);
+    let next: i64 = sqlx::query_scalar(
+        "INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at) \
+         VALUES ('m3', 'client', 'used-emote', '0x' || repeat('c', 40), now(), now()) RETURNING seq",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(next, 3);
+    let (cursors, seq_idx, moves_idx): (bool, bool, bool) = sqlx::query_as(
+        "SELECT to_regclass('social.badge_cursors') IS NOT NULL, \
+                to_regclass('social.client_events_seq_idx') IS NOT NULL, \
+                to_regclass('social.client_events_session_moves_idx') IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(cursors && seq_idx && moves_idx);
+}
+
 #[tokio::test]
 async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows() {
     let Some(old) = stamped_with_the_closure_base().await else {
@@ -450,6 +503,10 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .execute(pool)
         .await
         .unwrap();
+    sqlx::raw_sql(CLIENT_EVENTS_BEFORE_SEQ)
+        .execute(pool)
+        .await
+        .unwrap();
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -494,6 +551,7 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     );
 
     assert_placeholder_badges_upgraded(pool).await;
+    assert_client_events_sequenced(pool).await;
 
     let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
         "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"

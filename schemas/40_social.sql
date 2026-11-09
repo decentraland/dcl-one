@@ -896,6 +896,20 @@ CREATE TABLE social.badge_admin_audit (
     CONSTRAINT badge_admin_audit_action_check CHECK (action IN ('grant', 'revoke'))
 );
 
+-- The badge processor's durable read positions, one row per source, advanced
+-- in the transaction that writes the progress the rows it passed produced:
+-- `client_events` (social.client_events.seq), `deployments`
+-- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- log_index of a shop log) and the recount passes (`position` counts the
+-- passes; the first pass writes no notification).
+CREATE TABLE social.badge_cursors (
+    source text NOT NULL,
+    position bigint NOT NULL,
+    log_index integer NOT NULL DEFAULT 0,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
+);
+
 -- Presence badges (upstream presence_badges, same columns): where a catalog
 -- badge counts (a scene by its base parcel, or a world), inside which UTC
 -- window, and the rule: a visit, or a stay of required_seconds. The badge's
@@ -1367,6 +1381,9 @@ CREATE TABLE social.client_events (
     received_at timestamp(3) without time zone NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- Insertion order for consumer cursors (the badge processor); not commit
+    -- order, so a consumer stops at the first row not yet settled.
+    seq bigint GENERATED ALWAYS AS IDENTITY,
     CONSTRAINT client_events_pkey PRIMARY KEY (key),
     CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
     CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
@@ -1374,6 +1391,11 @@ CREATE TABLE social.client_events (
 );
 -- Consumers scan forward in insertion order; the purge deletes the oldest.
 CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
+-- The badge processor's cursor scan (seq > cursor ORDER BY seq).
+CREATE UNIQUE INDEX client_events_seq_idx ON social.client_events (seq);
+-- Traveler's session read-back: a wallet's moves in one session, newest first.
+CREATE INDEX client_events_session_moves_idx ON social.client_events (address, session_id, seq)
+    WHERE sub_type = 'move-to-parcel';
 
 -- Every stored client event is announced on the `social.client_events`
 -- channel, the row's identity columns as JSON (never the metadata: the
