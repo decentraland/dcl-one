@@ -34,9 +34,9 @@ import { useMarketplace } from "../market/access";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
+import { shopReads } from "../discovery/reads";
 import "./cartpage.css";
 import { listingTypeFor } from "@shop/market/access-rule";
-import { shopClient } from "../api/host";
 
 export type CartNavState = { resumeCheckout?: boolean; creditsAdded?: number };
 
@@ -75,7 +75,7 @@ function CartUpsell({ exclude }: { exclude: string[] }) {
   const marketplace = useMarketplace();
   const generic = useShopQuery(
     personalHidden !== null ? ["upsell-listings", marketplace ? "all" : "primary"] : null,
-    (signal) => fetchListings({ first: 40, listingType: listingTypeFor(marketplace) }, { client: shopClient(), signal }),
+    (signal) => fetchListings({ first: 40, listingType: listingTypeFor(marketplace) }, shopReads(signal)),
     { staleMs: 60_000 },
   );
   const skip = new Set(exclude);
@@ -206,7 +206,7 @@ function CartScreen() {
     if (wearableKeys.length === 0) return;
     setFittingBusy(true);
     try {
-      const items = await fetchCatalogByIds(wearableKeys, { client: shopClient() });
+      const items = await fetchCatalogByIds(wearableKeys, shopReads());
       if (items.length > 0) setFitting(items);
     } catch {
     } finally {

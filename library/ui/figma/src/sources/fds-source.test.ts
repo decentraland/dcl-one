@@ -550,6 +550,52 @@ describe('when the cache swap fails after the old cache was moved aside', () => 
     expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))).toEqual([])
     expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.staging-'))).toEqual([])
   })
+
+  it('should keep the original failure as the cause and name the backup when moving it back also fails', async () => {
+    const restoreError = new Error('injected restore failure')
+    const failingRename = async (from: string, to: string) => {
+      if (from.includes('.staging-')) throw new Error('injected rename failure')
+      if (from.includes('.previous-')) throw restoreError
+      await rename(from, to)
+    }
+    const error = await fetchFdsSource({
+      figmaRoot,
+      lockFile,
+      remote: `file://${remote}`,
+      rename: failingRename
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(FdsCacheError)
+    expect(((error as Error).cause as Error).message).toBe('injected rename failure')
+    expect((error as { restoreError?: unknown }).restoreError).toBe(restoreError)
+    const backups = (await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))
+    expect(backups).toHaveLength(1)
+    const backup = path.join(figmaRoot, backups[0]!, 'figma-snapshot')
+    expect((error as Error).message).toContain(backup)
+    expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
+    for (const [file, bytes] of before)
+      expect(await readFile(path.join(backup, file))).toEqual(bytes)
+  })
+})
+
+describe('when a killed run left a backup folder with this process id behind', () => {
+  const stale = () => path.join(figmaRoot, `figma-snapshot.previous-${process.pid}`)
+
+  beforeEach(async () => {
+    await fetchCache({ seal: true })
+    await mkdir(path.join(stale(), 'figma-snapshot'), { recursive: true })
+    await writeFile(path.join(stale(), 'figma-snapshot', 'left-behind.json'), '{"kept":true}\n')
+  })
+
+  it('should still swap the cache in and leave the stale folder untouched', async () => {
+    await fetchCache()
+    expect(existsSync(path.join(figmaRoot, 'figma-snapshot', '.fds-source.json'))).toBe(true)
+    expect(await readFile(path.join(stale(), 'figma-snapshot', 'left-behind.json'), 'utf8')).toBe(
+      '{"kept":true}\n'
+    )
+    expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))).toEqual([
+      path.basename(stale())
+    ])
+  })
 })
 
 describe('when the lock names the figma-design-system repository', () => {

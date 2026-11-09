@@ -34,7 +34,7 @@ import CreatorCard from "./collection/CreatorCard";
 import defaultCover from "./collection/default-cover.jpeg";
 import "../components/browselayout.css";
 import "./collection/collection.css";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../reads";
 
 const PAGE_SIZE = 48;
 
@@ -69,9 +69,9 @@ export default function Collection() {
     ...emoteFilters.emote,
   };
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(contractAddress ? ["collection-page", filters] : null, (skip, signal) =>
-    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { client: shopClient(), signal }),
+    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, shopReads(signal)),
   );
-  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
+  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, shopReads(signal)), { staleMs: 5 * 60_000 });
   const title = meta.data?.name || t("collection.fallbackTitle");
   useSeo({ title: meta.data?.name });
   const creator = meta.data?.creator || grid.items[0]?.creator;

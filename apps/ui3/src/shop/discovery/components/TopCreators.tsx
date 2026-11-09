@@ -14,7 +14,7 @@ import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
 import "./rail.css";
 import "./topcreators.css";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../reads";
 
 const CARDS = 8;
 const DAYS = 30;
@@ -28,7 +28,7 @@ function tr(key: string, fallback: string): string {
 }
 
 export async function loadTopCreators(signal?: AbortSignal): Promise<TopCreator[]> {
-  const ranked = await fetchShopTopCreators(CANDIDATES, DAYS, { client: shopClient(), signal });
+  const ranked = await fetchShopTopCreators(CANDIDATES, DAYS, shopReads(signal));
   const raw = ranked.length ? await fetchCommunityProfiles(ranked.map((c) => c.id), { signal }) : {};
   const profiles = new Map<string, CreatorProfile>();
   for (const [address, p] of Object.entries(raw)) profiles.set(address.toLowerCase(), { name: p.name, hasClaimedName: p.claimed === true, face: p.picture ?? undefined });
