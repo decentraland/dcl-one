@@ -108,6 +108,7 @@ pub fn create_runtime(
         ops: ops.into(),
         esm_files: sources::own().into(),
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
+        global_template_middleware: Some(hardened_ops::mark_timer_origin),
         middleware_fn: Some(Box::new({
             let pending_overrides = pending_overrides.clone();
             let pending_disabled = pending_disabled.clone();
@@ -155,7 +156,12 @@ pub fn create_runtime(
         ..Default::default()
     });
 
-    runtime.op_state().borrow_mut().put(blob_store);
+    {
+        let state = runtime.op_state();
+        let mut state = state.borrow_mut();
+        state.put(hardened_ops::take_timer_origin());
+        state.put(blob_store);
+    }
 
     {
         let mut problems = override_problems.take();

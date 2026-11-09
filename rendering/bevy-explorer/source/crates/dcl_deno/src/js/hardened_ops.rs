@@ -9,7 +9,7 @@ use deno_core::{
     url::{form_urlencoded, quirks, Url},
     v8, JsBuffer, OpDecl, OpState,
 };
-use deno_web::{BlobStoreTrait, InMemoryBlobPart};
+use deno_web::{BlobStoreTrait, InMemoryBlobPart, StartTime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -43,6 +43,9 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_blob_read_part(),
         op_blob_remove_part(),
         op_blob_create_object_url(),
+        op_now(),
+        op_time_origin(),
+        op_timer_now(),
     ]
 }
 
@@ -520,4 +523,84 @@ fn op_blob_remove_part(state: &mut OpState, #[string] id: &str) -> Result<(), Op
     let id = blob_part_id(id)?;
     state.borrow::<Arc<dyn BlobStoreTrait>>().remove_part(&id);
     Ok(())
+}
+
+// Scenes share a process, so every clock they can read is coarsened against timing side
+// channels.
+const CLOCK_GRANULARITY: std::time::Duration = std::time::Duration::from_millis(2);
+const CLOCK_GRANULARITY_MS: f64 = 2.0;
+
+fn coarsen(time: std::time::Duration) -> std::time::Duration {
+    let step = CLOCK_GRANULARITY.as_nanos();
+    let nanos = time.as_nanos() / step * step;
+    std::time::Duration::new(
+        (nanos / 1_000_000_000) as u64,
+        (nanos % 1_000_000_000) as u32,
+    )
+}
+
+fn expose_time(time: std::time::Duration, out: &mut [u8]) {
+    if out.len() >= 8 {
+        out[0..4].copy_from_slice(&(time.as_secs() as u32).to_ne_bytes());
+        out[4..8].copy_from_slice(&time.subsec_nanos().to_ne_bytes());
+    }
+}
+
+#[op2(fast)]
+fn op_now(state: &mut OpState, #[buffer] buf: &mut [u8]) {
+    let elapsed = state
+        .try_borrow::<StartTime>()
+        .map(|start| start.elapsed())
+        .unwrap_or_default();
+    expose_time(coarsen(elapsed), buf);
+}
+
+#[op2(fast)]
+fn op_time_origin(state: &mut OpState, #[buffer] buf: &mut [u8]) {
+    let monotonic = state
+        .try_borrow::<StartTime>()
+        .map(|start| start.elapsed())
+        .unwrap_or_default();
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .saturating_sub(monotonic);
+    expose_time(coarsen(epoch), buf);
+}
+
+/// deno_core's timer clock, in milliseconds since the realm was created. Rounded up, so a
+/// timer's start is never earlier than the clock the event loop fires it by.
+#[op2(fast)]
+fn op_timer_now(state: &mut OpState) -> f64 {
+    let elapsed = state
+        .try_borrow::<TimerOrigin>()
+        .map(|origin| origin.0.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or_default();
+    (elapsed / CLOCK_GRANULARITY_MS).ceil() * CLOCK_GRANULARITY_MS
+}
+
+/// When the realm's timer clock started; see [`mark_timer_origin`].
+pub struct TimerOrigin(pub std::time::Instant);
+
+thread_local! {
+    static CONTEXT_CREATED: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// A global-template middleware: deno_core starts the realm's timer clock just before it
+/// builds the global template, so this instant matches it to within microseconds.
+pub fn mark_timer_origin<'s, 'i>(
+    _scope: &mut v8::PinScope<'s, 'i, ()>,
+    template: v8::Local<'s, v8::ObjectTemplate>,
+) -> v8::Local<'s, v8::ObjectTemplate> {
+    CONTEXT_CREATED.with(|created| created.set(Some(std::time::Instant::now())));
+    template
+}
+
+/// The instant [`mark_timer_origin`] recorded while this thread created its last runtime.
+pub fn take_timer_origin() -> TimerOrigin {
+    TimerOrigin(
+        CONTEXT_CREATED
+            .with(|created| created.take())
+            .unwrap_or_else(std::time::Instant::now),
+    )
 }
