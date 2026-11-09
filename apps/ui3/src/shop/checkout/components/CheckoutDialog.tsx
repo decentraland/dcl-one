@@ -302,7 +302,7 @@ export function NoFundsBody(props: {
   }
 
   return (
-    <div className={styles.body}>
+    <DialogBody>
       <div className={styles.warning} data-testid={`${props.testId}-insufficient`}>
         <WarningIcon />
         <p className={styles.warningText}>
@@ -358,17 +358,17 @@ export function NoFundsBody(props: {
           {error}
         </p>
       ) : null}
-      <div className={styles.ctas}>
-        <button type="button" className={styles.btn} data-variant="outline" onClick={props.onCancel}>
+      <DialogCtas>
+        <DialogButton variant="outline" onClick={props.onCancel}>
           {TEXT.cancel}
-        </button>
+        </DialogButton>
         {iap ? null : (
-          <button type="button" className={styles.btn} data-variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid={`${props.testId}-topup`}>
+          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid={`${props.testId}-topup`}>
             {TEXT.buy}
-          </button>
+          </DialogButton>
         )}
-      </div>
-    </div>
+      </DialogCtas>
+    </DialogBody>
   );
 }
 
@@ -405,58 +405,58 @@ export function DialogLinkButton({ variant, ...rest }: { variant: Variant } & An
 /** The first price check: a spinner in the card's full height. */
 export function LoadingBody() {
   return (
-    <div className={styles.body} data-processing>
+    <DialogBody processing>
       <span className={styles.spinner} aria-hidden="true" />
-    </div>
+    </DialogBody>
   );
 }
 
 /** A purchase sent and not confirmed yet: the loader, what to expect, and the screen's buttons. */
 export function PendingBody({ text, testId, children }: { text: string; testId?: string; children: ReactNode }) {
   return (
-    <div className={styles.body} data-testid={testId}>
+    <DialogBody testId={testId}>
       <div className={styles.success}>
         <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
         <p className={styles.processing}>{text}</p>
       </div>
       {children}
-    </div>
+    </DialogBody>
   );
 }
 
 /** A purchase on its way: the loader, what is happening, and a sliding bar that claims no progress it has not made. */
 export function ProcessingBody({ text }: { text: string }) {
   return (
-    <div className={styles.body} data-processing>
+    <DialogBody processing>
       <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
       <div className={styles.processing}>{text}</div>
       <div className={styles.progress} aria-hidden="true">
         <span className={styles.progressFill} />
       </div>
-    </div>
+    </DialogBody>
   );
 }
 
 /** The failure panel: the reason (or that the Credits are safe), and a retry when there is one to make. */
 export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry?: () => void }) {
   return (
-    <div className={styles.body}>
+    <DialogBody>
       <div className={styles.error} data-testid="buy-error">
         <img className={styles.errorArt} src={buyErrorArt} alt="" width={64} height={80} />
         <p className={styles.errorText}>
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
       </div>
-      <div className={styles.ctas}>
-        <button type="button" className={styles.btn} data-variant="outline" data-full={onRetry ? undefined : true} onClick={onClose}>
+      <DialogCtas>
+        <DialogButton variant="outline" full={!onRetry} onClick={onClose}>
           {TEXT.cancel}
-        </button>
+        </DialogButton>
         {onRetry ? (
-          <button type="button" className={styles.btn} data-variant="ruby" onClick={onRetry}>
+          <DialogButton variant="ruby" onClick={onRetry}>
             {TEXT.tryAgain}
-          </button>
+          </DialogButton>
         ) : null}
-      </div>
-    </div>
+      </DialogCtas>
+    </DialogBody>
   );
 }

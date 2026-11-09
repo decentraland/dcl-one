@@ -101,13 +101,17 @@ type PaymentMethodStepProps = {
 
 export default function PaymentMethodStep(props: PaymentMethodStepProps) {
   const { display, rails } = props;
-  const shortfallId = useId();
   const creditsShortId = useId();
   const hasCredits = !!rails.credits;
   const hasMana = !!rails.mana;
   const hasCombined = !!rails.combined;
   const [picked, setPicked] = useState<Set<Ticked>>(() => seed(hasCredits, hasCombined, hasMana, props.initial));
+  // The earlier pick also seeds a step that mounts before its rails are priced again; the buyer's own tick replaces it.
+  const initial = useRef(props.initial ?? null);
   const creditsUsable = hasCredits || hasCombined;
+  // "Not enough Credits" only when that is what it is: a known balance below the price, not one that could not be read
+  // or a Credits price that is out.
+  const creditsShort = !creditsUsable && props.balanceCredits !== null && props.balanceCredits < props.priceCredits;
   const manaUsable = hasMana || hasCombined;
 
   // The rails follow the balances and the price as they resolve, so the ticks do too: one that stopped paying is
@@ -119,7 +123,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
       if (next.has("mana") && !manaUsable) next.delete("mana");
       // Two ticks that no longer pay together (the Credits now cover it alone): the Credits, as the first pick would be.
       if (next.size === 2 && !hasCombined) next.delete("mana");
-      if (next.size === 0) for (const r of seed(hasCredits, hasCombined, hasMana)) next.add(r);
+      if (next.size === 0) for (const r of seed(hasCredits, hasCombined, hasMana, initial.current)) next.add(r);
       // By content, not size: a swapped tick keeps the count.
       const same = next.size === prev.size && [...next].every((r) => prev.has(r));
       return same ? prev : next;
@@ -137,6 +141,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
 
   const toggle = (r: Ticked) => {
     if (r === "credits" ? !creditsUsable : !manaUsable) return;
+    initial.current = null;
     setPicked((prev) => {
       if (prev.has(r)) {
         const next = new Set(prev);
@@ -192,7 +197,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
           data-disabled={!creditsUsable}
           aria-disabled={!creditsUsable}
           aria-checked={hasC}
-          aria-describedby={creditsUsable ? undefined : creditsShortId}
+          aria-describedby={creditsShort ? creditsShortId : undefined}
           onClick={() => toggle("credits")}
         >
           <span className={styles.left}>
@@ -207,12 +212,6 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
               </span>
               <span className={styles.text}>
                 <span className={styles.label}>{TEXT.credits}</span>
-                {creditsUsable ? null : (
-                  // Upstream draws no reason on this row; a reader still gets one.
-                  <span className={styles.srOnly} id={creditsShortId}>
-                    {TEXT.notEnoughCredits}
-                  </span>
-                )}
                 <span className={styles.balance}>
                   {TEXT.creditsBalance}
                   <Icon name="credits" className={styles.balanceIco} />
@@ -232,6 +231,13 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
             </span>
           </span>
         </button>
+        {creditsShort ? (
+          // Upstream draws no reason on this row; a reader still gets one. Outside the row, so it is its description and
+          // not read again as part of its name.
+          <span className={styles.srOnly} id={creditsShortId}>
+            {TEXT.notEnoughCredits}
+          </span>
+        ) : null}
 
         <button
           type="button"
@@ -240,10 +246,9 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
           data-testid="pay-with-mana"
           data-selected={hasM}
           data-disabled={!manaUsable}
-          // Not natively disabled: a row that cannot pay stays reachable, so its reason is read out.
+          // Not natively disabled: a row that cannot pay stays reachable, and its name carries its reason ("Not enough MANA").
           aria-disabled={!manaUsable}
           aria-checked={hasM}
-          aria-describedby={manaUsable ? undefined : shortfallId}
           onClick={() => toggle("mana")}
         >
           <span className={styles.left}>
@@ -273,7 +278,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
                 </span>
               ) : (
                 // The balance is short, said as the fact it is: the Shop quotes no MANA-to-Credits rate anywhere.
-                <span className={styles.detail} id={shortfallId} data-testid="mana-shortfall-note">
+                <span className={styles.detail} data-testid="mana-shortfall-note">
                   {TEXT.notEnoughMana}
                 </span>
               )}

@@ -27,7 +27,7 @@ import type { RailContext } from "../../checkout/purchase/rail";
 import { createSpendGuard } from "../../checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
-import type { CartAddInput } from "../../cart/store";
+import { cartLineId, type CartAddInput } from "../../cart/store";
 import { formatMana } from "../../model/money";
 import type { CartLine, PurchaseOffer } from "../../model/purchase";
 import type { MixedPayment } from "../../payment/present";
@@ -52,6 +52,45 @@ type CombinedPhase =
   | { kind: "error"; message: string };
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
+const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
+
+// A split sent and not confirmed yet, per account and item, in this tab. The run writes it itself, so it is there however
+// the split was started (Buy now's dialog or the page's) and even when its screen is gone by then (an account switched
+// away remounts the dialog). It holds a second split off for 15 minutes, or until Check again reads the receipt.
+const SENT_KEY = "dcl-shop-buynow-split:v1:";
+export const SENT_HOLD_MS = 15 * 60 * 1000;
+
+export type SentSplit = { at: number; txHash: string | null; chainId: number | null };
+
+const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
+
+/** The split this account sent for this line, while it is held: recorded no later than now and no longer ago than the hold. */
+export function readSentSplit(account: string | null, lineId: string, now: number = Date.now()): SentSplit | null {
+  try {
+    const raw = sessionStorage.getItem(sentKey(account, lineId));
+    const sent = raw ? (JSON.parse(raw) as Partial<SentSplit>) : null;
+    if (!sent || typeof sent.at !== "number" || now < sent.at || now - sent.at >= SENT_HOLD_MS) return null;
+    return { at: sent.at, txHash: typeof sent.txHash === "string" ? sent.txHash : null, chainId: typeof sent.chainId === "number" ? sent.chainId : null };
+  } catch {
+    return null;
+  }
+}
+
+function writeSentSplit(account: string | null, lineId: string, sent: SentSplit): void {
+  try {
+    sessionStorage.setItem(sentKey(account, lineId), JSON.stringify(sent));
+  } catch {
+    // Without storage the screen still shows it while open.
+  }
+}
+
+function clearSentSplit(account: string | null, lineId: string): void {
+  try {
+    sessionStorage.removeItem(sentKey(account, lineId));
+  } catch {
+    // Nothing was stored.
+  }
+}
 
 /** What paying with Credits and MANA is doing, and what the screen drawing it can do next. */
 type CombinedBuyRun = {
@@ -69,6 +108,11 @@ type CombinedBuyRun = {
   declined(): void;
   /** Back to the start after a failure, so the buyer can choose again. */
   reset(): void;
+  /** A split for this account and line was sent and is not known to be confirmed yet (this run's, or an earlier one). */
+  remembered: boolean;
+  checking: boolean;
+  /** Reads the sent split's receipt: confirmed completes it, reverted fails it, and either releases the hold. */
+  checkAgain(): Promise<void>;
 };
 
 type Terms = { offer: PurchaseOffer; mixed: MixedPayment };
@@ -93,6 +137,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       mounted.current = false;
     };
   }, []);
+  const lineId = cartLineId(line.asset, line.listing);
+  const [remembered, setRemembered] = useState(() => readSentSplit(wallet.account, lineId) !== null);
+  useEffect(() => setRemembered(readSentSplit(wallet.account, lineId) !== null), [wallet.account, lineId]);
+  const [checking, setChecking] = useState(false);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
@@ -156,8 +204,11 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   async function pay(ctx: RailContext, { offer, mixed }: Terms, known?: PurchaseTarget) {
     setPhase({ kind: "working" });
     let creditId: string | null = null;
+    let sentHash: string | null = null;
+    let sentChain: number | null = null;
     try {
       const target = known ?? (await resolveTarget(ctx, offer));
+      sentChain = manaSpenderFor("combined", target).chainId;
       const item = line.asset.token.kind === "item" ? { contractAddress: line.asset.contract, itemId: line.asset.token.itemId } : undefined;
       const authorized = await authorizeUsdCredit(
         mixed.creditsCents,
@@ -173,7 +224,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const gapArgs = {
         credits: [{ ...authorized.credit }],
         manaGapWei: gap > 0n ? gap : mixed.manaWei,
-        onBroadcast: ({ txHash }: { txHash: string }) => guard.current.broadcast(id, txHash),
+        onBroadcast: ({ txHash }: { txHash: string }) => {
+          sentHash = txHash;
+          guard.current.broadcast(id, txHash);
+        },
         onReverted: ({ txHash }: { txHash: string | null }) => {
           if (txHash) guard.current.reverted(txHash);
         },
@@ -184,11 +238,16 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           ? await buyWithCreditsAndMana(ctx, { trade: target.trade, coupon: target.coupon, ...gapArgs })
           : await buyMintWithCreditsAndMana(ctx, { mint: target.mint, ...gapArgs });
       guard.current.submitFinished(id);
+      clearSentSplit(ctx.buyer, lineId);
+      setRemembered(false);
       setPhase({ kind: "success", txHash: hash });
       onDone?.(hash);
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
       if (isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e)) {
+        // Recorded for the account that sent it, whatever the wallet shows by now.
+        writeSentSplit(ctx.buyer, lineId, { at: Date.now(), txHash: sentHash, chainId: sentChain });
+        setRemembered(true);
         setPhase({ kind: "pending" });
         return;
       }
@@ -223,11 +282,40 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     reset: () => {
       if (!busy) setPhase({ kind: "review" });
     },
+    remembered,
+    checking,
+    checkAgain: async () => {
+      const sent = readSentSplit(wallet.account, lineId);
+      if (!sent) {
+        // The hold ran out: nothing stops a new purchase.
+        setRemembered(false);
+        if (phase.kind === "pending") setPhase({ kind: "review" });
+        return;
+      }
+      // A split that never got a hash has no receipt to read: the hold stands until it runs out.
+      if (!sent.txHash || sent.chainId === null) return;
+      setChecking(true);
+      try {
+        const receipt = await services.reader.receipt(sent.chainId, sent.txHash);
+        if (!receipt) return;
+        clearSentSplit(wallet.account, lineId);
+        setRemembered(false);
+        if (receipt.status === "reverted") setPhase({ kind: "error", message: REVERTED });
+        else {
+          setPhase({ kind: "success", txHash: sent.txHash });
+          onDone?.(sent.txHash);
+        }
+      } catch {
+        // A failed read is not an answer: still confirming.
+      } finally {
+        setChecking(false);
+      }
+    },
   };
 }
 
 export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
-  const { phase, busy, agreed, blocked, start, grant, approved, declined } = useCombinedBuy({ line, offer, mixed, onDone });
+  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checking, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
   const title = `Buy ${line.display.name}`;
   const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
   const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
@@ -245,10 +333,18 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
             <p role="status">Purchase complete. {line.display.name} is on its way to your wallet.</p>
             <Button onClick={onClose}>Done</Button>
           </>
-        ) : phase.kind === "pending" ? (
+        ) : phase.kind === "pending" || (remembered && phase.kind === "review") ? (
+          // Still confirming, from this run or one sent earlier: never a second one beside it.
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your purchases in a moment.</p>
-            <Button onClick={onClose}>Close</Button>
+            <div className="shop-orderbuy__actions">
+              <Button onClick={() => void checkAgain()} disabled={checking} data-testid="combined-check-again">
+                Check again
+              </Button>
+              <Button variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            </div>
           </>
         ) : (
           <>

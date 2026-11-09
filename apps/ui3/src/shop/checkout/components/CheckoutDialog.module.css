@@ -1,5 +1,6 @@
 /* from: shop@3a322cf9:app/src/components/BuyModal/modal.styles.ts (Modal, Scrim, Card, Head, HeadRow, Title, X, Balance*,
-         Body, Asset*, Warning*, Packs, Pack*, Total*, Ctas, Btn, Logo, BuyError*, ProcessingText, Progress*, Success*),
+         Body, Asset*, Warning*, Packs, Pack*, Total*, Ctas, Btn, Logo, BuyError*, ProcessingText, Progress*, and Success's
+         layout for the pending screen; "Purchase complete!" is Buy now's own, BuyModal.module.css),
          app/src/components/CreditPackPicker/CreditPackPicker.styles.ts (PackTile),
          app/src/components/CartCheckoutModal/CartCheckoutModal.styles.ts (Scroll, QtyTag),
          app/src/styles/index.css (cart-pop-in, .spinner), app/src/styles/theme.ts (the colours below).
