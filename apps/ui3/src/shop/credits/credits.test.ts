@@ -19,7 +19,7 @@ import { pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
 import { RESUME_CART_KEY } from "../checkout/purchase/cart";
 import { stashNameResume } from "../names/resume";
-import { bindBuyNowTopUp, clearTopUpHandoffs, dropBuyNowTopUp, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
+import { bindBuyNowTopUp, bindTopUpReturn, clearTopUpHandoffs, dropBuyNowTopUp, keepHandoffsOf, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
 
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
@@ -218,6 +218,20 @@ describe("hand-offs and the stream", () => {
       leave();
       stashNameResume("nacho");
       expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+    });
+
+    it("the cart's top-up, bound to its order, comes back for that order (also when continued) and for no other", () => {
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      keepHandoffsOf("order-c");
+      expect(takeTopUpReturn(T0, "order-c")?.path).toBe("/shop/cart");
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      keepHandoffsOf("order-x");
+      expect(takeTopUpReturn(T0, "order-c")).toBeNull();
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      expect(takeTopUpReturn(T0, "order-x")).toBeNull();
     });
 
     it("drops a cart top-up the buyer walked away from: the basket is never paid after Buy now's", () => {

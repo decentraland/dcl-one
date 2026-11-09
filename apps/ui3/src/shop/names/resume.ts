@@ -7,9 +7,8 @@ import { clearTopUpHandoffs } from "../credits/returns";
 
 export const RESUME_NAME_KEY = "dcl_shop_resume_name";
 
-/** The sibling hand-offs a NAME top-up supersedes (upstream RESUME_BUY_KEY, RESUME_CART_KEY). */
+/** Upstream's item hand-off a NAME top-up supersedes; the cart's and Buy now's are credits/returns.ts's, cleared below. */
 export const RESUME_BUY_KEY = "dcl_shop_resume_buy";
-export const RESUME_CART_KEY = "dcl_shop_resume_cart";
 
 function store(): Storage | null {
   try {

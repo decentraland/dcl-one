@@ -1,7 +1,7 @@
 // Buy now's dialog over the cart's own fakes (checkout/demo): the screens upstream's BuyModal shows, and that the
 // purchase goes through the cart's checkout without ever touching the buyer's cart.
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CartAddInput } from "../../cart/store";
@@ -157,6 +157,8 @@ describe("Buy now's dialog", () => {
     const approve = await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    // Focus came back into the dialog from the approval step.
+    expect(document.activeElement).toBe(screen.getByTestId("buy-modal"));
     // Paid, and not with a Credit: the purchase went out (relayed or from the wallet) with none authorized.
     expect(demo.relay.posts.length + demo.wallet.sent.length).toBeGreaterThan(0);
     expect(authorizations(demo)).toHaveLength(0);
@@ -227,7 +229,7 @@ describe("Buy now's dialog", () => {
   });
 
   it("back from Stripe through the page cache, the pack checkout can be started again", async () => {
-    const { opened } = renderBuy({ session: "web2", balanceCents: 30 });
+    const { opened, unmount } = renderBuy({ session: "web2", balanceCents: 30 });
     const dialog = await settledDialog();
     fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
     await waitFor(() => expect(opened).toHaveLength(1));
@@ -238,6 +240,9 @@ describe("Buy now's dialog", () => {
       window.dispatchEvent(shown);
     });
     expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled();
+    // Back on the page, the buyer has not left for Stripe after all: going now drops the hand-off.
+    unmount();
+    expect(sessionStorage.getItem("dcl-shop-buynow-return:v1")).toBeNull();
   });
 
   it("back from a top-up at a lower price, it finishes on its own", async () => {
@@ -251,6 +256,36 @@ describe("Buy now's dialog", () => {
     await settledDialog();
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("the higher price stays on screen after the dialog hands the resume back to the page", async () => {
+    const { demo, line, lineId } = renderBuy({ session: "web2" }, {});
+    cleanup();
+    // The page's side: it drops its resume as soon as the dialog reports it used.
+    function Page() {
+      const [resume, setResume] = useState<{ account: string; lineId: string; credits: number } | null>({ account: BOOK.buyer.toLowerCase(), lineId, credits: 10 });
+      return <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={() => setResume(null)} onClose={() => {}} />;
+    }
+    render(
+      <DemoShell demo={demo} path={PATH}>
+        <Page />
+      </DemoShell>,
+    );
+    const dialog = await settledDialog();
+    await act(async () => new Promise((r) => setTimeout(r, 50)));
+    expect(within(dialog).getByTestId("price-changed")).toBeTruthy();
+    expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("a wallet to reconnect: Buy waits, says why, and offers the way back", async () => {
+    let connects = 0;
+    renderBuy({ session: "web3", noSigner: true }, { tweak: (d) => (d.host.onConnectWallet = () => void (connects += 1)) });
+    const dialog = await settledDialog();
+    const held = await within(dialog).findByTestId("buy-modal-held");
+    expect(held).toHaveTextContent("Connect your wallet again to sign the purchase.");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    fireEvent.click(within(held).getByRole("button", { name: "Connect wallet" }));
+    expect(connects).toBe(1);
   });
 
   it("back from a top-up for another line, it waits for a press", async () => {

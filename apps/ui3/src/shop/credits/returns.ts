@@ -139,6 +139,19 @@ export function stashBuyNowTopUp(r: { path: string; account: string; lineId: str
   return attempt;
 }
 
+/**
+ * The pack order the cart's top-up created (a return with no attempt): continuing that order keeps the way back to the
+ * cart, and another order's grant never takes it.
+ */
+export function bindTopUpReturn(orderId: string): void {
+  try {
+    const back = read<TopUpReturn>(KEY);
+    if (back && !back.attempt && !back.orderId) store()?.setItem(KEY, JSON.stringify({ ...back, orderId }));
+  } catch {
+    // Unbound, the return still resumes for the next grant, as before.
+  }
+}
+
 /** The pack order this attempt's top-up created: the only one whose grant may finish the purchase. */
 export function bindBuyNowTopUp(attempt: string, orderId: string): void {
   try {

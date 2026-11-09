@@ -42,9 +42,9 @@ import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { backpackDeepLink, jumpUrl } from "../lib/jump";
-import buyErrorArt from "../../checkout/assets/buy-error.png?url";
-import packCoin from "../../checkout/assets/pack-coin.webp?url";
-import styles from "../../checkout/components/CheckoutModal.module.css";
+import buyErrorArt from "../assets/buy-error.png?url";
+import packCoin from "../assets/pack-coin.webp?url";
+import styles from "./BuyModal.module.css";
 
 const TEXT = {
   titleBuy: "Buy Item",
@@ -64,6 +64,8 @@ const TEXT = {
   completingResume: "Completing Purchase…",
   stillConfirming: "Your purchase is still being confirmed. It can take a few minutes; nothing is charged twice.",
   checkAgain: "Check again",
+  connectWallet: "Connect wallet",
+  switchAccount: "Switch account",
   successTitle: "Your purchase was successful!",
   successBody: "You can find your item in the My Items tab.",
   myItems: "My items",
@@ -95,8 +97,10 @@ function sessionStorageFor(namespace: string): () => CartStorage | null {
   };
 }
 
-// The dialogs' carts, one per account and item for this tab. A store of purchase state, not a cache of server state: the
-// same kind as the cart's own module-level store (cart/store.ts shopCart), which docs/web-app-standards.md allows.
+// The dialogs' carts, one per account and item for this tab, kept for the tab's life: one let go while a purchase is
+// being priced or sent could be created again beside it, unaware of that purchase. A store of purchase state, not a
+// cache of server state: the same kind as the cart's own module-level store (cart/store.ts shopCart), which
+// docs/web-app-standards.md allows; it holds only the items Buy now was opened on.
 const stores = new Map<string, CartStore>();
 
 const storeKey = (account: string | null, lineId: string) => `${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
@@ -124,13 +128,6 @@ function holdLine(cart: CartStore, line: CartAddInput): void {
   const held = cart.getSnapshot().lines.some((l) => l.id === id);
   if (!held) cart.add({ ...line, quantity: 1 });
   else if (!settlingIn(cart) && line.seen) cart.markSeen(id, line.seen);
-}
-
-/** A closed dialog's cart is let go unless a purchase in it is still settling (its storage keeps it either way). */
-function releaseBuyNowCart(account: string | null, lineId: string): void {
-  const key = storeKey(account, lineId);
-  const cart = stores.get(key);
-  if (cart && !settlingIn(cart)) stores.delete(key);
 }
 
 /** For tests: forget every dialog's cart. */
@@ -164,9 +161,6 @@ export default function BuyModal(props: BuyModalProps) {
   lineRef.current = props.line;
   useEffect(() => holdLine(cart, lineRef.current), [cart]);
   const services = useMemo(() => ({ cart }), [cart]);
-  // However the dialog goes (closed, the split taken to the page, the page left), its cart is let go once nothing in it
-  // is settling.
-  useEffect(() => () => releaseBuyNowCart(account, lineId), [account, lineId]);
   if (typeof document === "undefined") return null;
   return createPortal(
     <EnsureQueryClient>
@@ -180,7 +174,10 @@ export default function BuyModal(props: BuyModalProps) {
 
 type Phase = "loading" | "nofunds" | "ready" | "processing" | "pending" | "complete" | "error";
 
-function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, onClose }: BuyModalProps) {
+function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuyMixed, onClose }: BuyModalProps) {
+  // The resume this dialog opened with, kept for its life: the page drops its own copy once it is used (so a dialog
+  // mounted again never reuses it), but this one still owes the buyer the price-change notice it implies.
+  const [resume] = useState(given);
   const navigate = useNavigate();
   const services = useShopServices();
   const [purchased, setPurchased] = useState<PurchasedLine[] | null>(null);
@@ -240,12 +237,17 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
   // any other way the dialog goes, except leaving for the pack checkout it started.
   const attempt = useRef<string | null>(null);
   const leaving = useRef(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Back from Stripe through the page cache, the buyer did not leave after all: closing again drops the hand-off.
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) leaving.current = false;
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      window.removeEventListener("pageshow", onShow);
       if (attempt.current && !leaving.current) dropBuyNowTopUp(attempt.current);
-    },
-    [],
-  );
+    };
+  }, []);
   const close = () => {
     if (busy) return;
     if (attempt.current) {
@@ -281,6 +283,11 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
     dialogRef.current?.focus();
     return () => before?.focus?.();
   }, []);
+  // After the approval step (drawn in the dialog's place), focus comes back in.
+  const approving = !!co.approval;
+  useEffect(() => {
+    if (!approving) dialogRef.current?.focus();
+  }, [approving]);
   // A modal dialog keeps Tab and Shift+Tab inside it.
   const trapTab = (e: ReactKeyboardEvent) => {
     if (e.key !== "Tab" || !dialogRef.current) return;
@@ -309,6 +316,9 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
   }, [resume, phase, cartLine, co, priceChanged, onResumeUsed]);
 
   const selected = cartLine?.method ?? view?.primary ?? "credits";
+  // Why Buy waits, when it is not the price being checked or a purchase running: a wallet to reconnect, an account the
+  // wallet switched away from. The cart's own words, shown where the cart would show them.
+  const held = !co.canConfirm && !priceChanged && checked && !co.running ? (co.blockers.find((b) => !/^(Checking prices|A purchase from this cart|Purchase in progress|Your Credits balance)/.test(b)) ?? null) : null;
   const [useMixed, setUseMixed] = useState(false);
   const mixed = selected === "mana" && onBuyMixed ? (mana?.mixed ?? null) : null;
   const pay = () => {
@@ -341,7 +351,7 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
   const title = phase === "complete" ? TEXT.titleComplete : phase === "error" ? TEXT.titleError : phase === "nofunds" ? TEXT.titleNoFunds : TEXT.titleBuy;
   const balance = co.balanceError ? "—" : (co.balance?.credits ?? 0).toLocaleString("en-US");
   return (
-    <div className={styles.root} role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1} onKeyDown={trapTab}>
+    <div className={styles.root} data-shop-tokens role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1} onKeyDown={trapTab}>
       <div className={styles.scrim} onClick={busy ? undefined : close} aria-hidden="true" data-testid="buy-modal-scrim" />
       <div className={styles.card} data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
         <div className={styles.head}>
@@ -434,6 +444,29 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
               </section>
             ) : null}
             <AssetRow display={display} priceCredits={priceCredits} />
+            {held ? (
+              <div className={styles.warning} role="status" data-testid="buy-modal-held">
+                <WarningIcon />
+                <p className={styles.warningText}>
+                  {held}
+                  {co.wallet.accountMismatch && co.wallet.host?.onSwitchAccount ? (
+                    <>
+                      {" "}
+                      <button type="button" className={styles.warningLink} onClick={co.wallet.host.onSwitchAccount}>
+                        {TEXT.switchAccount}
+                      </button>
+                    </>
+                  ) : !co.wallet.host?.provider && co.wallet.host?.onConnectWallet ? (
+                    <>
+                      {" "}
+                      <button type="button" className={styles.warningLink} onClick={co.wallet.host.onConnectWallet}>
+                        {TEXT.connectWallet}
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
             <div className={styles.ctas}>
               <button
                 type="button"
@@ -482,7 +515,7 @@ function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, 
             <Confetti className={styles.confetti} />
             <div className={styles.success} data-testid="buy-modal-complete">
               <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
-                <circle cx="32" cy="32" r="32" fill="#34ce74" />
+                <circle cx="32" cy="32" r="32" className={styles.successMark} />
                 <path d="M20 33l8 8 16-18" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <p className={styles.successText}>
@@ -540,7 +573,7 @@ function AssetRow({ display, priceCredits }: { display: CartLineDisplay; priceCr
 const WarningIcon = () => (
   <svg viewBox="0 0 20 20" width="24" height="24" aria-hidden="true">
     <path
-      fill="#f48221"
+      className={styles.warningMark}
       d="M10 0a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm0-8a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Z"
     />
   </svg>

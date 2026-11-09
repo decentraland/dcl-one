@@ -4,8 +4,8 @@
          .spinner), app/src/styles/theme.ts (the colours below).
    The checkout modal's shell: a scrim over the whole viewport and a card holding a header (title, close, the
    Credits balance) and one body per phase. Upstream's Buy now draws it on its dark surface, which is the only one
-   ported here. The dialog renders in a portal outside the Shop's
-   token scope (`.shop-chrome`), so each token carries its value as the fallback. */
+   ported here. The dialog renders in a portal outside `.shop-chrome`; its root carries `data-shop-tokens`, which gives
+   it the same token scope (shoptheme.css). */
 
 .root {
   --ckm-accent: var(--shop-accent, #691fa9);
@@ -14,7 +14,7 @@
   --ckm-glass: var(--shop-glass, rgba(255, 255, 255, 0.2));
   --ckm-glass-strong: rgba(255, 255, 255, 0.3);
   --ckm-overlay: var(--shop-overlay, rgba(0, 0, 0, 0.4));
-  --ckm-modal-tile: #3f1365;
+  --ckm-modal-tile: var(--shop-modal-tile, #3f1365);
   --ckm-red: var(--shop-dcl-red, #ff2d55);
   --ckm-buy: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
   --ckm-progress: linear-gradient(90deg, #ff2d55 0%, #ffbc5b 100%);
@@ -522,4 +522,12 @@
   .progressFill {
     animation: none;
   }
+}
+
+/* The success check and the warning glyph, in the Shop's own colours. */
+.successMark {
+  fill: var(--shop-success, #34ce74);
+}
+.warningMark {
+  fill: var(--shop-warning, #f48221);
 }
