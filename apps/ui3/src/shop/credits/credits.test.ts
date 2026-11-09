@@ -137,7 +137,8 @@ describe("packs", () => {
 
   it("the client reads the node's own 'order not found' string", () => {
     // This file's fixtures are built from the constant, so only this test pins its value. The node's side is pinned by
-    // orders.rs's `order_not_found_wire_body`: changing either string without the other fails a test.
+    // orders.rs's `order_not_found_wire_body`: each test catches an accidental change on its side; a deliberate change
+    // to one must update the other by hand.
     expect(ORDER_NOT_FOUND).toBe("order not found");
   });
 
