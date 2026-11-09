@@ -1,0 +1,56 @@
+.Navbar,
+.Header.Navbar {
+  height: 100px;
+  margin-bottom: 30px;
+  padding: 0 32px;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.Navbar .menu {
+  display: flex;
+  margin-left: 26px;
+  gap: 40px;
+}
+
+.Navbar .logo {
+  display: flex;
+  align-items: center;
+}
+
+.Navbar .menu .menu-item {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0;
+  cursor: pointer;
+  text-transform: uppercase;
+  padding: 10px 4px;
+  color: var(--dcl-silver);
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.Navbar .menu .menu-item:hover {
+  background: var(--palette-whiteTransparent-subtle);
+}
+
+.Navbar .menu .menu-item:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: -2px;
+}
+
+.Navbar .menu .menu-item.active {
+  color: var(--palette-neutral-softWhite);
+  box-shadow: inset 0 -2px 0 var(--palette-neutral-softWhite);
+}
+
+.Navbar .actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.Header.Navbar > .user {
+  margin-left: 20px;
+}

@@ -177,6 +177,19 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         component.write_text("import styled from 'styled-components'\nexport const A = styled.div``\nexport const B = styled.span``\n")
         self.assertEqual(ui_standards.check('HEAD'), [])
 
+    def test_imported_files_pass_only_when_added(self):
+        (self.root / 'tooling').mkdir()
+        (self.root / ui_standards.IMPORTED).write_text('# imported\napps/sites/src/Old.tsx\napps/sites/src/Old.css\n')
+        component = self.path / 'Old.tsx'
+        component.write_text("import styled from 'styled-components'\n")
+        (self.path / 'Old.css').write_text('.root {}\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed'])
+        self.commit('import')
+        component.write_text("import styled from 'styled-components'\nimport { css } from '@emotion/css'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
+
     def test_colored_diff_config_does_not_hide_added_lines(self):
         self.git('config', 'color.diff', 'always')
         component = self.path / 'Card.tsx'

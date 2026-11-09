@@ -98,6 +98,8 @@
 /apps/ui3/src/editor/ @decentraland/web-applications
 /apps/ui3/editor-scene/ @decentraland/web-applications
 /apps/creator-hub/ @decentraland/web-applications
+/.github/workflows/creator-hub-*.yml @decentraland/web-applications
+/.github/actions/creator-hub-*/ @decentraland/web-applications
 
 # explorer-client
 /rendering/bevy-explorer/ @decentraland/client

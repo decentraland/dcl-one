@@ -1,0 +1,83 @@
+import { ipcMain } from 'electron';
+import log from 'electron-log';
+
+import type { Ipc, IpcError, IpcResult } from '/shared/types/ipc';
+import { captureException } from '@sentry/electron/main';
+import { StreamError } from './bin';
+
+const SENSITIVE_KEY = /^x-identity-|auth-chain|authorization|password|token|secret/i;
+
+/**
+ * Renders IPC arguments for the log. Credential-shaped values are masked because
+ * these lines land in the electron log on disk — `metrics.request` alone carries
+ * a signed ADR-44 auth chain on every call.
+ */
+export function formatArgs(args: unknown[]): string {
+  return args
+    .map(
+      (arg, idx) =>
+        `args[${idx}]=${JSON.stringify(arg, (key, value) =>
+          SENSITIVE_KEY.test(key) ? '[redacted]' : value,
+        )}`,
+    )
+    .join(' ');
+}
+
+// wrapper for ipcMain.handle with types
+export async function handle<T extends keyof Ipc>(
+  channel: T,
+  handler: (event: Electron.IpcMainInvokeEvent, ...args: Parameters<Ipc[T]>) => ReturnType<Ipc[T]>,
+) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      log.info(`[IPC] channel=${channel} ${formatArgs(args)}`.trim());
+      const value = await handler(event, ...(args as Parameters<Ipc[T]>));
+      const result: IpcResult<typeof value> = {
+        success: true,
+        value,
+      };
+      return result;
+    } catch (error: any) {
+      const name = error.name || 'Error';
+      log.error(`[IPC] channel=${channel} name=${name} error=${error.message}`);
+
+      const extra: Record<string, string> = { channel };
+      if (error instanceof StreamError) {
+        extra.stderr = error.stderr.toString('utf8');
+      }
+
+      if (name !== 'AbortError') {
+        captureException(error, { tags: { source: 'ipc-handle' }, extra });
+      }
+      const result: IpcError = {
+        success: false,
+        error: {
+          message: error.message,
+          name,
+        },
+      };
+      return result;
+    }
+  });
+}
+
+export function handleSync<T extends keyof Ipc>(
+  channel: T,
+  handler: (event: Electron.IpcMainEvent, ...args: Parameters<Ipc[T]>) => ReturnType<Ipc[T]>,
+) {
+  ipcMain.on(channel, (event, ...args) => {
+    try {
+      log.info(`[IPC-SYNC] channel=${channel} ${formatArgs(args)}`.trim());
+      const result = handler(event, ...(args as Parameters<Ipc[T]>));
+      event.returnValue = result;
+      return result;
+    } catch (error: any) {
+      const name = error.name || 'Error';
+      log.error(`[IPC-SYNC] channel=${channel} name=${name} error=${error.message}`);
+
+      captureException(error, { tags: { source: 'ipc-handleSync' }, extra: { channel } });
+      event.returnValue = null;
+      return null;
+    }
+  });
+}

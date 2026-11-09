@@ -21,6 +21,10 @@ NON_WEB_ROOTS = ('apps/dcl-scene-cli/scripts/', 'apps/dcl-scene-cli/src/template
 # Application entry stylesheets (App.css, index.css, main.css directly in an app's src/) are global by design.
 ENTRY_STYLESHEETS = ('app', 'index', 'main')
 ENTRY_DIRECTORY = re.compile(r'^(?:apps/[^/]+/src|rendering/bevy-explorer/source/react-web/src)/[^/]+$')
+# Files that already broke these rules when a whole project was imported (apps/creator-hub,
+# docs/adr/2026-11-09-creator-hub-in-dcl-one.md). They pass only as the files that change adds;
+# any later change to one is checked like every other file. Nothing is added to this list.
+IMPORTED = 'tooling/ui-standards-imported.txt'
 ZERO_SHA = re.compile(r'^0+$')
 COMMIT_SHA = re.compile(r'^[0-9a-f]{40}$')
 CSS_IN_JS_MODULE = re.compile(r'^(?:styled-components|@emotion/(?:styled|react|css)|@mui/(?:material/styles|system)/styled|@mui/styled-engine(?:-sc)?)(?:/.*)?$')
@@ -247,6 +251,14 @@ def resolve_base(base):
     return fallback
 
 
+def imported_paths():
+    try:
+        lines = (ROOT / IMPORTED).read_text(encoding='utf-8').splitlines()
+    except FileNotFoundError:
+        return frozenset()
+    return frozenset(line.strip() for line in lines if line.strip() and not line.startswith('#'))
+
+
 def check(base='HEAD', staged=False):
     """List violations in changes from base to the working tree, or to the index when staged."""
     base = resolve_base(base)
@@ -272,11 +284,12 @@ def check(base='HEAD', staged=False):
 
     changed = names(diff, '--name-only', '--diff-filter=ACMR', '--end-of-options', base, '--') | untracked
     added = new_files(diff, base) | untracked
+    imported = imported_paths() & added
     issues = []
-    for name in sorted(added):
+    for name in sorted(added - imported):
         if is_ui_source(name) and is_component_stylesheet(name, tracked):
             issues.append(f'{name}: new component styles must use .module.css')
-    for name in sorted(changed):
+    for name in sorted(changed - imported):
         if not is_ui_source(name) or not name.endswith(SCRIPT_EXTENSIONS):
             continue
         if name in untracked:

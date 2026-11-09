@@ -1,0 +1,72 @@
+name: Creator Hub / CI
+# The entry point for the Creator Hub workspace (apps/creator-hub): it calls every other
+# creator-hub-*.yml workflow. Reusable workflows can't widen the token, so this grants the
+# most any of them needs and each job narrows it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/creator-hub/**'
+      - '.github/workflows/creator-hub-*'
+      - '.github/actions/creator-hub-*/**'
+  pull_request:
+    paths:
+      - 'apps/creator-hub/**'
+      - '.github/workflows/creator-hub-*'
+      - '.github/actions/creator-hub-*/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: creator-hub-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/creator-hub-build.yml
+  lint:
+    uses: ./.github/workflows/creator-hub-lint.yml
+  typechecking:
+    needs: [ build ]
+    uses: ./.github/workflows/creator-hub-typechecking.yml
+  tests:
+    needs: [ build ]
+    uses: ./.github/workflows/creator-hub-tests.yml
+  e2e:
+    needs: [ build, tests ]
+    uses: ./.github/workflows/creator-hub-e2e.yml
+    secrets: inherit
+  drop_pre_release:
+    name: drop pre-release
+    needs: [ lint, typechecking, tests ]
+    uses: ./.github/workflows/creator-hub-drop.yml
+    secrets: inherit
+    with:
+      # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+  asset-packs:
+    needs: [ drop_pre_release ]
+    uses: ./.github/workflows/creator-hub-asset-packs.yml
+    secrets: inherit
+  inspector:
+    needs: [ asset-packs ]
+    uses: ./.github/workflows/creator-hub-inspector.yml
+    secrets: inherit
+    with:
+      asset_packs_s3_bucket_key: ${{ needs.asset-packs.outputs.s3_bucket_key }}
+      asset_packs_version: ${{ needs.asset-packs.outputs.version }}
+      asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
+  creator-hub:
+    needs: [ inspector ]
+    uses: ./.github/workflows/creator-hub-desktop.yml
+    secrets: inherit
+    with:
+      # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
+      inspector_version: ${{ needs.inspector.outputs.version }}
+      inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}

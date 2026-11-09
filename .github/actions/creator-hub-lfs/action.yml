@@ -1,0 +1,31 @@
+name: Creator Hub asset-pack media
+description: >-
+  Fetch the asset packs' Git LFS media (apps/creator-hub/packages/asset-packs/packs), through a
+  cache keyed on the LFS object ids, so a run downloads from LFS only what changed. Only the jobs
+  that build, validate or upload the packs need it.
+
+runs:
+  using: composite
+  steps:
+    - name: List the packs' LFS objects
+      id: objects
+      shell: bash
+      run: |
+        git lfs ls-files --long --include 'apps/creator-hub/packages/asset-packs/packs/**' \
+          | cut -d' ' -f1 | sort > "$RUNNER_TEMP/creator-hub-lfs-objects"
+        echo "count=$(wc -l < "$RUNNER_TEMP/creator-hub-lfs-objects" | tr -d ' ')" >> "$GITHUB_OUTPUT"
+        # hashFiles() only reads the workspace, so the key is hashed here.
+        echo "key=$(git hash-object "$RUNNER_TEMP/creator-hub-lfs-objects")" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the LFS object cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .git/lfs/objects
+        key: creator-hub-lfs-${{ steps.objects.outputs.key }}
+        restore-keys: creator-hub-lfs-
+
+    - name: Check out the packs' media
+      shell: bash
+      run: |
+        git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/**'
+        echo "Checked out ${{ steps.objects.outputs.count }} LFS objects"

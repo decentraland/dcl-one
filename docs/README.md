@@ -14,6 +14,7 @@
 - [Organizing library and services](adr/2026-10-19-organizing-library-services-folders.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)
 - [SDK in dcl-one](adr/2026-10-26-sdk-in-dcl-one.md)
+- [Creator Hub in dcl-one](adr/2026-11-09-creator-hub-in-dcl-one.md)
 - [Shared Pulse and Explorer ENet](adr/2026-10-28-shared-pulse-enet.md)
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)

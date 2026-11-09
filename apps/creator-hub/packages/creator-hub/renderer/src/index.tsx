@@ -1,0 +1,201 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { Provider as StoreProvider } from 'react-redux';
+
+import { MemoryRouter as Router, Routes, Route } from 'react-router-dom';
+import { init as reactInit } from '@sentry/react';
+import {
+  init as SentryInit,
+  globalHandlersIntegration,
+  linkedErrorsIntegration,
+  dedupeIntegration,
+  scopeToMainIntegration,
+  browserTracingIntegration,
+  replayIntegration,
+} from '@sentry/electron/renderer';
+import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TranslationProvider } from '/@/components/TranslationProvider';
+
+import { AuthProvider } from '/@/components/AuthProvider';
+
+import { AiChatWindow } from '/@/components/AiChatWindow';
+import { ConsoleWindow } from '/@/components/ConsoleWindow';
+import { HomePage } from '/@/components/HomePage';
+import { ScenesPage } from '/@/components/ScenesPage';
+import { EditorPage } from '/@/components/EditorPage';
+import { CollectionsPage } from '/@/components/CollectionsPage';
+import { AnalyticsPage } from '/@/components/AnalyticsPage';
+import { AnalyticsDetailPage } from '/@/components/AnalyticsDetailPage';
+import { ManagePage } from '/@/components/ManagePage';
+import { LandDetailPage } from '/@/components/LandDetailPage';
+import { WorldDetailPage } from '/@/components/WorldDetailPage';
+import { LearnPage } from '/@/components/LearnPage';
+import { SignInPage } from '/@/components/SignInPage';
+import { TemplatesPage } from '/@/components/TemplatesPage';
+import { MorePage } from '/@/components/MorePage';
+import { VideosPage } from '/@/components/VideosPage';
+import { DocsPage } from '/@/components/DocsPage';
+import { Snackbar } from '/@/components/Snackbar';
+import { ScrollToTop } from '/@/components/ScrollToTop';
+import { AppErrorBoundary, RouteErrorBoundary } from '/@/components/ErrorBoundary';
+
+import { store } from '#store';
+
+import '/@/themes';
+
+const container = document.getElementById('app')!;
+const root = createRoot(container);
+
+if (import.meta.env.PROD) {
+  SentryInit(
+    {
+      defaultIntegrations: false,
+      integrations: [
+        globalHandlersIntegration(),
+        linkedErrorsIntegration(),
+        dedupeIntegration(),
+        scopeToMainIntegration(),
+        browserTracingIntegration({
+          enableLongTask: false,
+          enableLongAnimationFrame: false,
+          enableInp: false,
+          enableElementTiming: false,
+        }),
+        replayIntegration({
+          mutationLimit: 500,
+          blockAllMedia: true,
+          beforeErrorSampling(event) {
+            const source = event.tags?.source;
+            // Only capture replays for UX-critical errors
+            return (
+              source === 'deployment' ||
+              source === 'editor-page' ||
+              source === 'workspace' ||
+              source === 'error-boundary'
+            );
+          },
+        }),
+      ],
+      release: import.meta.env.VITE_APP_VERSION,
+      tracesSampleRate: 0.001,
+      replaysSessionSampleRate: 0.01,
+      replaysOnErrorSampleRate: 0.01,
+      enabled: true,
+    },
+    reactInit,
+  );
+}
+
+// The detached AI chat window (#1504) boots the same bundle with `?view=ai-chat`, but
+// renders only the chat — no router, no app chrome. It keeps no chat store of its own
+// (the store here is just for i18n/theme); it mirrors the main window's state over IPC.
+const view = new URLSearchParams(window.location.search).get('view');
+const isAiChatWindow = view === 'ai-chat';
+// The detached console window (#1272) boots the same bundle with `?view=console`, rendering
+// only the console — no router, no app chrome.
+const isConsoleWindow = view === 'console';
+
+if (isAiChatWindow || isConsoleWindow) {
+  root.render(
+    <React.StrictMode>
+      <AppErrorBoundary name={isConsoleWindow ? 'console-window' : 'ai-chat-window'}>
+        <StoreProvider store={store}>
+          <TranslationProvider>
+            <ThemeProvider theme={dark}>
+              {isConsoleWindow ? <ConsoleWindow /> : <AiChatWindow />}
+            </ThemeProvider>
+          </TranslationProvider>
+        </StoreProvider>
+      </AppErrorBoundary>
+    </React.StrictMode>,
+  );
+} else {
+  root.render(
+    <React.StrictMode>
+      <AppErrorBoundary name="app">
+        <StoreProvider store={store}>
+          <TranslationProvider>
+            <ThemeProvider theme={dark}>
+              <main className="Main">
+                <Router>
+                  <ScrollToTop />
+                  <AuthProvider>
+                    <RouteErrorBoundary>
+                      <Routes>
+                        <Route
+                          path="/"
+                          element={<HomePage />}
+                        />
+                        <Route
+                          path="/home"
+                          element={<HomePage />}
+                        />
+                        <Route
+                          path="/scenes"
+                          element={<ScenesPage />}
+                        />
+                        <Route
+                          path="/templates"
+                          element={<TemplatesPage />}
+                        />
+                        <Route
+                          path="/collections"
+                          element={<CollectionsPage />}
+                        />
+                        <Route
+                          path="/analytics"
+                          element={<AnalyticsPage />}
+                        />
+                        <Route
+                          path="/analytics/:placeId"
+                          element={<AnalyticsDetailPage />}
+                        />
+                        <Route
+                          path="/manage"
+                          element={<ManagePage />}
+                        />
+                        <Route
+                          path="/manage/land/:id/:tab?"
+                          element={<LandDetailPage />}
+                        />
+                        <Route
+                          path="/manage/world/:name/:tab?"
+                          element={<WorldDetailPage />}
+                        />
+                        <Route
+                          path="/learn"
+                          element={<LearnPage />}
+                        />
+                        <Route
+                          path="/learn/videos"
+                          element={<VideosPage />}
+                        />
+                        <Route
+                          path="/learn/docs"
+                          element={<DocsPage />}
+                        />
+                        <Route
+                          path="/more"
+                          element={<MorePage />}
+                        />
+                        <Route
+                          path="/editor"
+                          element={<EditorPage />}
+                        />
+                        <Route
+                          path="/sign-in"
+                          element={<SignInPage />}
+                        />
+                      </Routes>
+                    </RouteErrorBoundary>
+                    <Snackbar />
+                  </AuthProvider>
+                </Router>
+              </main>
+            </ThemeProvider>
+          </TranslationProvider>
+        </StoreProvider>
+      </AppErrorBoundary>
+    </React.StrictMode>,
+  );
+}

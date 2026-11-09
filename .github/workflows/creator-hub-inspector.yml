@@ -1,0 +1,278 @@
+name: Inspector
+on:
+  workflow_call:
+    inputs:
+      asset_packs_s3_bucket_key:
+        description: 'S3 bucket key for the asset-packs package'
+        required: true
+        type: string
+      asset_packs_version:
+        description: 'Version of the asset-packs package'
+        required: true
+        type: string
+      asset_packs_changed:
+        description: 'Whether the version of the asset-packs package has changed'
+        required: true
+        type: boolean
+    outputs:
+      s3_bucket_key:
+        description: "S3 bucket key for the published Inspector package"
+        value: ${{ jobs.publish.outputs.s3_bucket_key }}
+      version:
+        description: "Version of the Inspector package"
+        value: ${{ jobs.version.outputs.version }}
+      changed:
+        description: "Whether the version of the Inspector package has changed"
+        value: ${{ jobs.version.outputs.changed }}
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changed: ${{ steps.detect-changes.outputs.changed }}
+      version: ${{ steps.detect-changes.outputs.version }}
+      previous_version: ${{ steps.semantic-version.outputs.previous_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Bump release version
+        id: semantic-version
+        uses: paulhatch/semantic-version@502226b17e3e242e4befd0a45690fcbb27dd1373 # v6.0.3
+        with:
+          tag_prefix: "@dcl/inspector@"
+          version_format: ${major}.${minor}.${patch}
+          major_pattern: "/^(major|breaking).+/"
+          minor_pattern: "/^(minor|feat).+/"
+          bump_each_commit: false
+          bump_each_commit_patch_pattern: "/^(patch|fix).+/"
+          search_commit_body: true
+          user_format_type: "json"
+          change_path: "apps/creator-hub/packages/inspector"
+
+      # Force a patch bump when only @dcl/asset-packs changed: inspector source
+      # references @dcl/asset-packs via `file:../asset-packs`, so dependency-only
+      # bumps don't touch apps/creator-hub/packages/inspector and semantic-version returns an
+      # unchanged version. Without the patch bump, `npm publish` would try to
+      # republish the same version (rejected by the registry), and downstream
+      # creator-hub would install a stale inspector tarball pinning the old
+      # asset-packs.
+      - name: Detect inspector/asset-packs changes
+        id: detect-changes
+        env:
+          INSPECTOR_CHANGED: ${{ steps.semantic-version.outputs.changed }}
+          ASSET_PACKS_CHANGED: ${{ inputs.asset_packs_changed }}
+          SEMVER_VERSION: ${{ steps.semantic-version.outputs.version }}
+          PREVIOUS_VERSION: ${{ steps.semantic-version.outputs.previous_version }}
+        run: |
+          if [[ "$INSPECTOR_CHANGED" == "true" ]]; then
+            echo "version=$SEMVER_VERSION" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$ASSET_PACKS_CHANGED" == "true" ]]; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$PREVIOUS_VERSION"
+            echo "version=${MAJOR}.${MINOR}.$((PATCH + 1))" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$SEMVER_VERSION" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [version]
+    if: ${{ needs.version.outputs.changed == 'true' }}
+    # npm trusted publishing names this environment for main; PR builds publish nothing to npm.
+    environment: ${{ github.ref == 'refs/heads/main' && 'creator-hub-release' || '' }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      s3_bucket_key: ${{ steps.s3-upload.outputs.s3-key }}
+      preview_path: ${{ steps.preview.outputs.path }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+        with:
+          cache-protoc: 'true'
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: npm i --silent && make install-inspector
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: install asset-packs
+        working-directory: apps/creator-hub/packages/inspector
+        run: |
+          # If the asset-packs version hasn't changed or we are on main branch, we need to install the latest version
+          # Otherwise, we need to install the version from the S3 bucket
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.asset_packs_changed }} == "false" ]]; then
+            echo "Installing latest asset-packs version: ${{ inputs.asset_packs_version }}"
+            # The asset-packs job published this version seconds ago and npm serves a CDN-cached
+            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            for ((i = 1; i <= 10; i++)); do
+              npm install --prefer-online "@dcl/asset-packs@${{ inputs.asset_packs_version }}" && exit 0
+              echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
+              sleep 30
+            done
+            npm view @dcl/asset-packs versions --json | tail -5 || true
+            exit 1
+          else
+            echo "Installing asset-packs version from S3 bucket: ${{ inputs.asset_packs_s3_bucket_key }}"
+            npm install ${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ inputs.asset_packs_s3_bucket_key }}
+          fi
+
+      - name: protoc
+        run: make protoc
+
+      - name: build
+        run: make build-inspector
+
+      - name: npm version
+        working-directory: apps/creator-hub/packages/inspector
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            VERSION="${{ needs.version.outputs.version }}"
+          else
+            VERSION="${{ needs.version.outputs.version }}-commit-${{ github.sha }}"
+          fi
+          npm version "$VERSION" --force --no-git-tag-version --allow-same-version
+
+      - name: npm pack
+        working-directory: apps/creator-hub/packages/inspector
+        id: npm-pack
+        run: |
+          PACK_OUTPUT=$(npm pack --json)
+          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.[0].filename')
+          echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
+
+      - name: upload package to S3
+        uses: ./.github/actions/creator-hub-s3-upload
+        id: s3-upload
+        with:
+          file-path: apps/creator-hub/packages/inspector/${{ steps.npm-pack.outputs.pack-filename }}
+          bucket: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+          region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+          prefix: 'creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/inspector'
+          aws-access-key-id: ${{ secrets.SDK_TEAM_AWS_ID }}
+          aws-secret-access-key: ${{ secrets.SDK_TEAM_AWS_SECRET }}
+          content-type: 'application/gzip'
+          acl: 'public-read'
+          cache-control: 'max-age=0,private'
+
+      - name: sanitize branch
+        id: sanitize-branch
+        run: |
+          branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
+          safe_branch=${branch//\//-}  # replace / with -
+          echo "safe_branch=$safe_branch" >> $GITHUB_OUTPUT
+
+      # The Babylon inspector preview for this branch. dcl-one has no GitHub Pages site, so it is
+      # served from the SDK bucket next to the branch's package tarballs. Source maps and the
+      # Bevy engine/agent bundles stay out: the preview doesn't load them.
+      - name: upload preview to S3
+        id: preview
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SDK_TEAM_AWS_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SDK_TEAM_AWS_SECRET }}
+          AWS_DEFAULT_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+          BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+          SAFE_BRANCH: ${{ steps.sanitize-branch.outputs.safe_branch }}
+        run: |
+          prefix="creator-hub/branch/${SAFE_BRANCH}/inspector"
+          aws s3 sync packages/inspector/public "s3://${BUCKET}/${prefix}" --delete \
+            --exclude '*.map' --exclude 'bevy-engine/*' --exclude 'bevy-agent/*' \
+            --acl public-read --cache-control 'max-age=0,private'
+          # The bucket's base URL is a secret, and an output that contains one is dropped, so
+          # the comment joins it to this path.
+          echo "path=${prefix}/index.html" >> "$GITHUB_OUTPUT"
+
+      - name: publish to npm registry
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: ./.github/actions/creator-hub-npm-publish
+        id: npm-publish
+        with:
+          working-directory: apps/creator-hub/packages/inspector
+          initial-tag: 'latest'
+          access: 'public'
+
+  notify:
+    needs: [version, publish]
+    if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: find Comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Test @dcl/inspector package
+
+      - name: create or update comment
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # Test @dcl/inspector package
+
+            - Preview: [link](${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.preview_path }})
+            - Install via NPM:
+              ```bash
+              npm install "${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.s3_bucket_key }}"
+              ```
+          edit-mode: replace
+
+  release:
+    needs: [version, publish]
+    if: ${{ needs.version.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: generate release notes
+        if: ${{ github.ref == 'refs/heads/main' }}
+        id: release_notes
+        uses: ./.github/actions/creator-hub-generate-release-notes
+        with:
+          previous_version: ${{ needs.version.outputs.previous_version }}
+          current_version: ${{ needs.version.outputs.version }}
+          paths: 'apps/creator-hub/packages/inspector'
+          section_names: 'Inspector Changes'
+          release_title: '@dcl/inspector'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: '@dcl/inspector@'
+
+      - name: update release description
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: ./.github/actions/creator-hub-update-release-description
+        with:
+          tag_name: "@dcl/inspector@${{ needs.version.outputs.version }}"
+          release_notes: ${{ steps.release_notes.outputs.release_notes }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create_if_not_exists: true
+          prerelease: true
