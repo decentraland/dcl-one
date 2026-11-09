@@ -1289,8 +1289,8 @@ catalog reaches it through the TS database import.
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs
-(`social/src/badges/jobs/`, on where `BADGES_PROCESSOR_ENABLED` and social
-writes are), each a reader of tables other areas own, with one row of
+(`social/src/badges/jobs/`, on where `BADGES_PROCESSOR_ENABLED`, off by
+default, and social writes are), each a reader of tables other areas own, with one row of
 `social.badge_cursors` per source:
 
 - `social.client_events` by `seq` (citizen, traveler, walkabout, moves

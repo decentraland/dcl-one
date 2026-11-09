@@ -662,8 +662,9 @@ pub struct SocialConfig {
     /// social writes are enabled): it reads social.client_events,
     /// content.deployments, the Polygon shop logs and mirrors and the accepted
     /// referrals, and grants upstream's evaluated badges with their
-    /// badge_granted notifications.
-    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// badge_granted notifications. Off by default: a node opts in once its
+    /// sources are current (the cursors start at the head when it does).
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub badges_processor_enabled: bool,
 
     /// Rows (or recounted wallets) the badge processor writes per transaction.

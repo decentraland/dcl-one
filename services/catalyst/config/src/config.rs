@@ -962,6 +962,21 @@ mod tests {
     }
 
     #[test]
+    fn the_badge_processor_runs_only_when_enabled() {
+        let off = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(!off.social.badges_processor_enabled);
+        let on = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--badges-processor-enabled",
+            "true",
+        ])
+        .unwrap();
+        assert!(on.social.badges_processor_enabled);
+    }
+
+    #[test]
     fn data_plane_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&[
             "x",
