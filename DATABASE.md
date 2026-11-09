@@ -1258,7 +1258,7 @@ completion are never taken back by a write (only the console revoke deletes
 them); a tiered badge completes at its last tier, a single badge at
 `criteria_steps`; an archived badge stays listed and kept by its earners and is
 never awarded; an unpublished one is invisible. A database stamped before step
-`0036_social_badges_catalog_parity` keeps its four placeholder rows: the step
+`0037_social_badges_catalog_parity` keeps its four placeholder rows: the step
 gives `open_for_business` and `emotionista` upstream's content and leaves
 `decentraland_citizen` and `walkabout` unpublished. It also fits the old
 progress rows to the new targets: a tiered row keeps completion only when the

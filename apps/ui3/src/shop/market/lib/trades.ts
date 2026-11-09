@@ -7,8 +7,7 @@ import { encodeFunctionData, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { isShopApiError } from "../../api/client";
-import { shopClient } from "../../api/shop";
-import { isPolygon, type ChainId } from "../../model/chain";
+import { isPolygon, type ChainId } from "@shop/model/chain";
 import { requireChain } from "../../wallet/chain";
 import {
   COLLECTION_V2_ABI,
@@ -19,10 +18,11 @@ import {
   MARKETPLACE_ABI,
   marketplaceForTrade,
   type ContractData,
-} from "./contracts";
+} from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "./metaTx";
 import { readContract } from "./rpc";
 import { chainSalt, declined, sendCall, signTypedData, waitForReceipt, walletAccount, type WaitOptions } from "./tx";
+import { shopClient } from "../../api/host";
 
 export const TRADE_ASSET = { ERC20: 1, USD_PEGGED_MANA: 2, ERC721: 3, COLLECTION_ITEM: 4 } as const;
 export type TradeAssetType = (typeof TRADE_ASSET)[keyof typeof TRADE_ASSET];

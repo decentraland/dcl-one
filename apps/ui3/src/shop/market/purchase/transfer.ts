@@ -5,9 +5,9 @@
 import { encodeFunctionData } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { parseEvmAddress, sameAddress } from "../../model/address";
-import { isPolygon, type ChainId } from "../../model/chain";
-import { collectionV2, ERC721_ABI } from "../lib/contracts";
+import { parseEvmAddress, sameAddress } from "@shop/model/address";
+import { isPolygon, type ChainId } from "@shop/model/chain";
+import { collectionV2, ERC721_ABI } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "../lib/metaTx";
 import { declined, isTxPending, sendCall, waitForReceipt, walletAccount, type WaitOptions } from "../lib/tx";
 

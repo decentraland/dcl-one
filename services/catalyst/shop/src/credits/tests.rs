@@ -23,7 +23,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use super::admin_store::{GrantRequest, PackSpec};
-use super::authorize::NewAuthorization;
+use super::authorize::{NewAuthorization, NewGroup, ReserveRefusal};
 use super::checkout::{CartLine, RepricedLine};
 use super::errors::ApiError;
 use super::escrow::{Broker, BrokerError, BuyRequest, ManaPaymentVerification};
@@ -6237,4 +6237,396 @@ async fn a_blocked_wallet_refuses_a_spend_but_its_settlement_debit_lands() {
         "the credit used on chain is debited from the earned bucket, block or not"
     );
     cleanup(&pool, &addr).await;
+}
+
+/// The authorize lane over `pool` with `market` as its catalogue and feed: the
+/// operation id tests build two over one database, the second with the
+/// catalogue or the feed gone, to show an operation is recovered without them.
+async fn opid_lane(pool: &PgPool, contract: &str, market: FakeMarket) -> Router {
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(contract.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(contract.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+    );
+    app(state)
+}
+
+const OPID_MANAGER: &str = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+
+/// A database with the usage index ready and a funded wallet, and the full
+/// catalogue's lane over it.
+async fn opid_setup(name: &str) -> Option<(OwnDatabase, Router, Wallet)> {
+    let db = OwnDatabase::create(name).await?;
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_item(COLLECTION, "95", "1900000000000000000", true)
+        .with_mana_usd("0.5");
+    let lane = opid_lane(&db.pool, OPID_MANAGER, market).await;
+    let wallet = scratch_wallet();
+    // Enough for every pledge the tests make (each is 200 cents at most).
+    seed_paid_credits(&db.pool, &wallet.address, "200").await;
+    Some((db, lane, wallet))
+}
+
+fn opid_item(cents: i64, item: &str, op: Option<&str>) -> Value {
+    let mut body = json!({ "usdPriceCents": cents, "contractAddress": COLLECTION, "itemId": item });
+    if let Some(op) = op {
+        body["operationId"] = json!(op);
+    }
+    body
+}
+
+async fn rows_of(pool: &PgPool, addr: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM credits.authorizations WHERE address = $1")
+        .bind(addr)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A purchase that names itself (`operationId`) is authorized once: a retry
+/// signed again replays its credit, two at once pledge once, and the same id
+/// with other lines is refused without a pledge. Without an id, each signed
+/// request is its own (the key holds its timestamp), as before.
+#[tokio::test]
+async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_lines() {
+    let Some((db, lane, wallet)) = opid_setup("opid").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize",
+                &[],
+                Some(body),
+            )
+            .await
+        }
+    };
+    let op = "0b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+
+    let (status, first) = authorize(opid_item(200, "200", Some(op))).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+    // Signed again (a later timestamp, as after a restart): the same credit.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = authorize(opid_item(200, "200", Some(&op.to_ascii_uppercase()))).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        1,
+        "and pledges nothing more"
+    );
+
+    // The same operation asking for other lines is refused, and pledges nothing.
+    let (status, other) = authorize(opid_item(95, "95", Some(op))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+
+    // Two requests of one operation at once pledge once.
+    let op2 = "1b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let (a, b) = tokio::join!(
+        authorize(opid_item(200, "200", Some(op2))),
+        authorize(opid_item(200, "200", Some(op2)))
+    );
+    assert_eq!(
+        (a.0, b.0),
+        (StatusCode::OK, StatusCode::OK),
+        "{} {}",
+        a.1,
+        b.1
+    );
+    assert_eq!(a.1["credit"], b.1["credit"]);
+    assert_ne!(
+        a.1["credit"], first["credit"],
+        "another operation, another credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+
+    // A malformed id is refused before anything is read or pledged.
+    let (status, bad) = authorize(opid_item(200, "200", Some("op-1"))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+
+    // Without an id, each signed request is its own, as before.
+    let (status, _) = authorize(opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, _) = authorize(opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// An operation is recovered from what it reserved, whatever the catalogue,
+/// the feed or the credit's own expiry say now: a lane over the same database
+/// with neither (it can issue nothing new) still hands back the original
+/// credit, unrenewed, also once it has expired or been released, and still
+/// refuses other lines as a reused operation.
+#[tokio::test]
+async fn an_operation_is_recovered_whatever_the_catalogue_the_feed_or_its_expiry_say_now() {
+    let Some((db, lane, wallet)) = opid_setup("opid-recover").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let authorize = |lane: &Router, body: Value| {
+        let lane = lane.clone();
+        let wallet = &wallet;
+        async move {
+            call(
+                &lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize",
+                &[],
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, first) = authorize(&lane, opid_item(200, "200", Some(op))).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+
+    // The catalogue and the feed are gone: nothing new can be issued here...
+    let bare = opid_lane(&pool, OPID_MANAGER, FakeMarket::default()).await;
+    let fresh = "3b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let (status, refused) = authorize(&bare, opid_item(200, "200", Some(fresh))).await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "a new operation needs the catalogue and the feed: {refused}"
+    );
+    // ...but the operation already reserved is handed back, and other lines are still a reused operation.
+    let (status, again) = authorize(&bare, opid_item(200, "200", Some(op))).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["credit"], first["credit"]);
+    let (status, other) = authorize(&bare, opid_item(95, "95", Some(op))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 1);
+
+    // Expired, swept and then released: still the same credit, as it was stored, never renewed.
+    sqlx::query("UPDATE credits.authorizations SET expires_at = $2 WHERE address = $1")
+        .bind(&wallet.address)
+        .bind(super::store::now() - chrono::Duration::minutes(1))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let credits = Credits::new(pool.clone());
+    assert_eq!(credits.expire_stale_authorizations().await.unwrap(), 1);
+    let stored = |status: &'static str| {
+        let pool = pool.clone();
+        let addr = wallet.address.clone();
+        async move {
+            let (id, amount, expires): (String, String, chrono::NaiveDateTime) = sqlx::query_as(
+                "SELECT id, amount_wei::text, expires_at FROM credits.authorizations WHERE address = $1 AND status = $2",
+            )
+            .bind(&addr)
+            .bind(status)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            (id, amount, expires.and_utc().timestamp())
+        }
+    };
+    for status_now in ["expired", "released"] {
+        if status_now == "released" {
+            sqlx::query("UPDATE credits.authorizations SET status = 'released' WHERE address = $1")
+                .bind(&wallet.address)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let (id, amount, expires) = stored(status_now).await;
+        let (status, replay) = authorize(&bare, opid_item(200, "200", Some(op))).await;
+        assert_eq!(status, StatusCode::OK, "{status_now}: {replay}");
+        assert_eq!(
+            replay["credit"]["id"],
+            id.as_str(),
+            "{status_now}: the original credit"
+        );
+        assert_eq!(replay["credit"]["id"], first["credit"]["id"]);
+        assert_eq!(replay["credit"]["amount"], amount.as_str(), "{status_now}");
+        assert_eq!(
+            replay["credit"]["expiresAt"], expires,
+            "{status_now}: never renewed"
+        );
+        assert_eq!(
+            rows_of(&pool, &wallet.address).await,
+            1,
+            "{status_now}: no other row"
+        );
+    }
+
+    db.drop().await;
+}
+
+/// The batch lane names its operation the same way: a retry replays the
+/// group's credit, other lines are a reused operation.
+#[tokio::test]
+async fn the_batch_lane_replays_an_operation_and_refuses_other_lines() {
+    let Some((db, lane, wallet)) = opid_setup("opid-batch").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let op = "4b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let batch = |items: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize/batch",
+                &[],
+                Some(json!({ "operationId": op, "items": items })),
+            )
+            .await
+        }
+    };
+    let one = json!([{ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200" }]);
+    let (status, first) = batch(one.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = batch(one).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["credit"], first["credit"]);
+    let (status, other) = batch(json!([
+        { "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200" },
+        { "usdPriceCents": 95, "contractAddress": COLLECTION, "itemId": "95" }
+    ]))
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 1);
+
+    db.drop().await;
+}
+
+/// The reservation itself, under the wallet's row lock, takes one set of lines
+/// per operation key, also when two requests with different lines both got
+/// past the lookup that found nothing: one reserves, the other is refused.
+#[tokio::test]
+async fn a_reservation_under_one_operation_key_takes_one_set_of_lines() {
+    let Some(db) = OwnDatabase::create("opid-reserve").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let addr = scratch_wallet().address;
+    seed_paid_credits(&pool, &addr, "100").await;
+    let credits = Credits::new(pool.clone());
+    let key = unique("authz-op:test");
+    let hex64 = |c: char| format!("0x{}", c.to_string().repeat(64));
+    let (id_a, id_b) = (hex64('a'), hex64('b'));
+    let (digest_a, digest_b) = ("a".repeat(64), "b".repeat(64));
+    fn group<'a>(id: &'a str, address: &'a str) -> NewGroup<'a> {
+        NewGroup {
+            id,
+            address,
+            chain_id: 137,
+            contract: OPID_MANAGER,
+            credit_hash: id,
+            quoted_cents: 200,
+            charged_cents: 200,
+            amount_wei: "1",
+            oracle_rate: "1",
+            oracle_decimals: 8,
+            source: None,
+            expires_at: future(),
+            lines: &[],
+        }
+    }
+    let (ga, gb) = (group(&id_a, &addr), group(&id_b, &addr));
+    let (a, b) = tokio::join!(
+        credits.reserve_credit_group(&ga, &key, Some(&digest_a)),
+        credits.reserve_credit_group(&gb, &key, Some(&digest_b))
+    );
+    let outcomes = [a.unwrap(), b.unwrap()];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, Ok(r) if !r.replayed))
+            .count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, Err(ReserveRefusal::OperationReused)))
+            .count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert_eq!(rows_of(&pool, &addr).await, 1);
+    // Whichever won, its own lines replay it and the other lines are refused.
+    let won_a = matches!(outcomes[0], Ok(_));
+    let (won, won_digest, lost, lost_digest) = if won_a {
+        (&ga, &digest_a, &gb, &digest_b)
+    } else {
+        (&gb, &digest_b, &ga, &digest_a)
+    };
+    let replay = credits
+        .reserve_credit_group(won, &key, Some(won_digest))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.id, won.id);
+    let refused = credits
+        .reserve_credit_group(lost, &key, Some(lost_digest))
+        .await
+        .unwrap();
+    assert!(
+        matches!(refused, Err(ReserveRefusal::OperationReused)),
+        "{refused:?}"
+    );
+    assert_eq!(rows_of(&pool, &addr).await, 1);
+
+    db.drop().await;
 }

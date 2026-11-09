@@ -5,17 +5,18 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import ManaMark from "../../../atoms/ManaMark";
-import { shortAddress } from "../../model/address";
-import { parseManaWei } from "../../model/money";
+import { shortAddress } from "@shop/model/address";
+import { parseManaWei } from "@shop/model/money";
 import type { UnifiedListing } from "../../discovery/api";
 import { ManaAmount } from "../../discovery/components/PriceTag";
-import { t } from "../../discovery/intl";
+import { t } from "@shop/discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import IndexNotice from "../../discovery/components/IndexNotice";
 import { useListingsFreshness } from "../../discovery/hooks";
 import { fetchResaleTokenInfos, type ClassicOrder } from "../api";
 import "./resaleoffers.css";
+import { shopClient } from "../../api/host";
 
 const PAGE = 8;
 
@@ -39,7 +40,7 @@ export default function ResaleOffers({
   const visible = useMemo(() => resales.slice(page * PAGE, page * PAGE + PAGE), [resales, page]);
   const freshness = useListingsFreshness();
   const missing = visible.filter((r) => r.tokenId && (!r.seller || !r.issuedId)).map((r) => r.tokenId!);
-  const { data: infos } = useShopQuery(missing.length ? ["resale-infos", contractAddress, ...missing] : null, (signal) => fetchResaleTokenInfos(contractAddress, missing, { signal }), {
+  const { data: infos } = useShopQuery(missing.length ? ["resale-infos", contractAddress, ...missing] : null, (signal) => fetchResaleTokenInfos(contractAddress, missing, { client: shopClient(), signal }), {
     staleMs: 60_000,
   });
 

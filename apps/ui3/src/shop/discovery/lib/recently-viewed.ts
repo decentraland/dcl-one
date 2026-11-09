@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { CatalogItem } from "./catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 const KEY = "shop:recently-viewed";
 const MAX = 12;

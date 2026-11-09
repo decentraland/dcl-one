@@ -145,7 +145,8 @@ export function PlacesBrowser({
         {headExtra}
       </BrowseToolbar>
 
-      <BrowsePanel>
+      {/* the search the hook runs is the trimmed box: the results answer the box once they match */}
+      <BrowsePanel label="Places results" busy={loading || draft.trim() !== search}>
         {loading ? (
           <BrowseLoading />
         ) : error && list.length === 0 ? (

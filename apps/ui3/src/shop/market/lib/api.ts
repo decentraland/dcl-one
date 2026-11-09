@@ -17,8 +17,9 @@ import type { Owner } from "@catalyst-api/market/Owner";
 import type { Sale } from "@catalyst-api/market/Sale";
 import { isShopApiError } from "../../api/client";
 import { catalogCategoryParams } from "../../discovery/lib/categories";
-import { shopClient, type ShopClient } from "../../api/shop";
-import { parseManaWei, type ManaWei } from "../../model/money";
+import { type ShopClient } from "../../api/shop";
+import { parseManaWei, type ManaWei } from "@shop/model/money";
+import { shopClient } from "../../api/host";
 
 export type { Account, Bid, Collection, Order, Owner, Sale };
 

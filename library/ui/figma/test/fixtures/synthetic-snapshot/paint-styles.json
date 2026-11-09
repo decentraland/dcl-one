@@ -1,0 +1,33 @@
+{
+  "gradients": [
+    {
+      "name": "Gradients/Sunset",
+      "type": "linear",
+      "angleDeg": 219,
+      "stops": [
+        {
+          "position": 0,
+          "hex": "#ff2d55"
+        },
+        {
+          "position": 1,
+          "hex": "#ffbc5b"
+        }
+      ]
+    },
+    {
+      "name": "Gradients/Glow",
+      "type": "radial",
+      "stops": [
+        {
+          "position": 0,
+          "hex": "#ffffff"
+        },
+        {
+          "position": 1,
+          "hex": "#161518"
+        }
+      ]
+    }
+  ]
+}

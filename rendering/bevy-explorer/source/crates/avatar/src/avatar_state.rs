@@ -157,6 +157,9 @@ struct EmoteState {
     repeat: bool,
     finished: bool,
     mask: &'static str,
+    /// An idle pose, which a triggered emote takes over: a scene's movement animation outranks
+    /// one only while it is not idle.
+    idle: bool,
 }
 
 impl AvatarReport {
@@ -196,6 +199,7 @@ impl EmoteState {
             "repeat": self.repeat,
             "finished": self.finished,
             "mask": self.mask,
+            "idle": self.idle,
         })
     }
 }
@@ -254,13 +258,15 @@ fn avatar_state_cmd(
         }
     };
 
-    let emote_state = |playback: &EmotePlayback, source: ActiveEmoteSource| EmoteState {
-        urn: emotes.source_urn(&playback.urn).to_owned(),
-        source: source_name(source),
-        repeat: playback.repeat,
-        finished: playback.finished,
-        mask: mask_name(playback.mask),
-    };
+    let emote_state =
+        |playback: &EmotePlayback, source: ActiveEmoteSource, idle: bool| EmoteState {
+            urn: emotes.source_urn(&playback.urn).to_owned(),
+            source: source_name(source),
+            repeat: playback.repeat,
+            finished: playback.finished,
+            mask: mask_name(playback.mask),
+            idle,
+        };
 
     let mut reports = Vec::new();
     for (
@@ -347,10 +353,10 @@ fn avatar_state_cmd(
                     hidden: hidden_slots(&definition.hides),
                 }
             }),
-            emote: emote.map(|(active, _)| emote_state(active, active.source())),
+            emote: emote.map(|(active, _)| emote_state(active, active.source(), active.is_idle())),
             upper_body_emote: emote
                 .and_then(|(_, masked)| masked.active_request())
-                .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote)),
+                .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote, false)),
         };
         if command.panel {
             let mut state = report.to_json();
@@ -459,6 +465,7 @@ mod tests {
                 repeat: true,
                 finished: false,
                 mask: "fullBody",
+                idle: true,
             }),
             upper_body_emote: None,
         }
@@ -494,6 +501,7 @@ mod tests {
                     "repeat": true,
                     "finished": false,
                     "mask": "fullBody",
+                    "idle": true,
                 },
                 "upperBodyEmote": null,
             })

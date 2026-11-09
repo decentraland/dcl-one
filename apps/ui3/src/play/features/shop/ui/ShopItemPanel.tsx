@@ -3,7 +3,7 @@
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
 // sale) is offered on the web Shop's item page.
 
-import type { CardPrice } from '../../../../shop/discovery/cardPrice'
+import type { CardPrice } from '@shop/discovery/cardPrice'
 import { Close, MaskIcon, rarityPanel } from '../../../design'
 import hiddenIcon from '../../../assets/backpack/icon-hidden.webp'
 import cartIcon from '../../../assets/shop/cart.svg'

@@ -1,0 +1,183 @@
+{
+ "page": {"id":"10:3","name":"Demo Cursors"},
+ "components": [
+  {
+   "kind": "component",
+   "id": "22:1",
+   "name": "Crosshair",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "22:1",
+    "name": "Crosshair",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Crosshair",
+     "w": 32,
+     "h": 32,
+     "children": [
+      {
+       "type": "ELLIPSE",
+       "name": "Ring",
+       "w": 32,
+       "h": 32,
+       "x": 0,
+       "y": 0,
+       "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 32 32\"><circle cx=\"16\" cy=\"16\" r=\"12.5\" stroke=\"#FCFCFC\" stroke-width=\"2\"/></svg>",
+       "sum": "mxakly"
+      },
+      {
+       "type": "ELLIPSE",
+       "name": "Dot",
+       "w": 8,
+       "h": 8,
+       "x": 12,
+       "y": 12,
+       "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\" viewBox=\"0 0 8 8\"><circle cx=\"4\" cy=\"4\" r=\"4\" fill=\"#FCFCFC\"/></svg>",
+       "sum": "1ie5rqx"
+      }
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "22:10",
+   "name": "Cursor3rdPerson",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "22:10",
+    "name": "Cursor3rdPerson",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Cursor3rdPerson",
+     "w": 48,
+     "h": 48,
+     "children": [
+      {
+       "type": "RECTANGLE",
+       "name": "Shadow",
+       "w": 6,
+       "h": 6,
+       "x": 0,
+       "y": 0,
+       "png": "iVBORw0KGgoAAAANSUhEUgAAAAYAAAAGCAYAAADgzO9IAAAABGdBTUEAALGPC/xhBQAAADpJREFUeJxjMGGAAgcGhwYGBwYLBQgHLMDgUAGXhCtDAg4NCK3IgpbIXCgBoi0bDjBgMwcmAjIGRAEAV9cLN7XqnD0AAAAASUVORK5CYII=",
+       "sum": "6po6id"
+      },
+      {"type":"VECTOR","name":"Body","w":40,"h":40,"x":4,"y":4,"heavy":true}
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "set",
+   "id": "22:20",
+   "name": "Pointer",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"State":{"type":"VARIANT","default":"Default","options":["Default","Hover","Pressed"]}},
+   "base": {
+    "id": "22:21",
+    "name": "State=Default",
+    "props": {"State":"Default"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "State=Default",
+     "w": 24,
+     "h": 24,
+     "children": [
+      {
+       "type": "RECTANGLE",
+       "name": "Arrow",
+       "w": 4,
+       "h": 4,
+       "x": 10,
+       "y": 10,
+       "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAABGdBTUEAALGPC/xhBQAAACVJREFUeJxjeMEABQ4wwoIBAUB8hwoICeU7MDRAJS0YHBoOAPkAuaQGiamGWuYAAAAASUVORK5CYII=",
+       "sum": "r36g1p"
+      }
+     ]
+    }
+   },
+   "others": [
+    {"id":"22:22","name":"State=Hover","props":{"State":"Hover"},"patches":[{"at":[],"set":{"name":"State=Hover"}},{"at":[0],"set":{"opacity":0.8}}]},
+    {
+     "id": "22:23",
+     "name": "State=Pressed",
+     "props": {"State":"Pressed"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "State=Pressed",
+        "w": 24,
+        "h": 24,
+        "children": [
+         {
+          "type": "RECTANGLE",
+          "name": "Arrow",
+          "w": 4,
+          "h": 4,
+          "x": 10,
+          "y": 10,
+          "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAABGdBTUEAALGPC/xhBQAAACVJREFUeJxjeMEABQ4wwoIBAUB8hwoICeU7MDRAJS0YHBoOAPkAuaQGiamGWuYAAAAASUVORK5CYII=",
+          "sum": "r36g1p"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "component",
+   "id": "22:30",
+   "name": "Badge",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "22:30",
+    "name": "Badge",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Badge",
+     "w": 40,
+     "h": 20,
+     "layout": {"mode":"HORIZONTAL","pad":[2,8,2,8],"gap":0,"main":"CENTER","cross":"CENTER"},
+     "radius": 10,
+     "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 24,
+       "h": 16,
+       "sizing": ["HUG","HUG"],
+       "text": "New",
+       "textStyle": "caption",
+       "font": "Inter Regular",
+       "fontSize": 12,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}
