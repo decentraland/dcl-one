@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "78f0d6666793fe61f815d9837b6f9e3a62d8e51935ae0b0c6163756e379d0539",
+  "lockHash": "a5b34e54b6d71989df4719f569ad90bdc90b4a6e83c9f72301ec7ba4a38bf55d",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "baad1b19f9997be9695fc00d8c5b2b0ff891875a",
+  "figmaTree": "95c82ba708b89ca0113078324d63d9286d184678",
   "checks": {
     "fetch-source": {
       "result": "pass",

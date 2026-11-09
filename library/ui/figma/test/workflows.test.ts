@@ -376,11 +376,12 @@ describe('when the Figma capture lives in figma-design-system', () => {
     expect(check).toBeGreaterThan(build)
   })
 
-  it('should check out the library job without LFS and download no LFS object', () => {
+  it('should hydrate only library/ui LFS objects in the library job', () => {
     const steps = ui().jobs.library!.steps
     const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'))!
     expect(checkout.with).toMatchObject({ lfs: false })
-    expect(runs('library').join('\n')).not.toMatch(/\blfs\b/)
+    const pulls = runs('library').filter((run) => /\blfs\b/.test(run))
+    expect(pulls).toEqual(['git lfs pull --include "library/ui/**"'])
   })
 
   it('should run no check that needs the capture in this repository', () => {
