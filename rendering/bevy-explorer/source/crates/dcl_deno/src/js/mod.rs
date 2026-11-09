@@ -43,6 +43,9 @@ pub fn create_runtime(
     super_user: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
+    #[cfg(test)]
+    crate::test_platform();
+
     // per runtime, so no Blob or BroadcastChannel state is shared between scenes
     let webidl = deno_webidl::deno_webidl::init();
     let mut web = deno_web::deno_web::init(

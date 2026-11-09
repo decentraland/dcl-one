@@ -44,8 +44,5 @@ hyper = { version = "0.14.26", features = [
   "server",
 ], optional = true }
 
-[dev-dependencies]
-deno_core = { workspace = true, features = ["unsafe_use_unprotected_platform"] }
-
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
