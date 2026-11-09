@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 /** @alpha THIS FILE INITIALIZES THE DECENTRALAND RUNTIME. WILL CHANGE SOON */
 import { Composite, engine, setCompositeProvider } from '@dcl/ecs'
 import { crdtGetState, crdtSendToRenderer, sendBatch } from '~system/EngineApi'

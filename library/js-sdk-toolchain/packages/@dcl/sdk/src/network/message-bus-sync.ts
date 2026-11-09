@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 import { IEngine, Transport, RealmInfo, PlayerIdentityData } from '@dcl/ecs'
 import { type SendBinaryRequest, type SendBinaryResponse } from '~system/CommunicationsController'
 

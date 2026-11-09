@@ -4,6 +4,8 @@
 
 ```ts
 
+/// <reference types="@dcl/js-runtime" />
+
 import _m0 from 'protobufjs/minimal';
 
 // @public (undocumented)
@@ -204,12 +206,10 @@ export interface AvatarAnimationState {
 }
 
 // @public (undocumented)
-export namespace AvatarAnimationState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): AvatarAnimationState;
-    // (undocumented)
-    export function encode(message: AvatarAnimationState, writer?: _m0.Writer): _m0.Writer;
-}
+export const AvatarAnimationState: {
+    encode(message: AvatarAnimationState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): AvatarAnimationState;
+};
 
 // @public (undocumented)
 export const AvatarAttach: LastWriteWinElementSetComponentDefinition<PBAvatarAttach>;
@@ -280,12 +280,10 @@ export interface AvatarMovementSettings {
 }
 
 // @public (undocumented)
-export namespace AvatarMovementSettings {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): AvatarMovementSettings;
-    // (undocumented)
-    export function encode(message: AvatarMovementSettings, writer?: _m0.Writer): _m0.Writer;
-}
+export const AvatarMovementSettings: {
+    encode(message: AvatarMovementSettings, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): AvatarMovementSettings;
+};
 
 // @public (undocumented)
 export const AvatarNametag: LastWriteWinElementSetComponentDefinition<PBAvatarNametag>;
@@ -312,12 +310,10 @@ export interface AvatarTexture {
 }
 
 // @public (undocumented)
-export namespace AvatarTexture {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): AvatarTexture;
-    // (undocumented)
-    export function encode(message: AvatarTexture, writer?: _m0.Writer): _m0.Writer;
-}
+export const AvatarTexture: {
+    encode(message: AvatarTexture, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): AvatarTexture;
+};
 
 // @public (undocumented)
 export const enum BackgroundTextureMode {
@@ -386,12 +382,10 @@ export interface BorderRect {
 }
 
 // @public (undocumented)
-export namespace BorderRect {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): BorderRect;
-    // (undocumented)
-    export function encode(message: BorderRect, writer?: _m0.Writer): _m0.Writer;
-}
+export const BorderRect: {
+    encode(message: BorderRect, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): BorderRect;
+};
 
 // Warning: (tsdoc-undefined-tag) The TSDoc tag "@category" is not defined in this configuration
 //
@@ -533,12 +527,10 @@ export interface CameraTransition {
 }
 
 // @public (undocumented)
-export namespace CameraTransition {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): CameraTransition;
-    // (undocumented)
-    export function encode(message: CameraTransition, writer?: _m0.Writer): _m0.Writer;
-}
+export const CameraTransition: {
+    encode(message: CameraTransition, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): CameraTransition;
+};
 
 // @public (undocumented)
 export interface CameraTransitionHelper {
@@ -575,12 +567,10 @@ export interface CinematicSettings {
 }
 
 // @public (undocumented)
-export namespace CinematicSettings {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): CinematicSettings;
-    // (undocumented)
-    export function encode(message: CinematicSettings, writer?: _m0.Writer): _m0.Writer;
-}
+export const CinematicSettings: {
+    encode(message: CinematicSettings, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): CinematicSettings;
+};
 
 // @public (undocumented)
 export const enum ColliderLayer {
@@ -773,12 +763,10 @@ export interface ColorRange {
 }
 
 // @public (undocumented)
-export namespace ColorRange {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): ColorRange;
-    // (undocumented)
-    export function encode(message: ColorRange, writer?: _m0.Writer): _m0.Writer;
-}
+export const ColorRange: {
+    encode(message: ColorRange, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): ColorRange;
+};
 
 // @public (undocumented)
 export interface ComponentData {
@@ -793,16 +781,12 @@ export interface ComponentData {
 }
 
 // @public (undocumented)
-export namespace ComponentData {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): ComponentData;
-    // (undocumented)
-    export function encode(message: ComponentData, writer?: _m0.Writer): _m0.Writer;
-    // (undocumented)
-    export function fromJSON(object: any): ComponentData;
-    // (undocumented)
-    export function toJSON(message: ComponentData): unknown;
-}
+export const ComponentData: {
+    encode(message: ComponentData, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): ComponentData;
+    fromJSON(object: any): ComponentData;
+    toJSON(message: ComponentData): unknown;
+};
 
 // @public (undocumented)
 export type ComponentDefinition<T> = LastWriteWinElementSetComponentDefinition<T> | GrowOnlyValueSetComponentDefinition<T> | ReadOnlyGrowOnlyValueSetComponentDefinition<T> | ReadOnlyLastWriteWinElementSetComponentDefinition<T>;
@@ -930,16 +914,12 @@ export interface CompositeComponent {
 }
 
 // @public (undocumented)
-export namespace CompositeComponent {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): CompositeComponent;
-    // (undocumented)
-    export function encode(message: CompositeComponent, writer?: _m0.Writer): _m0.Writer;
-    // (undocumented)
-    export function fromJSON(object: any): CompositeComponent;
-    // (undocumented)
-    export function toJSON(message: CompositeComponent): unknown;
-}
+export const CompositeComponent: {
+    encode(message: CompositeComponent, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): CompositeComponent;
+    fromJSON(object: any): CompositeComponent;
+    toJSON(message: CompositeComponent): unknown;
+};
 
 // @public (undocumented)
 export interface CompositeComponent_DataEntry {
@@ -950,16 +930,12 @@ export interface CompositeComponent_DataEntry {
 }
 
 // @public (undocumented)
-export namespace CompositeComponent_DataEntry {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): CompositeComponent_DataEntry;
-    // (undocumented)
-    export function encode(message: CompositeComponent_DataEntry, writer?: _m0.Writer): _m0.Writer;
-    // (undocumented)
-    export function fromJSON(object: any): CompositeComponent_DataEntry;
-    // (undocumented)
-    export function toJSON(message: CompositeComponent_DataEntry): unknown;
-}
+export const CompositeComponent_DataEntry: {
+    encode(message: CompositeComponent_DataEntry, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): CompositeComponent_DataEntry;
+    fromJSON(object: any): CompositeComponent_DataEntry;
+    toJSON(message: CompositeComponent_DataEntry): unknown;
+};
 
 // @public (undocumented)
 export interface CompositeDefinition {
@@ -970,16 +946,12 @@ export interface CompositeDefinition {
 }
 
 // @public (undocumented)
-export namespace CompositeDefinition {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): CompositeDefinition;
-    // (undocumented)
-    export function encode(message: CompositeDefinition, writer?: _m0.Writer): _m0.Writer;
-    // (undocumented)
-    export function fromJSON(object: any): CompositeDefinition;
-    // (undocumented)
-    export function toJSON(message: CompositeDefinition): unknown;
-}
+export const CompositeDefinition: {
+    encode(message: CompositeDefinition, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): CompositeDefinition;
+    fromJSON(object: any): CompositeDefinition;
+    toJSON(message: CompositeDefinition): unknown;
+};
 
 // @public (undocumented)
 export type CompositeProvider = {
@@ -1072,7 +1044,7 @@ export function createEntityContainer(opts?: {
 
 // @public
 export function createEthereumProvider(): {
-    send(message: RPCSendableMessage, callback?: ((error: Error | null, result?: any) => void) | undefined): void;
+    send(message: RPCSendableMessage, callback?: (error: Error | null, result?: any) => void): void;
     sendAsync(message: RPCSendableMessage, callback: (error: Error | null, result?: any) => void): void;
 };
 
@@ -1395,7 +1367,7 @@ export type ExcludeUndefined<T> = {
 }[keyof T];
 
 // @public
-export const executeTask: (task: Task<unknown>) => void;
+export const executeTask: (task: Task) => void;
 
 // @public (undocumented)
 export const ExplorerConfiguration: LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>;
@@ -1470,12 +1442,10 @@ export interface FloatRange {
 }
 
 // @public (undocumented)
-export namespace FloatRange {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): FloatRange;
-    // (undocumented)
-    export function encode(message: FloatRange, writer?: _m0.Writer): _m0.Writer;
-}
+export const FloatRange: {
+    encode(message: FloatRange, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): FloatRange;
+};
 
 // @public (undocumented)
 export const enum Font {
@@ -2248,12 +2218,10 @@ export interface Move {
 }
 
 // @public (undocumented)
-export namespace Move {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Move;
-    // (undocumented)
-    export function encode(message: Move, writer?: _m0.Writer): _m0.Writer;
-}
+export const Move: {
+    encode(message: Move, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Move;
+};
 
 // @public (undocumented)
 export interface MoveContinuous {
@@ -2264,12 +2232,10 @@ export interface MoveContinuous {
 }
 
 // @public (undocumented)
-export namespace MoveContinuous {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): MoveContinuous;
-    // (undocumented)
-    export function encode(message: MoveContinuous, writer?: _m0.Writer): _m0.Writer;
-}
+export const MoveContinuous: {
+    encode(message: MoveContinuous, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): MoveContinuous;
+};
 
 // @public (undocumented)
 export interface MovementAnimation {
@@ -2283,12 +2249,10 @@ export interface MovementAnimation {
 }
 
 // @public (undocumented)
-export namespace MovementAnimation {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): MovementAnimation;
-    // (undocumented)
-    export function encode(message: MovementAnimation, writer?: _m0.Writer): _m0.Writer;
-}
+export const MovementAnimation: {
+    encode(message: MovementAnimation, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): MovementAnimation;
+};
 
 // @public (undocumented)
 export interface MoveRotateScale {
@@ -2307,12 +2271,10 @@ export interface MoveRotateScale {
 }
 
 // @public (undocumented)
-export namespace MoveRotateScale {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): MoveRotateScale;
-    // (undocumented)
-    export function encode(message: MoveRotateScale, writer?: _m0.Writer): _m0.Writer;
-}
+export const MoveRotateScale: {
+    encode(message: MoveRotateScale, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): MoveRotateScale;
+};
 
 // @public
 export interface MoveRotateScaleModeParams {
@@ -2542,12 +2504,10 @@ export interface Orthographic {
 }
 
 // @public (undocumented)
-export namespace Orthographic {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Orthographic;
-    // (undocumented)
-    export function encode(message: Orthographic, writer?: _m0.Writer): _m0.Writer;
-}
+export const Orthographic: {
+    encode(message: Orthographic, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Orthographic;
+};
 
 // @public
 export type OverflowType = 'hidden' | 'scroll' | 'visible';
@@ -2581,12 +2541,10 @@ export interface PBAnimationState {
 }
 
 // @public (undocumented)
-export namespace PBAnimationState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAnimationState;
-    // (undocumented)
-    export function encode(message: PBAnimationState, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAnimationState: {
+    encode(message: PBAnimationState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAnimationState;
+};
 
 // @public (undocumented)
 export interface PBAnimator {
@@ -2594,12 +2552,10 @@ export interface PBAnimator {
 }
 
 // @public (undocumented)
-export namespace PBAnimator {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAnimator;
-    // (undocumented)
-    export function encode(message: PBAnimator, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAnimator: {
+    encode(message: PBAnimator, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAnimator;
+};
 
 // @public (undocumented)
 export interface PBAssetLoad {
@@ -2608,12 +2564,10 @@ export interface PBAssetLoad {
 }
 
 // @public (undocumented)
-export namespace PBAssetLoad {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAssetLoad;
-    // (undocumented)
-    export function encode(message: PBAssetLoad, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAssetLoad: {
+    encode(message: PBAssetLoad, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAssetLoad;
+};
 
 // @public (undocumented)
 export interface PBAssetLoadLoadingState {
@@ -2623,12 +2577,10 @@ export interface PBAssetLoadLoadingState {
 }
 
 // @public (undocumented)
-export namespace PBAssetLoadLoadingState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAssetLoadLoadingState;
-    // (undocumented)
-    export function encode(message: PBAssetLoadLoadingState, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAssetLoadLoadingState: {
+    encode(message: PBAssetLoadLoadingState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAssetLoadLoadingState;
+};
 
 // @public (undocumented)
 export interface PBAudioAnalysis {
@@ -2655,12 +2607,10 @@ export interface PBAudioAnalysis {
 }
 
 // @public (undocumented)
-export namespace PBAudioAnalysis {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioAnalysis;
-    // (undocumented)
-    export function encode(message: PBAudioAnalysis, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAudioAnalysis: {
+    encode(message: PBAudioAnalysis, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioAnalysis;
+};
 
 // @public (undocumented)
 export const enum PBAudioAnalysisMode {
@@ -2678,12 +2628,10 @@ export interface PBAudioEvent {
 }
 
 // @public (undocumented)
-export namespace PBAudioEvent {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioEvent;
-    // (undocumented)
-    export function encode(message: PBAudioEvent, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAudioEvent: {
+    encode(message: PBAudioEvent, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioEvent;
+};
 
 // @public (undocumented)
 export interface PBAudioSource {
@@ -2697,12 +2645,10 @@ export interface PBAudioSource {
 }
 
 // @public (undocumented)
-export namespace PBAudioSource {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioSource;
-    // (undocumented)
-    export function encode(message: PBAudioSource, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAudioSource: {
+    encode(message: PBAudioSource, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioSource;
+};
 
 // @public (undocumented)
 export interface PBAudioStream {
@@ -2715,12 +2661,10 @@ export interface PBAudioStream {
 }
 
 // @public (undocumented)
-export namespace PBAudioStream {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioStream;
-    // (undocumented)
-    export function encode(message: PBAudioStream, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAudioStream: {
+    encode(message: PBAudioStream, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAudioStream;
+};
 
 // @public (undocumented)
 export interface PBAvatarAttach {
@@ -2729,12 +2673,10 @@ export interface PBAvatarAttach {
 }
 
 // @public (undocumented)
-export namespace PBAvatarAttach {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarAttach;
-    // (undocumented)
-    export function encode(message: PBAvatarAttach, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarAttach: {
+    encode(message: PBAvatarAttach, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarAttach;
+};
 
 // @public (undocumented)
 export interface PBAvatarBase {
@@ -2753,12 +2695,10 @@ export interface PBAvatarBase {
 }
 
 // @public (undocumented)
-export namespace PBAvatarBase {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarBase;
-    // (undocumented)
-    export function encode(message: PBAvatarBase, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarBase: {
+    encode(message: PBAvatarBase, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarBase;
+};
 
 // @public (undocumented)
 export interface PBAvatarEmoteCommand {
@@ -2773,12 +2713,10 @@ export interface PBAvatarEmoteCommand {
 }
 
 // @public (undocumented)
-export namespace PBAvatarEmoteCommand {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarEmoteCommand;
-    // (undocumented)
-    export function encode(message: PBAvatarEmoteCommand, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarEmoteCommand: {
+    encode(message: PBAvatarEmoteCommand, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarEmoteCommand;
+};
 
 // @public (undocumented)
 export interface PBAvatarEquippedData {
@@ -2790,12 +2728,10 @@ export interface PBAvatarEquippedData {
 }
 
 // @public (undocumented)
-export namespace PBAvatarEquippedData {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarEquippedData;
-    // (undocumented)
-    export function encode(message: PBAvatarEquippedData, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarEquippedData: {
+    encode(message: PBAvatarEquippedData, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarEquippedData;
+};
 
 // @public (undocumented)
 export interface PBAvatarLocomotionSettings {
@@ -2811,12 +2747,10 @@ export interface PBAvatarLocomotionSettings {
 }
 
 // @public (undocumented)
-export namespace PBAvatarLocomotionSettings {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarLocomotionSettings;
-    // (undocumented)
-    export function encode(message: PBAvatarLocomotionSettings, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarLocomotionSettings: {
+    encode(message: PBAvatarLocomotionSettings, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarLocomotionSettings;
+};
 
 // @public (undocumented)
 export interface PBAvatarModifierArea {
@@ -2829,12 +2763,10 @@ export interface PBAvatarModifierArea {
 }
 
 // @public (undocumented)
-export namespace PBAvatarModifierArea {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarModifierArea;
-    // (undocumented)
-    export function encode(message: PBAvatarModifierArea, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarModifierArea: {
+    encode(message: PBAvatarModifierArea, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarModifierArea;
+};
 
 // @public (undocumented)
 export interface PBAvatarMovement {
@@ -2850,12 +2782,10 @@ export interface PBAvatarMovement {
 }
 
 // @public (undocumented)
-export namespace PBAvatarMovement {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovement;
-    // (undocumented)
-    export function encode(message: PBAvatarMovement, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarMovement: {
+    encode(message: PBAvatarMovement, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovement;
+};
 
 // @public (undocumented)
 export interface PBAvatarMovementInfo {
@@ -2874,12 +2804,10 @@ export interface PBAvatarMovementInfo {
 }
 
 // @public (undocumented)
-export namespace PBAvatarMovementInfo {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovementInfo;
-    // (undocumented)
-    export function encode(message: PBAvatarMovementInfo, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarMovementInfo: {
+    encode(message: PBAvatarMovementInfo, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovementInfo;
+};
 
 // @public (undocumented)
 export interface PBAvatarNametag {
@@ -2890,12 +2818,10 @@ export interface PBAvatarNametag {
 }
 
 // @public (undocumented)
-export namespace PBAvatarNametag {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarNametag;
-    // (undocumented)
-    export function encode(message: PBAvatarNametag, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarNametag: {
+    encode(message: PBAvatarNametag, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarNametag;
+};
 
 // @public (undocumented)
 export interface PBAvatarShape {
@@ -2915,12 +2841,10 @@ export interface PBAvatarShape {
 }
 
 // @public (undocumented)
-export namespace PBAvatarShape {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarShape;
-    // (undocumented)
-    export function encode(message: PBAvatarShape, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBAvatarShape: {
+    encode(message: PBAvatarShape, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarShape;
+};
 
 // @public (undocumented)
 export interface PBBillboard {
@@ -2929,12 +2853,10 @@ export interface PBBillboard {
 }
 
 // @public (undocumented)
-export namespace PBBillboard {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBBillboard;
-    // (undocumented)
-    export function encode(message: PBBillboard, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBBillboard: {
+    encode(message: PBBillboard, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBBillboard;
+};
 
 // @public (undocumented)
 export interface PBCameraLayer {
@@ -2951,12 +2873,10 @@ export interface PBCameraLayer {
 }
 
 // @public (undocumented)
-export namespace PBCameraLayer {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraLayer;
-    // (undocumented)
-    export function encode(message: PBCameraLayer, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBCameraLayer: {
+    encode(message: PBCameraLayer, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraLayer;
+};
 
 // @public (undocumented)
 export interface PBCameraLayers {
@@ -2965,12 +2885,10 @@ export interface PBCameraLayers {
 }
 
 // @public (undocumented)
-export namespace PBCameraLayers {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraLayers;
-    // (undocumented)
-    export function encode(message: PBCameraLayers, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBCameraLayers: {
+    encode(message: PBCameraLayers, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraLayers;
+};
 
 // @public (undocumented)
 export interface PBCameraMode {
@@ -2978,12 +2896,10 @@ export interface PBCameraMode {
 }
 
 // @public (undocumented)
-export namespace PBCameraMode {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraMode;
-    // (undocumented)
-    export function encode(message: PBCameraMode, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBCameraMode: {
+    encode(message: PBCameraMode, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraMode;
+};
 
 // @public (undocumented)
 export interface PBCameraModeArea {
@@ -2995,12 +2911,10 @@ export interface PBCameraModeArea {
 }
 
 // @public (undocumented)
-export namespace PBCameraModeArea {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraModeArea;
-    // (undocumented)
-    export function encode(message: PBCameraModeArea, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBCameraModeArea: {
+    encode(message: PBCameraModeArea, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBCameraModeArea;
+};
 
 // @public (undocumented)
 export interface PBColor3 {
@@ -3013,12 +2927,10 @@ export interface PBColor3 {
 }
 
 // @public (undocumented)
-export namespace PBColor3 {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBColor3;
-    // (undocumented)
-    export function encode(message: PBColor3, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBColor3: {
+    encode(message: PBColor3, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBColor3;
+};
 
 // @public (undocumented)
 export interface PBColor4 {
@@ -3033,12 +2945,10 @@ export interface PBColor4 {
 }
 
 // @public (undocumented)
-export namespace PBColor4 {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBColor4;
-    // (undocumented)
-    export function encode(message: PBColor4, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBColor4: {
+    encode(message: PBColor4, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBColor4;
+};
 
 // @public (undocumented)
 export interface PBEngineInfo {
@@ -3050,12 +2960,10 @@ export interface PBEngineInfo {
 }
 
 // @public (undocumented)
-export namespace PBEngineInfo {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBEngineInfo;
-    // (undocumented)
-    export function encode(message: PBEngineInfo, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBEngineInfo: {
+    encode(message: PBEngineInfo, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBEngineInfo;
+};
 
 // @public (undocumented)
 export interface PBExplorerConfiguration {
@@ -3063,12 +2971,10 @@ export interface PBExplorerConfiguration {
 }
 
 // @public (undocumented)
-export namespace PBExplorerConfiguration {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerConfiguration;
-    // (undocumented)
-    export function encode(message: PBExplorerConfiguration, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerConfiguration: {
+    encode(message: PBExplorerConfiguration, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerConfiguration;
+};
 
 // @public (undocumented)
 export interface PBExplorerItemPurchaseResult {
@@ -3090,48 +2996,40 @@ export interface PBExplorerItemPurchaseResult {
 }
 
 // @public (undocumented)
-export namespace PBExplorerItemPurchaseResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult;
-    // (undocumented)
-    export function encode(message: PBExplorerItemPurchaseResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerItemPurchaseResult: {
+    encode(message: PBExplorerItemPurchaseResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult;
+};
 
 // @public (undocumented)
 export interface PBExplorerItemPurchaseResult_Dismissed {
 }
 
 // @public (undocumented)
-export namespace PBExplorerItemPurchaseResult_Dismissed {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Dismissed;
-    // (undocumented)
-    export function encode(_: PBExplorerItemPurchaseResult_Dismissed, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerItemPurchaseResult_Dismissed: {
+    encode(_: PBExplorerItemPurchaseResult_Dismissed, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Dismissed;
+};
 
 // @public (undocumented)
 export interface PBExplorerItemPurchaseResult_Failed {
 }
 
 // @public (undocumented)
-export namespace PBExplorerItemPurchaseResult_Failed {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Failed;
-    // (undocumented)
-    export function encode(_: PBExplorerItemPurchaseResult_Failed, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerItemPurchaseResult_Failed: {
+    encode(_: PBExplorerItemPurchaseResult_Failed, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Failed;
+};
 
 // @public (undocumented)
 export interface PBExplorerItemPurchaseResult_Purchased {
 }
 
 // @public (undocumented)
-export namespace PBExplorerItemPurchaseResult_Purchased {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Purchased;
-    // (undocumented)
-    export function encode(_: PBExplorerItemPurchaseResult_Purchased, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerItemPurchaseResult_Purchased: {
+    encode(_: PBExplorerItemPurchaseResult_Purchased, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerItemPurchaseResult_Purchased;
+};
 
 // @public (undocumented)
 export interface PBExplorerUiEventsResult {
@@ -3149,36 +3047,30 @@ export interface PBExplorerUiEventsResult {
 }
 
 // @public (undocumented)
-export namespace PBExplorerUiEventsResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult;
-    // (undocumented)
-    export function encode(message: PBExplorerUiEventsResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerUiEventsResult: {
+    encode(message: PBExplorerUiEventsResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult;
+};
 
 // @public (undocumented)
 export interface PBExplorerUiEventsResult_UiClosed {
 }
 
 // @public (undocumented)
-export namespace PBExplorerUiEventsResult_UiClosed {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult_UiClosed;
-    // (undocumented)
-    export function encode(_: PBExplorerUiEventsResult_UiClosed, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerUiEventsResult_UiClosed: {
+    encode(_: PBExplorerUiEventsResult_UiClosed, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult_UiClosed;
+};
 
 // @public (undocumented)
 export interface PBExplorerUiEventsResult_UiOpened {
 }
 
 // @public (undocumented)
-export namespace PBExplorerUiEventsResult_UiOpened {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult_UiOpened;
-    // (undocumented)
-    export function encode(_: PBExplorerUiEventsResult_UiOpened, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBExplorerUiEventsResult_UiOpened: {
+    encode(_: PBExplorerUiEventsResult_UiOpened, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerUiEventsResult_UiOpened;
+};
 
 // @public (undocumented)
 export interface PBGlobalLight {
@@ -3188,12 +3080,10 @@ export interface PBGlobalLight {
 }
 
 // @public (undocumented)
-export namespace PBGlobalLight {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGlobalLight;
-    // (undocumented)
-    export function encode(message: PBGlobalLight, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGlobalLight: {
+    encode(message: PBGlobalLight, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGlobalLight;
+};
 
 // @public (undocumented)
 export interface PBGltfContainer {
@@ -3203,12 +3093,10 @@ export interface PBGltfContainer {
 }
 
 // @public (undocumented)
-export namespace PBGltfContainer {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfContainer;
-    // (undocumented)
-    export function encode(message: PBGltfContainer, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfContainer: {
+    encode(message: PBGltfContainer, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfContainer;
+};
 
 // @public (undocumented)
 export interface PBGltfContainerLoadingState {
@@ -3222,12 +3110,10 @@ export interface PBGltfContainerLoadingState {
 }
 
 // @public (undocumented)
-export namespace PBGltfContainerLoadingState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfContainerLoadingState;
-    // (undocumented)
-    export function encode(message: PBGltfContainerLoadingState, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfContainerLoadingState: {
+    encode(message: PBGltfContainerLoadingState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfContainerLoadingState;
+};
 
 // @public (undocumented)
 export interface PBGltfNode {
@@ -3235,12 +3121,10 @@ export interface PBGltfNode {
 }
 
 // @public (undocumented)
-export namespace PBGltfNode {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNode;
-    // (undocumented)
-    export function encode(message: PBGltfNode, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfNode: {
+    encode(message: PBGltfNode, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNode;
+};
 
 // @public (undocumented)
 export interface PBGltfNodeModifiers {
@@ -3249,12 +3133,10 @@ export interface PBGltfNodeModifiers {
 }
 
 // @public (undocumented)
-export namespace PBGltfNodeModifiers {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeModifiers;
-    // (undocumented)
-    export function encode(message: PBGltfNodeModifiers, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfNodeModifiers: {
+    encode(message: PBGltfNodeModifiers, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeModifiers;
+};
 
 // @public (undocumented)
 export interface PBGltfNodeModifiers_GltfNodeModifier {
@@ -3264,12 +3146,10 @@ export interface PBGltfNodeModifiers_GltfNodeModifier {
 }
 
 // @public (undocumented)
-export namespace PBGltfNodeModifiers_GltfNodeModifier {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeModifiers_GltfNodeModifier;
-    // (undocumented)
-    export function encode(message: PBGltfNodeModifiers_GltfNodeModifier, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfNodeModifiers_GltfNodeModifier: {
+    encode(message: PBGltfNodeModifiers_GltfNodeModifier, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeModifiers_GltfNodeModifier;
+};
 
 // @public (undocumented)
 export interface PBGltfNodeState {
@@ -3280,12 +3160,10 @@ export interface PBGltfNodeState {
 }
 
 // @public (undocumented)
-export namespace PBGltfNodeState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeState;
-    // (undocumented)
-    export function encode(message: PBGltfNodeState, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBGltfNodeState: {
+    encode(message: PBGltfNodeState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeState;
+};
 
 // @public (undocumented)
 export interface PBInputModifier {
@@ -3297,12 +3175,10 @@ export interface PBInputModifier {
 }
 
 // @public (undocumented)
-export namespace PBInputModifier {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBInputModifier;
-    // (undocumented)
-    export function encode(message: PBInputModifier, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBInputModifier: {
+    encode(message: PBInputModifier, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBInputModifier;
+};
 
 // @public (undocumented)
 export interface PBInputModifier_StandardInput {
@@ -3325,12 +3201,10 @@ export interface PBInputModifier_StandardInput {
 }
 
 // @public (undocumented)
-export namespace PBInputModifier_StandardInput {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBInputModifier_StandardInput;
-    // (undocumented)
-    export function encode(message: PBInputModifier_StandardInput, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBInputModifier_StandardInput: {
+    encode(message: PBInputModifier_StandardInput, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBInputModifier_StandardInput;
+};
 
 // @public (undocumented)
 export interface PBLightSource {
@@ -3351,24 +3225,20 @@ export interface PBLightSource {
 }
 
 // @public (undocumented)
-export namespace PBLightSource {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource;
-    // (undocumented)
-    export function encode(message: PBLightSource, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBLightSource: {
+    encode(message: PBLightSource, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource;
+};
 
 // @public (undocumented)
 export interface PBLightSource_Point {
 }
 
 // @public (undocumented)
-export namespace PBLightSource_Point {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource_Point;
-    // (undocumented)
-    export function encode(_: PBLightSource_Point, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBLightSource_Point: {
+    encode(_: PBLightSource_Point, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource_Point;
+};
 
 // @public (undocumented)
 export interface PBLightSource_Spot {
@@ -3377,12 +3247,10 @@ export interface PBLightSource_Spot {
 }
 
 // @public (undocumented)
-export namespace PBLightSource_Spot {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource_Spot;
-    // (undocumented)
-    export function encode(message: PBLightSource_Spot, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBLightSource_Spot: {
+    encode(message: PBLightSource_Spot, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBLightSource_Spot;
+};
 
 // @public (undocumented)
 export interface PBMainCamera {
@@ -3390,12 +3258,10 @@ export interface PBMainCamera {
 }
 
 // @public (undocumented)
-export namespace PBMainCamera {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMainCamera;
-    // (undocumented)
-    export function encode(message: PBMainCamera, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMainCamera: {
+    encode(message: PBMainCamera, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMainCamera;
+};
 
 // @public (undocumented)
 export interface PBMaterial {
@@ -3411,12 +3277,10 @@ export interface PBMaterial {
 }
 
 // @public (undocumented)
-export namespace PBMaterial {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial;
-    // (undocumented)
-    export function encode(message: PBMaterial, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMaterial: {
+    encode(message: PBMaterial, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial;
+};
 
 // @public (undocumented)
 export interface PBMaterial_GltfMaterial {
@@ -3427,12 +3291,10 @@ export interface PBMaterial_GltfMaterial {
 }
 
 // @public (undocumented)
-export namespace PBMaterial_GltfMaterial {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_GltfMaterial;
-    // (undocumented)
-    export function encode(message: PBMaterial_GltfMaterial, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMaterial_GltfMaterial: {
+    encode(message: PBMaterial_GltfMaterial, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_GltfMaterial;
+};
 
 // @public (undocumented)
 export interface PBMaterial_PbrMaterial {
@@ -3455,12 +3317,10 @@ export interface PBMaterial_PbrMaterial {
 }
 
 // @public (undocumented)
-export namespace PBMaterial_PbrMaterial {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_PbrMaterial;
-    // (undocumented)
-    export function encode(message: PBMaterial_PbrMaterial, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMaterial_PbrMaterial: {
+    encode(message: PBMaterial_PbrMaterial, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_PbrMaterial;
+};
 
 // @public (undocumented)
 export interface PBMaterial_UnlitMaterial {
@@ -3472,12 +3332,10 @@ export interface PBMaterial_UnlitMaterial {
 }
 
 // @public (undocumented)
-export namespace PBMaterial_UnlitMaterial {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_UnlitMaterial;
-    // (undocumented)
-    export function encode(message: PBMaterial_UnlitMaterial, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMaterial_UnlitMaterial: {
+    encode(message: PBMaterial_UnlitMaterial, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_UnlitMaterial;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider {
@@ -3502,24 +3360,20 @@ export interface PBMeshCollider {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider;
-    // (undocumented)
-    export function encode(message: PBMeshCollider, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider: {
+    encode(message: PBMeshCollider, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider_BoxMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider_BoxMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_BoxMesh;
-    // (undocumented)
-    export function encode(_: PBMeshCollider_BoxMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider_BoxMesh: {
+    encode(_: PBMeshCollider_BoxMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_BoxMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider_CylinderMesh {
@@ -3528,12 +3382,10 @@ export interface PBMeshCollider_CylinderMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider_CylinderMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_CylinderMesh;
-    // (undocumented)
-    export function encode(message: PBMeshCollider_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider_CylinderMesh: {
+    encode(message: PBMeshCollider_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_CylinderMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider_GltfMesh {
@@ -3542,36 +3394,30 @@ export interface PBMeshCollider_GltfMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider_GltfMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_GltfMesh;
-    // (undocumented)
-    export function encode(message: PBMeshCollider_GltfMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider_GltfMesh: {
+    encode(message: PBMeshCollider_GltfMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_GltfMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider_PlaneMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider_PlaneMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_PlaneMesh;
-    // (undocumented)
-    export function encode(_: PBMeshCollider_PlaneMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider_PlaneMesh: {
+    encode(_: PBMeshCollider_PlaneMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_PlaneMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshCollider_SphereMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshCollider_SphereMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_SphereMesh;
-    // (undocumented)
-    export function encode(_: PBMeshCollider_SphereMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshCollider_SphereMesh: {
+    encode(_: PBMeshCollider_SphereMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_SphereMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer {
@@ -3595,12 +3441,10 @@ export interface PBMeshRenderer {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer;
-    // (undocumented)
-    export function encode(message: PBMeshRenderer, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer: {
+    encode(message: PBMeshRenderer, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer_BoxMesh {
@@ -3608,12 +3452,10 @@ export interface PBMeshRenderer_BoxMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer_BoxMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_BoxMesh;
-    // (undocumented)
-    export function encode(message: PBMeshRenderer_BoxMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer_BoxMesh: {
+    encode(message: PBMeshRenderer_BoxMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_BoxMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer_CylinderMesh {
@@ -3622,12 +3464,10 @@ export interface PBMeshRenderer_CylinderMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer_CylinderMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_CylinderMesh;
-    // (undocumented)
-    export function encode(message: PBMeshRenderer_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer_CylinderMesh: {
+    encode(message: PBMeshRenderer_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_CylinderMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer_GltfMesh {
@@ -3636,12 +3476,10 @@ export interface PBMeshRenderer_GltfMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer_GltfMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_GltfMesh;
-    // (undocumented)
-    export function encode(message: PBMeshRenderer_GltfMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer_GltfMesh: {
+    encode(message: PBMeshRenderer_GltfMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_GltfMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer_PlaneMesh {
@@ -3649,24 +3487,20 @@ export interface PBMeshRenderer_PlaneMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer_PlaneMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_PlaneMesh;
-    // (undocumented)
-    export function encode(message: PBMeshRenderer_PlaneMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer_PlaneMesh: {
+    encode(message: PBMeshRenderer_PlaneMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_PlaneMesh;
+};
 
 // @public (undocumented)
 export interface PBMeshRenderer_SphereMesh {
 }
 
 // @public (undocumented)
-export namespace PBMeshRenderer_SphereMesh {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_SphereMesh;
-    // (undocumented)
-    export function encode(_: PBMeshRenderer_SphereMesh, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBMeshRenderer_SphereMesh: {
+    encode(_: PBMeshRenderer_SphereMesh, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_SphereMesh;
+};
 
 // @public (undocumented)
 export interface PBNftShape {
@@ -3676,12 +3510,10 @@ export interface PBNftShape {
 }
 
 // @public (undocumented)
-export namespace PBNftShape {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBNftShape;
-    // (undocumented)
-    export function encode(message: PBNftShape, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBNftShape: {
+    encode(message: PBNftShape, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBNftShape;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem {
@@ -3730,12 +3562,10 @@ export interface PBParticleSystem {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem;
-    // (undocumented)
-    export function encode(message: PBParticleSystem, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem: {
+    encode(message: PBParticleSystem, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem;
+};
 
 // @public (undocumented)
 const enum PBParticleSystem_BlendMode {
@@ -3754,12 +3584,10 @@ export interface PBParticleSystem_Box {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_Box {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Box;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_Box, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_Box: {
+    encode(message: PBParticleSystem_Box, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Box;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem_Burst {
@@ -3771,12 +3599,10 @@ export interface PBParticleSystem_Burst {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_Burst {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Burst;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_Burst, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_Burst: {
+    encode(message: PBParticleSystem_Burst, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Burst;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem_BurstConfiguration {
@@ -3785,12 +3611,10 @@ export interface PBParticleSystem_BurstConfiguration {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_BurstConfiguration {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_BurstConfiguration;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_BurstConfiguration, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_BurstConfiguration: {
+    encode(message: PBParticleSystem_BurstConfiguration, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_BurstConfiguration;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem_Cone {
@@ -3799,12 +3623,10 @@ export interface PBParticleSystem_Cone {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_Cone {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Cone;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_Cone, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_Cone: {
+    encode(message: PBParticleSystem_Cone, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Cone;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem_LimitVelocity {
@@ -3813,12 +3635,10 @@ export interface PBParticleSystem_LimitVelocity {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_LimitVelocity {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_LimitVelocity;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_LimitVelocity, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_LimitVelocity: {
+    encode(message: PBParticleSystem_LimitVelocity, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_LimitVelocity;
+};
 
 // @public (undocumented)
 const enum PBParticleSystem_PlaybackState {
@@ -3834,12 +3654,10 @@ export interface PBParticleSystem_Point {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_Point {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Point;
-    // (undocumented)
-    export function encode(_: PBParticleSystem_Point, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_Point: {
+    encode(_: PBParticleSystem_Point, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Point;
+};
 
 // @public (undocumented)
 export const enum PBParticleSystem_SimulationSpace {
@@ -3853,12 +3671,10 @@ export interface PBParticleSystem_Sphere {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_Sphere {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Sphere;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_Sphere, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_Sphere: {
+    encode(message: PBParticleSystem_Sphere, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_Sphere;
+};
 
 // @public (undocumented)
 export interface PBParticleSystem_SpriteSheetAnimation {
@@ -3868,12 +3684,10 @@ export interface PBParticleSystem_SpriteSheetAnimation {
 }
 
 // @public (undocumented)
-export namespace PBParticleSystem_SpriteSheetAnimation {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_SpriteSheetAnimation;
-    // (undocumented)
-    export function encode(message: PBParticleSystem_SpriteSheetAnimation, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBParticleSystem_SpriteSheetAnimation: {
+    encode(message: PBParticleSystem_SpriteSheetAnimation, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBParticleSystem_SpriteSheetAnimation;
+};
 
 // @public (undocumented)
 export interface PBPhysicsCombinedForce {
@@ -3881,12 +3695,10 @@ export interface PBPhysicsCombinedForce {
 }
 
 // @public (undocumented)
-export namespace PBPhysicsCombinedForce {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPhysicsCombinedForce;
-    // (undocumented)
-    export function encode(message: PBPhysicsCombinedForce, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPhysicsCombinedForce: {
+    encode(message: PBPhysicsCombinedForce, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPhysicsCombinedForce;
+};
 
 // @public (undocumented)
 export interface PBPhysicsCombinedImpulse {
@@ -3895,12 +3707,10 @@ export interface PBPhysicsCombinedImpulse {
 }
 
 // @public (undocumented)
-export namespace PBPhysicsCombinedImpulse {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPhysicsCombinedImpulse;
-    // (undocumented)
-    export function encode(message: PBPhysicsCombinedImpulse, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPhysicsCombinedImpulse: {
+    encode(message: PBPhysicsCombinedImpulse, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPhysicsCombinedImpulse;
+};
 
 // @public (undocumented)
 export interface PBPlayerIdentityData {
@@ -3910,12 +3720,10 @@ export interface PBPlayerIdentityData {
 }
 
 // @public (undocumented)
-export namespace PBPlayerIdentityData {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPlayerIdentityData;
-    // (undocumented)
-    export function encode(message: PBPlayerIdentityData, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPlayerIdentityData: {
+    encode(message: PBPlayerIdentityData, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPlayerIdentityData;
+};
 
 // @public (undocumented)
 export interface PBPointerEvents {
@@ -3923,12 +3731,10 @@ export interface PBPointerEvents {
 }
 
 // @public (undocumented)
-export namespace PBPointerEvents {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents;
-    // (undocumented)
-    export function encode(message: PBPointerEvents, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPointerEvents: {
+    encode(message: PBPointerEvents, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents;
+};
 
 // @public (undocumented)
 export interface PBPointerEvents_Entry {
@@ -3938,12 +3744,10 @@ export interface PBPointerEvents_Entry {
 }
 
 // @public (undocumented)
-export namespace PBPointerEvents_Entry {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents_Entry;
-    // (undocumented)
-    export function encode(message: PBPointerEvents_Entry, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPointerEvents_Entry: {
+    encode(message: PBPointerEvents_Entry, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents_Entry;
+};
 
 // @public (undocumented)
 export interface PBPointerEvents_Info {
@@ -3959,12 +3763,10 @@ export interface PBPointerEvents_Info {
 }
 
 // @public (undocumented)
-export namespace PBPointerEvents_Info {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents_Info;
-    // (undocumented)
-    export function encode(message: PBPointerEvents_Info, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPointerEvents_Info: {
+    encode(message: PBPointerEvents_Info, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEvents_Info;
+};
 
 // @public (undocumented)
 export interface PBPointerEventsResult {
@@ -3979,12 +3781,10 @@ export interface PBPointerEventsResult {
 }
 
 // @public (undocumented)
-export namespace PBPointerEventsResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEventsResult;
-    // (undocumented)
-    export function encode(message: PBPointerEventsResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPointerEventsResult: {
+    encode(message: PBPointerEventsResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerEventsResult;
+};
 
 // @public (undocumented)
 export interface PBPointerLock {
@@ -3992,12 +3792,10 @@ export interface PBPointerLock {
 }
 
 // @public (undocumented)
-export namespace PBPointerLock {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerLock;
-    // (undocumented)
-    export function encode(message: PBPointerLock, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPointerLock: {
+    encode(message: PBPointerLock, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPointerLock;
+};
 
 // @public (undocumented)
 export interface PBPosition {
@@ -4010,12 +3808,10 @@ export interface PBPosition {
 }
 
 // @public (undocumented)
-export namespace PBPosition {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPosition;
-    // (undocumented)
-    export function encode(message: PBPosition, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPosition: {
+    encode(message: PBPosition, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPosition;
+};
 
 // @public (undocumented)
 export interface PBPrimaryPointerInfo {
@@ -4026,12 +3822,10 @@ export interface PBPrimaryPointerInfo {
 }
 
 // @public (undocumented)
-export namespace PBPrimaryPointerInfo {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPrimaryPointerInfo;
-    // (undocumented)
-    export function encode(message: PBPrimaryPointerInfo, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBPrimaryPointerInfo: {
+    encode(message: PBPrimaryPointerInfo, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBPrimaryPointerInfo;
+};
 
 // @public (undocumented)
 export interface PBQuaternion {
@@ -4046,12 +3840,10 @@ export interface PBQuaternion {
 }
 
 // @public (undocumented)
-export namespace PBQuaternion {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBQuaternion;
-    // (undocumented)
-    export function encode(message: PBQuaternion, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBQuaternion: {
+    encode(message: PBQuaternion, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBQuaternion;
+};
 
 // @public (undocumented)
 export interface PBRaycast {
@@ -4080,12 +3872,10 @@ export interface PBRaycast {
 }
 
 // @public (undocumented)
-export namespace PBRaycast {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBRaycast;
-    // (undocumented)
-    export function encode(message: PBRaycast, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBRaycast: {
+    encode(message: PBRaycast, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBRaycast;
+};
 
 // @public (undocumented)
 export interface PBRaycastResult {
@@ -4097,12 +3887,10 @@ export interface PBRaycastResult {
 }
 
 // @public (undocumented)
-export namespace PBRaycastResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBRaycastResult;
-    // (undocumented)
-    export function encode(message: PBRaycastResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBRaycastResult: {
+    encode(message: PBRaycastResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBRaycastResult;
+};
 
 // @public (undocumented)
 export interface PBRealmInfo {
@@ -4116,12 +3904,10 @@ export interface PBRealmInfo {
 }
 
 // @public (undocumented)
-export namespace PBRealmInfo {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBRealmInfo;
-    // (undocumented)
-    export function encode(message: PBRealmInfo, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBRealmInfo: {
+    encode(message: PBRealmInfo, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBRealmInfo;
+};
 
 // @public (undocumented)
 export interface PBSkyboxTime {
@@ -4130,12 +3916,10 @@ export interface PBSkyboxTime {
 }
 
 // @public (undocumented)
-export namespace PBSkyboxTime {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBSkyboxTime;
-    // (undocumented)
-    export function encode(message: PBSkyboxTime, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBSkyboxTime: {
+    encode(message: PBSkyboxTime, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBSkyboxTime;
+};
 
 // @public (undocumented)
 export interface PBTextShape {
@@ -4164,12 +3948,10 @@ export interface PBTextShape {
 }
 
 // @public (undocumented)
-export namespace PBTextShape {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTextShape;
-    // (undocumented)
-    export function encode(message: PBTextShape, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTextShape: {
+    encode(message: PBTextShape, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTextShape;
+};
 
 // @public (undocumented)
 export interface PBTextureCamera {
@@ -4190,12 +3972,10 @@ export interface PBTextureCamera {
 }
 
 // @public (undocumented)
-export namespace PBTextureCamera {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTextureCamera;
-    // (undocumented)
-    export function encode(message: PBTextureCamera, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTextureCamera: {
+    encode(message: PBTextureCamera, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTextureCamera;
+};
 
 // @public (undocumented)
 export interface PBTouchScreenControls {
@@ -4207,12 +3987,10 @@ export interface PBTouchScreenControls {
 }
 
 // @public (undocumented)
-export namespace PBTouchScreenControls {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTouchScreenControls;
-    // (undocumented)
-    export function encode(message: PBTouchScreenControls, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTouchScreenControls: {
+    encode(message: PBTouchScreenControls, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTouchScreenControls;
+};
 
 // @public (undocumented)
 export interface PBTouchScreenControls_TouchInput {
@@ -4222,12 +4000,10 @@ export interface PBTouchScreenControls_TouchInput {
 }
 
 // @public (undocumented)
-export namespace PBTouchScreenControls_TouchInput {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTouchScreenControls_TouchInput;
-    // (undocumented)
-    export function encode(message: PBTouchScreenControls_TouchInput, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTouchScreenControls_TouchInput: {
+    encode(message: PBTouchScreenControls_TouchInput, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTouchScreenControls_TouchInput;
+};
 
 // @public (undocumented)
 export interface PBTriggerArea {
@@ -4236,12 +4012,10 @@ export interface PBTriggerArea {
 }
 
 // @public (undocumented)
-export namespace PBTriggerArea {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerArea;
-    // (undocumented)
-    export function encode(message: PBTriggerArea, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTriggerArea: {
+    encode(message: PBTriggerArea, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerArea;
+};
 
 // @public (undocumented)
 export interface PBTriggerAreaResult {
@@ -4255,12 +4029,10 @@ export interface PBTriggerAreaResult {
 }
 
 // @public (undocumented)
-export namespace PBTriggerAreaResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerAreaResult;
-    // (undocumented)
-    export function encode(message: PBTriggerAreaResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTriggerAreaResult: {
+    encode(message: PBTriggerAreaResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerAreaResult;
+};
 
 // @public (undocumented)
 export interface PBTriggerAreaResult_Trigger {
@@ -4272,12 +4044,10 @@ export interface PBTriggerAreaResult_Trigger {
 }
 
 // @public (undocumented)
-export namespace PBTriggerAreaResult_Trigger {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerAreaResult_Trigger;
-    // (undocumented)
-    export function encode(message: PBTriggerAreaResult_Trigger, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTriggerAreaResult_Trigger: {
+    encode(message: PBTriggerAreaResult_Trigger, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTriggerAreaResult_Trigger;
+};
 
 // @public (undocumented)
 export interface PBTween {
@@ -4315,12 +4085,10 @@ export interface PBTween {
 }
 
 // @public (undocumented)
-export namespace PBTween {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTween;
-    // (undocumented)
-    export function encode(message: PBTween, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTween: {
+    encode(message: PBTween, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTween;
+};
 
 // @public (undocumented)
 export interface PBTweenSequence {
@@ -4331,12 +4099,10 @@ export interface PBTweenSequence {
 }
 
 // @public (undocumented)
-export namespace PBTweenSequence {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTweenSequence;
-    // (undocumented)
-    export function encode(message: PBTweenSequence, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTweenSequence: {
+    encode(message: PBTweenSequence, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTweenSequence;
+};
 
 // @public (undocumented)
 export interface PBTweenState {
@@ -4346,12 +4112,10 @@ export interface PBTweenState {
 }
 
 // @public (undocumented)
-export namespace PBTweenState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBTweenState;
-    // (undocumented)
-    export function encode(message: PBTweenState, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBTweenState: {
+    encode(message: PBTweenState, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBTweenState;
+};
 
 // @public (undocumented)
 export interface PBUiBackground {
@@ -4365,12 +4129,10 @@ export interface PBUiBackground {
 }
 
 // @public (undocumented)
-export namespace PBUiBackground {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiBackground;
-    // (undocumented)
-    export function encode(message: PBUiBackground, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiBackground: {
+    encode(message: PBUiBackground, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiBackground;
+};
 
 // @public (undocumented)
 export interface PBUiCanvas {
@@ -4382,12 +4144,10 @@ export interface PBUiCanvas {
 }
 
 // @public (undocumented)
-export namespace PBUiCanvas {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiCanvas;
-    // (undocumented)
-    export function encode(message: PBUiCanvas, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiCanvas: {
+    encode(message: PBUiCanvas, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiCanvas;
+};
 
 // @public (undocumented)
 export interface PBUiCanvasInformation {
@@ -4399,12 +4159,10 @@ export interface PBUiCanvasInformation {
 }
 
 // @public (undocumented)
-export namespace PBUiCanvasInformation {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiCanvasInformation;
-    // (undocumented)
-    export function encode(message: PBUiCanvasInformation, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiCanvasInformation: {
+    encode(message: PBUiCanvasInformation, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiCanvasInformation;
+};
 
 // @public (undocumented)
 export interface PBUiDropdown {
@@ -4425,12 +4183,10 @@ export interface PBUiDropdown {
 }
 
 // @public (undocumented)
-export namespace PBUiDropdown {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiDropdown;
-    // (undocumented)
-    export function encode(message: PBUiDropdown, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiDropdown: {
+    encode(message: PBUiDropdown, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiDropdown;
+};
 
 // @public (undocumented)
 export interface PBUiDropdownResult {
@@ -4439,12 +4195,10 @@ export interface PBUiDropdownResult {
 }
 
 // @public (undocumented)
-export namespace PBUiDropdownResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiDropdownResult;
-    // (undocumented)
-    export function encode(message: PBUiDropdownResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiDropdownResult: {
+    encode(message: PBUiDropdownResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiDropdownResult;
+};
 
 // @public (undocumented)
 export interface PBUiInput {
@@ -4465,12 +4219,10 @@ export interface PBUiInput {
 }
 
 // @public (undocumented)
-export namespace PBUiInput {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInput;
-    // (undocumented)
-    export function encode(message: PBUiInput, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiInput: {
+    encode(message: PBUiInput, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInput;
+};
 
 // @public (undocumented)
 export interface PBUiInputBinding {
@@ -4478,12 +4230,10 @@ export interface PBUiInputBinding {
 }
 
 // @public (undocumented)
-export namespace PBUiInputBinding {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInputBinding;
-    // (undocumented)
-    export function encode(message: PBUiInputBinding, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiInputBinding: {
+    encode(message: PBUiInputBinding, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInputBinding;
+};
 
 // @public (undocumented)
 export interface PBUiInputResult {
@@ -4493,12 +4243,10 @@ export interface PBUiInputResult {
 }
 
 // @public (undocumented)
-export namespace PBUiInputResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInputResult;
-    // (undocumented)
-    export function encode(message: PBUiInputResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiInputResult: {
+    encode(message: PBUiInputResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInputResult;
+};
 
 // @public (undocumented)
 export interface PBUiLayoutFeedback {
@@ -4510,12 +4258,10 @@ export interface PBUiLayoutFeedback {
 }
 
 // @public (undocumented)
-export namespace PBUiLayoutFeedback {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiLayoutFeedback;
-    // (undocumented)
-    export function encode(message: PBUiLayoutFeedback, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiLayoutFeedback: {
+    encode(message: PBUiLayoutFeedback, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiLayoutFeedback;
+};
 
 // @public (undocumented)
 export interface PBUiScrollResult {
@@ -4524,12 +4270,10 @@ export interface PBUiScrollResult {
 }
 
 // @public (undocumented)
-export namespace PBUiScrollResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiScrollResult;
-    // (undocumented)
-    export function encode(message: PBUiScrollResult, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiScrollResult: {
+    encode(message: PBUiScrollResult, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiScrollResult;
+};
 
 // @public (undocumented)
 export interface PBUiText {
@@ -4545,12 +4289,10 @@ export interface PBUiText {
 }
 
 // @public (undocumented)
-export namespace PBUiText {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiText;
-    // (undocumented)
-    export function encode(message: PBUiText, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiText: {
+    encode(message: PBUiText, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiText;
+};
 
 // @public (undocumented)
 export interface PBUiTransform {
@@ -4667,12 +4409,10 @@ export interface PBUiTransform {
 }
 
 // @public (undocumented)
-export namespace PBUiTransform {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiTransform;
-    // (undocumented)
-    export function encode(message: PBUiTransform, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBUiTransform: {
+    encode(message: PBUiTransform, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBUiTransform;
+};
 
 // @public (undocumented)
 export interface PBVector2 {
@@ -4683,12 +4423,10 @@ export interface PBVector2 {
 }
 
 // @public (undocumented)
-export namespace PBVector2 {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVector2;
-    // (undocumented)
-    export function encode(message: PBVector2, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVector2: {
+    encode(message: PBVector2, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVector2;
+};
 
 // @public (undocumented)
 export interface PBVector3 {
@@ -4701,12 +4439,10 @@ export interface PBVector3 {
 }
 
 // @public (undocumented)
-export namespace PBVector3 {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVector3;
-    // (undocumented)
-    export function encode(message: PBVector3, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVector3: {
+    encode(message: PBVector3, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVector3;
+};
 
 // @public (undocumented)
 export interface PBVideoEvent {
@@ -4721,12 +4457,10 @@ export interface PBVideoEvent {
 }
 
 // @public (undocumented)
-export namespace PBVideoEvent {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVideoEvent;
-    // (undocumented)
-    export function encode(message: PBVideoEvent, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVideoEvent: {
+    encode(message: PBVideoEvent, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVideoEvent;
+};
 
 // @public (undocumented)
 export interface PBVideoPlayer {
@@ -4742,12 +4476,10 @@ export interface PBVideoPlayer {
 }
 
 // @public (undocumented)
-export namespace PBVideoPlayer {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVideoPlayer;
-    // (undocumented)
-    export function encode(message: PBVideoPlayer, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVideoPlayer: {
+    encode(message: PBVideoPlayer, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVideoPlayer;
+};
 
 // @public (undocumented)
 export interface PBVirtualCamera {
@@ -4759,12 +4491,10 @@ export interface PBVirtualCamera {
 }
 
 // @public (undocumented)
-export namespace PBVirtualCamera {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVirtualCamera;
-    // (undocumented)
-    export function encode(message: PBVirtualCamera, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVirtualCamera: {
+    encode(message: PBVirtualCamera, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVirtualCamera;
+};
 
 // @public (undocumented)
 export interface PBVisibilityComponent {
@@ -4773,12 +4503,10 @@ export interface PBVisibilityComponent {
 }
 
 // @public (undocumented)
-export namespace PBVisibilityComponent {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBVisibilityComponent;
-    // (undocumented)
-    export function encode(message: PBVisibilityComponent, writer?: _m0.Writer): _m0.Writer;
-}
+export const PBVisibilityComponent: {
+    encode(message: PBVisibilityComponent, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): PBVisibilityComponent;
+};
 
 // @public (undocumented)
 export interface Perspective {
@@ -4786,12 +4514,10 @@ export interface Perspective {
 }
 
 // @public (undocumented)
-export namespace Perspective {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Perspective;
-    // (undocumented)
-    export function encode(message: Perspective, writer?: _m0.Writer): _m0.Writer;
-}
+export const Perspective: {
+    encode(message: Perspective, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Perspective;
+};
 
 // @public
 export const Physics: PhysicsSystem;
@@ -5131,12 +4857,10 @@ export interface RaycastHit {
 }
 
 // @public (undocumented)
-export namespace RaycastHit {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): RaycastHit;
-    // (undocumented)
-    export function encode(message: RaycastHit, writer?: _m0.Writer): _m0.Writer;
-}
+export const RaycastHit: {
+    encode(message: RaycastHit, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): RaycastHit;
+};
 
 // @public (undocumented)
 export const enum RaycastQueryType {
@@ -5326,12 +5050,10 @@ export interface Rect {
 }
 
 // @public (undocumented)
-export namespace Rect {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Rect;
-    // (undocumented)
-    export function encode(message: Rect, writer?: _m0.Writer): _m0.Writer;
-}
+export const Rect: {
+    encode(message: Rect, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Rect;
+};
 
 // @public
 export function removeEntityWithChildren(engine: Pick<IEngine, 'getEntitiesWith' | 'defineComponentFromSchema' | 'removeEntity' | 'defineComponent'>, entity: Entity): void;
@@ -5350,12 +5072,10 @@ export interface Rotate {
 }
 
 // @public (undocumented)
-export namespace Rotate {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Rotate;
-    // (undocumented)
-    export function encode(message: Rotate, writer?: _m0.Writer): _m0.Writer;
-}
+export const Rotate: {
+    encode(message: Rotate, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Rotate;
+};
 
 // @public (undocumented)
 export interface RotateContinuous {
@@ -5366,12 +5086,10 @@ export interface RotateContinuous {
 }
 
 // @public (undocumented)
-export namespace RotateContinuous {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): RotateContinuous;
-    // (undocumented)
-    export function encode(message: RotateContinuous, writer?: _m0.Writer): _m0.Writer;
-}
+export const RotateContinuous: {
+    encode(message: RotateContinuous, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): RotateContinuous;
+};
 
 // @public
 export function rotateVectorByQuaternion(v: Vector3Type, q: QuaternionType): Vector3Type;
@@ -5421,12 +5139,10 @@ export interface Scale {
 }
 
 // @public (undocumented)
-export namespace Scale {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Scale;
-    // (undocumented)
-    export function encode(message: Scale, writer?: _m0.Writer): _m0.Writer;
-}
+export const Scale: {
+    encode(message: Scale, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Scale;
+};
 
 // @public
 export type ScaleContext = {
@@ -5494,14 +5210,16 @@ export namespace Schemas {
     const // (undocumented)
     Array: <T>(type: ISchema<T>) => ISchema<T[]>;
     const // (undocumented)
-    Map: <T extends Spec>(spec: T, defaultValue?: Partial<MapResult<T>> | undefined) => ISchema<MapResult<T>>;
+    Map: <T extends Spec>(spec: T, defaultValue?: Partial<MapResult<T>>) => ISchema<MapResult<T>>;
     const // (undocumented)
     Optional: <T>(spec: ISchema<T>) => ISchema<T | undefined>;
     const // (undocumented)
-    OneOf: <T extends Spec>(specs: T) => ISchema<{ [K in keyof T]: {
+    OneOf: <T extends Spec>(specs: T) => ISchema<{
+        [K in keyof T]: {
             readonly $case: K;
-            readonly value: ReturnType<T[K]["deserialize"]>;
-        }; }[keyof T]>;
+            readonly value: ReturnType<T[K]['deserialize']>;
+        };
+    }[keyof T]>;
     const // Warning: (tsdoc-param-tag-missing-hyphen) The @param block should be followed by a parameter name and then a hyphen
     fromJson: (json: JsonSchemaExtended) => ISchema<unknown>;
     const mutateNestedValues: (jsonSchema: JsonSchemaExtended, value: unknown, mutateFn: (value: unknown, valueType: JsonSchemaExtended) => {
@@ -5528,12 +5246,10 @@ export interface ScrollPositionValue {
 }
 
 // @public (undocumented)
-export namespace ScrollPositionValue {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): ScrollPositionValue;
-    // (undocumented)
-    export function encode(message: ScrollPositionValue, writer?: _m0.Writer): _m0.Writer;
-}
+export const ScrollPositionValue: {
+    encode(message: ScrollPositionValue, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): ScrollPositionValue;
+};
 
 // @public
 export function setCompositeProvider(engine: IEngine, provider: CompositeProvider): void;
@@ -5665,12 +5381,10 @@ export interface Texture {
 }
 
 // @public (undocumented)
-export namespace Texture {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): Texture;
-    // (undocumented)
-    export function encode(message: Texture, writer?: _m0.Writer): _m0.Writer;
-}
+export const Texture: {
+    encode(message: Texture, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): Texture;
+};
 
 // @public (undocumented)
 export const TextureCamera: LastWriteWinElementSetComponentDefinition<PBTextureCamera>;
@@ -5711,12 +5425,10 @@ export interface TextureMove {
 }
 
 // @public (undocumented)
-export namespace TextureMove {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): TextureMove;
-    // (undocumented)
-    export function encode(message: TextureMove, writer?: _m0.Writer): _m0.Writer;
-}
+export const TextureMove: {
+    encode(message: TextureMove, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): TextureMove;
+};
 
 // @public (undocumented)
 export interface TextureMoveContinuous {
@@ -5728,12 +5440,10 @@ export interface TextureMoveContinuous {
 }
 
 // @public (undocumented)
-export namespace TextureMoveContinuous {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): TextureMoveContinuous;
-    // (undocumented)
-    export function encode(message: TextureMoveContinuous, writer?: _m0.Writer): _m0.Writer;
-}
+export const TextureMoveContinuous: {
+    encode(message: TextureMoveContinuous, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): TextureMoveContinuous;
+};
 
 // @public (undocumented)
 export const enum TextureMovementType {
@@ -5761,12 +5471,10 @@ export interface TextureUnion {
 }
 
 // @public (undocumented)
-export namespace TextureUnion {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): TextureUnion;
-    // (undocumented)
-    export function encode(message: TextureUnion, writer?: _m0.Writer): _m0.Writer;
-}
+export const TextureUnion: {
+    encode(message: TextureUnion, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): TextureUnion;
+};
 
 // @public (undocumented)
 export const enum TextureWrapMode {
@@ -6061,12 +5769,10 @@ export interface UiCanvasTexture {
 }
 
 // @public (undocumented)
-export namespace UiCanvasTexture {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): UiCanvasTexture;
-    // (undocumented)
-    export function encode(message: UiCanvasTexture, writer?: _m0.Writer): _m0.Writer;
-}
+export const UiCanvasTexture: {
+    encode(message: UiCanvasTexture, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): UiCanvasTexture;
+};
 
 // @public (undocumented)
 export type UiComponent = () => ReactEcs.JSX.ReactNode;
@@ -6152,12 +5858,10 @@ export interface UiLayoutRect {
 }
 
 // @public (undocumented)
-export namespace UiLayoutRect {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): UiLayoutRect;
-    // (undocumented)
-    export function encode(message: UiLayoutRect, writer?: _m0.Writer): _m0.Writer;
-}
+export const UiLayoutRect: {
+    encode(message: UiLayoutRect, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): UiLayoutRect;
+};
 
 // @public
 export type uint32 = number;
@@ -6417,12 +6121,10 @@ export interface VideoTexture {
 }
 
 // @public (undocumented)
-export namespace VideoTexture {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): VideoTexture;
-    // (undocumented)
-    export function encode(message: VideoTexture, writer?: _m0.Writer): _m0.Writer;
-}
+export const VideoTexture: {
+    encode(message: VideoTexture, writer?: _m0.Writer): _m0.Writer;
+    decode(input: _m0.Reader | Uint8Array, length?: number): VideoTexture;
+};
 
 // Warning: (ae-missing-release-tag) "VirtualCamera" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
