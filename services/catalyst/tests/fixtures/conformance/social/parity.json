@@ -1545,7 +1545,7 @@
         }
       ],
       "gaps": [
-        "Native login production is implemented only by the owned Bevy Explorer. Unchanged Unity, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
+        "Native login production is implemented only by the owned Bevy Explorer. Unchanged external desktop, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
         "Native signed login observations for a banned referrer receive 204 without progress or a receipt. The client discards the acknowledged event; lifting the ban does not replay it, and a new login observation is required."
       ],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. Local provider tests do not establish other-client producer coverage or deployed provider delivery."
@@ -2412,7 +2412,7 @@
         }
       ],
       "gaps": [
-        "Native login production is implemented only by the owned Bevy Explorer. Unchanged Unity, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
+        "Native login production is implemented only by the owned Bevy Explorer. Unchanged external desktop, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
         "Native signed login observations for a banned referrer receive 204 without progress or a receipt. The client discards the acknowledged event; lifting the ban does not replay it, and a new login observation is required."
       ],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. Local provider tests do not establish other-client producer coverage or deployed provider delivery."
@@ -3359,7 +3359,7 @@
       "gaps": [
         "Intentional ingress hardening: untrusted CF-Connecting-IP, X-Forwarded-For and X-Real-IP do not select the quota bucket. Direct headerless sockets use their real peer. Trusted backend proxies must be provisioned with HTTP_TRUSTED_PROXY_CIDRS and overwrite X-Real-IP; this differs from source header priority.",
         "Intentional provider hardening: Slack uses a ten-second absolute whole-effect budget, at most three attempts and Retry-After capped at two seconds, differing from the captured source timeout0 and eleven-attempt exhaustion. Committed attribution/grant is retained; attribution alerts are awaited, while native login milestone alerts are best effort after commit.",
-        "Native login production is implemented only by the owned Bevy Explorer. Unchanged Unity, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
+        "Native login production is implemented only by the owned Bevy Explorer. Unchanged external desktop, mobile and other clients do not advance referral login days, grants or rewards through this replacement; they require native signed login integration before rollout. Retained SQS observations lack a user signature and cannot be replayed; no importer exists.",
         "Native signed login observations for a banned referrer receive 204 without progress or a receipt. The client discards the acknowledged event; lifting the ban does not replay it, and a new login observation is required."
       ],
       "remaining_verification": "Real Slack and email delivery, other-client producers and cutover state remain unverified. SDK cases use controlled local providers; exhausted concurrent rate-limit ordering and full lifecycle email replay remain outstanding. Backend proxy trust provisioning and live client-IP distribution must be verified before cutover; exact source equivalence is not claimed."
