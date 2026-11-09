@@ -20,7 +20,7 @@ Check your [scene's details](/docs/creator/scene-editor/configure/scene-settings
 
 > [!CAUTION]
 > **❗Warning**: When planning live events, don't make last minute changes to the scene right before the event. Publish your final version at least an hour before the event starts.
-> 
+>
 > Players who already had loaded the scene in the current session before your updates will continue to see a cached version of the scene. To see the renewed version they must close and re-enter Decentraland.
 
 
@@ -31,7 +31,7 @@ To publish your scene:
 1. Open your scene in the Scene Editor and click **Publish**. This opens a window showing details about the publication.
 2. Select if you want to publish to LAND or to a WORLD. See [Kinds of projects](/docs/creator/sdk7/projects/kinds-of-project/) to better understand the different options.
 
-![](/docs/creator/images/editor/publish-options.webp)
+![](/docs/creator/images/editor/publish-options.webp)
 
 3. If publishing to LAND, select the location on the map. You'll see your eligible parcels marked in red. If publishing to a WORLD, you'll see your eligible NAMEs in a dropdown.
 
@@ -41,15 +41,24 @@ To publish your scene:
 
 
 4. The next screen shows all of the files you're currently uploading and their sizes, confirm the operation.
-5. The publication process will then start. It has two stages, and once both are done a **Jump In** button appears. ![](/docs/creator/images/editor/deploy-steps.webp)
+5. The publication process will then start. It has two stages, and once both are done a **Jump In** button appears.
+
+
+> [!NOTE]
+> **💡 Tip**: The success screen also shows a web link to your scene, with a button to copy it. Anyone can open that link in a browser, whether or not they have the desktop client installed, so it's the one to paste into a Discord message or an event page. It looks like `https://decentraland.org/jump?realm=<your-world-name>` for a World, or `https://decentraland.org/jump?position=<x>,<y>` for a scene in Genesis City.
+>
+> The **Jump In** button is for you rather than your audience: it opens the scene in your own desktop client so you can check your work.
+
+
+![](/docs/creator/images/editor/deploy-steps.webp)
 
 
 > [!NOTE]
 > **📔 Note**: The two stages of the deployment involve:
-> 
-> - **1. Uploading**: Uploading the files to the servers.
+>
+> - **1. Uploading**: Uploading the files to the servers. Scenes of 50 MiB or more upload in batches, see [Publish large scenes](/docs/creator/sdk7/publishing/publishing/#publish-large-scenes).
 > - **2. Converting**: The scene's 3D models are compressed into Asset Bundles for faster rendering. This usually takes seconds. It may take longer for very large scenes.
-> 
+>
 > Decentraland's servers also generate Low Level of Detail (LOD) versions of your models, used to draw your scene from far away. That runs in the background once your scene is already live, so publishing never waits for it.
 
 
@@ -74,7 +83,7 @@ Scenes published to Worlds count against a storage budget that is shared across 
 
 The **Manage** tab shows how much of your storage budget you're using. Click **View Details** to see how your MANA, LAND, and NAME holdings add up.
 
-<img src="/docs/.gitbook/assets/world-storage-budget.webp" width="300" />
+<img src="/docs/creator/.gitbook/assets/world-storage-budget.webp" width="300" />
 
 You can also check your remaining budget in the **Worlds** tab of the [Builder](https://decentraland.org/builder/worlds).
 
@@ -84,7 +93,7 @@ See [Worlds size limits](/docs/creator/sdk7/projects/kinds-of-project/#size-limi
 
 A World Owner can edit its settings by going into the desired World **Settings** under the **Manage** panel, or by accessing it during the publishing process by clicking on **Settings** if **Multi-Scene World (Advanced)** is enabled.
 
-<img src="/docs/.gitbook/assets/world-manage-settings.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/world-manage-settings.webp" width="600" />
 
 - **Details**: World's general information:
   - World Title
@@ -98,7 +107,7 @@ The information added in **Details** will be shown in Decentraland Places and in
   - Remove individual scenes by clicking the three dots and selecting **Remove from World**.
   - **World Map** shows the World layout and identifies parcels with content and the remaining free parcels.
 
-<img src="/docs/.gitbook/assets/world-layout.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/world-layout.webp" width="600" />
 
 - **Misc**: Other useful World configurations:
   - World Spawn Coordinate: This sets up the Parcel (X,Y) in which the user will spawn inside the World. The scene located in that Parcel determines the exact position the user will spawn (for example, Parcel 1,1 is the World Spawn, and the scene in 1,1 has a Spawn point of 1,0,1 **inside that scene**).
@@ -139,7 +148,7 @@ A World can have multiple scenes, published by the World Owner or by other creat
 
 A World Owner can choose to make the World Multi-Scene by toggling **Multi-Scene World (Advanced)** when publishing to a single-scene World.
 
-<img src="/docs/.gitbook/assets/multi-scene-owner-first-deploy.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/multi-scene-owner-first-deploy.webp" width="600" />
 
 Once the Multi-Scene World is published, the World Owner can publish additional scenes or add Collaborators to publish within the World.
 
@@ -152,17 +161,17 @@ Once the Multi-Scene World is published, the World Owner can publish additional 
 
 In the **Manage** panel, a World Owner can access the World's **Permissions** by clicking on the three dots. The World Owner can manage collaborators under the **Collaborators** tab.
 
-<img src="/docs/.gitbook/assets/world-settings-collaborators.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/world-settings-collaborators.webp" width="600" />
 
 A Collaborator can have deploy rights to All Parcels or to specific Custom Coordinates. Custom Coordinates can be selected and confirmed through an interactive World map, similar to the one in the World Settings.
 
-<img src="/docs/.gitbook/assets/multi-scene-custom-coordinates.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/multi-scene-custom-coordinates.webp" width="600" />
 
 #### Deploying to a Multi-Scene World as a Collaborator
 
 World Collaborators cannot edit its Settings or Permissions. In the **Manage** tab, a creator can see the World they are a Collaborator in but cannot access **Settings** or **Permissions**.
 
-<img src="/docs/.gitbook/assets/world-manage-collaborator.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/world-manage-collaborator.webp" width="600" />
 
 When going through the publishing process, the creator can select to publish only to the parcels they are a Collaborator in (as set by the World Owner).
 
@@ -173,7 +182,7 @@ In the **Collaborators** section, if the World Owner set **Custom Coordinates** 
 > **📔 Note**: Collaborators with **All Parcels** publishing access can overwrite any scene from the world, even if it was published by the owner or other collaborators.
 
 
-<img src="/docs/.gitbook/assets/multi-scene-publish-collaborator.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/multi-scene-publish-collaborator.webp" width="600" />
 
 ### Private Worlds
 
@@ -211,7 +220,7 @@ To add new addresses or communities to the **Approved Addresses**, follow these 
 
 - **Community**: Search and add any Public Community. This adds **all Community addresses** to the **Addresses Approved**.
 
-  <img src="/docs/.gitbook/assets/world-access-community.webp" width="600" />
+  <img src="/docs/creator/.gitbook/assets/world-access-community.webp" width="600" />
 
 - **Import CSV**: Use an existing CSV with a list of addresses or community IDs to add to **Approved Addresses**. The structure is one wallet per line, for example:
 
@@ -222,13 +231,13 @@ To add new addresses or communities to the **Approved Addresses**, follow these 
 
 Once imported, it tracks each Address individually, as shown in the image.
 
-  <img src="/docs/.gitbook/assets/world-access-csv.webp" width="600" />
+  <img src="/docs/creator/.gitbook/assets/world-access-csv.webp" width="600" />
 
 3. After confirming, the address/es are in the **Approved Addresses**.
 
 4. With a new **+ New Invite**, addresses are added to the existing list, helping the World Owner manage and extend the list if needed.
 
-<img src="/docs/.gitbook/assets/world-access-all.webp" width="600" />
+<img src="/docs/creator/.gitbook/assets/world-access-all.webp" width="600" />
 
 5. Individual Addresses or set of Addresses (in case of a Community) can be removed by selecting **Delete** on the three dots in the **Approved Addresses** section.
 
@@ -243,11 +252,11 @@ There are different scenarios if a user jumps into a World that doesn't have **P
 
 - Their address in the **Approved Addresses**: Will be able to join normally. If not, they will get information that the World is **Invitation Only**.
 
-<img src="/docs/.gitbook/assets/world-invitation-only-modal.webp" width="300" />
+<img src="/docs/creator/.gitbook/assets/world-invitation-only-modal.webp" width="300" />
 
 - The World is **Password Protected**: Users will be able to write the password. The maximum limit is ten (10) attempts.
 
-<img src="/docs/.gitbook/assets/world-password-modal.webp" width="300" />
+<img src="/docs/creator/.gitbook/assets/world-password-modal.webp" width="300" />
 
 ## Publish from a hardware wallet
 

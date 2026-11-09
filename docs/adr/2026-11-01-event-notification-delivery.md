@@ -64,8 +64,11 @@ notice. New notification rows use the database delivery clock for `occurred_at`,
 avoiding source-time backdating of catch-up notices in incremental bell polling.
 This preserves the feed's existing timestamp cursor semantics; it does not
 establish a commit-ordered watermark across concurrent transactions. Source event timing
-remains in the notification metadata. Reminder wording says “starts soon” rather
-than assuming that exactly one hour remains.
+remains in the notification metadata. Titles, descriptions and links are the
+old events service's (`Notifications/index.ts`): the reminder is "Event starts in
+an hour" and links the jump-in site (`JUMP_IN_SITE_URL`), as that service sent it,
+even for an occurrence approved with less than an hour to go (its cursor skipped
+those; this node reminds them once).
 
 Event notification channel preferences come from Social subscriptions, including
 per-type settings and community opt-outs. Community UUID scopes are normalized

@@ -49,6 +49,16 @@ const VALID_PARCELS: &str = "EXISTS (SELECT 1 FROM unnest(s.parcels) AS parcel(v
     AND pg_input_is_valid(btrim(split_part(value, ',', 1)), 'integer') \
     AND pg_input_is_valid(btrim(split_part(value, ',', 2)), 'integer'))";
 
+/// A scene row with the typed columns of the catalogue legs
+/// (`query::typed_columns_sql`), so `place_columns()` reads it as it reads
+/// `explore.place_indexed`.
+fn typed_scene_rows(rows: &str) -> String {
+    format!(
+        "SELECT scene_rows.*{} FROM ({rows}) scene_rows",
+        super::query::typed_columns_sql()
+    )
+}
+
 impl PlacesComponent {
     fn scene_rows_sql(&self, content_index: usize) -> String {
         let binding = super::scene_identity::BOUND_WORLD_SCENE_FROM;
@@ -127,13 +137,16 @@ impl PlacesComponent {
             ));
             predicates.push(format!("p.identity = ANY(ARRAY(SELECT CASE WHEN pg_input_is_valid(uf.entity_id, 'uuid') THEN uf.entity_id::uuid END FROM explore.user_favorites uf WHERE uf.\"user\" = ${}))", binds.len()));
         }
-        let rows = self.scene_rows_sql(1);
-        let predicate = predicates.join(" AND ");
-        let columns = "id, base_position, title, description, creator_address, content_rating, categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw, world_name, world";
+        let rows = typed_scene_rows(&format!(
+            "{} AND {}",
+            self.scene_rows_sql(1),
+            predicates.join(" AND ")
+        ));
+        let columns = "id, base_position, title, description, creator_address, content_rating, categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw, world_name, world, like_score_num, like_rate_num, ranking_num, skybox_time_num, user_count_num, user_visits_num, settings_version_num, created_at_ts, updated_at_ts, disabled_at_ts, textsearch";
         let local = crate::copies::origin::world_scene_rows_sql();
         super::ListSource {
             prefix: format!(
-                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT EXISTS (SELECT 1 FROM explore.world_scene_place p WHERE p.identity = CASE WHEN pg_input_is_valid(regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i'), 'uuid') THEN regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i')::uuid END) UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows} AND {predicate}) scene_rows WHERE true {local}) "
+                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT EXISTS (SELECT 1 FROM explore.world_scene_place p WHERE p.identity = CASE WHEN pg_input_is_valid(regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i'), 'uuid') THEN regexp_replace(explore.place_indexed.id, '^urn:uuid:', '', 'i')::uuid END) UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
             ),
             relation: "scene_catalogue AS place_indexed",
             scene_projection: true,
@@ -192,19 +205,6 @@ impl PlacesComponent {
         Ok((catalogue, scenes.into_iter().collect()))
     }
 
-    pub(super) async fn world_scene_places_by_ids(
-        &self,
-        ids: &[String],
-        viewer: Option<&str>,
-    ) -> Result<Vec<PlaceRow>, ApiError> {
-        self.world_scene_places_by_ids_scoped(
-            ids,
-            viewer,
-            crate::copies::origin::world_scenes_local_only(),
-        )
-        .await
-    }
-
     pub(super) async fn world_scene_places_by_ids_scoped(
         &self,
         ids: &[String],
@@ -215,7 +215,7 @@ impl PlacesComponent {
             .iter()
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
-        let scene_rows = self.scene_rows_sql(3);
+        let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
             "SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
             place_columns(),
@@ -245,7 +245,7 @@ impl PlacesComponent {
         };
         // Both identity ownership and visibility are observed in one snapshot,
         // so a concurrent retirement cannot cause a fallback to upstream.
-        let scene_rows = self.scene_rows_sql(3);
+        let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
             "WITH scene AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
              SELECT scene.*, p.identity::text AS canonical_id FROM explore.world_scene_place p \
@@ -293,7 +293,7 @@ impl PlacesComponent {
     ) -> Result<(Vec<PlaceRow>, i64), ApiError> {
         let world = world.trim().to_lowercase();
         self.require_discoverable_world(&world).await?;
-        let scene_rows = self.scene_rows_sql(3);
+        let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
             "WITH visible AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
              page AS (SELECT * FROM visible ORDER BY deployed_at DESC NULLS LAST, id LIMIT $4 OFFSET $5) \
@@ -625,15 +625,30 @@ mod tests {
             get(&app, &format!("/v1/destinations/{first}")).await.0,
             StatusCode::OK
         );
+        // The object body is `/v1/destinations`';
+        // `/api/destinations` answers upstream's "not an array" 400 to it.
         let (status, batch_destinations) = signed(
+            &app,
+            "POST",
+            "/v1/destinations",
+            Some(json!({"ids": [first]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{batch_destinations}");
+        assert_eq!(batch_destinations["data"][0]["id"], first);
+        assert_eq!(batch_destinations["data"][0]["kind"], "place");
+        let (status, refused) = signed(
             &app,
             "POST",
             "/api/destinations",
             Some(json!({"ids": [first]})),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{batch_destinations}");
-        assert_eq!(batch_destinations["data"][0]["id"], first);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(
+            refused["error"],
+            "Invalid request body. Expected an array of destination IDs."
+        );
         let (status, categories) = get(&app, &format!("/api/places/{first}/categories")).await;
         assert_eq!(status, StatusCode::OK, "{categories}");
         assert_eq!(categories["data"]["categories"], json!([]));
@@ -726,7 +741,7 @@ mod tests {
         ] {
             for route in ["/api/places", "/api/places/status", "/api/destinations"] {
                 let (status, body) = signed(&app, "POST", route, Some(ids.clone())).await;
-                assert_eq!(status, StatusCode::OK, "{route}: {body}");
+                assert_eq!(status, StatusCode::CREATED, "{route}: {body}");
                 assert_eq!(
                     body["data"].as_array().unwrap().len(),
                     expected,
@@ -739,8 +754,8 @@ mod tests {
             json!({"world_names": [mirrored]}),
             json!({"ids": [mirrored_id], "positions": ["0,0"]}),
         ] {
-            let (status, body) = signed(&app, "POST", "/api/destinations", Some(selectors)).await;
-            assert_eq!(status, StatusCode::OK);
+            let (status, body) = signed(&app, "POST", "/v1/destinations", Some(selectors)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
             assert!(
                 body["data"]
                     .as_array()
@@ -768,12 +783,19 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        // Places counts string IDs, ignoring other array entries. Padding
-        // cannot change the selected source authority in the middleware.
+        // The middleware counts string IDs, so padding cannot change the
+        // selected source authority; the route itself counts every entry, as
+        // upstream did (`getPlaceListById.ts:31-36`), and refuses the 101st.
         let mut padded_ids = vec![Value::Null; super::super::handlers::MAX_BATCH_ITEMS];
         padded_ids.push(json!(mirrored_id));
-        let (_, padded) = signed(&app, "POST", "/api/places", Some(json!(padded_ids))).await;
-        assert_eq!(padded["data"], json!([]));
+        let (status, padded) = signed(&app, "POST", "/api/places", Some(json!(padded_ids))).await;
+        assert_eq!(
+            (status, padded["error"].clone()),
+            (
+                StatusCode::BAD_REQUEST,
+                json!("Cannot request more than 100 places at once")
+            )
+        );
         // Before the configured mirror's first complete pass, a mixed batch
         // exposes local deployment places only; direct local detail worked
         // above without a catalogue refresh.
@@ -789,7 +811,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::CREATED);
         let batch: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
                 .unwrap();
@@ -870,7 +892,7 @@ mod tests {
                 .is_none()
         );
         let standalone =
-            super::super::PlacesComponent::new(pool.clone(), "https://content.example".into());
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example");
         assert!(
             standalone
                 .find_by_id_for(&mirrored_id, None)
@@ -895,7 +917,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let upstream_world_id = uuid::Uuid::new_v4().to_string();
+        // The worlds catalogue keys a world by its lowercased name.
+        let upstream_world_id = mirrored.clone();
         sqlx::query("INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,1', $2)")
             .bind(&upstream_world_id)
             .bind(json!({"world": true, "world_name": mirrored}))
@@ -963,7 +986,7 @@ mod tests {
         let merged = deploy(&pool, &world, "merged", &["1,0", "5,0"]).await;
         let (status, retired) =
             signed(&app, "POST", "/api/places/status", Some(json!([first]))).await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::CREATED);
         assert_eq!(retired["data"][0]["disabled"], true);
 
         assert_ne!(merged, first);

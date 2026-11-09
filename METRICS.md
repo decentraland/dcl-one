@@ -339,3 +339,55 @@ counts update under the existing socket-map mutex without scanning that map.
 These are bounded label/state invariants, not measured throughput improvements.
 The community coordination benchmark above excludes the bounded SQLx
 acquisition setup and does not measure it.
+
+## Snapshot inactive-entities count
+
+The snapshot generator's port of upstream's inactive-entities check counts, at
+each pass (every `SNAPSHOT_GENERATION_INTERVAL_HOURS`, default 6), the active
+deployments of every window whose row was generated over four weeks earlier
+(`content/src/snapshot_gen.rs` `has_inactive_entities`). On a settled node that
+is nearly every window, the year windows included, so a pass counts close to
+every active row of `content.deployments`.
+
+Dataset: a synthetic `content.deployments` of 4,042,824 rows (2,730 MB heap)
+on PostgreSQL 18.6, Apple M3 Pro, 18 GiB, `shared_buffers` 64 MB, during a
+concurrent build. Active rows follow the 14 windows and `numberOfEntities` a
+public upstream node listed on 2026-11-05 (1,470,117 active; 707,202 in one
+month window, 396,161 in the newest year window), with 1.75 overwritten rows
+per active row in each window, uniform `entity_timestamp` inside the window
+and random physical order. Rows carry a three-link auth chain and no
+metadata (about 675 heap bytes per row), so production rows are wider. 809 `local_entities`
+rows, 270 tombstoned. The indexes on the measured columns were those of
+`schemas/00_content.sql` (`deployments_entity_timestamp_entity_id_idx`,
+`deployments_full_snapshots_ix`). Query: the count with the tombstone
+anti-join. The table is `VACUUM ANALYZE`d. Execution times from
+`EXPLAIN (ANALYZE, BUFFERS)`: the first run, then five more as
+min / median / max.
+
+| Window (active rows) | Existing indexes: plan, buffers | first; min / median / max | With `deployments_active_entity_timestamp_idx`: buffers | first; min / median / max |
+| --- | --- | --- | --- | --- |
+| year 2025-07 .. 2026-06 (396,161) | parallel seq scan, 349,370 | 7,399; 4,162 / 4,567 / 5,335 ms | index-only, 4,684 | 116; 48 / 51 / 62 ms |
+| month 2026-08 .. 09 (707,202) | parallel seq scan, 349,370 | 4,279; 3,280 / 4,078 / 6,386 ms | index-only, 8,259 | 369; 103 / 133 / 148 ms |
+| year 2020-01 .. 12 (16,162) | bitmap AND of both indexes, 45,277 | 4,019; 3,709 / 3,816 / 7,371 ms | index-only, 215 | 7.6; 3.2 / 4.0 / 5.4 ms |
+| month 2026-06 .. 07 (2,941) | bitmap heap scan, 8,097 | 608; 13 / 20 / 26 ms | index-only, 64 | 2.1; 0.6 / 0.9 / 1.5 ms |
+
+The existing indexes do not serve the count: `deleter_deployment` lives only in
+the heap or in `deployments_full_snapshots_ix`, which has no `entity_timestamp`,
+so each large window reads the whole heap (2.7 GB here) and a pass several
+times that. The partial index `deployments_active_entity_timestamp_idx`
+(`entity_timestamp` INCLUDE `entity_id` WHERE `deleter_deployment IS NULL`)
+makes each count an index-only scan with no heap fetches after a vacuum. It
+holds 133 MB for 1,470,117 active rows and built in 7.8 s.
+
+Write cost, `EXPLAIN (ANALYZE, WAL)` in a rolled-back transaction on the same
+table: inserting 10,000 active rows wrote 24,408,070 WAL bytes in 50,261
+records with the index and 23,035,141 bytes in 42,820 records without it
+(+6 %, about 137 bytes per row). Setting `deleter_deployment` on those rows
+wrote 23,941,555 bytes with it and 23,893,327 without: the new row version
+leaves the partial index. `catalyst schema migrate` builds the index in its
+transaction (not concurrently), holding writes on `content.deployments` for
+the build; DATABASE.md gives the concurrent build to run beforehand.
+
+These are single warm-cache samples on synthetic data during other load. They
+do not measure production row width, cold reads, the build time or lock wait
+on the production table, or a whole pass's total.

@@ -4,6 +4,8 @@
 // cannot be equal between two renders (3D previews, live timers) and say why; expected entries
 // are deliberate differences, each with the rule (the repository's AGENTS.md) or code behind it.
 import type { Page } from "playwright-core";
+import { waitUntil } from "../../library/async/index.ts";
+import { collectionOfItem, creatorOfProfile } from "./lib/discover.mts";
 import type { Expectation } from "./lib/structure.mts";
 
 
@@ -23,10 +25,13 @@ export type PageSpec = {
   path: string | ((targets: Record<string, string>) => string);
   /** Visible on each side once the page has rendered its content. */
   ready: PerSide<string>;
+  /** Signed in as the test wallet ([`signIn`](lib/session.mts), SHOP_PARITY_WALLET_KEY) on both sides. */
+  signedIn?: boolean;
   /** Interactions after the first render (both sides do the same thing). */
   setup?: (page: Page, side: Side, targets: Record<string, string>) => Promise<void>;
-  /** While recording: read targets later pages need (from the reference). */
-  discover?: (page: Page) => Promise<Record<string, string>>;
+  /** While recording: read targets later pages need (from the reference). A null target was not found: the
+   *  recording drops it, so a page reading it refuses rather than compare the previous set's. */
+  discover?: (page: Page, targets: Readonly<Record<string, string>>) => Promise<Record<string, string | null>>;
   keys: KeyElement[];
   masks?: Mask[];
   regions?: Region[];
@@ -46,6 +51,59 @@ const both1 = (s: string): PerSide<string[]> => ({ reference: [s], "dcl-one": [s
 const UP = "translate(normalize-space(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ')";
 /** An element by its visible words, case-insensitively (the same words on both sides). */
 const byText = (tag: string, text: string, scope = "//main") => `xpath=${scope}//${tag}[${UP}='${text.toUpperCase()}']`;
+/**
+ * The innermost element in the cart drawer (a dialog both sides portal to the body, outside <main>) whose
+ * visible words start with `text`, case-insensitively.
+ */
+const inDrawer = (tag: string, text: string) =>
+  `xpath=//*[@role='dialog']//${tag}[starts-with(${UP},'${text.toUpperCase()}') and not(.//${tag}[starts-with(${UP},'${text.toUpperCase()}')])]`;
+/** Adds the detail page's item (or the second card's) through the page itself, as a buyer does. */
+async function addToCart(page: Page, path?: string, expectedCount = 1) {
+  if (path) await page.goto(new URL(path, page.url()).href, { waitUntil: "load" });
+  const add = page.locator(byText("button", "Add to cart"));
+  await add.first().waitFor({ state: "visible", timeout: 20_000 });
+  if (expectedCount === 1) {
+    const drawer = page.getByRole("dialog", { name: /shopping cart/i });
+    await waitUntil(async (remainingMs) => {
+      if (await drawer.isVisible()) return true;
+      await page.getByTestId("subnav-cart").click({ timeout: remainingMs });
+      return await drawer.isVisible() ? true : undefined;
+    }, { timeoutMs: 20_000, description: "the cart responding before the first add" });
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "hidden", timeout: 20_000 });
+  }
+  await page.waitForFunction(cartHasCount, expectedCount - 1, { timeout: 20_000 });
+  await add.first().click();
+  await page.waitForFunction(cartHasCount, expectedCount, { timeout: 20_000 });
+}
+/** The buy dialog's settled screens (upstream BuyModal's titles past its loading phase). */
+const BUY_SCREENS = /Buy Credits and Item|Buy Item|Choose your payment method|Purchase complete!|Something went wrong/i;
+
+/** The detail page's Buy now: upstream's button also carries its price (hidden), so its words only start with it. */
+const BUY_NOW = `xpath=//main//button[starts-with(${UP},'BUY NOW')]`;
+
+/** Opens the detail page's Buy now as a signed-in buyer does, and waits for the dialog to settle on a screen. */
+async function buyNow(page: Page) {
+  const buy = page.locator(BUY_NOW);
+  await buy.first().waitFor({ state: "visible", timeout: 20_000 });
+  await buy.first().click();
+  const dialog = page.getByTestId("buy-modal");
+  await dialog.waitFor({ state: "visible", timeout: 20_000 });
+  await page.waitForFunction(
+    (source) => new RegExp(source, "i").test(document.querySelector("[data-testid=buy-modal]")?.textContent ?? ""),
+    BUY_SCREENS.source,
+    { timeout: 20_000 },
+  );
+}
+
+function cartHasCount(expected: number): boolean {
+  const cart = document.querySelector("[data-testid=subnav-cart]");
+  if (!cart) return false;
+  const text = `${cart.getAttribute("aria-label") ?? ""} ${cart.textContent ?? ""}`;
+  const count = Number(text.match(/\d+/)?.[0] ?? 0);
+  return count === expected;
+}
+
 /** The nearest ancestor box of a text that is at least `minChildren` wide, e.g. a panel by its heading. */
 const panelOf = (text: string) => `xpath=//main//*[${UP}='${text.toUpperCase()}' and not(*)]/ancestor::*[count(*)>=2][2]`;
 
@@ -71,14 +129,8 @@ const WEBGL: Mask = {
 
 const NAV_SECTIONS = "the site nav links dcl-one's own sections: the landing page, What's On, /play, /shop, /create and /docs are one site (AGENTS.md, Scope)";
 
-const CONFIRMATION_GROUPS =
-  "a cart shows explicit confirmation groups, one per payment method, chain and settlement contract (checkout/components/CheckoutGroups.tsx), because Credits, MANA and the MANA-only sales settle separately (AGENTS.md: Credits are the main payment option; LAND and every secondary sale are MANA-only)";
-
 const NO_MODELS =
   "3D models are not recorded (pictures are placeholders), so ui3's renderer shows its fallback notice inside the masked preview; the reference's preview iframe renders nothing there";
-
-const PAYMENT_PANEL =
-  "the price block is ui3's payment panel: the server's offer decides the methods shown (AGENTS.md: Credits are the main payment option, logged-in web3 wallets also see MANA, secondary sales are MANA-only with guidance for web2 users)";
 
 /** The base avatar ui3's 3D preview dresses: its wearables' entities are not recorded and the preview is masked. */
 const PREVIEW_AVATAR = { match: /^POST peer \/content\/entities\/active .*urn:decentraland:off-chain:base-avatars:/, why: NO_MODELS };
@@ -91,9 +143,6 @@ const PROMO_PREVIEW = {
 
 const OUTFIT_ORDER =
   "the reference shuffles Buy the Look on every visit within recency buckets (components/OutfitsRow/OutfitsRow.tsx, lib/outfits.ts orderOutfitsByRecency), so its order is not a property to match; the row's box and cards are still compared";
-
-const CREATOR_TAG =
-  "every mint line says it is bought from its creator: one Shop sells mints and resales side by side (AGENTS.md: the Shop absorbs every Marketplace feature), where the reference shows the chip only while its secondary-sales flag is on, and that flag is off in the recording";
 
 const PLAY_MODE =
   "the play-mode chip shows only when the item carries data.emote.loop (detail/ItemDetail.tsx, as upstream's own comment states); the reference shows PLAY ONCE on this wearable, whose recorded rows carry no emote data";
@@ -171,6 +220,10 @@ export const PAGES: PageSpec[] = [
     regions: [...FRAME_REGIONS, { selector: both1("[data-testid=outfits-row-track]"), why: OUTFIT_ORDER }],
     expected: [...FRAME_EXPECTED, { match: /^key:outfits$/, why: OUTFIT_ORDER, only: ["text"] }],
     unrecorded: [PROMO_PREVIEW, NEWSLETTER_EMBED],
+    discover: async (page) => {
+      const href = await page.locator("xpath=(//*[@data-testid='outfit-card']//a[@href] | //a[@data-testid='outfit-card'])[1]").getAttribute("href").catch(() => null);
+      return { outfit: href ? new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null };
+    },
   },
   {
     id: "items",
@@ -191,7 +244,9 @@ export const PAGES: PageSpec[] = [
     discover: async (page) => {
       const href = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").first().getAttribute("href");
       if (!href) throw new Error("no card in the reference items grid to take as the detail page");
-      return { item: new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") };
+      const second = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").nth(1).getAttribute("href", { timeout: 5_000 }).catch(() => null);
+      const shop = (h: string) => new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
+      return { item: shop(href), item2: second ? shop(second) : null };
     },
     maxHeight: 3000,
     masks: [WEBGL],
@@ -218,7 +273,7 @@ export const PAGES: PageSpec[] = [
       { name: "creator", selector: both("[data-testid=creator]") },
       { name: "price", selector: both("[data-testid=item-price]") },
       { name: "stock", selector: { reference: "xpath=//main//*[" + UP + "='STOCK' and not(*)]/..", "dcl-one": "[data-testid=detail-stock]" } },
-      { name: "buy-now", selector: both(byText("button", "Buy now")) },
+      { name: "buy-now", selector: both(BUY_NOW) },
       { name: "add-to-cart", selector: both(byText("button", "Add to cart")) },
       { name: "rail", selector: { reference: "[data-testid=carousel]", "dcl-one": "[data-testid=detail-rail]" } },
       { name: "rail.title", selector: { reference: "[data-testid=carousel] h2", "dcl-one": "[data-testid=detail-rail] h2" } },
@@ -235,11 +290,40 @@ export const PAGES: PageSpec[] = [
     regions: FRAME_REGIONS,
     expected: [
       ...FRAME_EXPECTED,
-      { match: /(^|\/)(payment-panel|cta-sign-in|cta-add-to-cart|price-credits|detail-stock)$/, status: "only-dcl-one", why: PAYMENT_PANEL },
       { match: /^"Preview unavailable for this item"$/, status: "only-dcl-one", why: NO_MODELS },
       { match: /^key:preview$/, why: NO_MODELS, only: ["text"] },
       { match: /(^|\/)detail-play-mode$|^key:tag\.play-mode$|^"PLAY ONCE"$/, status: "only-reference", why: PLAY_MODE },
     ],
+    discover: async (page, targets) => {
+      const shop = (h: string | null) => (h ? new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null);
+      const link = (contains: string) => page.locator(`xpath=(//main//a[contains(@href,'${contains}')])[1]`).getAttribute("href", { timeout: 2_000 }).catch(() => null);
+      // The pinned reference names the item's collection and creator as text, not links. Its collection is the
+      // item's contract (/shop/collection/<contract>, a page the reference serves), and its creator is the account
+      // that collection page links to as its profile (/shop/items/creator/<address>).
+      const collection = shop(await link("/collection/")) ?? collectionOfItem(shop(page.url()) ?? "");
+      let creator = shop(await link("/creator/"));
+      if (!creator && collection) {
+        // Opened in the item capture's context, so its answers are recorded with the same routes and clock. That
+        // context's request log is shared too: a host only the collection page asks for is listed under item@.
+        // Best-effort: a collection page that fails keeps the collection found above, and the creator already known
+        // for that same collection (from the previous set or another viewport), which is still its creator.
+        let other: Page | undefined;
+        try {
+          other = await page.context().newPage();
+          await other.goto(new URL(collection, page.url()).href, { waitUntil: "load" });
+          // The first profile link in <main> is the collection header's creator, which renders before the cards. A
+          // layout that put another profile link first would record that account; the creator page would then
+          // show its items, not this collection's.
+          const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 });
+          creator = profile ? creatorOfProfile(profile) : null;
+        } catch {
+          creator = targets.collection === collection ? (targets.creator ?? null) : null;
+        } finally {
+          await other?.close().catch(() => {});
+        }
+      }
+      return { collection, creator };
+    },
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
   },
   {
@@ -249,11 +333,7 @@ export const PAGES: PageSpec[] = [
     ready: both(byText("*", "Purchase Summary")),
     setup: async (page, _side, targets) => {
       // Add the detail page's item through the page itself, then open the cart.
-      await page.goto(new URL(targets.item ?? "/shop/items", page.url()).href, { waitUntil: "load" });
-      const add = page.locator(byText("button", "Add to cart"));
-      await add.first().waitFor({ state: "visible", timeout: 20_000 });
-      await add.first().click();
-      await page.waitForTimeout(500);
+      await addToCart(page, targets.item ?? "/shop/items");
       await page.goto(new URL("/shop/cart", page.url()).href, { waitUntil: "load" });
     },
     keys: [
@@ -272,15 +352,213 @@ export const PAGES: PageSpec[] = [
       { name: "rail.card", selector: both("[data-testid=carousel] [data-testid=card]"), max: 5 },
     ],
     masks: [WEBGL],
-    regions: [...FRAME_REGIONS, { selector: { reference: [], "dcl-one": ["[data-testid=checkout-group]"] }, why: CONFIRMATION_GROUPS }],
-    expected: [
-      ...FRAME_EXPECTED,
-      { match: /checkout-group|^"(Pay with Credits|Pay with MANA|Ready to confirm)"/, why: CONFIRMATION_GROUPS },
-      { match: /(^|\/)cart-creator-tag$|^"Creator"$/, status: "only-dcl-one", why: CREATOR_TAG },
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
+  {
+    id: "item-added",
+    title: "Item detail right after Add to cart (the reference opens its cart drawer)",
+    path: (t) => t.item ?? "/shop/items",
+    // After the click: the reference stays on the item with its drawer open; dcl-one may have moved on.
+    ready: both("[data-testid=subnav]"),
+    // The page the path opened: click its Add to cart where a buyer would.
+    setup: async (page) => {
+      await addToCart(page);
+    },
+    // The drawer is fixed: one screen holds it, and a scrolled capture would stitch it once per tile.
+    maxHeight: 800,
+    keys: [
+      ...FRAME_KEYS,
+      { name: "drawer.title", selector: both(inDrawer("*", "Shopping Cart")) },
+      { name: "drawer.added", selector: both(inDrawer("*", "1 Item successfully added")) },
+      { name: "drawer.total", selector: both(inDrawer("*", "Total:")) },
+      { name: "drawer.continue", selector: both(inDrawer("button", "Continue shopping")) },
+      { name: "drawer.go-to-cart", selector: both(inDrawer("button", "Go to cart")) },
+      { name: "subnav.cart", selector: both("[data-testid=subnav-cart]") },
     ],
+    masks: [
+      { selector: both1("[data-testid=item-preview]"), why: "3D preview: a WebGL render that differs between frames and renderers; its box is still compared structurally" },
+      WEBGL,
+    ],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
+  {
+    id: "cart-two",
+    title: "Cart with two different items, signed out",
+    path: "/shop/cart",
+    ready: both(byText("*", "Purchase Summary")),
+    setup: async (page, _side, targets) => {
+      if (!targets.item2) throw new Error("the recording has no second item (record a new set: discover reads it)");
+      await addToCart(page, targets.item ?? "/shop/items");
+      await addToCart(page, targets.item2, 2);
+      await page.goto(new URL("/shop/cart", page.url()).href, { waitUntil: "load" });
+    },
+    keys: [
+      ...FRAME_KEYS,
+      { name: "lines.count", selector: both("xpath=//main//*[starts-with(normalize-space(),'Cart:') and not(*)]") },
+      { name: "summary", selector: both(panelOf("Purchase Summary")) },
+      { name: "summary.total", selector: both("xpath=//main//*[starts-with(normalize-space(),'Total:') and not(*)]/..") },
+      { name: "summary.checkout", selector: both(byText("button", "Checkout")) },
+      { name: "lines.clear", selector: both(byText("*", "Clear cart")) },
+    ],
+    masks: [WEBGL],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
+  {
+    id: "cart-empty",
+    title: "Empty cart, signed out",
+    path: "/shop/cart",
+    ready: both("[data-testid=subnav]"),
+    keys: [...FRAME_KEYS],
+    masks: [WEBGL],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [NEWSLETTER_EMBED],
+  },
+];
+
+/**
+ * The same page signed in as the test wallet: the frame shows the account and its balances instead
+ * of the sign-in button, and the cart its payment buttons. A signed-in page is its signed-out page's
+ * path, interactions, masks and rules; only the sign-in key, which a session replaces, is dropped.
+ */
+function signedIn(spec: PageSpec, title: string): PageSpec {
+  // Discovery stays with the signed-out page: a second pass would rewrite targets already recorded under
+  // them (the reference reshuffles Buy the Look on every visit).
+  const { discover: _discover, ...rest } = spec;
+  return {
+    ...rest,
+    id: `${spec.id}-signed-in`,
+    title,
+    signedIn: true,
+    keys: spec.keys.filter((k) => k.name !== "site-nav.signin"),
+  };
+}
+
+const byId = (id: string) => {
+  const spec = PAGES.find((p) => p.id === id);
+  if (!spec) throw new Error(`no page ${id}`);
+  return spec;
+};
+
+/** A whole page compared on its frame, its pixels and every text run it shows. */
+function plain(id: string, title: string, path: PageSpec["path"], extra: Partial<PageSpec> = {}): PageSpec {
+  return {
+    id,
+    title,
+    path,
+    ready: both("[data-testid=subnav]"),
+    keys: [...FRAME_KEYS],
+    maxHeight: 3000,
+    masks: [WEBGL],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+    ...extra,
+  };
+}
+
+/** A page discovered while recording: none recorded is a refusal, never another page under this id. */
+const target = (key: string) => (t: Record<string, string>) => {
+  if (!t[key]) throw new Error(`the recording has no ${key} target (record a new set: discovery reads it)`);
+  return t[key];
+};
+
+PAGES.push(
+  plain("collection", "A collection (the detail page's)", target("collection")),
+  plain("creator", "A creator's items (the detail page's)", target("creator")),
+  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit"), {
+    masks: [
+      {
+        selector: { reference: ["[data-testid=outfit-detail-preview]"], "dcl-one": ["[data-testid=outfit-detail-preview]"] },
+        why: "the outfit's 3D preview: the reference's wearable-preview iframe and ui3's own renderer draw different frames (its models are not recorded); its box is still compared structurally",
+      },
+      WEBGL,
+    ],
+  }),
+  plain("credits", "Buy credits", "/shop/credits"),
+  plain("not-found", "A path the Shop does not have", "/shop/no-such-page"),
+);
+
+/** The cart's checkout dialog (upstream's CartCheckoutModal, labelled for its whole flow). */
+const CART_CHECKOUT = "[role=dialog][aria-label='Check out your cart']";
+
+const SIGNED_IN_ONLY: PageSpec[] = [
+  plain("my-items", "My Items", "/shop/my-items"),
+  plain("my-favorites", "My Favorites", "/shop/my-favorites"),
+  plain("activity", "Activity", "/shop/activity"),
+  plain("my-store", "My Store", "/shop/my-store"),
+  {
+    id: "cart-checkout",
+    title: "Checkout from the cart, short on Credits (the reference opens its CartCheckoutModal on the packs)",
+    path: "/shop/cart",
+    // The test wallet holds no Credits, so Checkout opens the packs that finish the purchase.
+    ready: both(CART_CHECKOUT),
+    setup: async (page, _side, targets) => {
+      await addToCart(page, targets.item ?? "/shop/items");
+      await page.goto(new URL("/shop/cart", page.url()).href, { waitUntil: "load" });
+      const checkout = page.locator(byText("button", "Checkout"));
+      await checkout.first().waitFor({ state: "visible", timeout: 20_000 });
+      await waitUntil(async () => (await checkout.first().isEnabled()) || undefined, { timeoutMs: 20_000, description: "Checkout enabled once the cart is priced" });
+      await checkout.first().click();
+    },
+    // The dialog is fixed over the page: one screen holds it.
+    maxHeight: 800,
+    keys: [
+      ...FRAME_KEYS,
+      { name: "dialog", selector: both(CART_CHECKOUT) },
+      { name: "dialog.title", selector: both(`xpath=//*[@role='dialog']//h2`) },
+      { name: "dialog.packs", selector: both(`${CART_CHECKOUT} [data-testid=credit-pack]`), max: 4 },
+    ],
+    masks: [WEBGL],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
+  {
+    id: "item-buy",
+    title: "Buy now on the item detail (the reference opens its BuyModal over the page)",
+    path: (t) => t.item ?? "/shop/items",
+    ready: both("[data-testid=item-price]"),
+    setup: async (page) => {
+      await buyNow(page);
+    },
+    // The dialog is fixed over the page: one screen holds it.
+    maxHeight: 800,
+    keys: [
+      ...FRAME_KEYS,
+      { name: "dialog", selector: both("[data-testid=buy-modal]") },
+      { name: "dialog.balance", selector: both(inDrawer("*", "My Credits Balance:")) },
+      { name: "dialog.insufficient", selector: both(inDrawer("*", "Insufficient Funds.")) },
+      { name: "dialog.packs", selector: both("[data-testid=buy-modal] [data-testid=credit-packs]") },
+      { name: "dialog.pack", selector: both("[data-testid=buy-modal] [data-testid=credit-pack]"), max: 4 },
+      { name: "dialog.total", selector: both("[data-testid=buy-modal] [data-testid=topup-total-credits]") },
+      { name: "dialog.cancel", selector: both(inDrawer("button", "Cancel")) },
+      { name: "dialog.buy", selector: both(inDrawer("button", "Buy")) },
+    ],
+    masks: [
+      { selector: both1("[data-testid=item-preview]"), why: "3D preview: a WebGL render that differs between frames and renderers; its box is still compared structurally" },
+      WEBGL,
+    ],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
   },
 ];
+
+PAGES.push(
+  ...SIGNED_IN_ONLY.map((spec) => signedIn(spec, `${spec.title}, signed in as the test wallet`)),
+  signedIn(byId("credits"), "Buy credits, signed in as the test wallet"),
+  signedIn(byId("overview"), "Overview, signed in as the test wallet"),
+  signedIn(byId("item"), "Item detail, signed in as the test wallet"),
+  signedIn(byId("cart"), "Cart with the detail page's item, signed in as the test wallet"),
+  signedIn(byId("cart-two"), "Cart with two different items, signed in as the test wallet"),
+);
 
 export function pagePath(spec: PageSpec, targets: Record<string, string>): string {
   return typeof spec.path === "function" ? spec.path(targets) : spec.path;

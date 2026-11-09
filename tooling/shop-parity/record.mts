@@ -4,6 +4,7 @@
 //
 //   node record.mts --set <name> [--pages overview,items] [--viewports desktop,mobile]
 //   node record.mts --set <name> --fill     # replay; read what the replay could not answer, once
+import { runnable, signedHeaders, walletKey, WALLET_KEY_ENV } from "./lib/session.mts";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
@@ -13,6 +14,13 @@ import { fillMisses, Recording, savingAfter } from "./lib/recording.mts";
 import { runAll, selectViewports } from "./lib/run.mts";
 import { prepareReference } from "./reference.mts";
 
+/** The test wallet's signer for the pages that read signed in, when its key is set. */
+function testWalletSigner() {
+  if (!process.env[WALLET_KEY_ENV]) return undefined;
+  const key = walletKey();
+  return (method: string, path: string, metadata: string) => signedHeaders(key, method, path, Date.now(), metadata);
+}
+
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -21,25 +29,27 @@ const set = arg("--set");
 if (!set || !/^[a-z0-9-]+$/.test(set)) throw new Error("--set <name> (lowercase, digits, dashes) is required");
 const dir = join(RECORDINGS, set);
 const wanted = arg("--pages")?.split(",");
-const specs = wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES;
+const specs = runnable(wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES);
 
 if (process.argv.includes("--fill")) {
   // Replay the recording, then read each request it could not answer once from production.
   const replay = new Recording(dir);
   if (!replay.manifest) throw new Error(`no recording ${set} under ${RECORDINGS}`);
   await runAll(replay, specs, selectViewports(arg("--viewports")), { now: Date.parse(replay.manifest.recordedAt), targets: replay.manifest.targets, out: join(STATE, "fill-run", set) });
-  const { failed } = await fillMisses(replay, new Recording(dir, { live: true }));
+  const { failed } = await fillMisses(replay, new Recording(dir, { live: true, signer: testWalletSigner() }));
   if (failed.length) {
     console.error(`could not fill ${failed.length} request(s); what was filled is saved:\n${failed.map((f) => `  ${f}`).join("\n")}`);
     process.exitCode = 1;
   }
 } else {
   prepareReference();
-  const live = new Recording(dir, { live: true });
+  const live = new Recording(dir, { live: true, signer: testWalletSigner() });
   live.synthesize = offerSynthesizer(live);
   const targets: Record<string, string> = { ...(live.manifest?.targets ?? {}) };
   const now = live.manifest?.recordedAt ? Date.parse(live.manifest.recordedAt) : Date.now();
   let current: PageSpec | null = null;
+  /** The targets a discover found in this run, on any viewport. */
+  const found = new Set<string>();
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
   const run = () =>
     runAll(live, specs, selectViewports(arg("--viewports")), {
@@ -50,9 +60,25 @@ if (process.argv.includes("--fill")) {
         current = spec;
       },
       onPage: async (side, page) => {
-        if (side === "reference" && current?.discover) Object.assign(targets, await current.discover(page));
+        if (side === "reference" && current?.discover) {
+          // targets starts from the previous manifest. discover runs once per viewport: a target one of them found
+          // in this run stays, and one that a discover reports as not found, with no viewport finding it, is dropped
+          // rather than kept from the previous set.
+          for (const [key, value] of Object.entries(await current.discover(page, targets))) {
+            if (value != null) {
+              targets[key] = value;
+              found.add(key);
+            } else if (!found.has(key)) delete targets[key];
+          }
+        }
       },
-      onResult: (r) => console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`),
+      onResult: (r) => {
+        console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`);
+        // A reference that failed before discover ran read no target here: what no viewport found keeps the previous set's.
+        if (r.sides.reference.error && specs.some((s) => s.id === r.page && s.discover)) {
+          console.warn(`  ${r.page}@${r.viewport} read no targets: a target no viewport found in this run is the previous set's`);
+        }
+      },
     });
   // Saved even if the run dies midway: running the same command again goes on from what was read.
   const { results } = await savingAfter(live, run, () => ({

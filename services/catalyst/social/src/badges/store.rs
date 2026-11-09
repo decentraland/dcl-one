@@ -23,6 +23,11 @@ use crate::shared::cache::TtlMap;
 /// replaces it at serve time, the rows are never rewritten.
 pub const DEFAULT_ASSET_BASE_URL: &str = "https://badges.decentraland.org";
 const CATALOG_TTL: Duration = Duration::from_secs(300);
+const BADGE_NOTIFICATION_NS: uuid::Uuid =
+    uuid::Uuid::from_u128(0x3b1e_6f0a_92c4_4d57_8e21_b6a0_c9d3_7f14);
+
+/// `(is_tier, tier_id, name, tier_name, assets)` of a grant.
+type GrantRow = (bool, Option<String>, String, Option<String>, Assets);
 
 /// Walks arbitrarily nested JSON so it need not know the `{"2d":{...},"3d":{...}}` shape;
 /// empty strings (the unfilled fields in the seed) never match a non-empty `from`
@@ -290,12 +295,14 @@ impl BadgesStore {
         granted_by: &str,
     ) -> Result<bool, ApiError> {
         let now = chrono::Utc::now().naive_utc();
-        let row: Option<(bool, bool)> = sqlx::query_as(
+        let mut tx = self.pool.begin().await?;
+        let row: Option<GrantRow> = sqlx::query_as(
             "WITH def AS ( \
-                 SELECT d.is_tier, t.tier_id, t.criteria_steps \
+                 SELECT d.is_tier, t.tier_id, t.criteria_steps, d.name, t.tier_name, \
+                        COALESCE(t.assets, d.assets) AS assets \
                  FROM social.badge_definitions d \
                  LEFT JOIN LATERAL ( \
-                     SELECT tier_id, criteria_steps FROM social.badge_tiers \
+                     SELECT tier_id, tier_name, assets, criteria_steps FROM social.badge_tiers \
                      WHERE badge_id = d.id AND ($3::text IS NULL OR tier_id = $3) \
                      ORDER BY ordinal DESC LIMIT 1 \
                  ) t ON TRUE \
@@ -329,25 +336,62 @@ impl BadgesStore {
                  INSERT INTO social.badge_admin_audit (action, address, badge_id, tier_id, actor, acted_at) \
                  SELECT 'grant', $1, $2, $3, $4, $5 FROM ok \
              ) \
-             SELECT is_tier, tier_id IS NOT NULL FROM def",
+             SELECT is_tier, tier_id, name, tier_name, assets FROM def",
         )
         .bind(address)
         .bind(badge_id)
         .bind(tier_id)
         .bind(granted_by)
         .bind(now)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        match row {
-            None => Ok(false),
-            Some((true, false)) => Err(match tier_id {
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        if row.0 && row.1.is_none() {
+            return Err(match tier_id {
                 Some(tid) => ApiError::not_found(format!("no tier '{tid}' on badge '{badge_id}'")),
                 None => ApiError::bad_request(format!(
                     "tiered badge '{badge_id}' has no tiers; specify tierId"
                 )),
+            });
+        }
+        let notification = self.badge_granted_notification(address, badge_id, row, now);
+        crate::notifications::insert_notifications(&mut *tx, &[notification]).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// The old badges processor's BadgeGranted event as the NW parser stored
+    /// it; keyed per (address, badge, tier) so a re-grant never re-notifies.
+    fn badge_granted_notification(
+        &self,
+        address: &Address,
+        badge_id: &str,
+        (_, tier_id, name, tier_name, assets): GrantRow,
+        now: NaiveDateTime,
+    ) -> crate::notifications::NewNotification {
+        let key = format!(
+            "badge:{}:{badge_id}:{}",
+            address.as_str(),
+            tier_id.as_deref().unwrap_or_default()
+        );
+        let description = match &tier_name {
+            Some(tier) => format!("{name} {tier}"),
+            None => name,
+        };
+        crate::notifications::NewNotification {
+            id: uuid::Uuid::new_v5(&BADGE_NOTIFICATION_NS, key.as_bytes()),
+            address: address.clone(),
+            kind: "badge_granted".into(),
+            metadata: serde_json::json!({
+                "id": badge_id,
+                "title": "New Badge Unlocked!",
+                "description": description,
+                "image": tier_image(&self.rewrite_assets(assets)),
             }),
-            Some(_) => Ok(true),
+            occurred_at: now,
         }
     }
 

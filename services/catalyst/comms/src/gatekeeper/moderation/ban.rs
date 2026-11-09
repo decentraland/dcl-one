@@ -155,7 +155,8 @@ mod tests {
         );
     }
 
-    struct Probe(Mutex<Vec<(Address, Option<SceneId>, Option<String>, NaiveDateTime)>>);
+    type ProbeCalls = Vec<(Address, Option<SceneId>, Option<String>, NaiveDateTime)>;
+    struct Probe(Mutex<ProbeCalls>);
     #[async_trait::async_trait]
     impl BanStatus for Probe {
         async fn ban(

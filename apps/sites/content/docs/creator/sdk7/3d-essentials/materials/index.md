@@ -8,7 +8,7 @@ Materials can be applied to entities that use primitive shapes (cube, sphere, pl
 
 _glTF_ models include their own materials that are implicitly imported into a scene together with the model. To modify or override these materials, use the `GltfNodeModifiers` component. See [Modify glTF materials](/docs/creator/sdk7/3d-essentials/materials/#modify-gltf-materials) for more details.
 
-When importing a 3D model with its own materials, keep in mind that not all shaders are supported by the Decentraland engine. Only standard materials and PBR (physically based rendering) materials are supported. See [external 3D model considerations](https://github.com/decentraland/docs-creator/blob/main/creator/3d-modeling/materials/README.md) for more details.
+When importing a 3D model with its own materials, keep in mind that not all shaders are supported by the Decentraland engine. Only standard materials and PBR (physically based rendering) materials are supported. See [external 3D model considerations](https://github.com/decentraland/docs/blob/main/creator/3d-modeling/materials.md) for more details.
 
 There are different types of supported materials:
 
@@ -63,9 +63,9 @@ Material.setPbrMaterial(meshEntity, {
 
 > [!WARNING]
 > **📔 Note**: The `Material` component must be imported via
-> 
+>
 > > `import { Material } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -192,7 +192,7 @@ Material.setPbrMaterial(myEntity, {
 
 Use this feature to cover a large surface with a tiled pattern. For example, repeat the following image:
 
-![](/docs/creator/images/editor/tiles.webp)
+![](/docs/creator/images/editor/tiles.webp)
 
 ```ts
 Material.setPbrMaterial(myEntity, {
@@ -204,7 +204,7 @@ Material.setPbrMaterial(myEntity, {
 })
 ```
 
-![](/docs/creator/images/editor/tiles-in-scene.webp)
+![](/docs/creator/images/editor/tiles-in-scene.webp)
 
 In the example below, the texture uses a _mirror_ wrap mode, and each repetition of the texture takes only 1/4 of the surface. This means that we'll see 4 copies of the image, mirrored against each other on both axis.
 
@@ -359,7 +359,7 @@ Material.setPbrMaterial(myEntity, {
 
 The `bumpTexture` can simulate bumps and wrinkles on a surface, by modifying how the normals of the surface behave on each pixel.
 
-![](/docs/creator/images/editor/wood-bump.webp)
+![](/docs/creator/images/editor/wood-bump.webp)
 
 The `emissiveTexture` can accentuate glow on certain parts of a material, to achieve very interesting effects.
 
@@ -506,7 +506,7 @@ Material.setPbrMaterial(myEntity, {
 })
 ```
 
-![](/docs/creator/images/avatarTexture.webp)
+![](/docs/creator/images/avatarTexture.webp)
 
 You can fetch the portrait of any Decentraland player, even if they're not currently connected, and even if they don't have a claimed Decentraland name.
 
@@ -530,7 +530,7 @@ Material.setPbrMaterial(meshEntity, {
 
 If a material uses a .png texture that includes transparency, it will be opaque by default, but you can activate its transparency by setting the `transparencyMode` to `MaterialTransparencyMode.MTM_ALPHA_BLEND`.
 
-![](/docs/creator/images/editor/transparent-image.webp)
+![](/docs/creator/images/editor/transparent-image.webp)
 
 ```typescript
 Material.setPbrMaterial(floor, {
@@ -549,6 +549,11 @@ The `transparencyMode` can have the following values:
 - `MaterialTransparencyMode.MTM_ALPHA_TEST_AND_ALPHA_BLEND`: Uses a combination of both methods.
 - `MaterialTransparencyMode.MTM_AUTO`: Determines the method based on the provided texture.
 
+
+> [!WARNING]
+> **📔 Note**: Always set `transparencyMode` yourself when you want a texture's own alpha channel to show through. On the desktop client, the default `MTM_AUTO` mode ignores the texture's alpha and only blends when the `albedoColor` alpha is below 1, so a transparent `.png` comes out fully opaque. With `MTM_ALPHA_BLEND` or `MTM_ALPHA_TEST`, transparency is the texture's alpha multiplied by the `albedoColor` alpha.
+
+
 If you set the `transparencyMode` to `MaterialTransparencyMode.MTM_ALPHA_TEST`, you can fine tune the threshold used to determine if each pixel is transparent or not. Set the `alphaTest` property between _0_ and _1_. By default its value is _0.5_.
 
 ```ts
@@ -566,14 +571,14 @@ When using an [unlit material](/docs/creator/sdk7/3d-essentials/materials/#unlit
 
 
 > [!WARNING]
-> **📔 Note**: This must be a single-channel image. In this image use the color red or black to determine what parts of the real texture should be transparent.
+> **📔 Note**: Paint the mask white where the material should show and black where it should disappear. The client reads the brightness of the mask's color channels, not its alpha channel, so any channel at full value counts as opaque: a pure red mask is opaque too. Don't reuse your color texture as its own mask, or every dark pixel in it turns transparent and eats your outlines and shading.
 
 
-![](/docs/creator/images/circular-video-screen.webp)
+![](/docs/creator/images/circular-video-screen.webp)
 
 ```ts
-// Using alpha test
-Material.setPbrMaterial(meshEntity1, {
+// Cut a screen down to a circle with a mask image
+Material.setBasicMaterial(meshEntity1, {
 	texture: Material.Texture.Common({
 		src: 'images/myTexture.png',
 	}),
@@ -583,6 +588,11 @@ Material.setPbrMaterial(meshEntity1, {
 	}),
 })
 ```
+
+Two more things to know about `alphaTexture` on the desktop client:
+
+* **It works on unlit materials only.** `Material.setPbrMaterial` accepts an `alphaTexture` but never uses it. For a PBR material, put the transparency in the color texture's own alpha channel and set `transparencyMode` instead.
+* **An unlit material without an `alphaTexture` is fully opaque**, and `alphaTest` has no effect on it. A `texture` plus `alphaTest` alone draws the transparent pixels' color, which is usually black.
 
 This can be used in very interesting ways together with videos. See [video playing](/docs/creator/sdk7/media/video-playing/).
 
@@ -698,7 +708,7 @@ The `path` property is a string that represents the path to the node in the _glT
 
 > [!NOTE]
 > **💡 Tip**: You can use the [Babylon Sandbox app](https://sandbox.babylonjs.com/) to inspect the _glTF_ model and find the path to the node you want to modify.
-> 
+>
 > In some models, however, the Babylon sandbox may list paths that belong to vertexes rather than meshes, which will not work. If you attempt to use a path that isn't valid, the scene's console will display an error message that includes the full list of valid paths on that model.
 
 

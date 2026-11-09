@@ -20,7 +20,7 @@ To view your LAND tokens, click **Manage your LAND**. Here you'll find a list of
 
 By clicking on one of the parcels or Estates listed under **Land**, you can edit its name, description, set an operator, or transfer it directly to another wallet address.
 
-![](/docs/player/images/media/marketplace_myland.webp)
+![](/docs/player/images/media/marketplace_myland.webp)
 
 ## Create an Estate
 
@@ -32,11 +32,11 @@ To create your first Estate, you need to own two or more adjacent LAND parcels.
 
 1. Open **My LAND** and select one of the parcels you'd like to add to the Estate.
 2. In the parcel's details page, click **Create Estate**.
-3. You will be shown a view of the Atlas centered on the parcel you selected, with the remaining adjacent parcels you own highlighted. Select the different parcels you want to include in your Estate. ![](/docs/player/images/media/market_estates1.webp) ![](/docs/player/images/media/market_estates3.webp)
+3. You will be shown a view of the Atlas centered on the parcel you selected, with the remaining adjacent parcels you own highlighted. Select the different parcels you want to include in your Estate. ![](/docs/player/images/media/market_estates1.webp) ![](/docs/player/images/media/market_estates3.webp)
 4. Click **Continue**.
 5.  Enter a name and description for your Estate. These details will be publicly displayed in the Atlas, just like the name and description for any individual parcel.
 
-    ![](/docs/player/images/media/market_estates2.webp)
+    ![](/docs/player/images/media/market_estates2.webp)
 6. Confirm this transaction on your Ethereum client and wait for the network to verify it.
 
 Once you've created your first Estate, you will see a new tab titled Estates. From this page you can view and manage all of your Estates.
@@ -51,7 +51,7 @@ To edit a parcel or Estate:
 
 1.  Navigate to the details page of the parcel or the Estate you'd like to edit and click **Edit**.
 
-    ![](/docs/player/images/media/marketplace_edit_parcel.webp)
+    ![](/docs/player/images/media/marketplace_edit_parcel.webp)
 2. Click **Submit**.
 3. Confirm this transaction on your Ethereum client and wait for the network to verify it.
 
@@ -63,10 +63,10 @@ The user given permission can also change the name or description in the Marketp
 
 To grant permissions over your LAND:
 
-1. Navigate to the details page of the parcel or Estate and click on the three dots and then **Set Operator**. ![](/docs/player/images/media/marketplace_give_permissions_set_operator.webp)
+1. Navigate to the details page of the parcel or Estate and click on the three dots and then **Set Operator**. ![](/docs/player/images/media/marketplace_give_permissions_set_operator.webp)
 2.  Fill the form with the desired info.
 
-    ![](/docs/player/images/media/marketplace_give_permissions.webp)
+    ![](/docs/player/images/media/marketplace_give_permissions.webp)
 3. Click **Submit**.
 4. Confirm this transaction on your Ethereum client and wait for the network to verify it.
 
@@ -74,7 +74,7 @@ To grant permissions over your LAND:
 
 Open the notifications page by clicking the bell icon at the top of the screen.
 
-![](/docs/player/images/media/marketplace_notifications.webp)
+![](/docs/player/images/media/marketplace_notifications.webp)
 
 The notifications page displays a list of all the recent transactions that you have carried out, together with their status.
 
@@ -86,7 +86,7 @@ To transfer a LAND parcel or Estate to another user:
 
 1.  Navigate to the details page of the parcel or the Estate you'd like to transfer and click **Transfer**.
 
-    ![](/docs/player/images/media/marketplace_transfer_land.webp)
+    ![](/docs/player/images/media/marketplace_transfer_land.webp)
 2. Enter the public address of the Ethereum wallet of the recipient.
 
 
@@ -94,7 +94,7 @@ To transfer a LAND parcel or Estate to another user:
 > **📔 Note**: Please double check this address, since you cannot cancel the operation. While the recipient could always transfer the LAND back to you, the original owner cannot reverse the action.
 
 
-![](/docs/player/images/media/marketplace_transfer_land_form.webp)
+![](/docs/player/images/media/marketplace_transfer_land_form.webp)
 
 3. Click **Submit**.
 4. Confirm this transaction on your Ethereum client and wait for the network to verify it.

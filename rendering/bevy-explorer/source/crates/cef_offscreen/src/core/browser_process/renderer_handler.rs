@@ -1,13 +1,15 @@
+use crate::components::WebviewSize;
 use async_channel::{Receiver, Sender};
 use bevy::prelude::{Entity, Event};
 use cef::rc::{Rc, RcImpl};
 use cef::{
     Browser, CefString, ImplRenderHandler, PaintElementType, Range, Rect, RenderHandler,
-    WrapRenderHandler, sys,
+    ScreenInfo, WrapRenderHandler, sys,
 };
 use cef_dll_sys::cef_paint_element_type_t;
 use std::cell::Cell;
 use std::os::raw::c_int;
+use std::time::{Duration, Instant};
 
 pub type TextureSender = Sender<RenderTexture>;
 
@@ -26,6 +28,10 @@ pub struct RenderTexture {
     pub height: u32,
     /// This buffer will be `width` *`height` * 4 bytes in size and represents a BGRA image with an upper-left origin
     pub buffer: Vec<u8>,
+    /// Time spent copying CEF's borrowed bitmap into the owned buffer.
+    pub bitmap_copy_time: Duration,
+    /// When the callback finished copying the bitmap, before sending it to Bevy.
+    pub bitmap_copied_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,7 +42,7 @@ pub enum RenderPaintElementType {
     Popup,
 }
 
-pub type SharedViewSize = std::rc::Rc<Cell<bevy::prelude::Vec2>>;
+pub type SharedViewSize = std::rc::Rc<Cell<WebviewSize>>;
 pub type SharedImeCaret = std::rc::Rc<Cell<u32>>;
 
 /// ## Reference
@@ -102,10 +108,20 @@ impl Clone for RenderHandlerBuilder {
 impl ImplRenderHandler for RenderHandlerBuilder {
     fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
         if let Some(rect) = rect {
-            let size = self.size.get();
+            let size = self.size.get().logical;
             rect.width = size.x as _;
             rect.height = size.y as _;
         }
+    }
+
+    fn screen_info(
+        &self,
+        _browser: Option<&mut Browser>,
+        screen_info: Option<&mut ScreenInfo>,
+    ) -> c_int {
+        let Some(info) = screen_info else { return 0 };
+        info.device_scale_factor = self.size.get().scale_factor;
+        1
     }
 
     fn on_text_selection_changed(
@@ -134,14 +150,18 @@ impl ImplRenderHandler for RenderHandlerBuilder {
             cef_paint_element_type_t::PET_POPUP => RenderPaintElementType::Popup,
             _ => RenderPaintElementType::View,
         };
+        let copy_started_at = Instant::now();
+        let buffer =
+            unsafe { std::slice::from_raw_parts(buffer, (width * height * 4) as usize).to_vec() };
+        let bitmap_copied_at = Instant::now();
         let texture = RenderTexture {
             webview: self.webview,
             ty,
             width: width as u32,
             height: height as u32,
-            buffer: unsafe {
-                std::slice::from_raw_parts(buffer, (width * height * 4) as usize).to_vec()
-            },
+            buffer,
+            bitmap_copy_time: bitmap_copied_at - copy_started_at,
+            bitmap_copied_at,
         };
         let _ = self.texture_sender.send_blocking(texture);
     }

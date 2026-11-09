@@ -87,11 +87,7 @@ mod metrics_tests {
             .unwrap();
         assert!(response.status().is_success());
         let rendered = response.text().await.unwrap();
-        for sample in [
-            "comms_nats_connected 0",
-            "comms_cluster_work_running 0",
-            "telemetry_rows_refused_total 0",
-        ] {
+        for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -104,7 +100,7 @@ mod metrics_tests {
     }
 
     #[test]
-    fn serve_registers_health_work_and_telemetry_before_events() {
+    fn serve_registers_health_and_work_before_events() {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
@@ -117,11 +113,6 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
-            "telemetry_rows_refused_total 0",
-            "telemetry_ingest_dropped_total{reason=\"queue_full\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"quota\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"rows_ceiling\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"bytes_ceiling\"} 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -190,7 +181,6 @@ fn install_restore_stamps(config: &Config) -> anyhow::Result<()> {
 
 fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();
-    ops::telemetry::register_metrics();
 }
 
 fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
@@ -219,6 +209,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -374,6 +365,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 None
             })
         };
+    if config.explore.events_mirror_adopt && config.explore.events_mirror_upstream {
+        anyhow::bail!(
+            "EVENTS_MIRROR_ADOPT adopts the mirrored events once the mirror is off: unset EVENTS_MIRROR_UPSTREAM first"
+        );
+    }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
         asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
@@ -400,6 +396,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "EVENTS_UPSTREAM_URL",
         )?,
         events_interval: Duration::from_secs(config.explore.events_mirror_interval_secs.max(1)),
+        events_adopt: config.explore.events_mirror_adopt,
         places_derive: Some(explore::places::derive::DeriveScope::resolve(
             config.explore.places_derive_from_content,
             config.explore.places_mirror_upstream,
@@ -418,9 +415,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .map(|a| a.trim().to_lowercase())
             .filter(|a| !a.is_empty())
             .collect(),
+        places_base_url: config.explore.places_base_url.trim().to_string(),
+        places_moderation_webhook: config.explore.places_moderation_webhook.clone(),
+        snapshot_score_url: Some(config.explore.snapshot_score_url.trim().to_string())
+            .filter(|u| !u.is_empty()),
         events_base_url: config
             .explore
             .events_base_url
+            .trim_end_matches('/')
+            .to_string(),
+        jump_in_site_url: config
+            .explore
+            .jump_in_site_url
+            .trim()
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
@@ -433,9 +440,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .unwrap_or("main")
             .to_string(),
     };
+    let explore_cors = explore::cors::Policy::upstream_with(&config.explore.explore_cors_origins)
+        .map_err(|e| anyhow::anyhow!("EXPLORE_CORS_ORIGINS: {e}"))?;
     let explore = Arc::new(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
-            .with_storage(storage.clone()),
+            .with_storage(storage.clone())
+            .with_outbound(http_client.clone())
+            .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
 
@@ -549,7 +560,27 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone())
+        .with_feature_flags(shop::market::features::Source {
+            url: config.shop.shop_feature_flags_url.clone(),
+            origin: if config.shop.shop_feature_flags_origin.is_empty() {
+                // The service answers by Referer: an origin it cannot name asks for no site, and every flag reads off.
+                match url::Url::parse(&config.shop.shop_base_url).map(|u| u.origin()) {
+                    Ok(origin) if origin.is_tuple() => origin.ascii_serialization(),
+                    _ => {
+                        tracing::warn!(
+                            shop_base_url = %config.shop.shop_base_url,
+                            "SHOP_FEATURE_FLAGS_ORIGIN is empty and SHOP_BASE_URL names no origin: the dapps flags are asked for no site, so they read off"
+                        );
+                        String::new()
+                    }
+                }
+            } else {
+                config.shop.shop_feature_flags_origin.clone()
+            },
+            refresh: Duration::from_secs(config.shop.shop_feature_flags_refresh_secs),
+        }),
     );
     market.spawn_api_jobs(&jobs);
 
@@ -605,6 +636,24 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading content.denylist")?;
     content.spawn_jobs(&jobs);
+    // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
+    // mirror), fetched once before the routes serve and every 120 s after,
+    // into the same projection; a failed fetch is logged, never fatal.
+    let denylist_urls = config.content.denylist_urls()?;
+    if !denylist_urls.is_empty() {
+        let (remote, errors) = content
+            .reload_remote_denylist(&http_client, &denylist_urls)
+            .await;
+        for error in &errors {
+            tracing::warn!(%error, "remote denylist fetch failed at boot");
+        }
+        tracing::info!(
+            urls = denylist_urls.len(),
+            remote,
+            "remote denylists loaded"
+        );
+    }
+    content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
     if config.writes.content_writes_enabled {
         tracing::warn!(
             denylisted,
@@ -802,13 +851,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     }
 
     // The operator plane and the remaining services (the old
-    // catalyrst-telemetry, -credits, -rpc and
-    // -bvimposters units): every one over the same pool, client, blob store,
-    // validator and job lifecycle. The credits ledger and
-    // the telemetry console writes are local authority behind
-    // OPS_WRITES_ENABLED (the social switch's twin); the telemetry sinks
-    // have their own TELEMETRY_INGEST_ENABLED, since an ingest sink is not
-    // user state and a node in catch-up may accept telemetry before writes.
+    // catalyrst-credits, -rpc and -bvimposters units): every one over the
+    // same pool, client, blob store, validator and job lifecycle. The credits
+    // ledger is local authority behind OPS_WRITES_ENABLED (the social
+    // switch's twin).
     let stage5_ops = ops_states(
         &config,
         &pool,
@@ -819,7 +865,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             price: &price,
             economy: &economy_state,
             eip1654: eip1654.clone(),
-            self_hosts: &self_hosts,
             public_url: &public_url,
         },
     )
@@ -951,6 +996,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .context("the Shop's MANA settlement venues")?,
     );
     shop::mana::spawn_jobs(&mana, &jobs);
+    // The Shop prices at the settlement chain's newest marketplace's own feed
+    // (`shop::mana::feed_rate`), read in the background; without an endpoint or a
+    // marketplace on that chain it keeps the spot.
+    let settlement = mana.settings.collections_chain_id;
+    match shop::mana::feed_rate::settlement_venue(&mana.venues, settlement) {
+        Some((url, marketplace)) => shop::mana::feed_rate::install(
+            Arc::new(
+                shop::credits::feed::ChainFeed::new(
+                    Arc::new(shop::evm::chain::ChainComponent::new(
+                        http_client.clone(),
+                        &url,
+                        shop::evm::chain::DEFAULT_RPC_TIMEOUT,
+                    )),
+                    config.shop.credits_usd_pegged_feed_max_age_secs,
+                )
+                .reading_past_tolerance(),
+            ),
+            settlement,
+            marketplace,
+            config.shop.credits_usd_pegged_feed_max_age_secs,
+        ),
+        None => tracing::info!(
+            chain_id = settlement,
+            "shop MANA/USD: no endpoint or marketplace for the settlement chain; the Shop prices at the market spot"
+        ),
+    }
     let social = social_states(
         &config,
         &pool,
@@ -961,6 +1032,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_stage.gatekeeper.clone(),
         eip1654,
         &explore,
+        explorer_api.onboarding.clone(),
         metrics_handle,
     )?;
     social
@@ -982,6 +1054,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         outfits.eip1654.clone(),
     ));
     subscriptions.spawn_jobs(&jobs);
+    shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live
         .set_participants(comms_stage.gatekeeper.clone());
@@ -1040,6 +1113,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
+    social.segment_webhooks.spawn_jobs(&jobs);
     if config.writes.social_writes_enabled {
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(
@@ -1193,7 +1267,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         // The console's /admin/api/<family>/* calls into these modules in
         // this process (the old console proxied to each over loopback HTTP).
         .with_domains(ops::admin::console::Domains {
-            telemetry: Some(stage5_ops.telemetry.clone()),
             credits: Some(stage5_ops.credits.clone()),
             price: Some(price.clone()),
             comms: Some(comms_stage.gatekeeper.clone()),
@@ -1216,8 +1289,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     tracing::info!(
         console = ops_admin.settings.admin_enabled(),
         sync_control = ops_admin.sync_control.is_some(),
-        telemetry = %stage5_ops.telemetry.sources_label(),
-        telemetry_ingest = config.ops.telemetry_ingest_enabled,
         credits_admin = stage5_ops.credits.settings.admin_token.is_some(),
         stripe = stage5_ops.credits.settings.stripe_secret_key.is_some(),
         rpc_networks = stage5_ops.rpc.upstreams_snapshot().len(),
@@ -1228,17 +1299,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     );
     if config.ops.ops_writes_enabled {
         tracing::warn!(
-            "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, the telemetry console and the operator console's writes"
+            "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger and the operator console's writes"
         );
     } else {
         tracing::info!(
             "OPS_WRITES_ENABLED=false: operator-plane routes serve reads; every write answers 503"
         );
     }
-    if !config.ops.telemetry_ingest_enabled {
-        tracing::info!("TELEMETRY_INGEST_ENABLED=false: the Sentry and Segment sinks answer 503");
-    }
-
     let addr = config.node.bind_addr();
     // The old gateway's location table (catalyrst/nixos/web-gateway.nix): the
     // content routes and /lambdas at the root, every other service under the
@@ -1269,7 +1336,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "/shop-api",
             shop::router(shop::States {
                 market: market.clone(),
-                analytics: shop::analytics::Sink::from(stage5_ops.telemetry.clone()),
                 credits: stage5_ops.credits.clone(),
                 economy: economy_state.clone(),
                 signatures: signatures.clone(),
@@ -1279,6 +1345,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             }),
         )
         .merge(shop::campaigns::builder_alias_router(market.clone()))
+        // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
+        .nest(
+            "/events-notifier",
+            shop::market::tips::router(market.clone()),
+        )
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
         .merge(economy_routes(&economy_state))
@@ -1301,15 +1372,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .nest("/archipelago-ea-stats", archipelago.stats)
         .merge(explore::api::router(explorer_api))
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
-        // room authority and the world comms mints at the root, the mints
-        // under `/worlds-content-server`, and the gatekeeper's routes with
-        // social's MLS routes under `/comms-gatekeeper` behind the social
-        // writes switch.
+        // room authority, the world comms mints and the LiveKit webhook (the
+        // worlds content server's root path) at the root, the mints and the
+        // webhook under `/worlds-content-server`, and the gatekeeper's routes
+        // with social's MLS routes under `/comms-gatekeeper` behind the
+        // social writes switch.
         .merge(comms::gatekeeper::room_authority_router(
             &comms_stage.gatekeeper,
         ))
         .merge(comms::gatekeeper::admission::world_mint::router(
             comms_stage.gatekeeper.clone(),
+        ))
+        .merge(social::writes::guard(
+            comms::gatekeeper::webhook_router(comms_stage.gatekeeper.clone()),
+            config.writes.social_writes_enabled,
         ))
         .nest(
             "/worlds-content-server",
@@ -1332,15 +1408,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .merge(builder::root_router(builder.clone()))
         .nest("/builder-api", builder::router(builder))
         .nest("/camera-reel-service", camera_reel::router(camera_reel));
-    // The operator plane under the old gateway's prefixes: the sinks and the
-    // console under /telemetry (TELEMETRY_BASE_PATH), credits under /credits
-    // only (its /users, /cart and /checkout would collide at the root; the
+    // The operator plane under the old gateway's prefixes: credits under
+    // /credits only (its /users, /cart and /checkout would collide at the root; the
     // handlers verify a signed fetch over the public path and the route-local
     // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
-        .nest("/telemetry", ops::telemetry::router(stage5_ops.telemetry))
         .nest("/credits", shop::credits::router(stage5_ops.credits))
         .nest("/rpc", ops::rpc::router(stage5_ops.rpc))
         .nest(
@@ -1363,6 +1437,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405 (also under
+    // /worlds-content-server/). Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1370,6 +1448,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr} (HTTP_SERVER_HOST + HTTP_SERVER_PORT)"))?;
+    let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
     axum::serve(
@@ -1379,7 +1458,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         >(app),
     )
     .with_graceful_shutdown(async move {
-        shutdown_signal().await;
+        shutdown.await;
         socket_restart.cancel();
         // Workers first, so cursors and batches settle while the listener
         // still answers; then the listener drains.
@@ -1438,14 +1517,11 @@ struct OpsSources<'a> {
     price: &'a Arc<price::State>,
     economy: &'a Arc<shop::evm::State>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
-    /// Every host this node answers at (`content::own_hosts`).
-    self_hosts: &'a [String],
     public_url: &'a str,
 }
 
 /// The operator-plane states, one per old unit, with their jobs attached.
 struct OpsStates {
-    telemetry: Arc<ops::telemetry::State>,
     credits: Arc<shop::credits::State>,
     rpc: ops::rpc::Shared,
     imposters: explore::imposters::Shared,
@@ -1459,35 +1535,6 @@ async fn ops_states(
     sources: OpsSources<'_>,
 ) -> anyhow::Result<OpsStates> {
     let non_empty = Config::non_empty;
-
-    let telemetry = Arc::new(
-        ops::telemetry::State::new(
-            pool.clone(),
-            http_client.clone(),
-            ops::telemetry::Settings::resolve(
-                ops::telemetry::RawSettings {
-                    ingest_enabled: config.ops.telemetry_ingest_enabled,
-                    writes_enabled: config.ops.ops_writes_enabled,
-                    admin_token: non_empty(&config.ops.catalyrst_telemetry_admin_token),
-                    contract_path: non_empty(&config.ops.telemetry_contract_path),
-                    contract_projects: non_empty(&config.ops.telemetry_contract_projects),
-                    flags_url: non_empty(&config.ops.telemetry_flags_url),
-                    base_path: config.ops.telemetry_base_path.clone(),
-                    retention_days: config.ops.telemetry_retention_days,
-                    purge_max_batches: config.ops.telemetry_purge_max_batches,
-                    default_daily_limit: config.ops.telemetry_default_daily_limit,
-                    max_rows_per_minute: config.ops.telemetry_max_rows_per_minute,
-                    max_bytes_per_minute: config.ops.telemetry_max_bytes_per_minute,
-                    sql_database_url: non_empty(&config.ops.telemetry_sql_database_url),
-                },
-                sources.self_hosts,
-            )
-            .context("TELEMETRY_* configuration")?,
-        )
-        .await
-        .context("loading telemetry.ingest_settings / project_quotas")?,
-    );
-    telemetry.spawn_jobs(jobs);
 
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
@@ -1541,7 +1588,6 @@ async fn ops_states(
     imposters.spawn_jobs(jobs);
 
     Ok(OpsStates {
-        telemetry,
         credits,
         rpc,
         imposters,
@@ -1665,12 +1711,13 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
             .and_then(|s| {
@@ -1678,6 +1725,10 @@ async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_access_caps(
+                        config.worlds.access_max_wallets,
+                        config.worlds.access_max_communities,
+                    )
                     .with_owner_reconcile_interval_secs(
                         config.worlds.worlds_owner_reconcile_interval_secs,
                     )
@@ -1806,7 +1857,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)
@@ -1893,7 +1945,7 @@ async fn comms_states(
         archipelago::config::RawSettings {
             max_sockets: config.worlds.ws_max_sockets,
             handshake_timeout_ms: config.worlds.handshake_timeout,
-            deny_list_url: non_empty(&config.worlds.deny_list_url),
+            deny_list_url: config.worlds.deny_list(),
             island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
             commit_hash: config.node.commit_hash.clone(),
         },
@@ -1914,7 +1966,7 @@ async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
-    .with_deny_list_url(non_empty(&config.worlds.deny_list_url))
+    .with_deny_list_url(config.worlds.deny_list())
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),
         takeover_retry_delay_ms: config.worlds.cluster_takeover_retry_delay_ms,
@@ -2049,7 +2101,6 @@ fn referral_settings(config: &Config) -> communities::referral::Settings {
         .into_iter()
         .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
         .collect(),
-        ..Default::default()
     }
 }
 
@@ -2217,6 +2268,7 @@ fn social_states(
     comms: comms::gatekeeper::SharedState,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
+    onboarding: Arc<explore::api::onboarding::OnboardingState>,
     metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
     config
@@ -2325,8 +2377,9 @@ fn social_states(
         explore.clone(),
     ));
 
-    if let Some(analytics) = social_analytics(config, http_client)? {
-        communities.set_analytics(analytics);
+    let analytics = social_analytics(config, http_client)?;
+    if let Some(analytics) = &analytics {
+        communities.set_analytics(analytics.clone());
     }
 
     let notifications = Arc::new(notifications::State::new(
@@ -2335,25 +2388,40 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            signing_key: non_empty(&config.social.signing_key),
+            service_base_url: config.social.notifications_service_base_url.clone(),
+            community_cdn_url: communities.settings.cdn_url.clone(),
+            jump_in_site_url: explore.settings.jump_in_site_url.clone(),
+            event_slack_notices: explore.settings.events_upcoming_summaries_enabled
+                && explore.settings.operator_writes_enabled
+                && explore
+                    .settings
+                    .events_slack_webhook
+                    .as_deref()
+                    .is_some_and(|endpoint| !endpoint.trim().is_empty()),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),
+                notification_template_id: non_empty(
+                    &config.social.sendgrid_notification_template_id,
+                ),
                 validate_email_template_id: non_empty(
                     &config.social.sendgrid_validate_email_template_id,
                 ),
                 validate_credits_email_template_id: non_empty(
                     &config.social.sendgrid_validate_credits_email_template_id,
                 ),
-                notification_template_id: non_empty(
-                    &config.social.sendgrid_notification_template_id,
-                ),
                 account_base_url: config.social.account_base_url.clone(),
-                marketplace_base_url: config.social.marketplace_base_url.clone(),
                 turnstile_secret_key: non_empty(&config.social.turnstile_secret_key),
                 domain_blacklist: notifications::EmailConfig::parse_domain_blacklist(
                     &config.social.email_domain_blacklist,
                 ),
+                sandbox_mode: config.social.sendgrid_sandbox_mode,
+                environment: non_empty(&config.social.social_environment).unwrap_or_default(),
             },
+            notification_service_token: non_empty(&config.social.notification_service_token),
+            governance_token: non_empty(&config.social.notifications_governance_token),
+            rewards_token: non_empty(&config.social.notifications_rewards_token),
             first_wear_enabled: config.social.first_wear_enabled,
             first_wear: notifications::FirstWearSettings {
                 shop_item_base_url: config.social.shop_item_base_url.clone(),
@@ -2362,12 +2430,27 @@ fn social_states(
             delivery_interval: Duration::from_secs(
                 config.social.notification_delivery_interval_secs,
             ),
+            broadcast_horizon: Duration::from_secs(
+                config
+                    .social
+                    .notifications_broadcast_horizon_days
+                    .max(1)
+                    .saturating_mul(86_400),
+            ),
+            delivery_max_age: notifications::delivery::max_age_from_secs(
+                config.social.notification_delivery_max_age_secs,
+            ),
+            current_version: config.social.social_rpc_current_version.clone(),
+            commit_hash: config.node.commit_hash.clone(),
         },
         http_client.clone(),
         eip1654.clone(),
         Some(market.index.clone()),
     ));
 
+    if let Some(analytics) = analytics {
+        notifications.set_analytics(analytics);
+    }
     communities.referral.set_mailer(notifications.email.clone());
 
     let badges = Arc::new(badges::State::new(
@@ -2377,6 +2460,21 @@ fn social_states(
             public_asset_base_url: config.social.badges_public_asset_base_url.clone(),
             assets_dir: non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from),
         },
+    ));
+
+    let segment_webhooks = Arc::new(social::segment_webhooks::State::new(
+        pool.clone(),
+        social::segment_webhooks::Settings {
+            signing_key: non_empty(&config.social.segment_signing_key),
+            force_context_validation: config.social.force_explorer_context_validation,
+            expected_realm: non_empty(&config.social.segment_expected_realm),
+            expected_realm_url: non_empty(&config.social.segment_expected_realm_url),
+            web_project_id: config.social.segment_web_project_id.clone(),
+            retention: Duration::from_secs(
+                u64::from(config.social.client_events_retention_days.max(1)) * 24 * 3600,
+            ),
+        },
+        onboarding,
     ));
 
     let media = Arc::new(
@@ -2499,6 +2597,7 @@ fn social_states(
         translate = media.backend_label(),
         profile_images = %profile_images.sources_label(),
         livekit = comms.livekit.configured,
+        segment_webhooks = segment_webhooks.settings.signing_key.is_some(),
         "social routes"
     );
     Ok(social::States {
@@ -2510,23 +2609,29 @@ fn social_states(
         media,
         profile_images,
         rpc,
+        segment_webhooks,
     })
 }
 
-pub(crate) async fn shutdown_signal() {
-    let ctrl_c = tokio::signal::ctrl_c();
+/// Installs the shutdown signal handlers now and returns the wait for one of
+/// them. Call it before logging that the process is ready, so a signal sent
+/// in reply to that line finds its handler.
+pub(crate) fn shutdown_signal() -> impl std::future::Future<Output = ()> {
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("installing the SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => tracing::info!("SIGINT received"),
-            _ = term.recv() => tracing::info!("SIGTERM received"),
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt()).expect("installing the SIGINT handler");
+        let mut term = signal(SignalKind::terminate()).expect("installing the SIGTERM handler");
+        async move {
+            tokio::select! {
+                _ = interrupt.recv() => tracing::info!("SIGINT received"),
+                _ = term.recv() => tracing::info!("SIGTERM received"),
+            }
         }
     }
     #[cfg(not(unix))]
-    {
-        let _ = ctrl_c.await;
+    async {
+        let _ = tokio::signal::ctrl_c().await;
         tracing::info!("shutdown signal received");
     }
 }

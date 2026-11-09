@@ -66,6 +66,20 @@ impl Analytics {
         }))))
     }
 
+    /// The same client posting under another `context`.
+    pub fn with_context(&self, context: &str) -> Self {
+        let inner = &self.0;
+        Self(Arc::new(Inner {
+            http: inner.http.clone(),
+            transport: std::sync::OnceLock::new(),
+            context: context.to_owned(),
+            url: inner.url.clone(),
+            token: inner.token.clone(),
+            environment: inner.environment.clone(),
+            timeout: inner.timeout,
+        }))
+    }
+
     pub fn fire_event(&self, event: &str, mut properties: Value) {
         let Some(body) = properties.as_object_mut() else {
             tracing::error!(

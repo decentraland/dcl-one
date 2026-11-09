@@ -1638,7 +1638,7 @@ fn baseline_input_boundaries_invalid_gameplay_is_terminal() {
         ),
         (
             client_message::Message::Input(PlayerStateInput {
-                state: Some(invalid.clone()),
+                state: Some(invalid),
             }),
             DisconnectReason::InvalidInputField,
         ),
@@ -1810,9 +1810,9 @@ fn baseline_input_boundaries_raw_fields_and_pointing_aggregate() {
                 state: Some(state),
             }))
         };
-        srv.dispatch(1, 0, &input(state.clone()), 0, 0);
+        srv.dispatch(1, 0, &input(state), 0, 0);
         change(&mut state);
-        srv.dispatch(1, 0, &input(state.clone()), 0, 100);
+        srv.dispatch(1, 0, &input(state), 0, 100);
         assert_eq!(srv.board.last_seq(1), 1);
         srv.dispatch(1, 0, &input(state), 0, 200);
         assert_eq!(srv.board.last_seq(1), 1);
@@ -1827,14 +1827,14 @@ fn baseline_input_boundaries_raw_fields_and_pointing_aggregate() {
     };
     state.state_flags = PlayerAnimationFlags::PointingAt as u32;
     state.point_at_x = Some(1);
-    srv.dispatch(1, 0, &input(state.clone()), 0, 0);
+    srv.dispatch(1, 0, &input(state), 0, 0);
     assert_eq!(srv.board.try_read(1).unwrap().point_at_x, None);
     state.point_at_x = Some(2);
-    srv.dispatch(1, 0, &input(state.clone()), 0, 100);
+    srv.dispatch(1, 0, &input(state), 0, 100);
     assert_eq!(srv.board.last_seq(1), 0);
     state.point_at_y = Some(3);
     state.point_at_z = Some(4);
-    srv.dispatch(1, 0, &input(state.clone()), 0, 200);
+    srv.dispatch(1, 0, &input(state), 0, 200);
     assert_eq!(srv.board.last_seq(1), 1);
     for axis in 0..3 {
         match axis {
@@ -1842,14 +1842,14 @@ fn baseline_input_boundaries_raw_fields_and_pointing_aggregate() {
             1 => state.point_at_y = Some(4),
             _ => state.point_at_z = Some(5),
         }
-        srv.dispatch(1, 0, &input(state.clone()), 0, 300 + axis * 100);
+        srv.dispatch(1, 0, &input(state), 0, 300 + axis * 100);
         assert_eq!(srv.board.last_seq(1), 2 + axis);
     }
     state.state_flags = 0;
-    srv.dispatch(1, 0, &input(state.clone()), 0, 700);
+    srv.dispatch(1, 0, &input(state), 0, 700);
     assert_eq!(srv.board.try_read(1).unwrap().point_at_x, None);
     state.point_at_x = Some(7);
-    srv.dispatch(1, 0, &input(state.clone()), 0, 800);
+    srv.dispatch(1, 0, &input(state), 0, 800);
     assert_eq!(srv.board.last_seq(1), 5);
     state.point_at_x = Some(1 << 17);
     assert_eq!(

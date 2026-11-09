@@ -13,21 +13,29 @@ pub fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
     q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-/// JS `parseInt(s, 10)`: leading whitespace, an optional sign, then the
-/// leading digits (saturating); `None` where JS gives `NaN`.
-pub fn js_parse_int(s: &str) -> Option<i64> {
-    let t = s.trim_start();
-    let (negative, rest) = match t.as_bytes().first() {
-        Some(b'-') => (true, &t[1..]),
-        Some(b'+') => (false, &t[1..]),
-        _ => (false, t),
-    };
-    let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
+/// The `authorized_deployer` filter of `GET /worlds` and the scene listings:
+/// absent or empty is no filter; otherwise `EthAddress.validate` (`0x` and 40
+/// hex digits, untrimmed).
+pub fn authorized_deployer(q: &QueryPairs) -> Result<Option<String>, ApiError> {
+    match query_param(q, "authorized_deployer") {
+        Some(d) if !d.is_empty() => Some(d)
+            .filter(|d| d.starts_with("0x"))
+            .and_then(|d| crate::shared::identity::Address::parse_untrimmed(d).ok())
+            .map(|a| Some(a.into_string()))
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "Invalid authorized_deployer address: {d}. Must be a valid Ethereum address."
+                ))
+            }),
+        _ => Ok(None),
     }
-    let n = digits.parse::<i64>().unwrap_or(i64::MAX);
-    Some(if negative { -n } else { n })
+}
+
+/// JS `parseInt(s, 10)`, the shared parser: leading JavaScript whitespace,
+/// an optional sign, then the leading digits (saturating); `None` where JS
+/// gives `NaN`.
+pub fn js_parse_int(s: &str) -> Option<i64> {
+    crate::shared::query_params::js_parse_int(s, false)
 }
 
 pub const MAX_PAGE_LIMIT: i64 = 100;

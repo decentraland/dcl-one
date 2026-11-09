@@ -112,7 +112,7 @@ These APIs are part of a larger distributed system. For architectural context:
 
 * [Architecture Overview](/docs/contributor/architecture/architecture/) - Complete system architecture
 * [Backend Services](/docs/contributor/architecture/services/) - Detailed service descriptions
-* [Client Architecture](/docs/contributor/architecture/client/) - How clients interact with services
+* [Client Architecture](/docs/contributor/architecture/architecture/#clients) - How clients interact with services
 
 ## Contributing
 

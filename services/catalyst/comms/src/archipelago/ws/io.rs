@@ -199,6 +199,8 @@ impl Pending {
         self.frames.len() == QUEUE_CAPACITY
             && self.full_since.is_some_and(|at| now >= at + FULL_DEADLINE)
     }
+    // A full queue hands the frame back; boxing it would allocate on the send path.
+    #[allow(clippy::result_large_err)]
     fn push(&mut self, frame: Frame) -> Result<(), Frame> {
         if frame.assignment
             && let Some(index) = self.frames.iter().position(|held| held.assignment)
@@ -661,22 +663,22 @@ async fn writer<S: Sink<Message> + Unpin>(
             if !write(&mut sink, frame.message, None, &state.feed).await {
                 break;
             }
-            if let Some((assigned, metric)) = frame.delivery {
-                if let Some(owner) = frame.owner.as_ref().filter(|owner| {
+            if let Some((assigned, metric)) = frame.delivery
+                && let Some(owner) = frame.owner.as_ref().filter(|owner| {
                     !owner.is_closed()
                         && (!frame.fence_bound
                             || frame.permit.as_ref().is_some_and(|permit| {
                                 state.registry.control_position_permit_is_current(permit)
                             }))
-                }) {
-                    match assigned {
-                        Some(true) => owner.assignment_sent(),
-                        Some(false) => owner.assignment_cleared(),
-                        None => {}
-                    }
-                    if metric {
-                        state.feed.on_socket_assignment_written();
-                    }
+                })
+            {
+                match assigned {
+                    Some(true) => owner.assignment_sent(),
+                    Some(false) => owner.assignment_cleared(),
+                    None => {}
+                }
+                if metric {
+                    state.feed.on_socket_assignment_written();
                 }
             }
         } else if done {

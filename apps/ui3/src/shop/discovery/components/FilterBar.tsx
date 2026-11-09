@@ -1,7 +1,7 @@
 // from: shop@2d3bf62:app/src/components/FilterBar/FilterBar.tsx (+ FilterBar.styles.ts),
 //       app/src/components/Dropdown/Dropdown.tsx (+ Dropdown.styles.ts), app/src/components/Chevron
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { t } from "../intl";
 import type { ShopSort } from "../api";
@@ -36,6 +36,7 @@ export default function FilterBar({
   onOpenFilters,
   chips,
   onClearChips,
+  search,
 }: {
   sort: string;
   onSort: (key: string) => void;
@@ -46,6 +47,8 @@ export default function FilterBar({
   onOpenFilters?: () => void;
   chips?: FilterChip[];
   onClearChips?: () => void;
+  /** A page-scoped search field beside Sort By (upstream: count on the left, search then SORT BY on the right). */
+  search?: ReactNode;
 }) {
   return (
     <div className="shop-filterbar" data-testid="browse-toolbar">
@@ -75,6 +78,7 @@ export default function FilterBar({
         </div>
       ) : null}
       <div className="shop-filterbar__right">
+        {search ? <div className="shop-filterbar__search">{search}</div> : null}
         <SortDropdown value={sort} options={sortOptions} onChange={onSort} />
         {onOpenFilters ? (
           <button type="button" className="shop-filterbar__pill" data-testid="open-filters" onClick={onOpenFilters}>

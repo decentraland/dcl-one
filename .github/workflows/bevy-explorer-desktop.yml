@@ -50,6 +50,9 @@ jobs:
         with:
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-desktop-${{ matrix.build_name }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+      - name: Restore the vendored Bevy's cached file times
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: add darwin target
         if: runner.os == 'macos'
         run: rustup target add aarch64-apple-darwin
@@ -99,7 +102,7 @@ jobs:
         if: runner.os == 'linux'
       - name: Install clang for webrtc-sys
         if: runner.os == 'linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: install ffmpeg deps (macOs)
         if: runner.os == 'macos'
         run: |-
@@ -139,6 +142,8 @@ jobs:
       - name: Cargo build (linux)
         if: runner.os == 'linux'
         run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
+      - name: Record the vendored Bevy's file times for the cache
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Package common
         run: |-
           mkdir package

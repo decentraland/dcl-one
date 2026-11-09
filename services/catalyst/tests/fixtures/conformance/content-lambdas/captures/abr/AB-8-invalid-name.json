@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/worlds/not_a_world/manifest",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "55"
+    },
+    "body": {
+      "ok": false,
+      "message": "A valid world name is required"
+    }
+  }
+}

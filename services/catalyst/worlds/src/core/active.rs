@@ -41,8 +41,11 @@ pub async fn active_entities(
 
     let banned = state.names.snapshot(&state.pool).await;
     let mut seen = HashSet::new();
+    // Upstream looks the pointer up as sent (lowercased): one with surrounding
+    // whitespace names no world there, so it is not trimmed into one here.
     let worlds: Vec<WorldName> = pointers
         .into_iter()
+        .filter(|p| p.trim() == *p)
         .filter_map(|p| WorldName::parse(p).ok())
         .filter(|w| seen.insert(w.key().to_string()))
         .filter(|w| banned.allows(w.display()))

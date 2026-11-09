@@ -12,12 +12,10 @@ import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { CURRENCY, formatAmount } from "../checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCreditOrder, type CreditOrder } from "./credits";
-import { balanceLabel, useBalance, useCreditPacks } from "./hooks";
+import { useCreditPacks } from "./hooks";
 import { isIapMode } from "./iap";
 import { createPackCheckout, packBonus, pollCreditGrant, type CreditPack } from "./payments";
-import { clearTopUpHandoffs, takeTopUpReturn } from "./returns";
-import CreditRate from "./components/CreditRate";
-import HeldCredits from "./components/HeldCredits";
+import { clearTopUpHandoffs, keepHandoffsOf, takeTopUpReturn } from "./returns";
 import packStack1 from "./assets/pack-stack1-512.webp?url";
 import packStack2 from "./assets/pack-stack2-512.webp?url";
 import packStack3 from "./assets/pack-stack3-512.webp?url";
@@ -234,6 +232,9 @@ function RecentOrders({ address }: { address: string }) {
   async function resume(order: CreditOrder) {
     setResuming(order.id);
     setNotice(null);
+    // An older order finishes nothing a later purchase left behind, only what its own top-up left: Buy now's at the price
+    // the buyer confirmed, the cart's waiting for a press.
+    keepHandoffsOf(order.id);
     const result = await resumeCreditOrder(order.id, client);
     setResuming(null);
     if (result.kind === "url" && /^https:\/\/([a-z0-9-]+\.)*stripe\.com\//i.test(result.url)) {
@@ -286,7 +287,6 @@ function CreditsScreen() {
   const account = wallet.account;
   const qc = useQueryClient();
   const { packs, isLoading } = useCreditPacks();
-  const balance = useBalance(account);
   const [phase, setPhase] = useState<Phase>("select");
   const [granted, setGranted] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,9 +322,11 @@ function CreditsScreen() {
         if (result.status === "credited") {
           const credits = result.creditsGranted ?? 0;
           setGranted(credits > 0 ? credits : null);
-          const back = takeTopUpReturn();
+          // Only a hand-off this order's top-up left: the page it returns to learns which order it was.
+          const back = takeTopUpReturn(Date.now(), orderId);
           if (back) {
-            navigate(back.path, { state: { resumeCheckout: true, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
+            // A continued order comes back without paying: the buyer confirms again what is there now.
+            navigate(back.path, { state: { ...(back.confirmAgain ? {} : { resumeCheckout: true }), topUpOrder: orderId, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
             return;
           }
           setPhase("success");
@@ -335,6 +337,12 @@ function CreditsScreen() {
         } else if (result.status === "failed") {
           clearTopUpHandoffs();
           setError("We couldn't add your Credits. If you were charged, the payment is refunded.");
+          setPhase("error");
+        } else if (result.status === "missing") {
+          // Never a "your payment went through" for an order this account has no record of. The node answers so for an
+          // order another account paid for too, so the copy speaks for this account and points to the other.
+          clearTopUpHandoffs();
+          setError("We couldn't find that Credits purchase for this account. If you paid with another account, sign in with it to see your Credits.");
           setPhase("error");
         } else {
           clearTopUpHandoffs();
@@ -380,6 +388,8 @@ function CreditsScreen() {
     }
     setError(null);
     setCanceledNote(false);
+    // A top-up started here finishes nothing elsewhere: one an earlier purchase left behind is not this one's.
+    clearTopUpHandoffs();
     setPhase("redirecting");
     try {
       const session = await createPackCheckout(pack.id, services.client);
@@ -445,17 +455,6 @@ function CreditsScreen() {
                     </button>
                   </div>
                 </header>
-
-                {account ? (
-                  <section className="shop-credits__balance" aria-label={`Your ${CURRENCY.name}`}>
-                    <span>Your balance</span>
-                    <b data-testid="credits-balance">
-                      {balanceLabel(balance.data, balance.isError)} {CURRENCY.name}
-                    </b>
-                    <HeldCredits held={balance.data?.held} />
-                    <CreditRate />
-                  </section>
-                ) : null}
 
                 {canceledNote ? (
                   <p className="shop-credits__note" role="status">

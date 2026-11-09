@@ -36,7 +36,6 @@ export type Place = {
 export type Category = {
   name: string;
   count: number;
-  active: boolean;
   i18n: { en: string | null };
 };
 
@@ -71,15 +70,16 @@ function normalizeCategory(c: CategoryOut): Category {
   return {
     name: c.name,
     count: c.count,
-    active: c.active,
     i18n: { en: c.i18n.en },
   };
 }
 
-// Older peers omit this additive moderation field. Keep the generated current
-// contract strict, while accepting their otherwise valid public place records.
+// Older peers omit these additive fields (the moderation flag, the places
+// table's `textsearch`). Keep the generated current contract strict, while
+// accepting their otherwise valid public place records.
 const CompatiblePlaceRowSchema = PlaceRowSchema.extend({
   exclude_from_ranking: PlaceRowSchema.shape.exclude_from_ranking.default(false),
+  textsearch: PlaceRowSchema.shape.textsearch.default(null),
 });
 
 export function parsePlace(raw: unknown): Place | null {

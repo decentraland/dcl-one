@@ -6,6 +6,8 @@ export class CatalystError extends Error {
   override name = "CatalystError";
   status: number;
   url: string;
+  /** Seconds the server asked to wait before retrying (`Retry-After` or a JSON `retryAfter`). */
+  retryAfterSecs?: number;
 
   constructor(message: string, url: string, status = 0) {
     super(message);
@@ -35,6 +37,15 @@ type CatalystWindow = Window & typeof globalThis & { __CATALYST_BASE__?: string 
 
 function errMessage(err: unknown, fallback: string): string {
   return (err as { message?: string } | null)?.message ?? fallback;
+}
+
+/** The server's message in a parsed error envelope: `message` where a host still
+ * sends it, else `error` (the places and events routes answer `{ok, error, code}`). */
+export function envelopeMessage(parsed: unknown): string {
+  const body = parsed as { message?: unknown; error?: unknown } | null;
+  if (typeof body?.message === "string") return body.message;
+  if (typeof body?.error === "string") return body.error;
+  return "";
 }
 
 function defaultBase(): string {
@@ -227,7 +238,7 @@ export async function sendJSON<T = unknown>(path: string, opts: SendOpts = {}): 
       const txt = await res.text();
       if (txt) {
         try {
-          serverMsg = (JSON.parse(txt) as { message?: string } | null)?.message ?? "";
+          serverMsg = envelopeMessage(JSON.parse(txt));
         } catch {
           serverMsg = txt;
         }
@@ -339,14 +350,20 @@ export async function sendSignedJSON<T = unknown>(
 
   if (status < 200 || status >= 300) {
     let serverMsg = "";
+    let retryAfter: unknown;
     if (body) {
       try {
-        serverMsg = (JSON.parse(body) as { message?: string } | null)?.message ?? "";
+        const parsed = JSON.parse(body) as { retryAfter?: unknown } | null;
+        serverMsg = envelopeMessage(parsed);
+        retryAfter = parsed?.retryAfter;
       } catch {
         serverMsg = body;
       }
     }
-    throw new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
+    const err = new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
+    // The bridge passes no headers, so the server repeats Retry-After in the body.
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterSecs = retryAfter;
+    throw err;
   }
 
   if (status === 204 || !body) return null;

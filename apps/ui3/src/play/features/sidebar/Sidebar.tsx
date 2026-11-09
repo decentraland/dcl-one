@@ -209,7 +209,7 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         onClick={session.places.toggle}
       />
     )
-  // The in-world Shop page where this HUD runs it (`?shop=new`); otherwise the web Shop in a new tab.
+  // The in-world Shop page where this HUD runs it (always, unless `?shop=old`); otherwise the web Shop in a new tab.
   if (item.kind === 'shop')
     return IN_WORLD_SHOP ? (
       <RailButton key="shop" icon={item.icon} label={item.label} active={session.shop.open} onClick={session.shop.toggle} />

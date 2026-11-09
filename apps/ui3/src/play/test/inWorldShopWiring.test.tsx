@@ -41,14 +41,20 @@ describe('when the HUD mounts the Shop page', () => {
     vi.restoreAllMocks()
   })
 
-  it('should open the in-world Shop, inside the HUD query client, with ?shop=new', async () => {
+  it('should open the in-world Shop, inside the HUD query client, by default', async () => {
+    await renderApp('', session)
+    expect(await screen.findByTestId('in-world-shop')).toBeInTheDocument()
+    expect(screen.queryByTestId('catalogue-shop')).toBeNull()
+  })
+
+  it('should still open it with ?shop=new, as links from before it was the default ask', async () => {
     await renderApp('?shop=new', session)
     expect(await screen.findByTestId('in-world-shop')).toBeInTheDocument()
     expect(screen.queryByTestId('catalogue-shop')).toBeNull()
   })
 
-  it('should keep the catalogue page without it', async () => {
-    await renderApp('', session)
+  it('should keep the catalogue page with ?shop=old, while it is retired', async () => {
+    await renderApp('?shop=old', session)
     expect(await screen.findByTestId('catalogue-shop')).toBeInTheDocument()
     expect(screen.queryByTestId('in-world-shop')).toBeNull()
   })
@@ -60,8 +66,8 @@ describe('when the sidebar offers the Shop', () => {
     vi.restoreAllMocks()
   })
 
-  it('should open the in-world Shop page with ?shop=new, not a web tab', async () => {
-    window.history.replaceState({}, '', '/?shop=new')
+  it('should open the in-world Shop page by default, not a web tab', async () => {
+    window.history.replaceState({}, '', '/')
     vi.resetModules()
     const { Sidebar } = await import('../features/sidebar/Sidebar')
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
@@ -70,5 +76,17 @@ describe('when the sidebar offers the Shop', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
     expect(session.shop.toggle).toHaveBeenCalled()
     expect(open).not.toHaveBeenCalled()
+  })
+
+  it('should open the web Shop in a new tab, with the web client utm source, with ?shop=old', async () => {
+    window.history.replaceState({}, '', '/?shop=old')
+    vi.resetModules()
+    const { Sidebar } = await import('../features/sidebar/Sidebar')
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const session = fakeSession()
+    render(<Sidebar session={session} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
+    expect(open).toHaveBeenCalledWith('https://decentraland.org/shop?utm_source=bevy-web-client', '_blank', 'noopener')
+    expect(session.shop.toggle).not.toHaveBeenCalled()
   })
 })

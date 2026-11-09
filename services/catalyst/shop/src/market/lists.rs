@@ -366,6 +366,18 @@ pub async fn get_or_create_default_list(
     Ok(row.get("id"))
 }
 
+/// The caller's own Favorites list, if it has been made (read only: the default list is made on a first pick).
+async fn own_default_list(pool: &PgPool, user_address: &str) -> Result<Option<String>, ApiError> {
+    let row = sqlx::query(
+        "SELECT id::text AS id FROM shop.lists WHERE user_address = $2 AND name = $1 ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(DEFAULT_LIST_NAME)
+    .bind(user_address.to_lowercase())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.get("id")))
+}
+
 pub async fn pick_and_unpick_in_bulk(
     pool: &PgPool,
     item_id: &str,
@@ -698,6 +710,22 @@ async fn pick_inner(
     }
     validate_list_ids(&picked_for)?;
     validate_list_ids(&unpicked_from)?;
+    // A named list is the Marketplace's; the plain favorite stays the Shop's, by the shared default id or by the
+    // caller's own Favorites row's real id.
+    let named: Vec<&String> = picked_for
+        .iter()
+        .chain(&unpicked_from)
+        .filter(|id| !is_default_list(id))
+        .collect();
+    if !named.is_empty() && !state.marketplace_features() {
+        let own = own_default_list(&state.pool, &user).await?;
+        if named.iter().any(|id| {
+            own.as_deref()
+                .is_none_or(|own| !own.eq_ignore_ascii_case(id))
+        }) {
+            state.require_marketplace()?;
+        }
+    }
     let (pick_ids, unpick_ids) = if picked_for.is_empty() && unpicked_from.is_empty() {
         if !item_exists(state, item_id).await? {
             return Err(PicksError::ItemNotFound(item_id.to_string()));
@@ -1464,6 +1492,10 @@ pub async fn create_list(
     headers: HeaderMap,
     body: Option<Json<ListCreationBody>>,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     create_list_inner(&state, &headers, body.map(|Json(b)| b))
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1499,6 +1531,10 @@ pub async fn update_list_route(
     headers: HeaderMap,
     body: Option<Json<ListUpdate>>,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     update_list_inner(&state, &id, &headers, body.map(|Json(b)| b))
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1520,6 +1556,10 @@ pub async fn delete_list_route(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     delete_list_inner(&state, &id, &headers)
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1558,6 +1598,10 @@ pub async fn add_pick_to_list_route(
     headers: HeaderMap,
     body: Option<Json<AddPickBody>>,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     add_pick_inner(&state, &id, &headers, body.map(|Json(b)| b))
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1586,6 +1630,10 @@ pub async fn delete_pick_in_list_route(
     Path((id, item_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     delete_pick_inner(&state, &id, &item_id, &headers)
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1621,6 +1669,10 @@ pub async fn create_access_route(
     headers: HeaderMap,
     body: Option<Json<AccessBody>>,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     access_inner(&state, &id, &headers, body.map(|Json(b)| b), true)
         .await
         .unwrap_or_else(IntoResponse::into_response)
@@ -1633,6 +1685,10 @@ pub async fn delete_access_route(
     headers: HeaderMap,
     body: Option<Json<AccessBody>>,
 ) -> Response {
+    // Lists are the Marketplace's (`features::MARKETPLACE_FEATURES`); the plain favorites (`/v1/picks`) are not.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     access_inner(&state, &id, &headers, body.map(|Json(b)| b), false)
         .await
         .unwrap_or_else(IntoResponse::into_response)

@@ -1,8 +1,10 @@
 //! The places read port over `explore.place_indexed`: one pool, one statement
 //! per page. The old component's writer pool, squid pool and interaction-table
 //! probes are gone: v2 has one database, so the viewer's favorites and likes
-//! always fold into the page statement, and the `owner` filter (LAND
-//! ownership from the squid index) answers empty until a chain reader lands.
+//! always fold into the page statement, and the `owner` filter matches the
+//! row's own owner plus the parcels the LAND index says the wallet holds or
+//! operates (`Place/model.ts:186-197`; the parcel leg is empty until a chain
+//! reader lands).
 
 pub mod admin;
 pub mod content_quality;
@@ -20,6 +22,7 @@ pub mod rows;
 pub mod scene_identity;
 pub mod social;
 pub mod v1;
+pub mod voting_power;
 pub mod world_scenes;
 
 use std::collections::HashMap;
@@ -32,11 +35,12 @@ use crate::sanitize::ContentOrigin;
 use crate::shared::cache::{TtlCache, cache_get, cache_put};
 use crate::shared::errors::ApiError;
 use query::{
-    Bind, bind_param, build_live_user_count_order, build_order_by, build_where_from,
-    description_plain_sql, destinations_lead_prefix, destinations_ranking_prefix, order_tail,
+    Bind, bind_param, build_active_lead, build_live_user_count_order, build_order_by,
+    build_where_from, destinations_lead_prefix, destinations_ranking_prefix,
+    like_score_recount_join, order_tail,
 };
 pub use rows::{
-    CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
+    ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
 };
 use rows::{place_columns, row_to_place, viewer_columns};
 
@@ -145,8 +149,10 @@ impl PlacesComponent {
         Ok(land.estate_at(conn, x, y).await?)
     }
 
-    /// Indexed LAND owner and direct update-operator parcels. An unavailable index
-    /// never turns creator-authored catalogue metadata into ownership authority.
+    /// Indexed LAND owner, estate-owner and update-operator parcels that a
+    /// catalogue place covers (`query::operated_positions_in_catalogue`). An
+    /// unavailable index never turns creator-authored catalogue metadata into
+    /// ownership authority.
     pub async fn operated_positions(&self, owner: &str) -> Result<Vec<String>, ApiError> {
         let Some(land) = self.land_authz.get() else {
             return Ok(vec![]);
@@ -154,16 +160,13 @@ impl PlacesComponent {
         if land.ready().await.is_none() {
             return Ok(vec![]);
         }
-        let store = land.store();
-        let mut parcels = store.parcels_owned_by(owner, 100_000).await?;
-        parcels.extend(store.parcels_with_update_operator(owner).await?);
-        let mut positions: Vec<String> = parcels
-            .into_iter()
-            .map(|p| format!("{},{}", p.x, p.y))
-            .collect();
-        positions.sort_unstable();
-        positions.dedup();
-        Ok(positions)
+        Ok(query::operated_positions_in_catalogue(
+            &land.pool,
+            &land.settings.land_registry,
+            &land.settings.estate_registry,
+            owner,
+        )
+        .await?)
     }
 
     /// Authorization for attaching a catalogue place to a community. Genesis ownership
@@ -218,17 +221,20 @@ impl PlacesComponent {
             return Ok((vec![], 0));
         };
         let f = &filters;
-        if matches!(&f.search, Some(s) if s.len() < 3) {
+        if search_too_short(f.search.as_deref()) {
             return Ok((vec![], 0));
         }
         let source = self.scene_list_source(f, &scenes);
-        let (sql, binds, live_binds) = list_sql_from(f, true, source);
+        // The live-positions lead is `most_active`'s alone, which re-sorts
+        // and recounts its cut (`busiest_first`): no catalogue count for it.
+        let with_total = !matches!(f.active, ActiveRows::Live(_));
+        let (sql, binds, live_binds) = list_sql_from(f, with_total, source);
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for b in &binds {
             q = bind_param(q, b);
         }
         if let Some(s) = &f.search {
-            q = q.bind(s.clone());
+            q = q.bind(query::tsquery(s));
         }
         for b in &live_binds {
             q = bind_param(q, b);
@@ -236,9 +242,11 @@ impl PlacesComponent {
         if let Some(v) = &f.viewer {
             q = q.bind(v.clone());
         }
-        let rows = q.fetch_all(&self.pool).await?;
+        let (limit, offset) = page_bounds(f);
+        let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await?;
         let total = match rows.first() {
-            Some(r) => r.try_get::<i64, _>("total_count")?,
+            Some(r) if with_total => r.try_get::<i64, _>("total_count")?,
+            Some(_) => 0,
             None if f.offset > 0 || f.limit <= 0 => self.count_list(f).await?,
             None => 0,
         };
@@ -260,7 +268,7 @@ impl PlacesComponent {
             return Ok(0);
         };
         let f = &filters;
-        if matches!(&f.search, Some(s) if s.len() < 3) {
+        if search_too_short(f.search.as_deref()) {
             return Ok(0);
         }
         let source = self.scene_list_source(f, &scenes);
@@ -317,10 +325,15 @@ impl PlacesComponent {
     ) -> Result<Option<PlaceRow>, ApiError> {
         // A canonical scene UUID belongs to Places even after retirement.
         // Never let an unrelated upstream row revive or shadow that identity.
-        if let Some(scene) = self.find_world_scene_place(place_id, viewer).await? {
+        // Both lookups run at once; the scene answer wins.
+        let (scene, row) = tokio::join!(
+            self.find_world_scene_place(place_id, viewer),
+            self.find_row_by_id_for(place_id, viewer)
+        );
+        if let Some(scene) = scene? {
             return Ok(scene);
         }
-        if let Some(row) = self.find_row_by_id_for(place_id, viewer).await? {
+        if let Some(row) = row? {
             return Ok(Some(row));
         }
         match self.canonical_id_for_parcel_alias(place_id).await? {
@@ -374,35 +387,48 @@ impl PlacesComponent {
             .map(|r| row_to_place(r, self.content_origin())))
     }
 
+    /// The places-table rows an id set names, as `POST /api/places` lists them
+    /// with the default query (`getPlaceListById.ts:53-65`): enabled rows only,
+    /// world scenes included, at most 100.
     pub async fn find_by_ids_for(
         &self,
         ids: &[String],
         viewer: Option<&str>,
     ) -> Result<Vec<PlaceRow>, ApiError> {
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let (catalogue_ids, scene_ids) = self.partition_scene_ids(ids).await?;
-        let sql = format!(
-            "SELECT {}{} FROM explore.place_indexed WHERE id = ANY($1){}",
-            place_columns(),
-            viewer.map(|_| viewer_columns(2)).unwrap_or_default(),
-            and_own_rows()
-        );
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&catalogue_ids);
-        if let Some(v) = viewer {
-            q = q.bind(v.to_lowercase());
-        }
-        let mut rows: Vec<PlaceRow> = q
-            .fetch_all(&self.pool)
-            .await?
-            .into_iter()
-            .map(|r| row_to_place(r, self.content_origin()))
-            .collect();
-        rows.extend(self.world_scene_places_by_ids(&scene_ids, viewer).await?);
-        Ok(rows)
+        let filters = PlaceListFilters {
+            ids: ids.to_vec(),
+            places_table: true,
+            limit: 100,
+            viewer: viewer.map(str::to_lowercase),
+            ..Default::default()
+        };
+        Ok(self.list_page(&filters).await?.0)
     }
 
+    /// `PlaceModel.countByIds` (`Place/model.ts:579-592`): every places-table
+    /// row an id names, disabled or not, plus the canonical scenes among the
+    /// ids (rows of this node's own that upstream never had).
+    pub async fn count_by_ids(&self, ids: &[String]) -> Result<i64, ApiError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let (catalogue_ids, scene_ids) = self.partition_scene_ids(ids).await?;
+        let catalogue: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*)::bigint FROM explore.place_indexed \
+             WHERE id = ANY($1) AND NOT {}{}",
+            query::WORLD_CATALOGUE_SQL,
+            and_own_rows()
+        )))
+        .bind(&catalogue_ids)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(catalogue + scene_ids.len() as i64)
+    }
+
+    /// `PlaceModel.findByIds` (`Place/model.ts:556-577`): the status columns,
+    /// no `disabled` filter. Upstream read its places table, which never held
+    /// the worlds catalogue, so the catalogue rows stay out here as they do
+    /// in [`Self::count_by_ids`] (`data` and `total` agree).
     pub async fn find_by_ids_status(
         &self,
         ids: &[String],
@@ -412,7 +438,11 @@ impl PlacesComponent {
         }
         let (catalogue_ids, scene_ids) = self.partition_scene_ids(ids).await?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT id, disabled, base_position, world, world_name FROM explore.place_indexed WHERE id = ANY($1){}",
+            "SELECT id, disabled, \
+             CASE WHEN jsonb_typeof(raw->'disabled_reason') = 'string' THEN raw->>'disabled_reason' END AS disabled_reason, \
+             base_position, world, world_name FROM explore.place_indexed \
+             WHERE id = ANY($1) AND NOT {}{}",
+            query::WORLD_CATALOGUE_SQL,
             and_own_rows()
         )))
         .bind(&catalogue_ids)
@@ -423,6 +453,9 @@ impl PlacesComponent {
             .map(|r| PlaceStatusRow {
                 id: r.get::<String, _>("id"),
                 disabled: r.get::<bool, _>("disabled"),
+                disabled_reason: r
+                    .try_get::<Option<String>, _>("disabled_reason")
+                    .unwrap_or(None),
                 world: r.get::<bool, _>("world"),
                 world_name: r.try_get::<Option<String>, _>("world_name").unwrap_or(None),
                 base_position: r.get::<String, _>("base_position"),
@@ -462,6 +495,7 @@ impl PlacesComponent {
                 Some(row) => status.push(PlaceStatusRow {
                     id,
                     disabled: false,
+                    disabled_reason: None,
                     base_position: row.base_position.clone(),
                     world: true,
                     world_name: row.world_name.clone(),
@@ -469,6 +503,7 @@ impl PlacesComponent {
                 None => status.push(PlaceStatusRow {
                     id,
                     disabled: true,
+                    disabled_reason: None,
                     base_position: String::new(),
                     world: true,
                     world_name: None,
@@ -490,15 +525,17 @@ impl PlacesComponent {
         if let Some(cached) = cache_get(&self.category_cache, key) {
             return Ok(cached);
         }
+        // `Category/model.ts:34-51`: a LEFT JOIN over every place row, disabled
+        // ones included; `target` narrows to `p.world IS true|false`.
         let world_filter = match target {
-            CategoryTarget::Worlds => "AND p.world IS TRUE",
-            CategoryTarget::Places => "AND p.world IS FALSE",
+            CategoryTarget::Worlds => "WHERE p.world IS TRUE",
+            CategoryTarget::Places => "WHERE p.world IS FALSE",
             CategoryTarget::All => "",
         };
         let sql = format!(
             "SELECT cat AS name, count(*)::bigint AS count \
              FROM explore.place_indexed p, unnest(p.categories) AS cat \
-             WHERE p.disabled IS FALSE {world_filter} \
+             {world_filter} \
              GROUP BY cat ORDER BY count DESC, name ASC"
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -533,6 +570,12 @@ impl PlacesComponent {
             .unwrap_or_default())
     }
 
+    /// A world row by its id, or by its name folded as `WorldModel.findByWorldName`
+    /// folds it (`World/model.ts:255-267`, the interaction routes' lookup), the
+    /// catalogue row first; with the latest scene's fields
+    /// (`fill_world_place_fields`) and the viewer's interactions. `GET
+    /// /api/worlds/:id` applies `findByIdWithAggregates`' verbatim-id rule on
+    /// top (`:333`, `handlers::get_world`).
     pub async fn find_world_by_id_for(
         &self,
         world_id: &str,
@@ -540,24 +583,117 @@ impl PlacesComponent {
     ) -> Result<Option<PlaceRow>, ApiError> {
         let sql = format!(
             "SELECT {}{} FROM explore.place_indexed \
-             WHERE world IS TRUE AND (id = $1 OR lower(world_name) = lower($1))",
+             WHERE world IS TRUE AND (id = $1 OR lower(world_name) = lower($1)) \
+             ORDER BY (id = $1) DESC, {} DESC LIMIT 1",
             place_columns(),
-            viewer.map(|_| viewer_columns(2)).unwrap_or_default()
+            viewer.map(|_| viewer_columns(2)).unwrap_or_default(),
+            query::WORLD_CATALOGUE_SQL
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(world_id);
         if let Some(v) = viewer {
             q = q.bind(v.to_lowercase());
         }
-        Ok(q.fetch_optional(&self.pool)
+        let mut row = q
+            .fetch_optional(&self.pool)
             .await?
-            .map(|r| row_to_place(r, self.content_origin())))
+            .map(|r| row_to_place(r, self.content_origin()));
+        if let Some(row) = row.as_mut() {
+            self.fill_world_place_fields(std::slice::from_mut(row))
+                .await?;
+        }
+        Ok(row)
     }
 
+    /// Upstream's world rows take `image` (as a fallback), `contact_name`,
+    /// `contact_email`, `creator_address`, `sdk` and `deployed_at` from the
+    /// world's latest enabled place (`World/model.ts:54-64`, the lateral join of
+    /// `:207-215` and `Destination/model.ts:39-49`). A mirrored world carries
+    /// those values already; a row missing any of them reads them here from
+    /// the newest enabled scene of the same world, one statement per page.
+    pub async fn fill_world_place_fields(&self, rows: &mut [PlaceRow]) -> Result<(), ApiError> {
+        fn incomplete(row: &PlaceRow) -> bool {
+            row.image.is_none()
+                || row.contact_name.is_none()
+                || row.contact_email.is_none()
+                || row.creator_address.is_none()
+                || row.sdk.is_none()
+                || row.deployed_at.is_none()
+        }
+        let names: Vec<String> = rows
+            .iter()
+            .filter(|row| row.is_world_catalogue_row() && incomplete(row))
+            .filter_map(|row| row.world_name.as_deref().map(str::to_lowercase))
+            .collect();
+        if names.is_empty() {
+            return Ok(());
+        }
+        let latest = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT DISTINCT ON (lower(world_name)) lower(world_name) AS name, \
+             raw->>'image' AS image, raw->>'contact_name' AS contact_name, \
+             raw->>'contact_email' AS contact_email, creator_address, raw->>'sdk' AS sdk, deployed_at \
+             FROM explore.place_indexed \
+             WHERE world IS TRUE AND id <> lower(world_name) AND lower(world_name) = ANY($1) \
+             AND disabled IS FALSE{} \
+             ORDER BY lower(world_name), deployed_at DESC NULLS LAST",
+            and_own_rows()
+        )))
+        .bind(&names)
+        .fetch_all(&self.pool)
+        .await?;
+        if latest.is_empty() {
+            return Ok(());
+        }
+        let latest: HashMap<String, sqlx::postgres::PgRow> = latest
+            .into_iter()
+            .map(|r| (r.get::<String, _>("name"), r))
+            .collect();
+        for row in rows.iter_mut().filter(|row| row.is_world_catalogue_row()) {
+            let Some(lp) = row
+                .world_name
+                .as_deref()
+                .and_then(|name| latest.get(&name.to_lowercase()))
+            else {
+                continue;
+            };
+            let text = |col: &str| lp.try_get::<Option<String>, _>(col).unwrap_or(None);
+            if row.image.is_none() {
+                row.image = crate::sanitize::sanitize_image_url(
+                    text("image").as_deref(),
+                    self.content_origin(),
+                );
+            }
+            if row.contact_name.is_none() {
+                row.contact_name = text("contact_name");
+            }
+            if row.contact_email.is_none() {
+                row.contact_email = text("contact_email");
+            }
+            if row.creator_address.is_none() {
+                row.creator_address = text("creator_address");
+            }
+            if row.sdk.is_none() {
+                row.sdk = text("sdk");
+            }
+            if row.deployed_at.is_none() {
+                row.deployed_at = lp
+                    .try_get::<Option<chrono::NaiveDateTime>, _>("deployed_at")
+                    .unwrap_or(None)
+                    .map(|n| n.and_utc());
+            }
+        }
+        Ok(())
+    }
+
+    /// `WorldModel.findWorldNames` (`World/model.ts:434-443`): the listed,
+    /// enabled catalogue worlds' names, ascending. Upstream also requires an
+    /// enabled place of the world; a mirrored row met that upstream, a local
+    /// one is written from its newest scene (`derive.rs`).
     pub async fn world_names(&self) -> Result<Vec<String>, ApiError> {
         let sql = format!(
             "SELECT DISTINCT world_name FROM explore.place_indexed \
-             WHERE world IS TRUE AND world_name IS NOT NULL \
+             WHERE {} AND disabled IS FALSE AND world_name IS NOT NULL \
              AND {} IS TRUE{} ORDER BY 1",
+            query::WORLD_CATALOGUE_SQL,
             query::SHOW_IN_PLACES_SQL,
             and_own_rows()
         );
@@ -571,10 +707,39 @@ impl PlacesComponent {
     }
 }
 
+/// `places-repository/component.ts:175,206`: a search under three UTF-16
+/// units answers nothing and counts nothing.
+fn search_too_short(search: Option<&str>) -> bool {
+    search.is_some_and(|s| s.encode_utf16().count() < 3)
+}
+
+#[cfg(test)]
+mod search_gate_tests {
+    use super::search_too_short;
+
+    #[test]
+    fn search_gate_counts_utf16_units() {
+        assert!(search_too_short(Some("\u{f1}a")));
+        assert!(!search_too_short(Some("\u{1f600}a")));
+        assert!(!search_too_short(Some("abc")));
+        assert!(!search_too_short(None));
+    }
+}
+
+/// The page the routes clamp to their upstream caps (100 for places, worlds
+/// and destinations, 500 for the map; this is only the ceiling any of them
+/// needs) and an offset the like-score cut can add to it.
+fn page_bounds(f: &PlaceListFilters) -> (i64, i64) {
+    (f.limit.clamp(0, 500), f.offset.clamp(0, i64::MAX - 500))
+}
+
 /// SQL for `list_page`: `binds` go first, then the search term when set, then
-/// `live_binds`, then the lowercased viewer when `f.viewer` is set. `with_total`
-/// adds `total_count` (a window count, or an uncorrelated COUNT on the like-score
-/// path whose candidate cut would undercount).
+/// `live_binds` (the live counts, then the active positions), then the
+/// lowercased viewer when `f.viewer` is set, then the
+/// page's limit and offset (`page_bounds`). A `page` CTE sorts and cuts the
+/// keys; the columns are read for the page alone. `with_total` adds
+/// `total_count`: a window count over the keys, or an uncorrelated COUNT of
+/// the same predicate beside the per-leg cut.
 #[cfg(test)]
 fn list_sql(f: &PlaceListFilters, with_total: bool) -> (String, Vec<Bind>, Vec<Bind>) {
     list_sql_from(f, with_total, ListSource::catalogue())
@@ -595,33 +760,40 @@ fn list_sql_from(
     } else {
         ""
     };
-    let order = f.order_by.column();
+    let order = f.order_by.order_expr();
     let dir = if f.order_desc { "DESC" } else { "ASC" };
-    let rank_prefix = if f.search.is_some() {
+    // `Place/model.ts:323-328,631`: `ts_rank_cd(textsearch, query) as rank`,
+    // selected and sorted first when a search is set.
+    let rank_expr = f.search.as_ref().map(|_| {
         format!(
-            "ts_rank_cd(to_tsvector('english', coalesce(title,'') || ' ' || ({plain})), \
-             plainto_tsquery('english', ${rank}), 32) DESC, ",
-            plain = description_plain_sql(),
-            rank = binds.len() + 1,
+            "ts_rank_cd(textsearch, to_tsquery('english', NULLIF(${}, '')))",
+            binds.len() + 1
         )
-    } else {
-        String::new()
-    };
+    });
+    let rank_prefix = rank_expr
+        .as_ref()
+        .map(|rank| format!("{rank} DESC, "))
+        .unwrap_or_default();
+    let rank_col = rank_expr
+        .as_ref()
+        .map(|rank| format!(", {rank} AS rank"))
+        .unwrap_or_default();
     let search_count = if f.search.is_some() { 1 } else { 0 };
     let live_start = binds.len() + search_count + 1;
-    let (live_prefix, live_binds) = build_live_user_count_order(f, live_start);
+    let (live_prefix, mut live_binds) = build_live_user_count_order(f, live_start);
+    let (active_prefix, active_binds) = build_active_lead(f, live_start + live_binds.len());
+    live_binds.extend(active_binds);
     let order_clause = build_order_by(
-        &destinations_lead_prefix(f, &live_prefix),
+        &format!(
+            "{active_prefix}{}",
+            destinations_lead_prefix(f, &live_prefix)
+        ),
         destinations_ranking_prefix(f),
         &rank_prefix,
         order,
         dir,
         order_tail(f),
     );
-    // The routes clamp to their upstream page caps (100 for places, worlds and
-    // destinations, 500 for the map); this is only the ceiling any of them needs.
-    let limit = f.limit.clamp(0, 500);
-    let offset = f.offset.max(0);
     let like_score_top_n = matches!(f.order_by, PlaceOrderBy::LikeScore)
         && f.order_desc
         && f.search.is_none()
@@ -629,10 +801,13 @@ fn list_sql_from(
         && !f.viewer_favorites_only
         && f.ids.is_empty()
         && !source.scene_projection;
+    let viewer_count = usize::from(f.viewer.is_some());
     let viewer_cols = match &f.viewer {
         Some(_) => viewer_columns(binds.len() + search_count + live_binds.len() + 1),
         None => String::new(),
     };
+    let limit = binds.len() + search_count + live_binds.len() + viewer_count + 1;
+    let offset = limit + 1;
     let sql = if like_score_top_n {
         let total = if with_total {
             format!(
@@ -641,40 +816,64 @@ fn list_sql_from(
         } else {
             String::new()
         };
-        // Cut each leg of place_indexed to the page under its own partial index, then read only those rows.
+        // Cut each leg of place_indexed to the page, order the page among those keys, then
+        // read the columns of the page alone. Each cut sorts the leg's rows on the score
+        // they answer, with the recounts joined beside them.
         format!(
             r#"
             WITH cand AS (
-                (SELECT id FROM explore.place WHERE ({where_clause}) AND world IS FALSE ORDER BY {order_clause} LIMIT {n})
+                (SELECT id FROM explore.place{place_join} WHERE ({where_clause}) AND world IS FALSE ORDER BY {order_clause} LIMIT {n})
                 UNION ALL
-                (SELECT id FROM explore.place WHERE ({where_clause}) AND world IS TRUE ORDER BY {order_clause} LIMIT {n})
+                (SELECT id FROM explore.place{place_join} WHERE ({where_clause}) AND world IS TRUE ORDER BY {order_clause} LIMIT {n})
                 UNION ALL
-                (SELECT id FROM explore.place_world_local WHERE {where_clause} ORDER BY {order_clause} LIMIT {n})
+                (SELECT id FROM explore.place_world_local{local_join} WHERE {where_clause} ORDER BY {order_clause} LIMIT {n})
+            ), page AS (
+                SELECT id FROM explore.place_indexed{indexed_join}
+                WHERE id = ANY (ARRAY(SELECT id FROM cand)) AND {where_clause}
+                ORDER BY {order_clause}
+                LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {cols}{viewer_cols}{total}
-            FROM explore.place_indexed
-            WHERE id = ANY (ARRAY(SELECT id FROM cand)) AND {where_clause}
+            SELECT {cols}{rank_col}{viewer_cols}{total}
+            FROM explore.place_indexed{indexed_join}
+            JOIN page USING (id)
             ORDER BY {order_clause}
-            LIMIT {limit} OFFSET {offset}
             "#,
             cols = place_columns(),
-            n = limit + offset,
+            n = format!("${limit}::bigint + ${offset}::bigint"),
+            place_join = like_score_recount_join(f.order_by, "place"),
+            local_join = like_score_recount_join(f.order_by, "place_world_local"),
+            indexed_join = like_score_recount_join(f.order_by, "place_indexed"),
         )
     } else {
-        let total = if with_total {
-            ", count(*) OVER () AS total_count"
+        let (window, total) = if with_total {
+            (", count(*) OVER () AS total_count", ", page.total_count")
         } else {
-            ""
+            ("", "")
+        };
+        // One pass over the keys sorts, counts and cuts the page; the columns are read for the
+        // page alone. A scene source opens the WITH list itself.
+        let cte_lead = if source.prefix.is_empty() {
+            "WITH"
+        } else {
+            ","
         };
         format!(
             r#"
-            SELECT {projection}{cols}{viewer_cols}{total}
-            FROM {relation}
-            WHERE {where_clause}
+            {cte_lead} page AS (
+                SELECT id{window}
+                FROM {relation}{recount_join}
+                WHERE {where_clause}
+                ORDER BY {order_clause}
+                LIMIT ${limit} OFFSET ${offset}
+            )
+            SELECT {projection}{cols}{rank_col}{viewer_cols}{total}
+            FROM {relation}{recount_join}
+            JOIN page USING (id)
             ORDER BY {order_clause}
-            LIMIT {limit} OFFSET {offset}
             "#,
             cols = place_columns(),
+            // A scene source is aliased `place_indexed` too.
+            recount_join = like_score_recount_join(f.order_by, "place_indexed"),
         )
     };
     (format!("{}{sql}", source.prefix), binds, live_binds)
@@ -685,9 +884,12 @@ fn and_own_rows() -> String {
     query::own_rows_sql().map(|c| format!(" AND {c}")).collect()
 }
 
+/// A derive-era id as this node minted it: lowercase hyphenated UUIDv5.
+/// Upstream matched ids verbatim (`Place/model.ts:549`), so any other
+/// spelling stays the miss it was there.
 fn is_parcel_alias(place_id: &str) -> bool {
     uuid::Uuid::parse_str(place_id)
-        .map(|u| u.get_version_num() == 5)
+        .map(|u| u.get_version_num() == 5 && u.hyphenated().to_string() == place_id)
         .unwrap_or(false)
 }
 
@@ -711,6 +913,10 @@ mod parcel_alias_tests {
     #[test]
     fn only_v5_ids_are_parcel_aliases() {
         assert!(is_parcel_alias("3ae8c888-1c33-5c77-b82f-ab14bd047f13"));
+        assert!(
+            !is_parcel_alias("3AE8C888-1C33-5C77-B82F-AB14BD047F13"),
+            "upstream matched ids verbatim; an upper-case id was a 404"
+        );
         assert!(!is_parcel_alias("fbbc9a64-4d74-4932-90e3-314ea8ca49f2"));
         assert!(!is_parcel_alias("harbour.dcl.eth"));
         assert!(!is_parcel_alias(""));
@@ -773,30 +979,56 @@ mod list_sql_tests {
     fn like_score_lists_cut_each_leg_to_the_page_first() {
         let (sql, _, _) = list_sql(&default_list(), false);
         assert!(sql.contains("WITH cand AS ("), "{sql}");
+        let recount = |row: &str| {
+            format!(
+                "LEFT JOIN (SELECT entity_id, like_score, imported FROM explore.place_interaction_counts WHERE like_score IS NOT NULL OR imported > 0) recount ON recount.entity_id = {row}.id"
+            )
+        };
         assert!(
-            sql.contains("FROM explore.place WHERE (")
+            sql.contains(&format!("FROM explore.place {} WHERE (", recount("place")))
                 && sql.contains(") AND world IS FALSE ORDER BY"),
             "{sql}"
         );
         assert!(sql.contains(") AND world IS TRUE ORDER BY"), "{sql}");
         assert!(
-            sql.contains("FROM explore.place_world_local WHERE"),
+            sql.contains(&format!(
+                "FROM explore.place_world_local {} WHERE",
+                recount("place_world_local")
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(&format!(
+                "FROM explore.place_indexed {}",
+                recount("place_indexed")
+            )),
             "{sql}"
         );
         assert!(
             sql.contains("WHERE id = ANY (ARRAY(SELECT id FROM cand)) AND"),
             "{sql}"
         );
-        assert_eq!(sql.matches("LIMIT 100").count(), 4, "{sql}");
+        // Every sort, the three cuts, the page and the read, orders on the served score.
+        assert_eq!(
+            sql.matches("ORDER BY CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END DESC NULLS LAST, deployed_at DESC, id ASC")
+                .count(),
+            5,
+            "{sql}"
+        );
+        assert!(!sql.contains("ORDER BY like_score_num"), "{sql}");
+        assert_eq!(
+            sql.matches("LIMIT $1::bigint + $2::bigint)").count(),
+            3,
+            "{sql}"
+        );
+        assert!(sql.contains("LIMIT $1 OFFSET $2"), "{sql}");
 
         let paged = PlaceListFilters {
             limit: 20,
-            offset: 40,
+            offset: i64::MAX,
             ..default_list()
         };
-        let (sql, _, _) = list_sql(&paged, false);
-        assert_eq!(sql.matches("LIMIT 60)").count(), 3, "{sql}");
-        assert!(sql.contains("LIMIT 20 OFFSET 40"), "{sql}");
+        assert_eq!(page_bounds(&paged), (20, i64::MAX - 500));
     }
 
     #[test]
@@ -847,6 +1079,7 @@ mod list_sql_tests {
 
     #[test]
     fn other_orders_read_place_indexed_directly_and_the_viewer_binds_last() {
+        let recount = "FROM explore.place_indexed LEFT JOIN (SELECT entity_id, like_score, imported FROM explore.place_interaction_counts WHERE like_score IS NOT NULL OR imported > 0) recount ON recount.entity_id = place_indexed.id\n";
         for f in [
             PlaceListFilters {
                 order_desc: false,
@@ -867,7 +1100,24 @@ mod list_sql_tests {
         ] {
             let (sql, _, _) = list_sql(&f, false);
             assert!(!sql.contains("cand"), "{sql}");
-            assert!(sql.contains("FROM explore.place_indexed\n"), "{sql}");
+            // A like-score sort over the whole relation reads the recounts beside the
+            // rows; another order reads the relation alone.
+            let like_score = matches!(f.order_by, PlaceOrderBy::LikeScore);
+            assert_eq!(
+                sql.matches(recount).count(),
+                if like_score { 2 } else { 0 },
+                "{sql}"
+            );
+            assert_eq!(
+                sql.matches("FROM explore.place_indexed\n").count(),
+                if like_score { 0 } else { 2 },
+                "{sql}"
+            );
+            assert_eq!(
+                sql.contains("CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END"),
+                like_score,
+                "{sql}"
+            );
         }
         let f = PlaceListFilters {
             search: Some("tower".into()),
@@ -880,7 +1130,10 @@ mod list_sql_tests {
             sql.contains(&format!("lower(uf.\"user\") = ${viewer_idx}")),
             "{sql}"
         );
-        assert!(sql.contains("count(*) OVER () AS total_count"), "{sql}");
+        assert!(
+            sql.contains(") AS total_count") && sql.contains("LIMIT $4 OFFSET $5"),
+            "{sql}"
+        );
     }
 }
 

@@ -564,7 +564,7 @@ In this example we're moving an entity by 0.05 meters per tick of the game loop.
 
 `Vector3.Forward()` returns a vector that faces forward and measures 1 meter in length. In this example we're then scaling this vector down to 1/20 of its length with `Vector3.scale()`. If our scene has 30 frames per second, the entity is moving at 1.5 meters per second in speed.
 
-![](/docs/creator/images/media/gifs/move.webp)
+![](/docs/creator/images/media/gifs/move.webp)
 
 ### Rotate via system
 
@@ -594,10 +594,10 @@ In this example, we're rotating the entity by 1 degree in an upwards direction i
 
 
 > [!NOTE]
-> **💡 Tip**: To make an entity always rotate to face the player, you can add a [`Billboard` component](/docs/creator/sdk7/3d-essentials/entity-positioning/#face-the-user).
+> **💡 Tip**: To make an entity always rotate to face the player, you can add a [`Billboard` component](/docs/creator/sdk7/3d-essentials/entity-positioning/#face-the-player).
 
 
-![](/docs/creator/images/media/gifs/rotate.webp)
+![](/docs/creator/images/media/gifs/rotate.webp)
 
 ### Rotate via system over a pivot point
 
@@ -631,7 +631,7 @@ MeshRenderer.setBox(childEntity)
 
 Note that in this example, the system is rotating the `pivotEntity` entity, that's a parent of the `childEntity` entity.
 
-![](/docs/creator/images/media/gifs/pivot-rotate.webp)
+![](/docs/creator/images/media/gifs/pivot-rotate.webp)
 
 ### Adjust movement to delay time
 
@@ -731,7 +731,31 @@ LerpTransformComponent.create(myEntity, {
 })
 ```
 
-![](/docs/creator/images/media/gifs/lerp-move.webp)
+![](/docs/creator/images/media/gifs/lerp-move.webp)
+
+### Smoothly follow a moving target via system
+
+To ease an entity toward a target that keeps moving, like a pet that follows the player, move it a part of the remaining distance on every frame. Don't use a fixed part per frame, like `Vector3.lerp(current, target, 0.1)`: the result then depends on the frame rate, so the entity catches up faster on a fast computer than on a slow one. Work out the part from `dt` instead:
+
+```ts
+const follower = engine.addEntity()
+Transform.create(follower, { position: Vector3.create(8, 1, 8) })
+MeshRenderer.setBox(follower)
+
+const RATE = 5 // Higher values catch up faster
+
+function FollowSystem(dt: number) {
+	const transform = Transform.getMutable(follower)
+	const target = Transform.get(engine.PlayerEntity).position
+	// The same smoothing at any frame rate
+	const t = 1 - Math.exp(-RATE * dt)
+	transform.position = Vector3.lerp(transform.position, target, t)
+}
+
+engine.addSystem(FollowSystem)
+```
+
+The same formula works for rotations with `Quaternion.slerp()`.
 
 ### Rotate between two angles via system
 
@@ -806,7 +830,7 @@ SlerpData.create(myEntity, {
 > **📔 Note**: You could instead represent the rotation with euler angles as `Vector3` values and use a `Lerp()` function, but that would imply a conversion from `Vector3` to `Quaternion` on each frame. Rotation values are internally stored as quaternions in the `Transform` component, so it's more efficient for the scene to work with quaternions.
 
 
-![](/docs/creator/images/media/gifs/lerp-rotate.webp)
+![](/docs/creator/images/media/gifs/lerp-rotate.webp)
 
 A simpler but less efficient approach to this takes advantage of the `Quaternion.rotateTowards` function, and avoids using any custom components.
 
@@ -908,7 +932,7 @@ ScaleTransformComponent.create(myEntity, {
 Vector3.create(1, 1, 1)
 ```
 
-![](/docs/creator/images/media/gifs/lerp-scale.webp)
+![](/docs/creator/images/media/gifs/lerp-scale.webp)
 
 ### Move at irregular speeds between two points via system
 
@@ -971,7 +995,7 @@ The example above is just like the linear lerp example we've shown before, but t
 
 You can also map a transition in rotation or in scale in the same way as shown above, by mapping a linear transition to a curve.
 
-![](/docs/creator/images/media/gifs/lerp-speed-up.webp)
+![](/docs/creator/images/media/gifs/lerp-speed-up.webp)
 
 ### Follow a path via system
 
@@ -1043,7 +1067,7 @@ The example above defines a 3D path that's made up of four 3D vectors. The `Path
 
 The system is very similar to the system in the _lerp_ example, but when a lerp action is completed, it sets the `target` and `origin` fields to new values. If we reach the end of the path, we return to the first value in the path.
 
-![](/docs/creator/images/media/gifs/lerp-path.webp)
+![](/docs/creator/images/media/gifs/lerp-path.webp)
 
 ## Texture tweens
 

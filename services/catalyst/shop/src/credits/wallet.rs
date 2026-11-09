@@ -113,6 +113,35 @@ impl Credits {
         tx_ref: &str,
         idempotency_key: Option<&str>,
     ) -> Result<(GrantOutcome, Option<i64>), ApiError> {
+        self.spend_inner(tx, address, amount, tx_ref, idempotency_key, true)
+            .await
+    }
+
+    /// [`Self::spend_in_tx`] for a usage settlement: the credit was authorized
+    /// and used on chain, so the operator's block, which refuses new spends,
+    /// does not hold the debit back.
+    pub(crate) async fn settle_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        address: &str,
+        amount: &str,
+        tx_ref: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<GrantOutcome, ApiError> {
+        self.spend_inner(tx, address, amount, tx_ref, idempotency_key, false)
+            .await
+            .map(|(outcome, _)| outcome)
+    }
+
+    async fn spend_inner(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        address: &str,
+        amount: &str,
+        tx_ref: &str,
+        idempotency_key: Option<&str>,
+        check_block: bool,
+    ) -> Result<(GrantOutcome, Option<i64>), ApiError> {
         let amount = CreditAmount::parse_non_negative(amount)?;
         if amount.is_zero() {
             let available: String = sqlx::query(
@@ -185,7 +214,8 @@ impl Credits {
                          WHERE address = $1 AND status IN ('authorized', 'retired') \
                      ), 0)::numeric / $3::numeric >= $2::numeric) AS sufficient, \
                     LEAST(earned_available, $2::numeric)::text AS earned_spent, \
-                    ($2::numeric - LEAST(earned_available, $2::numeric))::text AS paid_spent \
+                    ($2::numeric - LEAST(earned_available, $2::numeric))::text AS paid_spent, \
+                    is_blocked_for_claiming AS blocked \
              FROM credits.wallets WHERE address = $1 FOR UPDATE",
         )
         .bind(address)
@@ -197,6 +227,16 @@ impl Credits {
         let Some(current) = current else {
             return Err(ApiError::payment_required("insufficient credits balance"));
         };
+        // The operator's block refuses every new spend (a checkout); a usage
+        // settlement debits a credit the wallet already used on chain, so it
+        // passes (`settle_in_tx`). A multi-accounting flag
+        // (`credits.wallet_flags`, `WalletRow::is_blocked_for_claiming`)
+        // blocks the claim only, never credits the wallet holds.
+        if check_block && current.get::<bool, _>("blocked") {
+            return Err(ApiError::forbidden(
+                "wallet is blocked from the credits program",
+            ));
+        }
         let sufficient: bool = current.get("sufficient");
         if !sufficient {
             return Err(ApiError::payment_required("insufficient credits balance"));

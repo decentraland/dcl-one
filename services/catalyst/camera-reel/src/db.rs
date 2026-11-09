@@ -30,6 +30,11 @@ use crate::shared::cache::{TtlCache, cache_get, cache_put};
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 const WORLD_PLACES_TTL: Duration = Duration::from_secs(300);
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static DISABLE_RANKING_STATEMENT_TIMEOUT: ();
+}
+
 pub const TABLE: &str = "camera_reel.images";
 
 const COLUMNS: &str =
@@ -477,6 +482,12 @@ impl Database {
                 .saturating_duration_since(tokio::time::Instant::now())
                 .as_millis()
                 .max(1);
+            #[cfg(test)]
+            let milliseconds = if DISABLE_RANKING_STATEMENT_TIMEOUT.try_with(|()| ()).is_ok() {
+                0
+            } else {
+                milliseconds
+            };
             sqlx::query("SELECT set_config('statement_timeout',$1,true)")
                 .bind(format!("{milliseconds}ms"))
                 .execute(&mut *tx)
