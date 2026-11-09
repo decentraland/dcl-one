@@ -168,6 +168,9 @@ jobs:
 
       # The only step that holds the key: main's key guard over the scanned commits, their library/ui tree and
       # the unpacked Review build (enumerated without following links, and size and count limited), all as data.
+      # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
+      # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
+      # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
       - name: Scan for the Figma file key
         id: scan
         if: steps.trigger.outputs.scan == 'true'
@@ -187,7 +190,7 @@ jobs:
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
           node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
-            --range "$range" --allowlist-from "$HEAD_SHA" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
+            --range "$range" --allowlist-from HEAD "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
       # The summary is the scanner's stdout alone, which the scanner redacts: the key never appears in a path,

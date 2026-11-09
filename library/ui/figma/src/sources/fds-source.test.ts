@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -517,5 +517,67 @@ describe('when rewriting one capture file', () => {
 
   it('should leave file names outside components untouched', () => {
     expect(keylessSnapshotFile('icons/a:b.svg', Buffer.from('<svg/>')).file).toBe('icons/a:b.svg')
+  })
+})
+
+describe('when the cache swap fails after the old cache was moved aside', () => {
+  let before: Map<string, Buffer>
+
+  const readCache = async () =>
+    new Map(
+      await Promise.all(
+        (await listCache()).map(
+          async (file) =>
+            [file, await readFile(path.join(figmaRoot, 'figma-snapshot', file))] as const
+        )
+      )
+    )
+
+  beforeEach(async () => {
+    await fetchCache({ seal: true })
+    before = await readCache()
+  })
+
+  it('should restore the previous cache byte for byte and leave no previous folder behind', async () => {
+    const failingRename = async (from: string, to: string) => {
+      if (from.includes('.staging-')) throw new Error('injected rename failure')
+      await rename(from, to)
+    }
+    await expect(
+      fetchFdsSource({ figmaRoot, lockFile, remote: `file://${remote}`, rename: failingRename })
+    ).rejects.toThrow('injected rename failure')
+    expect(await readCache()).toEqual(before)
+    expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))).toEqual([])
+    expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.staging-'))).toEqual([])
+  })
+})
+
+describe('when the lock names the figma-design-system repository', () => {
+  const FDS = 'https://github.com/decentraland/figma-design-system'
+  const lock = (repository: string) => ({
+    sources: [{ repository, revision: 'a'.repeat(40), snapshot: { revision: 'b'.repeat(40) } }]
+  })
+
+  it('should fetch the decentraland repository over SSH', () => {
+    expect(readFdsPin(lock(FDS), { sealing: true }).remote).toBe(
+      'git@github.com:decentraland/figma-design-system.git'
+    )
+  })
+
+  it.each([
+    'https://github.com/someone-else/figma-design-system',
+    `${FDS}/../../someone-else/figma-design-system`,
+    'http://github.com/decentraland/figma-design-system',
+    'https://example.com/decentraland/figma-design-system'
+  ])('should refuse %s', (repository) => {
+    expect(() => readFdsPin(lock(repository), { sealing: true })).toThrow(
+      `must name the figma-design-system repository ${FDS}`
+    )
+  })
+
+  it('should not take a suffixed URL for the figma-design-system source', () => {
+    expect(() => readFdsPin(lock(`${FDS}.git`), { sealing: true })).toThrow(
+      'no figma-design-system source'
+    )
   })
 })

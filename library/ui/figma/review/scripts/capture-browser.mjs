@@ -151,6 +151,9 @@ async function openSession(executable, { signal } = {}) {
     const send = (method, params = {}, sessionId) =>
       new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(signal.reason)
+        // A send after close (or on a socket that is no longer open) would only wait out its timeout.
+        if (closing || socket.readyState !== WebSocket.OPEN)
+          return reject(new Error('Capture browser session closed'))
         const id = ++serial
         const timeout = setTimeout(() => {
           pending.delete(id)

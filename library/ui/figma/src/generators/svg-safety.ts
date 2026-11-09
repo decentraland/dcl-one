@@ -110,7 +110,15 @@ const NAMESPACES: Record<string, string> = {
   xmlns: 'http://www.w3.org/2000/svg',
   'xmlns:xlink': 'http://www.w3.org/1999/xlink'
 }
-const SAFE_HREF = /^(?:#[\w.-]+|data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\s]*)$/
+// The one raster rule: a data: image counts as raster unless it is SVG, whatever its type or letter case.
+const RASTER_DATA = /data:image\/(?!svg\+xml[;,])/i
+const RASTER_DATA_URL = new RegExp(`^${RASTER_DATA.source}`, 'i')
+const isRasterData = (value: string): boolean => RASTER_DATA_URL.test(value)
+const mentionsRasterData = (text: string): boolean => RASTER_DATA.test(text)
+const LOCAL_HREF = /^#[\w.-]+$/
+const BASE64_IMAGE = /^data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=\s]*$/i
+const safeHref = (value: string): boolean =>
+  LOCAL_HREF.test(value) || (isRasterData(value) && BASE64_IMAGE.test(value))
 const SAFE_URL_REFERENCE = /^url\(#[\w.-]+\)$/
 const NUMBER = /^-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i
 const STYLE_VALUES: Record<string, RegExp> = {
@@ -164,7 +172,7 @@ function unsafeSvgReason(svg: string): string | undefined {
         if (!ATTRIBUTES.has(attribute!)) return `attribute ${attribute} is not allowed`
         if (attribute! in NAMESPACES && value !== NAMESPACES[attribute!])
           return `namespace ${attribute}="${value}" is not allowed`
-        if ((attribute === 'href' || attribute === 'xlink:href') && !SAFE_HREF.test(value))
+        if ((attribute === 'href' || attribute === 'xlink:href') && !safeHref(value))
           return `${attribute} must reference a local id or an embedded raster`
         // Character references and CSS escapes could spell a reference the checks below would not see.
         if (/[&\\]/.test(value))
@@ -184,9 +192,7 @@ function unsafeSvgReason(svg: string): string | undefined {
   return undefined
 }
 
-const RASTER_HREF = /^data:image\/(?:png|jpeg|gif|webp);base64,/
-
-// Whether an SVG that already passed unsafeSvgReason references an embedded raster. SAFE_HREF admits a raster
+// Whether an SVG that already passed unsafeSvgReason references an embedded raster. safeHref admits a raster
 // data: href on any element, <use> as well as <image>, so every element's href counts, not only <image>'s.
 function embedsRaster(svg: string): boolean {
   let rest = svg.trim()
@@ -198,7 +204,7 @@ function embedsRaster(svg: string): boolean {
       for (const [, attribute, double, single] of attributes!.matchAll(ATTRIBUTE))
         if (
           (attribute === 'href' || attribute === 'xlink:href') &&
-          RASTER_HREF.test((double ?? single)!)
+          isRasterData((double ?? single)!)
         )
           return true
     rest = rest.slice(whole!.length).trimStart()
@@ -206,4 +212,4 @@ function embedsRaster(svg: string): boolean {
   return false
 }
 
-export { embedsRaster, unsafeSvgReason }
+export { embedsRaster, isRasterData, mentionsRasterData, unsafeSvgReason }

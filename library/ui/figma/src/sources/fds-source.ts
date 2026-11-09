@@ -124,7 +124,9 @@ function digestTableHash(digests: Record<string, string>): string {
   )
 }
 
-const SSH_REMOTE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?$/
+/** The only repository a lock may pin, so a lock edit cannot point fetch-source at a fork. */
+const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
+const FDS_REMOTE = 'git@github.com:decentraland/figma-design-system.git'
 
 /** Reads the FDS pin from upstream.lock.json. Throws unless it names a full commit and a non-empty digest table. */
 function readFdsPin(lock: unknown, { sealing = false } = {}): FdsPin {
@@ -138,16 +140,17 @@ function readFdsPin(lock: unknown, { sealing = false } = {}): FdsPin {
   const revision = source.revision
   if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/.test(revision))
     throw new Error('upstream.lock.json must pin figma-design-system to a full 40-hex commit')
-  const match = SSH_REMOTE.exec(String(source.repository))
-  if (!match)
-    throw new Error('upstream.lock.json names an unsupported figma-design-system repository URL')
+  if (source.repository !== FDS_REPOSITORY)
+    throw new Error(
+      `upstream.lock.json must name the figma-design-system repository ${FDS_REPOSITORY}`
+    )
   const snapshot = source.snapshot as { revision?: unknown; digests?: unknown } | undefined
   const snapshotRevision = snapshot?.revision
   if (typeof snapshotRevision !== 'string' || !/^[0-9a-f]{40}$/.test(snapshotRevision))
     throw new Error(
       'upstream.lock.json must pin the capture (snapshot.revision) to a full 40-hex commit'
     )
-  const remote = `git@github.com:${match[1]}/${match[2]}.git`
+  const remote = FDS_REMOTE
   const digests = snapshot?.digests
   if (sealing) return { remote, revision, snapshotRevision, digests: {} }
   if (
@@ -271,6 +274,8 @@ type FetchOptions = {
   /** Overrides the pinned remote; tests use a local repository. */
   remote?: string
   runner?: Git
+  /** Overrides the directory rename of the cache swap; tests use it to fail one step. */
+  rename?: (from: string, to: string) => Promise<void>
   /**
    * Porting only: accept whatever the pinned commit yields and write its digest table into the lock, instead of
    * checking it. The port verification record then has to vouch for the new table.
@@ -370,8 +375,8 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
     assertDigests(files, digests)
 
     // Every ported file's counterpart at the pinned commit: hashed in memory, never written anywhere.
-    const source = (lock.sources as Record<string, unknown>[]).find((entry) =>
-      String(entry.repository).endsWith('/figma-design-system')
+    const source = (lock.sources as Record<string, unknown>[]).find(
+      (entry) => entry.repository === FDS_REPOSITORY
     )!
     const ported =
       source.files && typeof source.files === 'object'
@@ -460,9 +465,16 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
         2
       ) + '\n'
     )
+    const move = options.rename ?? rename
     const previous = `${target}.previous-${process.pid}`
-    if (existsSync(target)) await rename(target, previous)
-    await rename(staging, target)
+    const hadCache = existsSync(target)
+    if (hadCache) await move(target, previous)
+    try {
+      await move(staging, target)
+    } catch (error) {
+      if (hadCache) await move(previous, target)
+      throw error
+    }
     await rm(previous, { recursive: true, force: true })
     if (options.seal) {
       source.snapshot = { revision: pin.snapshotRevision, path: FDS_SNAPSHOT, digests }

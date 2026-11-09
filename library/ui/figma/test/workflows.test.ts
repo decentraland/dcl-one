@@ -63,6 +63,7 @@ describe.each(['ui-library.yml'])('%s', (file) => {
 // request's own workflow file and scripts, so none may reference the secret; the key check runs in a
 // workflow_run workflow that executes only the default branch's code and reads the pull request as data.
 type WorkflowStep = {
+  id?: string
   uses?: string
   run?: string
   with?: Record<string, unknown>
@@ -104,7 +105,7 @@ describe('the ui-library.yml url scan', () => {
     expect(guardSteps[scan]!.env ?? {}).not.toHaveProperty('READ_TOKEN')
   })
 
-  it('should read the url allowlist from the pull request head, as the trusted scan does, not the merge commit', () => {
+  it('should read the url allowlist of the unprivileged scan from the pull request head, not the merge commit', () => {
     const scan = guardSteps.find((step) =>
       step.run?.includes('--no-worktree --range "$RANGE" --allowlist-from')
     )
@@ -171,6 +172,13 @@ describe('ui-library-key-scan.yml', () => {
     expect(allSteps.indexOf(holders[0]!)).toBeGreaterThan(0)
     expect(Object.keys(holders[0]!.env ?? {})).toContain('FIGMA_FILE_KEY')
     expect(holders[0]!.run).toMatch(/^node trusted\/library\/ui\/figma\/key-guard\.mjs /m)
+  })
+
+  it('should read the url allowlist of the privileged scan from the default branch, never the scanned head', () => {
+    const scan = allSteps.find((step) => step.id === 'scan')!
+    expect(scan.run).toContain('--root trusted --no-worktree')
+    expect(scan.run).toContain('--allowlist-from HEAD ')
+    expect(scan.run).not.toMatch(/--allowlist-from "\$(HEAD_SHA|BASE)"/)
   })
 
   it('should validate the triggering run before anything else, requiring a successful run', () => {

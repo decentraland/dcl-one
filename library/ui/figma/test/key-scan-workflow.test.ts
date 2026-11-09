@@ -200,3 +200,83 @@ describe('when selecting the LFS inputs of the scan', () => {
     expect(prefetch).toContain('lfs-prefetch.mjs')
   })
 })
+describe('when the privileged scan reads the url allowlist', () => {
+  const url = 'https://www.figma' + '.com/design/AllowlistExample123/fixture'
+  const entry = JSON.stringify([
+    { path: 'docs/link.md', check: 'url', id: 'AllowlistExample123', reason: 'fixture' }
+  ])
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: path.join(root, 'trusted'), stdio: 'pipe' })
+      .toString()
+      .trim()
+  const commit = () => {
+    git('add', '-A')
+    git(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'fixture'
+    )
+    return git('rev-parse', 'HEAD')
+  }
+  const allowlistFile = () => path.join(root, 'trusted/library/ui/figma/key-guard-allow.json')
+  // Runs the real scan step with main's real key guard and a synthetic key.
+  const scan = (env: Record<string, string>) =>
+    spawnSync(
+      'bash',
+      ['-e', '-o', 'pipefail', '-c', steps.find((step) => step.id === 'scan')!.run!],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...defaults(),
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          FIGMA_FILE_KEY: 'SyntheticKeyExample0',
+          ARTIFACT_REQUIRED: 'false',
+          ...env
+        }
+      }
+    )
+  let mainBase: string, headSha: string
+  beforeEach(async () => {
+    await mkdir(path.join(root, 'trusted/library/ui/figma'), { recursive: true })
+    git('init', '-q', '-b', 'main')
+    await writeFile(
+      path.join(root, 'trusted/library/ui/figma/key-guard.mjs'),
+      await readFile(path.join(repo, 'library/ui/figma/key-guard.mjs'))
+    )
+    await writeFile(allowlistFile(), '[]')
+    mainBase = commit()
+    git('checkout', '-q', '-b', 'feature')
+    await mkdir(path.join(root, 'trusted/docs'))
+    await writeFile(path.join(root, 'trusted/docs/link.md'), `See ${url}\n`)
+    await writeFile(allowlistFile(), entry)
+    headSha = commit()
+    git('checkout', '-q', 'main')
+  })
+
+  it('should take the allowlist from the default branch, so a head-only entry does not suppress the url', () => {
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).toContain(`figma-key-guard at ${mainBase}`)
+    expect(result.stdout).toContain('allowlisted public file ids in 0 paths from HEAD')
+    expect(result.stdout).toContain(`FAIL url ${headSha.slice(0, 12)}:docs/link.md`)
+    expect(result.stdout).not.toContain('SyntheticKeyExample0')
+  })
+
+  it('should accept the url once the allowlist entry has landed on the default branch', async () => {
+    await writeFile(allowlistFile(), entry)
+    const landed = commit()
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(result.stdout).toContain(`figma-key-guard at ${landed}`)
+    expect(result.stdout).toContain('allowlisted public file ids in 1 paths from HEAD')
+    expect(result.stdout).toContain('result: PASS')
+  })
+})

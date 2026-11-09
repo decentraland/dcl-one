@@ -19,12 +19,19 @@ const LOCK = 'library/ui/upstream.lock.json'
 const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1\n')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
+/** The only repository a lock may pin, so a lock edit cannot point the port at a fork. */
+const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
+
 /** The FDS source entry of a parsed lock, or a thrown error. */
 export function fdsSource(lock) {
   const source = Array.isArray(lock?.sources)
     ? lock.sources.find((entry) => String(entry?.repository ?? '').endsWith('/figma-design-system'))
     : undefined
   if (!source) throw new Error('upstream.lock.json has no figma-design-system source')
+  if (source.repository !== FDS_REPOSITORY)
+    throw new Error(
+      `upstream.lock.json must name the figma-design-system repository ${FDS_REPOSITORY}`
+    )
   return source
 }
 

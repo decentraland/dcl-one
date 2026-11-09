@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { compare, main, pinnedFiles } from './lock-digests.mjs'
+import { compare, fdsSource, main, pinnedFiles } from './lock-digests.mjs'
 
 const LOCK = 'library/ui/upstream.lock.json'
 let repo: string
@@ -296,5 +296,42 @@ describe('when comparing tables', () => {
       missing: ['c'],
       unpinned: ['d']
     })
+  })
+})
+
+describe('when the lock names the figma-design-system repository', () => {
+  const FDS = 'https://github.com/decentraland/figma-design-system'
+
+  it('should accept the decentraland repository', () => {
+    expect(fdsSource({ sources: [{ repository: FDS }] })).toEqual({ repository: FDS })
+  })
+
+  it.each([
+    'https://github.com/someone-else/figma-design-system',
+    `${FDS}/../../someone-else/figma-design-system`,
+    'http://github.com/decentraland/figma-design-system',
+    'https://example.com/decentraland/figma-design-system'
+  ])('should reject %s', (repository) => {
+    expect(() => fdsSource({ sources: [{ repository }] })).toThrow(
+      `must name the figma-design-system repository ${FDS}`
+    )
+  })
+
+  it('should not take a suffixed URL for the figma-design-system source', () => {
+    expect(() => fdsSource({ sources: [{ repository: `${FDS}.git` }] })).toThrow(
+      'no figma-design-system source'
+    )
+  })
+
+  it('should fail the check when the lock points at another owner', async () => {
+    await put(
+      LOCK,
+      JSON.stringify({
+        sources: [{ repository: 'https://github.com/someone-else/figma-design-system' }]
+      })
+    )
+
+    expect(run()).toBe(1)
+    expect(out).toContain('must name the figma-design-system repository')
   })
 })
