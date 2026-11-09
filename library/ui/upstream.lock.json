@@ -68,6 +68,7 @@
         "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
         "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment.",
+        "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key."
       ],
       "snapshot": {
@@ -746,12 +747,13 @@
           ]
         },
         "library/ui/figma/lock-digests.test.ts": {
-          "sha256": "1c996d68702f64f992a32717371f63db6602266725d5c437fdd065140bd9d293",
+          "sha256": "53292795ad47479f19f556486bf9ccaed98fad4d8e8b0993576781f20303f7d5",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "request-scope-hardening",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/port-verification.mjs": {
@@ -2643,9 +2645,12 @@
           "deviation": "port:30ca0608"
         },
         "library/ui/figma/src/generators/variant-contract.census.test.ts": {
-          "sha256": "7b49e1a6b1704ad2621c47f20ac60845053ee0a9148563da37a880dcf823d329",
+          "sha256": "b2e5665e18cab75cf39097cf2df0edc9f2ac4de5daabec9eaa8f9e3eb7bc4007",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-3"
+          ]
         },
         "library/ui/figma/src/guard/aggregate-edits.ts": {
           "sha256": "da327167c96b2638e98cddab7d33f27581c03c21bbbecc72c21c2fc1a66a8ea1",
@@ -3250,9 +3255,12 @@
           ]
         },
         "library/ui/figma/src/orphan-drain.test.ts": {
-          "sha256": "b8bc5e7e3d40c092d8a64079f844919e3c4afa45679c73f859d82ac530919158",
+          "sha256": "5a266e687db1bb7a1a4a4ac450f9b93eefffb4b37eac698454010b8518d85668",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-3"
+          ]
         },
         "library/ui/figma/src/orphan-drain.ts": {
           "sha256": "9c983fc1075c04f4992fda43f86bc6f651362684da9f93086b5452d698461438",
@@ -3405,23 +3413,25 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/sources/fds-source.test.ts": {
-          "sha256": "7317fe6346f365db1e4a8957190a0078daeead8ee8f86ae17b7aaba74add2014",
+          "sha256": "4b907eeb4b894b88f5a9ccf0989bdde7d9f7b4b7bc7bb496be35522375f52929",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "bot-review-279",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/src/sources/fds-source.ts": {
-          "sha256": "05fd5cff8c45202579477f03ab9583e6d237abbde145170eab79af923a3e9708",
+          "sha256": "27ed57e2444e4789f2285ded3758c021c35a5baa76582b50be19c80150f8baa6",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "live-read-restored",
             "cache-hardening",
             "bot-review-279",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/src/sources/rest-assets.ts": {
@@ -3884,13 +3894,14 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "1a48277b556e4070a9faa44de0fcb87086f883801b8c4434ec4d9ce3fae3dcf5",
+          "sha256": "c029dfb0cdb049373e4a1722c57a3fe0117400f46ad18b5bf6d3ca9f808f935a",
           "fds": null,
           "deviation": [
             "capture-removed",
             "bot-review-279",
             "review-followup-2",
             "bot-review-279-b",
+            "review-followup-3",
             "key-scan-repair"
           ]
         },
@@ -3921,7 +3932,8 @@
         "review-followup-2": 47,
         "bot-review-279-b": 48,
         "bot-review-279-c": 49,
-        "key-scan-repair": 50
+        "review-followup-3": 50,
+        "key-scan-repair": 51
       }
     }
   ]
