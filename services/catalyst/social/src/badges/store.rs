@@ -495,7 +495,9 @@ impl BadgesStore {
     /// every tier up to it is earned and the badge completes only at its last
     /// tier, then audits it, through [`apply_progress`] with notifications.
     /// `Ok(false)` is "no such published badge"; an archived badge, a missing
-    /// or unknown tier keep their own errors and write nothing.
+    /// or unknown tier keep their own errors and write nothing. The definition
+    /// is read `FOR SHARE`, so an archive or catalog write waits for the grant
+    /// or is seen by it, and the target and audited tier are the awarded ones.
     pub async fn grant_badge(
         &self,
         address: &Address,
@@ -507,7 +509,7 @@ impl BadgesStore {
         let mut tx = self.pool.begin().await?;
         let def: Option<(bool, Option<i32>, bool, bool)> = sqlx::query_as(
             "SELECT is_tier, criteria_steps, published_at IS NOT NULL, archived_at IS NOT NULL \
-             FROM social.badge_definitions WHERE id = $1",
+             FROM social.badge_definitions WHERE id = $1 FOR SHARE",
         )
         .bind(badge_id)
         .fetch_optional(&mut *tx)
