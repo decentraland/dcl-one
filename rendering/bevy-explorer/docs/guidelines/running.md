@@ -207,7 +207,8 @@ State, in every build:
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
-  `customMessage`, `expiresAt`, `checkedAgoSecs`, `error`), the local user's scene admission
+  `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
+  `checkedAgoSecs`, `error`), the local user's scene admission
   (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,

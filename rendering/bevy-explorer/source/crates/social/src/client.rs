@@ -209,6 +209,13 @@ impl SocialClientHandler {
         })
     }
 
+    /// Takes the block sets and their snapshot flag over from a handler being replaced.
+    pub fn carry_blocks_from(&mut self, old: Self) {
+        self.blocked = old.blocked;
+        self.blocked_by = old.blocked_by;
+        self.has_snapshot = old.has_snapshot;
+    }
+
     pub fn live(&self) -> bool {
         !self.friendship_receiver.is_closed()
     }

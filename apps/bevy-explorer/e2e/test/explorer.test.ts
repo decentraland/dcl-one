@@ -76,7 +76,7 @@ describe('Explorer', () => {
         JSON.stringify({
           address: '0x' + '1'.repeat(40),
           blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
-          platformBan: { state: 'checked', isBanned: false, source: null, reason: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
+          platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
           sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
           sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
           lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,

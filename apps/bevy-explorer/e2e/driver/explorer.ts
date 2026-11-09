@@ -161,6 +161,7 @@ export interface BanBlockState {
     isBanned: boolean | null
     source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
     reason: string | null
+    matchedOn: string | null
     customMessage: string | null
     expiresAt: string | null
     checkedAgoSecs: number | null

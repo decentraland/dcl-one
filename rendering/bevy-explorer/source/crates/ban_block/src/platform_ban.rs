@@ -70,6 +70,9 @@ pub struct PlatformBanInfo {
     pub expires_at: Option<String>,
     #[serde(default)]
     pub banned_by: String,
+    /// What a withheld record matched (`device`); `None` for a record as served.
+    #[serde(default)]
+    pub matched_on: Option<String>,
 }
 
 /// How the platform ban became known.
@@ -118,11 +121,12 @@ impl PlatformBanInfo {
     pub fn withheld(matched_on: &str) -> Self {
         Self {
             id: String::new(),
-            reason: format!("banned (record withheld, matched on {matched_on})"),
+            reason: String::new(),
             custom_message: None,
             banned_at: String::new(),
             expires_at: None,
             banned_by: String::new(),
+            matched_on: Some(matched_on.to_owned()),
         }
     }
 
@@ -135,6 +139,7 @@ impl PlatformBanInfo {
             banned_at: String::new(),
             expires_at: None,
             banned_by: String::new(),
+            matched_on: None,
         }
     }
 }
@@ -297,14 +302,15 @@ impl BanCheckSchedule {
         true
     }
 
-    /// Whether a check starts now: a trigger, or the period or the server's delay elapsed.
+    /// Whether a check starts now: a trigger, or the period or the server's delay elapsed. A
+    /// kept trigger waits out the server's delay.
     fn starts(&mut self, now: f64, triggered: bool) -> bool {
-        let start = triggered
-            || std::mem::take(&mut self.retrigger)
-            || due(now, self.last_checked, self.retry_after);
+        let kept = self.retry_after.is_none() && self.retrigger;
+        let start = triggered || kept || due(now, self.last_checked, self.retry_after);
         if start {
             self.last_checked = Some(now);
             self.retry_after = None;
+            self.retrigger = false;
         }
         start
     }
@@ -452,6 +458,7 @@ mod tests {
         let banned = br#"{"data":{"isBanned":true,"ban":{"id":"b1","bannedAddress":"0xab","bannedBy":"0xcd","reason":"spam","customMessage":"go away","bannedAt":"2026-01-01T00:00:00.000Z","expiresAt":null,"liftedAt":null,"liftedBy":null,"createdAt":"2026-01-01T00:00:00.000Z"}}}"#;
         let ban = PlatformBanInfo::from_json(banned).unwrap().unwrap();
         assert_eq!(ban.reason, "spam");
+        assert_eq!(ban.matched_on, None);
         assert_eq!(ban.custom_message.as_deref(), Some("go away"));
         assert_eq!(ban.expires_at, None);
         assert_eq!(
@@ -473,7 +480,8 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(withheld, PlatformBanInfo::withheld("device"));
-        assert!(withheld.reason.contains("device"));
+        assert_eq!(withheld.matched_on.as_deref(), Some("device"));
+        assert_eq!(withheld.reason, "");
         let unexplained = PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#)
             .unwrap()
             .unwrap();
@@ -569,11 +577,14 @@ mod tests {
         assert!(!schedule.retrigger);
         assert!(!schedule.starts(3.0, false));
 
-        // a server delay is floored and then honoured
+        // a server delay is floored and then honoured, by a kept trigger too
         schedule.delay(Some(0.0));
+        schedule.retrigger = true;
         assert_eq!(schedule.retry_after, Some(MIN_RETRY_SECS));
         assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false));
+        assert!(schedule.retrigger);
         assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false));
+        assert!(!schedule.retrigger);
 
         // the same address is no change; another drops the schedule
         assert!(!schedule.follow(Some(address(1))));

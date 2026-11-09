@@ -24,6 +24,7 @@ pub(crate) fn register(app: &mut App) {
                 ("Blocked by", "blocks.blockedBy"),
                 ("Platform ban", "platformBan.isBanned"),
                 ("Ban reason", "platformBan.reason"),
+                ("Ban matched on", "platformBan.matchedOn"),
                 ("Ban source", "platformBan.source"),
                 ("Checked (s ago)", "platformBan.checkedAgoSecs"),
                 ("Scene admission", "sceneAdmission.state"),
@@ -167,6 +168,7 @@ fn platform_ban_json(
         PlatformBanState::Unknown => {
             unavailable.insert("platformBan.isBanned".into(), json!("not checked yet"));
             unavailable.insert("platformBan.reason".into(), json!("not checked yet"));
+            unavailable.insert("platformBan.matchedOn".into(), json!("not checked yet"));
             unavailable.insert("platformBan.source".into(), json!("not checked yet"));
             unavailable.insert(
                 "platformBan.checkedAgoSecs".into(),
@@ -174,31 +176,43 @@ fn platform_ban_json(
             );
             json!({
                 "state": "unknown",
-                "isBanned": null, "source": null, "reason": null, "customMessage": null,
-                "expiresAt": null, "checkedAgoSecs": null, "error": null,
+                "isBanned": null, "source": null, "reason": null, "matchedOn": null,
+                "customMessage": null, "expiresAt": null, "checkedAgoSecs": null, "error": null,
             })
         }
         PlatformBanState::Failed { error, checked_at } => {
             let why = format!("check failed: {error}");
             unavailable.insert("platformBan.isBanned".into(), json!(why));
             unavailable.insert("platformBan.reason".into(), json!(why));
+            unavailable.insert("platformBan.matchedOn".into(), json!(why));
             unavailable.insert("platformBan.source".into(), json!(why));
             json!({
                 "state": "failed",
-                "isBanned": null, "source": null, "reason": null, "customMessage": null,
-                "expiresAt": null, "checkedAgoSecs": ago(*checked_at), "error": error,
+                "isBanned": null, "source": null, "reason": null, "matchedOn": null,
+                "customMessage": null, "expiresAt": null, "checkedAgoSecs": ago(*checked_at),
+                "error": error,
             })
         }
         PlatformBanState::Checked { ban, checked_at } => {
-            if ban.is_none() {
-                unavailable.insert("platformBan.reason".into(), json!("not banned"));
-                unavailable.insert("platformBan.source".into(), json!("not banned"));
+            match ban {
+                None => {
+                    unavailable.insert("platformBan.reason".into(), json!("not banned"));
+                    unavailable.insert("platformBan.matchedOn".into(), json!("not banned"));
+                    unavailable.insert("platformBan.source".into(), json!("not banned"));
+                }
+                Some(ban) if ban.matched_on.is_some() => {
+                    unavailable.insert("platformBan.reason".into(), json!("record withheld"));
+                }
+                Some(_) => {
+                    unavailable.insert("platformBan.matchedOn".into(), json!("record served"));
+                }
             }
             json!({
                 "state": "checked",
                 "isBanned": ban.is_some(),
                 "source": ban_block.platform_ban_source(),
-                "reason": ban.as_ref().map(|b| b.reason.clone()),
+                "reason": ban.as_ref().map(|b| b.reason.clone()).filter(|r| !r.is_empty()),
+                "matchedOn": ban.as_ref().and_then(|b| b.matched_on.clone()),
                 "customMessage": ban.as_ref().and_then(|b| b.custom_message.clone()),
                 "expiresAt": ban.as_ref().and_then(|b| b.expires_at.clone()),
                 "checkedAgoSecs": ago(*checked_at),
