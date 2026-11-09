@@ -1,41 +1,55 @@
-//! The world-storage error envelope: `{"ok": false, "error": <label>,
-//! "message": <text>}` (the old `ApiErrorBody`), with the upstream
-//! worlds-content-server status codes. A signed-fetch refusal carries its raw
-//! chain error as `error` and the fixed ADR-44 sentence as `message`; an
-//! internal fault never leaks its detail.
+//! The world-storage error envelope, as upstream world-storage-service
+//! answers it: `@dcl/http-commons`' `{"error": <label>, "message": <text>}`
+//! (a 500 is `{"error": "Internal Server Error"}` alone, never leaking its
+//! detail), and the schema validator's `{"ok": false, "message", "data"?}`
+//! for a 415 or an unreadable or schema-invalid upsert body. A signed-fetch
+//! refusal carries its raw chain error as `error` and the fixed ADR-44
+//! sentence as `message`.
 
 use axum::Json;
-use axum::http::{StatusCode, header::RETRY_AFTER};
+use axum::http::{
+    StatusCode,
+    header::{CONNECTION, RETRY_AFTER},
+};
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
 use crate::shared::identity::AuthorityNotEstablished;
 
+use super::js_json::AjvError;
+
 pub use crate::comms::worlds_envelope::SIGNED_FETCH_MESSAGE;
 
 #[derive(Debug, serde::Serialize)]
 struct ErrorBody {
-    ok: bool,
     error: String,
-    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 impl ErrorBody {
-    fn new(message: &str) -> Self {
+    fn internal() -> Self {
         Self {
-            ok: false,
-            error: message.to_string(),
-            message: message.to_string(),
+            error: "Internal Server Error".to_string(),
+            message: None,
         }
     }
 
     fn labeled(error: &str, message: &str) -> Self {
         Self {
-            ok: false,
             error: error.to_string(),
-            message: message.to_string(),
+            message: Some(message.to_string()),
         }
     }
+}
+
+/// `@dcl/schema-validator-component`'s refusals.
+#[derive(Debug, serde::Serialize)]
+struct ValidatorBody<'a> {
+    ok: bool,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<&'a [AjvError]>,
 }
 
 #[derive(Debug, Error)]
@@ -54,6 +68,19 @@ pub enum ApiError {
 
     #[error("{0}")]
     PayloadTooLarge(String),
+
+    /// 415 `{ok: false, message}`: an upsert without a JSON content type.
+    #[error("Content-Type must be application/json")]
+    UnsupportedMediaType,
+
+    /// 400 `{ok: false, message, data?}`: an unparseable body (the
+    /// `JSON.parse` message) or a schema violation (`Invalid JSON body` and
+    /// the ajv errors).
+    #[error("{message}")]
+    InvalidBody {
+        message: String,
+        data: Option<Vec<AjvError>>,
+    },
 
     /// The authority could not be established because of a transient store
     /// or reader fault (503, never a denial).
@@ -113,6 +140,8 @@ impl ApiError {
             Self::NotFound(_) => 404,
             Self::LengthRequired(_) => 411,
             Self::PayloadTooLarge(_) => 413,
+            Self::UnsupportedMediaType => 415,
+            Self::InvalidBody { .. } => 400,
             Self::Unavailable(_) | Self::Misconfigured(_) => 503,
             Self::Database(_) | Self::Internal(_) => 500,
             Self::SignedFetch { status, .. } => *status,
@@ -163,18 +192,42 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(m) => ErrorBody::labeled("Bad request", m),
             ApiError::NotAuthorized(m) => ErrorBody::labeled("Not Authorized", m),
             ApiError::NotFound(m) => ErrorBody::labeled("Not Found", m),
-            ApiError::LengthRequired(m) => ErrorBody::labeled("Length Required", m),
+            ApiError::LengthRequired(m) => {
+                // The unread body stays on the socket; upstream closes it too.
+                return (
+                    status,
+                    [(CONNECTION, "close")],
+                    Json(ErrorBody::labeled("Length Required", m)),
+                )
+                    .into_response();
+            }
             ApiError::PayloadTooLarge(m) => ErrorBody::labeled("Payload Too Large", m),
+            ApiError::UnsupportedMediaType => {
+                let body = ValidatorBody {
+                    ok: false,
+                    message: "Content-Type must be application/json",
+                    data: None,
+                };
+                return (status, Json(body)).into_response();
+            }
+            ApiError::InvalidBody { message, data } => {
+                let body = ValidatorBody {
+                    ok: false,
+                    message,
+                    data: data.as_deref(),
+                };
+                return (status, Json(body)).into_response();
+            }
             ApiError::Unavailable(m) | ApiError::Misconfigured(m) => {
                 ErrorBody::labeled("Service Unavailable", m)
             }
             ApiError::Database(e) => {
                 tracing::error!(error = %e, "world storage: sqlx error");
-                ErrorBody::new("Internal Server Error")
+                ErrorBody::internal()
             }
             ApiError::Internal(m) => {
                 tracing::error!(error = %m, "world storage: internal error");
-                ErrorBody::new("Internal Server Error")
+                ErrorBody::internal()
             }
             ApiError::TooManyRequests {
                 message,
@@ -222,7 +275,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             body_of(resp).await,
-            json!({ "ok": false, "error": "Not Found", "message": "value not found" })
+            json!({ "error": "Not Found", "message": "value not found" })
         );
     }
 
@@ -237,7 +290,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             body_of(resp).await,
-            json!({ "ok": false, "error": "Invalid signature: x", "message": SIGNED_FETCH_MESSAGE })
+            json!({ "error": "Invalid signature: x", "message": SIGNED_FETCH_MESSAGE })
         );
     }
 
@@ -245,9 +298,37 @@ mod tests {
     async fn an_internal_error_never_leaks_its_detail() {
         let resp = ApiError::internal("pool secret detail").into_response();
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = body_of(resp).await;
-        assert_eq!(body["error"], "Internal Server Error");
-        assert!(!body.to_string().contains("secret"));
+        assert_eq!(
+            body_of(resp).await,
+            json!({ "error": "Internal Server Error" })
+        );
+    }
+
+    #[tokio::test]
+    async fn validator_refusals_carry_ok_false_and_a_411_closes() {
+        let resp = ApiError::UnsupportedMediaType.into_response();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            body_of(resp).await,
+            json!({ "ok": false, "message": "Content-Type must be application/json" })
+        );
+        let resp = ApiError::InvalidBody {
+            message: "Unexpected end of JSON input".into(),
+            data: None,
+        }
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body_of(resp).await,
+            json!({ "ok": false, "message": "Unexpected end of JSON input" })
+        );
+        let resp = ApiError::LengthRequired("x".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::LENGTH_REQUIRED);
+        assert_eq!(resp.headers()[CONNECTION], "close");
+        assert_eq!(
+            body_of(resp).await,
+            json!({ "error": "Length Required", "message": "x" })
+        );
     }
 
     #[test]

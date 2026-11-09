@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import re
 import unittest
@@ -94,6 +95,89 @@ class StorageTrustedCidrsTest(unittest.TestCase):
     def test_disjoint_networks_and_different_address_families_are_allowed(self):
         render(GATEWAY_TRUSTED_PROXY_CIDRS="10.0.0.0/8,2001:db8::/48",
                GATEWAY_STORAGE_TRUSTED_CIDRS="192.0.2.0/24,2001:db8:1::/48")
+
+
+class StorageKeyEncodingTest(unittest.TestCase):
+    """Encoded `/` and `?` in a storage key reach the service as sent."""
+
+    def setUp(self):
+        self.text = render()
+        self.maps = nginx_map.parse(self.text)
+
+    def request(self, host, request_uri):
+        sub = host.removesuffix(".example.test") if host != "example.test" else ""
+        uri = request_uri.split("?")[0].replace("%2F", "/").replace("%2f", "/").replace("%3F", "?").replace("%3f", "?")
+        return nginx_map.Request(self.maps, host=host, request_uri=request_uri, uri=uri, gateway_subdomain=sub)
+
+    def test_storage_hosts_forward_the_raw_path_under_the_prefix(self):
+        for host, sent, forwarded in [
+            ("storage.example.test", "/values/a%2Fb", "/world-storage/values/a%2Fb"),
+            ("storage.example.test", "/values/a%3Fb?x=1", "/world-storage/values/a%3Fb?x=1"),
+            ("world-storage.example.test", "/players/0xa/values/k%2F1", "/world-storage/players/0xa/values/k%2F1"),
+            ("gateway.example.test", "/storage/values/a%2Fb", "/world-storage/values/a%2Fb"),
+            ("storage.example.test", "/values/.hidden", "/world-storage/values/.hidden"),
+        ]:
+            with self.subTest(host=host, sent=sent):
+                self.assertEqual(self.request(host, sent)["storage_raw_uri"], forwarded)
+
+    def test_other_requests_keep_the_normalized_rewrite(self):
+        for host, sent in [
+            ("storage.example.test", "/world-storage/values/a%2Fb"),
+            ("storage.example.test", "/values/../admin"),
+            ("storage.example.test", "/values/%2E%2e/admin"),
+            ("storage.example.test", "/values/./k"),
+            ("storage.example.test", "/values//k"),
+            ("example.test", "/world-storage/values/a%2Fb"),
+            ("gateway.example.test", "/world-storage/values/a%2Fb"),
+            ("peer.example.test", "/values/a%2Fb"),
+        ]:
+            with self.subTest(host=host, sent=sent):
+                self.assertEqual(self.request(host, sent)["storage_raw_uri"], "")
+
+    def test_the_raw_form_is_reached_only_by_the_server_rewrite(self):
+        server = self.text[self.text.index("server_name example.test"):]
+        self.assertLess(server.index("if ($storage_raw_uri) { rewrite ^ /__gateway_storage_raw last; }"),
+                        server.index("if ($ambiguous_path) { return 400; }"))
+        body = location(self.text, "= /__gateway_storage_raw")
+        self.assertTrue(body.startswith("internal;\n"))
+        self.assertIn("proxy_pass http://apis$storage_raw_uri;", body)
+        self.assertIn("limit_req zone=storage burst=400 nodelay;", body)
+
+    def test_an_encoded_question_mark_is_refused_only_where_a_rewrite_would_split_it(self):
+        for host, sent, refused in [
+            ("example.test", "/world-storage/values/a%3Fb", 0),
+            ("gateway.example.test", "/world-storage/values/a%3Fb", 0),
+            ("example.test", "/a%3Fb", 1),
+            ("foo.example.test", "/world-storage/a%3Fb", 1),
+            ("gateway.example.test", "/peer/a%3fb?x=1", 1),
+            ("example.test", "/about?x=a%3Fb", 0),
+        ]:
+            with self.subTest(host=host, sent=sent):
+                self.assertEqual(self.request(host, sent)["ambiguous_path"], str(refused))
+
+    def test_storage_bodies_take_their_cap_and_a_json_413(self):
+        for key in ["= /world-storage", "^~ /world-storage/", "= /__gateway_storage_raw"]:
+            with self.subTest(key=key):
+                body = location(self.text, key)
+                self.assertIn(f"client_max_body_size {gateway.STORAGE_BODY_CAP_BYTES};", body)
+                self.assertIn("error_page 413 = @storage_too_large;", body)
+        named = location(self.text, "@storage_too_large")
+        self.assertIn("default_type application/json;", named)
+        answer = re.search(r"return (\d+) '(.*)';", named)
+        self.assertEqual(answer[1], "413")
+        self.assertEqual(json.loads(answer[2]), {
+            "error": "Payload Too Large",
+            "message": f"Request body exceeds the maximum allowed size ({gateway.STORAGE_BODY_CAP_BYTES} bytes)"})
+
+    def test_the_storage_cap_covers_the_services_default_value_caps(self):
+        root = Path(__file__).parents[3] / "services/catalyst/worlds/src/storage"
+        defaults = (root / "mod.rs").read_text()
+        caps = [int(v.replace("_", "")) for v in
+                re.findall(r"(?:world|player|env)_max_value_size_bytes: ([\d_]+),", defaults)]
+        self.assertEqual(len(caps), 3)
+        slack = int(re.search(r"BODY_ENVELOPE_SLACK_BYTES: i64 = ([\d_]+);",
+                              (root / "handlers.rs").read_text())[1].replace("_", ""))
+        self.assertGreater(gateway.STORAGE_BODY_CAP_BYTES, max(caps) + slack)
 
 
 if __name__ == "__main__":

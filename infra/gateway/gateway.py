@@ -16,6 +16,14 @@ WORLDS_SETTINGS_CAP = "12m"
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
 CONTENT_DEPLOY_CAP = "248m"
+# World storage bodies: above the largest default value cap (worlds storage
+# `WORLD_STORAGE_MAX_VALUE_SIZE_BYTES`, 512 KiB, plus its 1 KiB envelope slack)
+# with room for a raised one, so the service's own 413 is the one a client
+# meets; a gateway test pins it against the defaults. Its own 413 answers the
+# service's body.
+STORAGE_BODY_CAP_BYTES = 4 * 1024 * 1024
+STORAGE_TOO_LARGE = {"error": "Payload Too Large",
+                     "message": f"Request body exceeds the maximum allowed size ({STORAGE_BODY_CAP_BYTES} bytes)"}
 # Uploads one address may have in flight on a deploy route: nginx buffers each
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
@@ -251,9 +259,17 @@ def render(table, cfg, mime):
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
                       "limit_req zone=storage_write burst=60 nodelay; "
-                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+                      "limit_req zone=storage_trusted burst=1000 nodelay;\n"
+                      f"client_max_body_size {STORAGE_BODY_CAP_BYTES}; "
+                      "error_page 413 = @storage_too_large;")
     locations += location("= /world-storage", proxy("apis", storage_limits))
     locations += location("^~ /world-storage/", proxy("apis", storage_limits))
+    # A storage host request, forwarded as the client spelled it under the
+    # /world-storage prefix ($storage_raw_uri), so an encoded `/` or `?` in a
+    # key reaches the service; only the server rewrite reaches it.
+    locations += location("= /__gateway_storage_raw",
+                          "internal;\n" + proxy("apis$storage_raw_uri", storage_limits))
+    locations += location("@storage_too_large", json_error + f"return 413 '{json.dumps(STORAGE_TOO_LARGE, separators=(',', ':'))}';")
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
@@ -325,6 +341,25 @@ http {{
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
+    }}
+    # The storage hosts' rewrite, from the unnormalized $request_uri: the
+    # decoded $uri would turn an encoded `/` or `?` in a key into a separator.
+    # Dot segments and empty segments keep the normalized rewrite.
+    map "$gateway_subdomain:$request_uri" $storage_raw_uri {{
+        default "";
+        "~*^[^:]*:[^?]*/(\\.|%2e){{1,2}}([/?]|$)" "";
+        "~^[^:]*:[^?]*//" "";
+        "~^(storage|world-storage):/world-storage([/?]|$)" "";
+        "~^(storage|world-storage):(?<storage_raw>/.*)$" /world-storage$storage_raw;
+        "~^gateway:/storage(?<storage_rest>/.*)$" /world-storage$storage_rest;
+    }}
+    # A decoded `?` would split a rewritten path; a /world-storage request
+    # that is not rewritten is forwarded as sent.
+    map "$gateway_uri:$uri" $ambiguous_path {{
+        volatile;
+        default 0;
+        "~^:/world-storage(/|$)" 0;
+        "~[?]" 1;
     }}
     map "$gateway_subdomain:$request_uri" $original_path {{
         default $request_uri;
@@ -400,7 +435,8 @@ http {{
     server {{
         listen 8080;
         server_name {domain_names};
-        if ($uri ~ "[?]") {{ return 400; }}
+        if ($storage_raw_uri) {{ rewrite ^ /__gateway_storage_raw last; }}
+        if ($ambiguous_path) {{ return 400; }}
         if ($gateway_uri) {{ rewrite ^ $gateway_uri; }}
         if ($internal_path) {{ return 404; }}
         if ($operator_denied) {{ return 403; }}

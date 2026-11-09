@@ -1,7 +1,10 @@
 //! The route handlers: every one verifies the signed fetch and resolves the
 //! scene context first ([`super::resolve_authorized`]), then reads or writes
 //! only the resolved [`SceneNamespace`]; an upsert answers its 411/413
-//! before the authorization ([`super::resolve_authorized_upsert`]). Values
+//! before the authorization ([`super::resolve_authorized_upsert`]), then, as
+//! upstream's schema validator, its 415 and body checks, then the key and the
+//! player address. A written value is stored and echoed as the text
+//! `JSON.stringify(JSON.parse(body).value)` gives ([`super::js_json`]); values
 //! are served as the jsonb text Postgres returns, spliced into the envelope
 //! byte for byte (a stored `0`, `false`, `""` or `null` is a 200, never a
 //! 404).
@@ -10,16 +13,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, OriginalUri, Path, RawQuery, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use axum::extract::{OriginalUri, Path, RawQuery, State};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use serde_json::{Value, json};
 
 use crate::shared::identity::Address;
 
 use super::errors::ApiError;
+use super::js_json::{self, Doc};
 use super::store::{StorageEntry, value_size_bytes};
 use super::{AuthPolicy, SharedState, resolve_authorized, resolve_authorized_upsert};
 
@@ -32,23 +33,31 @@ pub const MAX_KEY_LENGTH: usize = 255;
 pub const BODY_ENVELOPE_SLACK_BYTES: i64 = 1024;
 
 /// 1..=255 code points (the old varchar(255) measured characters; the
-/// schema's `octet_length(key) <= 1020` CHECK is the byte bound of that).
+/// schema's `octet_length(key) <= 1020` CHECK is the byte bound of that),
+/// and no NUL, which no SQL statement may receive.
 pub fn validate_key(key: &str) -> Result<(), ApiError> {
     if key.is_empty() || (key.len() > MAX_KEY_LENGTH && key.chars().count() > MAX_KEY_LENGTH) {
         return Err(ApiError::bad_request(format!(
             "Key must be between 1 and {MAX_KEY_LENGTH} characters"
         )));
     }
+    if key.contains('\0') {
+        return Err(ApiError::bad_request("Key must not contain NUL characters"));
+    }
     Ok(())
 }
 
+/// Upstream's body-size middleware: the declared `Content-Length` against
+/// the namespace's value cap plus the envelope slack; no `Content-Length`
+/// and no `Transfer-Encoding` is an empty body (RFC 9112 §6.3), a chunked
+/// or unreadable length a 411.
 pub fn check_content_length(headers: &HeaderMap, max_value_size: i64) -> Result<(), ApiError> {
-    let content_length = headers
-        .get(axum::http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<i64>().ok())
-        .filter(|v| *v >= 0);
-    let Some(content_length) = content_length else {
+    let content_length = match headers.get(header::CONTENT_LENGTH) {
+        Some(v) => v.to_str().ok().and_then(|v| v.trim().parse::<i64>().ok()),
+        None if headers.contains_key(header::TRANSFER_ENCODING) => None,
+        None => Some(0),
+    };
+    let Some(content_length) = content_length.filter(|v| *v >= 0) else {
         return Err(ApiError::LengthRequired(
             "Requests with a body must include a valid Content-Length header".to_string(),
         ));
@@ -165,51 +174,90 @@ pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpsertBody {
-    pub value: Value,
+/// `@dcl/schema-validator-component`'s check: the media type of the
+/// `Content-Type` (repeated headers joined as `Headers.get` joins them),
+/// trimmed and lowercased, is `application/json` or an RFC 6839
+/// `type/subtype+json`.
+pub fn is_json_content_type(headers: &HeaderMap) -> bool {
+    let values: Vec<&str> = headers
+        .get_all(header::CONTENT_TYPE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    if values.is_empty() {
+        return false;
+    }
+    let joined = values.join(", ");
+    let media = joined
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if media == "application/json" {
+        return true;
+    }
+    let plain = |s: &str| !s.is_empty() && !s.contains(|c: char| c == '/' || c.is_whitespace());
+    media.split_once('/').is_some_and(|(kind, subtype)| {
+        plain(kind)
+            && plain(subtype)
+            && subtype
+                .strip_suffix("+json")
+                .is_some_and(|name| !name.is_empty())
+    })
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpsertEnvBody {
-    pub value: String,
+/// Which upsert schema the body must satisfy.
+#[derive(Clone, Copy)]
+pub enum UpsertSchema {
+    /// `{ value: <any JSON value> }`.
+    Storage,
+    /// `{ value: <string> }`.
+    Env,
 }
 
-pub struct ValidatedJson<T>(pub T);
-
-impl<T, S> FromRequest<S> for ValidatedJson<T>
-where
-    T: DeserializeOwned,
-    S: Send + Sync,
-{
-    type Rejection = ApiError;
-
-    async fn from_request(
-        req: axum::http::Request<axum::body::Body>,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        let Json(value) = Json::<T>::from_request(req, state)
-            .await
-            .map_err(|rejection: JsonRejection| ApiError::bad_request(rejection.body_text()))?;
-        Ok(ValidatedJson(value))
+/// The schema validator's 415 and body checks: the parsed document and its
+/// `value` item.
+pub async fn read_upsert_body(
+    headers: &HeaderMap,
+    body: axum::body::Body,
+    max_value_size: i64,
+    schema: UpsertSchema,
+) -> Result<(Doc, usize), ApiError> {
+    if !is_json_content_type(headers) {
+        return Err(ApiError::UnsupportedMediaType);
+    }
+    // The declared length already passed `check_content_length`.
+    let limit = usize::try_from(max_value_size + BODY_ENVELOPE_SLACK_BYTES).unwrap_or(usize::MAX);
+    let bytes = axum::body::to_bytes(body, limit)
+        .await
+        .map_err(|e| ApiError::InvalidBody {
+            message: e.to_string(),
+            data: None,
+        })?;
+    let doc =
+        js_json::parse(&js_json::decode_body(&bytes)).map_err(|message| ApiError::InvalidBody {
+            message,
+            data: None,
+        })?;
+    let checked = match schema {
+        UpsertSchema::Storage => doc.validate_storage_body(),
+        UpsertSchema::Env => doc.validate_env_body(),
+    };
+    match checked {
+        Ok(value) => Ok((doc, value)),
+        Err(errors) => Err(ApiError::InvalidBody {
+            message: "Invalid JSON body".to_string(),
+            data: Some(errors),
+        }),
     }
 }
 
-/// The path segment before the signed fetch is verified: trimmed and folded
-/// (an empty one is refused here, an invalid one after the credential, as
-/// the old handlers ordered it).
-pub fn normalize_player(address: &str) -> Result<String, ApiError> {
-    let t = address.trim();
-    if t.is_empty() {
-        return Err(ApiError::bad_request("player_address is required"));
-    }
-    Ok(t.to_ascii_lowercase())
-}
-
-pub fn parse_player(normalized: &str) -> Result<Address, ApiError> {
-    Address::parse(normalized).map_err(|_| ApiError::bad_request("Invalid player address"))
+/// `params.player_address.toLowerCase()` then `EthAddress.validate`: never
+/// trimmed.
+pub fn parse_player(raw: &str) -> Result<Address, ApiError> {
+    Address::parse_untrimmed(&raw.to_ascii_lowercase())
+        .map_err(|_| ApiError::bad_request("Invalid player address"))
 }
 
 #[derive(Debug)]
@@ -369,13 +417,12 @@ pub async fn world_upsert(
         state.settings.world_limits.max_value_size_bytes,
     )
     .await?;
+    let max = state.settings.world_limits.max_value_size_bytes;
+    let (doc, value) = read_upsert_body(&parts.headers, body, max, UpsertSchema::Storage).await?;
     validate_key(&key)?;
 
-    let req = axum::http::Request::from_parts(parts, body);
-    let ValidatedJson(body) = ValidatedJson::<UpsertBody>::from_request(req, &()).await?;
-
-    let serialized = serde_json::to_string(&body.value)
-        .map_err(|e| ApiError::bad_request(format!("invalid value: {e}")))?;
+    let serialized = doc.stringify(value);
+    drop(doc);
     reject_nul_characters(&serialized)?;
 
     state
@@ -462,7 +509,6 @@ pub async fn player_get(
     headers: HeaderMap,
     uri: Uri,
 ) -> Result<RawJson, ApiError> {
-    let player = normalize_player(&player)?;
     let ctx = resolve_authorized(
         &state,
         &headers,
@@ -472,8 +518,8 @@ pub async fn player_get(
         AuthPolicy::LOGS_ACCESS,
     )
     .await?;
-    let player = parse_player(&player)?;
     validate_key(&key)?;
+    let player = parse_player(&player)?;
     get_value_response(
         state
             .store
@@ -487,7 +533,6 @@ pub async fn player_upsert(
     Path((player, key)): Path<(String, String)>,
     req: axum::extract::Request,
 ) -> Result<RawJson, ApiError> {
-    let player = normalize_player(&player)?;
     let (parts, body) = req.into_parts();
     let ctx = resolve_authorized_upsert(
         &state,
@@ -498,14 +543,13 @@ pub async fn player_upsert(
         state.settings.player_limits.max_value_size_bytes,
     )
     .await?;
-    let player = parse_player(&player)?;
+    let max = state.settings.player_limits.max_value_size_bytes;
+    let (doc, value) = read_upsert_body(&parts.headers, body, max, UpsertSchema::Storage).await?;
     validate_key(&key)?;
+    let player = parse_player(&player)?;
 
-    let req = axum::http::Request::from_parts(parts, body);
-    let ValidatedJson(body) = ValidatedJson::<UpsertBody>::from_request(req, &()).await?;
-
-    let serialized = serde_json::to_string(&body.value)
-        .map_err(|e| ApiError::bad_request(format!("invalid value: {e}")))?;
+    let serialized = doc.stringify(value);
+    drop(doc);
     reject_nul_characters(&serialized)?;
 
     state
@@ -528,7 +572,6 @@ pub async fn player_delete(
     headers: HeaderMap,
     uri: Uri,
 ) -> Result<StatusCode, ApiError> {
-    let player = normalize_player(&player)?;
     let ctx = resolve_authorized(
         &state,
         &headers,
@@ -538,8 +581,8 @@ pub async fn player_delete(
         AuthPolicy::LOGS_ACCESS,
     )
     .await?;
-    let player = parse_player(&player)?;
     validate_key(&key)?;
+    let player = parse_player(&player)?;
     state
         .store
         .player_delete(&ctx.namespace, &player, &key)
@@ -555,7 +598,6 @@ pub async fn player_list(
     headers: HeaderMap,
     uri: Uri,
 ) -> Result<RawJson, ApiError> {
-    let player = normalize_player(&player)?;
     let ctx = resolve_authorized(
         &state,
         &headers,
@@ -587,7 +629,6 @@ pub async fn player_clear(
     headers: HeaderMap,
     uri: Uri,
 ) -> Result<StatusCode, ApiError> {
-    let player = normalize_player(&player)?;
     let ctx = resolve_authorized(
         &state,
         &headers,
@@ -696,14 +737,17 @@ pub async fn env_upsert(
         state.settings.env_limits.max_value_size_bytes,
     )
     .await?;
+    let max = state.settings.env_limits.max_value_size_bytes;
+    let (doc, value) = read_upsert_body(&parts.headers, body, max, UpsertSchema::Env).await?;
     validate_key(&key)?;
+    let value = doc
+        .string(value)
+        .expect("the env schema admits only a string");
+    drop(doc);
     let encryptor = state.encryptor()?;
 
-    let req = axum::http::Request::from_parts(parts, body);
-    let ValidatedJson(body) = ValidatedJson::<UpsertEnvBody>::from_request(req, &()).await?;
-
-    let size = value_size_bytes(&body.value);
-    let enc = encryptor.encrypt(&body.value)?;
+    let size = value_size_bytes(&value);
+    let enc = encryptor.encrypt(&value)?;
     state
         .store
         .env_upsert_with_quota(&ctx.namespace, &key, &enc, size, state.settings.env_limits)
@@ -812,7 +856,6 @@ pub async fn usage_player(
     headers: HeaderMap,
     uri: Uri,
 ) -> Result<Json<UsageResponse>, ApiError> {
-    let player = normalize_player(&player)?;
     let ctx = resolve_authorized(
         &state,
         &headers,
@@ -899,6 +942,11 @@ mod tests {
     #[test]
     fn content_length_precheck_maps_to_411_and_413() {
         let mut headers = HeaderMap::new();
+        assert!(
+            check_content_length(&headers, 100).is_ok(),
+            "no length and no transfer-encoding is an empty body"
+        );
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
         let err = check_content_length(&headers, 100).unwrap_err();
         assert!(matches!(err, ApiError::LengthRequired(_)));
         assert_eq!(err.into_response().status(), StatusCode::LENGTH_REQUIRED);
@@ -928,6 +976,52 @@ mod tests {
         let err = check_content_length(&headers, 100).unwrap_err();
         assert!(matches!(err, ApiError::PayloadTooLarge(_)));
         assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn keys_refuse_nul_after_the_length_check() {
+        assert_eq!(
+            validate_key("a\0b").unwrap_err().to_string(),
+            "Key must not contain NUL characters"
+        );
+        assert_eq!(
+            validate_key("").unwrap_err().to_string(),
+            "Key must be between 1 and 255 characters"
+        );
+    }
+
+    #[test]
+    fn json_content_types_follow_the_schema_validator() {
+        let check = |values: &[&str]| {
+            let mut headers = HeaderMap::new();
+            for v in values {
+                headers.append("content-type", v.parse().unwrap());
+            }
+            is_json_content_type(&headers)
+        };
+        for ok in [
+            "application/json",
+            "application/json; charset=utf-8",
+            " APPLICATION/JSON ",
+            "application/json;",
+            "application/vnd.api+json",
+            "text/x+json; v=1",
+        ] {
+            assert!(check(&[ok]), "{ok:?}");
+        }
+        for refused in [
+            "",
+            "text/plain",
+            "application/jsonx",
+            "application/+json",
+            "+json",
+            "a/b/c+json",
+            "application/json, text/plain",
+        ] {
+            assert!(!check(&[refused]), "{refused:?}");
+        }
+        assert!(!check(&[]));
+        assert!(!check(&["application/json", "text/plain"]));
     }
 
     fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -1005,20 +1099,18 @@ mod tests {
     }
 
     #[test]
-    fn player_addresses_are_folded_then_validated() {
-        assert_eq!(normalize_player(" 0xAbC ").unwrap(), "0xabc");
-        assert!(matches!(
-            normalize_player("  "),
-            Err(ApiError::BadRequest(_))
-        ));
+    fn player_addresses_are_lowercased_never_trimmed() {
         assert_eq!(
-            parse_player("0xabcdef0123456789abcdef0123456789abcdef01")
+            parse_player("0xABCDEF0123456789abcdef0123456789ABCDEF01")
                 .unwrap()
                 .as_str(),
             "0xabcdef0123456789abcdef0123456789abcdef01"
         );
         for bad in [
             "",
+            " ",
+            " 0xabcdef0123456789abcdef0123456789abcdef01",
+            "0xabcdef0123456789abcdef0123456789abcdef01 ",
             "0x123",
             "not-an-address",
             "0x000000000000000000000000000000000000000g",
@@ -1134,57 +1226,99 @@ mod tests {
         );
     }
 
-    #[test]
-    fn upsert_body_schema_matches_ajv() {
-        assert!(serde_json::from_str::<UpsertBody>(r#"{"value": {"a": 1}}"#).is_ok());
-        assert!(serde_json::from_str::<UpsertBody>(r#"{"value": null}"#).is_ok());
-        assert!(serde_json::from_str::<UpsertBody>(r#"{"value": [1,2,3]}"#).is_ok());
-        assert!(serde_json::from_str::<UpsertBody>(r#"{"value": 0}"#).is_ok());
-        assert!(serde_json::from_str::<UpsertBody>(r#"{}"#).is_err());
-        assert!(serde_json::from_str::<UpsertBody>(r#"{"value": 1, "extra": 2}"#).is_err());
+    fn json_put(content_type: Option<&str>, body: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(ct) = content_type {
+            headers.insert("content-type", ct.parse().unwrap());
+        }
+        headers.insert("content-length", body.len().to_string().parse().unwrap());
+        headers
     }
 
-    #[test]
-    fn upsert_env_body_requires_string_value() {
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{"value": "secret"}"#).is_ok());
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{"value": 5}"#).is_err());
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{"value": true}"#).is_err());
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{"value": null}"#).is_err());
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{}"#).is_err());
-        assert!(serde_json::from_str::<UpsertEnvBody>(r#"{"value": "x", "extra": 1}"#).is_err());
+    async fn read(
+        content_type: Option<&str>,
+        body: &str,
+        schema: UpsertSchema,
+    ) -> Result<String, ApiError> {
+        let headers = json_put(content_type, body);
+        let (doc, value) = read_upsert_body(
+            &headers,
+            axum::body::Body::from(body.to_string()),
+            1024,
+            schema,
+        )
+        .await?;
+        Ok(match schema {
+            UpsertSchema::Storage => doc.stringify(value),
+            UpsertSchema::Env => doc.string(value).unwrap(),
+        })
     }
 
-    fn json_put(body: &str) -> axum::http::Request<axum::body::Body> {
-        axum::http::Request::builder()
-            .method("PUT")
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.to_string()))
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn validated_json_rejects_bad_body_with_400_bad_request() {
-        let res =
-            ValidatedJson::<UpsertBody>::from_request(json_put(r#"{"value":1,"extra":2}"#), &())
-                .await;
-        let err = res.err().expect("extra property should be rejected");
-        assert!(matches!(err, ApiError::BadRequest(_)));
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
-
-        let res = ValidatedJson::<UpsertBody>::from_request(json_put(r#"{}"#), &()).await;
-        assert!(matches!(res.err(), Some(ApiError::BadRequest(_))));
-
-        let res =
-            ValidatedJson::<UpsertEnvBody>::from_request(json_put(r#"{"value":5}"#), &()).await;
-        assert!(matches!(res.err(), Some(ApiError::BadRequest(_))));
+    async fn refusal(err: ApiError) -> (StatusCode, Value) {
+        let resp = err.into_response();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
     }
 
     #[tokio::test]
-    async fn validated_json_accepts_valid_body() {
-        let ValidatedJson(body) =
-            ValidatedJson::<UpsertBody>::from_request(json_put(r#"{"value":{"a":1}}"#), &())
+    async fn upsert_bodies_answer_like_the_schema_validator() {
+        let json = Some("application/json");
+        assert_eq!(
+            read(
+                json,
+                r#"{"value":{"b":1.0,"a":[1e2,-0]}}"#,
+                UpsertSchema::Storage
+            )
+            .await
+            .unwrap(),
+            r#"{"b":1,"a":[100,0]}"#
+        );
+        assert_eq!(
+            read(json, r#"{"value":"s"}"#, UpsertSchema::Env)
                 .await
-                .expect("a valid body should extract");
-        assert_eq!(body.value, json!({"a": 1}));
+                .unwrap(),
+            "s"
+        );
+        for missing in [None, Some("text/plain")] {
+            let err = read(missing, r#"{"value":1}"#, UpsertSchema::Storage)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                refusal(err).await,
+                (
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    json!({ "ok": false, "message": "Content-Type must be application/json" })
+                )
+            );
+        }
+        let err = read(json, "{", UpsertSchema::Storage).await.unwrap_err();
+        assert_eq!(
+            refusal(err).await,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)" })
+            )
+        );
+        let err = read(json, r#"{"value":1,"extra":2}"#, UpsertSchema::Storage)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refusal(err).await,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "message": "Invalid JSON body", "data": [{
+                    "instancePath": "", "schemaPath": "#/additionalProperties",
+                    "keyword": "additionalProperties", "params": { "additionalProperty": "extra" },
+                    "message": "must NOT have additional properties"
+                }] })
+            )
+        );
+        let err = read(json, r#"{"value":5}"#, UpsertSchema::Env)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal(err).await.1["data"][0]["message"], "must be string");
     }
 }

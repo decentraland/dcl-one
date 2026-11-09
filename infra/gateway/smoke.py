@@ -235,6 +235,19 @@ def client(args):
             result = request(public, path, vhost=vhost)
             assert result[0] == 400, ("ambiguous path", vhost, path, result)
     hit("/about?x=a%3Fb", "apis")
+    # Encoded `/` and `?` in a storage key reach the service as sent.
+    for path, vhost, target in [
+        ("/values/a%2Fb%3Fc?x=1", "storage.example.test", "/world-storage/values/a%2Fb%3Fc?x=1"),
+        ("/storage/values/a%2Fb", "gateway.example.test", "/world-storage/values/a%2Fb"),
+        ("/world-storage/values/a%2Fb%3Fc", "example.test", None),
+    ]:
+        data = hit(path, "apis", vhost=vhost, target=target)
+    assert data["headers"]["x-original-path"] == "/world-storage/values/a%2Fb%3Fc", data
+    assert request(public, "/__gateway_storage_raw", vhost="example.test")[0] == 404
+    import gateway
+    status, body = request(public, "/world-storage/values/k", method="PUT",
+                           body=b"x" * (gateway.STORAGE_BODY_CAP_BYTES + 1))
+    assert (status, json.loads(body)["error"]) == (413, "Payload Too Large"), (status, body)
     for path, host in [("/", "admin.example.test"), ("/admin/api/jobs", "gateway.example.test")]:
         assert request(public, path, vhost=host, headers=forged)[0] == 403
     for path, host in [("/pulse/x.data", "internal.example.test"),

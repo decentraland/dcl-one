@@ -406,8 +406,8 @@ difference not listed here is a gap, not a decision.
   `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
   default, and while the restore stamps do not vouch for this node
   (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
-  `POST /entities/active`, the parcel-holder lookup and the comms mints stay
-  open. A node replacing the upstream service sets it once a restore of its
+  `POST /entities/active`, the parcel-holder lookup, the world-storage
+  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once a restore of its
   database, blobs and credentials has been shown to work.
 - **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
   whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
@@ -447,3 +447,29 @@ difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+
+## World storage
+
+`/world-storage` follows
+[`decentraland/world-storage-service`](https://github.com/decentraland/world-storage-service)
+(compared at `d55f24c`).
+
+### HTTP
+
+- **Deeply nested values.** A value nested deeper than about 4,500 levels
+  is accepted and stored, up to the depth Postgres' `jsonb` input accepts
+  (then 500 `{"error": "Internal Server Error"}`). Upstream answers 500 from
+  that depth on, where ajv's recursive validation and `JSON.stringify`
+  exhaust Node's stack.
+- **Schema errors of deep values.** When the non-finite number that fails
+  the value's `anyOf` sits more than 128 containers deep, `data` holds only
+  the outermost `anyOf` error at `/value`. Upstream lists every level's
+  errors, a body that grows with the square of the depth (6.7 MB at 1,000
+  levels).
+- **NUL in a query.** A `%00` in the query string (a list's `prefix`)
+  answers 400 `{"error": "request path or query contains a NUL byte"}`
+  before the signed fetch is checked. Upstream passes it to Postgres and
+  answers 500. A NUL in a key answers upstream's 400 after authorization.
+- **`GET /collaborator` lists local scenes only.** Mirrored world scenes
+  are left out, as their `logsPermissions` grant no storage access on this
+  node; upstream lists every scene its deployment consumer indexed.

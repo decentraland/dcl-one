@@ -42,6 +42,7 @@ pub mod encryption;
 pub mod errors;
 pub mod export;
 pub mod handlers;
+pub mod js_json;
 pub mod store;
 
 #[cfg(test)]
@@ -818,7 +819,8 @@ async fn resolve_and_authorize(
 
 /// The old route table (`api_router` plus `/ping`), to nest under
 /// `/world-storage` (the old gateway location, which stripped the prefix and
-/// set `x-original-path`) with the content routes' CORS and NUL guards.
+/// set `x-original-path`) with the content routes' CORS guard and the query
+/// half of their NUL guard.
 pub fn router(state: SharedState) -> Router {
     let largest_value = [
         state.settings.world_limits,
@@ -877,7 +879,12 @@ pub fn router(state: SharedState) -> Router {
                 .delete(handlers::env_delete),
         )
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
-        .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
+        // A NUL in a key or player address is the handler's 400, after the
+        // credential, as upstream answers it; `validate_key` and
+        // `parse_player` keep it from every statement.
+        .layer(axum::middleware::from_fn(
+            nul_guard::nul_query_guard_middleware,
+        ))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .with_state(state)
 }
