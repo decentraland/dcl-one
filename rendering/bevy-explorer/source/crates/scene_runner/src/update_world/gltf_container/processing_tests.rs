@@ -159,6 +159,32 @@ fn node(app: &mut App, name: &str) -> Entity {
         .expect("a node with that name")
 }
 
+fn has_node(app: &mut App, name: &str) -> bool {
+    app.world_mut()
+        .query::<&Name>()
+        .iter(app.world())
+        .any(|node| node.as_str() == name)
+}
+
+/// A glTF container in `root` with nothing to process: its file failed or has no scene.
+fn spawn_empty_container(app: &mut App, root: Entity) -> Entity {
+    app.world_mut()
+        .spawn((
+            SceneEntity {
+                root,
+                scene_id: SceneId(root),
+                id: SceneEntityId {
+                    id: 513,
+                    generation: 0,
+                },
+            },
+            GltfDefinition(PbGltfContainer::default()),
+            GltfHandle(Handle::default()),
+            GltfLoaded(None),
+        ))
+        .id()
+}
+
 /// The node paths processing recorded, sorted.
 fn processed_names(app: &App, container: Entity) -> Vec<String> {
     let mut names: Vec<_> = app
@@ -365,4 +391,52 @@ fn removing_the_container_drops_its_progress() {
     app.update();
 
     assert!(app.world().get::<GltfProcessing>(container).is_none());
+    // and its model, whose nodes processed so far already collide
+    assert!(!has_node(&mut app, "top"));
+    assert!(!has_node(&mut app, "a"));
+}
+
+#[test]
+fn removing_the_container_while_its_model_spawns_leaves_nothing() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    // the spawner's deadline too: it writes one entity a frame
+    one_node_per_frame(&mut app);
+    let (container, instance) = spawn_container(&mut app, root, &["top", "a", "b"]);
+    app.update();
+    let spawner = |app: &App| {
+        app.world()
+            .resource::<SceneSpawner>()
+            .instance_is_ready(instance)
+    };
+    assert!(!spawner(&app));
+
+    app.world_mut()
+        .entity_mut(container)
+        .remove::<GltfDefinition>();
+    for _ in 0..4 {
+        app.update();
+    }
+
+    assert!(!spawner(&app));
+    assert!(!has_node(&mut app, "top"));
+    assert!(!has_node(&mut app, "a"));
+}
+
+#[test]
+fn a_model_with_nothing_to_process_does_not_wait_behind_one_in_progress() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let (busy, _) = spawn_container(&mut app, root, &["top", "a", "b"]);
+    app.update();
+    give_context(&mut app, root);
+    one_node_per_frame(&mut app);
+    app.update();
+    let empty = spawn_empty_container(&mut app, root);
+
+    app.update();
+
+    assert!(is_processed(&app, empty));
+    assert!(!is_processed(&app, busy));
 }

@@ -225,6 +225,10 @@ pub struct GltfEntity {
 
 #[derive(Component)]
 struct GltfLoaded(Option<InstanceId>);
+
+/// The value the model was loaded for: a scene may put the same value again, which keeps it.
+#[derive(Component)]
+struct GltfSource(PbGltfContainer);
 #[derive(Component, Default)]
 pub struct GltfProcessed {
     pub instance_id: Option<InstanceId>,
@@ -280,13 +284,29 @@ fn despawn_instance_non_recursive(commands: &mut Commands, entities: impl Iterat
     }
 }
 
-fn on_gltf_container_removed(trigger: Trigger<OnRemove, GltfDefinition>, mut commands: Commands) {
-    commands.entity(trigger.target()).try_remove::<(
+fn on_gltf_container_removed(
+    trigger: Trigger<OnRemove, GltfDefinition>,
+    mut commands: Commands,
+    loaded: Query<(&GltfLoaded, Has<GltfProcessed>)>,
+    mut scene_spawner: ResMut<SceneSpawner>,
+) {
+    let entity = trigger.target();
+    // a processed model goes with its GltfReady (clear_stale_instance); one still spawning or
+    // processing has none yet, and the nodes processed so far already collide
+    if let Ok((GltfLoaded(Some(instance)), false)) = loaded.get(entity) {
+        despawn_instance_non_recursive(
+            &mut commands,
+            scene_spawner.iter_instance_entities(*instance),
+        );
+        scene_spawner.unregister_instance(*instance);
+    }
+    commands.entity(entity).try_remove::<(
         GltfLoaded,
         GltfProcessed,
         GltfProcessing,
         GltfReady,
         GltfAssetFailed,
+        GltfSource,
     )>();
 }
 
@@ -323,6 +343,7 @@ fn update_gltf(
             &GltfDefinition,
             Option<&GltfLoaded>,
             Has<GltfProcessed>,
+            Option<&GltfSource>,
         ),
         Changed<GltfDefinition>,
     >,
@@ -373,11 +394,17 @@ fn update_gltf(
         };
     };
 
-    for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed) in new_gltfs.iter() {
+    for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed, source) in new_gltfs.iter() {
+        // the same value put again: a restart would leave a large model never finished, now that
+        // it takes several frames
+        if source.is_some_and(|source| source.0 == gltf.0) {
+            continue;
+        }
         debug!("{} has {}", scene_ent.id, gltf.0.src);
 
         commands
             .entity(ent)
+            .try_insert(GltfSource(gltf.0.clone()))
             .remove::<GltfLoaded>()
             .remove::<GltfProcessed>()
             .remove::<GltfProcessing>()
@@ -640,6 +667,7 @@ fn update_ready_gltfs(
     };
     let mut processed_any = false;
     let mut slowest: Option<(Duration, usize, String)> = None;
+    let log_slowest = bevy::log::tracing::enabled!(target: "spawn_timing", bevy::log::Level::DEBUG);
 
     // models already in progress first
     'outer: for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing) in
@@ -647,15 +675,15 @@ fn update_ready_gltfs(
             .iter_mut()
             .chain(gltfs_to_start.iter_mut())
     {
-        if !has_time(processed_any) {
-            break;
-        }
         if loaded.0.is_none() {
-            // nothing to process
+            // nothing to process: done whatever the deadline
             commands
                 .entity(bevy_scene_entity)
                 .try_insert(GltfProcessed::default())
                 .try_remove::<(GltfReady, GltfProcessing)>();
+            continue;
+        }
+        if !has_time(processed_any) {
             continue;
         }
         let instance = *loaded.0.as_ref().unwrap();
@@ -1184,9 +1212,10 @@ fn update_ready_gltfs(
             }
 
             let slice = slice_started.elapsed();
-            if slowest
-                .as_ref()
-                .is_none_or(|(longest, ..)| slice > *longest)
+            if log_slowest
+                && slowest
+                    .as_ref()
+                    .is_none_or(|(longest, ..)| slice > *longest)
             {
                 slowest = Some((slice, processed_now, definition.0.src.clone()));
             }
