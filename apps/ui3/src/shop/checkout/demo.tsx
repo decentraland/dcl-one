@@ -39,6 +39,8 @@ export type DemoScenario = {
   walletChainId?: number;
   walletAccount?: string;
   noSigner?: boolean;
+  /** The host is still reading the session back (the Marketplace's access is pending meanwhile). */
+  resolving?: boolean;
   checkout?: (lines: { id: string }[], cart: CartStore) => PurchaseState | null;
   path?: string;
   handlers?: FakeHandlers;
@@ -166,6 +168,7 @@ export function createDemo(s: DemoScenario) {
     onSignIn: () => {},
     onConnectWallet: () => {},
     onSwitchAccount: () => {},
+    resolving: s.resolving,
   };
 
   return { session, cart, lines: lines.map((l) => l.line), shop, chain, relay, wallet, services, host };

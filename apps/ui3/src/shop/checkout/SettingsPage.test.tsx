@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import { marketplaceOn } from "../market/testing-flags";
 import { BOOK } from "../payment/fixtures";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
 import SettingsPage from "./SettingsPage";
@@ -23,6 +24,8 @@ const rowOf = (name: RegExp, chain: string) =>
   screen.getAllByTestId("authorization").find((r) => name.test(r.textContent ?? "") && (r.textContent ?? "").includes(`on ${chain}`))!;
 
 describe("the settings page (authorizations)", () => {
+  beforeEach(() => marketplaceOn());
+
   it("signed out: draws the Marketplace's Get Started sign-in page", () => {
     renderSettings({ session: "signedOut" });
     expect(screen.getByTestId("settings-signed-out")).toBeTruthy();
@@ -85,5 +88,55 @@ describe("the settings page (authorizations)", () => {
     expect(screen.getByText("Handled for you")).toBeTruthy();
     await waitFor(() => expect(screen.getAllByRole("switch").length).toBeGreaterThan(0));
     expect(screen.getAllByRole("switch").every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+  });
+});
+
+describe("the settings page without the Marketplace", () => {
+  it("is open, and lists only the Shop's own approvals: no marketplaces, bids, rentals or selling", async () => {
+    let scanned = 0;
+    renderSettings({
+      handlers: {
+        nfts: () => {
+          scanned += 1;
+          return { data: [{ nft: { contractAddress: BOOK.collection, chainId: 137 } }] };
+        },
+      },
+    });
+    await waitFor(() => expect(rowOf(/CollectionStore/, "Polygon").textContent).toContain("Not authorized"));
+    expect(screen.getByRole("group", { name: "For buying" })).toBeTruthy();
+    for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
+    expect(screen.getAllByTestId("authorization").some((r) => /Marketplace/.test(r.textContent ?? ""))).toBe(false);
+    // The held collections are still read, so a selling approval granted before can be revoked.
+    await waitFor(() => expect(scanned).toBeGreaterThan(0));
+  });
+
+  it("still lists a Marketplace approval the account granted earlier, so it can be revoked, and only that one", async () => {
+    const demo = createDemo({ session: "web3" });
+    demo.chain.allowances.set(`137:${BOOK.buyer}:0xe38ef22abe871513555cba89adfe45ab4f548ada`, 10n ** 30n);
+    render(
+      <DemoShell demo={demo} path="/shop/settings">
+        <SettingsPage />
+      </DemoShell>,
+    );
+    const group = await screen.findByRole("group", { name: "Granted to the Marketplace" });
+    const rows = within(group).getAllByTestId("authorization");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toMatch(/OffChainMarketplaceV3/);
+    expect(rows[0]!.textContent).toContain("Polygon");
+    expect(rows[0]!.textContent).toContain("Authorized");
+    for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
+  });
+
+  it("lists a selling approval of a held collection granted earlier, so it can be revoked", async () => {
+    const demo = createDemo({ session: "web3", handlers: { nfts: () => ({ data: [{ nft: { contractAddress: BOOK.collection, chainId: 137 } }] }) } });
+    demo.chain.approvals.set(`137:${BOOK.collection.toLowerCase()}:${BOOK.buyer}:0xe38ef22abe871513555cba89adfe45ab4f548ada`, true);
+    render(
+      <DemoShell demo={demo} path="/shop/settings">
+        <SettingsPage />
+      </DemoShell>,
+    );
+    const group = await screen.findByRole("group", { name: "Granted to the Marketplace" });
+    await waitFor(() => expect(within(group).getAllByTestId("authorization").some((r) => (r.textContent ?? "").includes("Authorized"))).toBe(true));
+    expect(screen.queryByRole("group", { name: "For selling" })).toBeNull();
   });
 });

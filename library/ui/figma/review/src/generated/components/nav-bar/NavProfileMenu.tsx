@@ -1060,7 +1060,7 @@ export const NavProfileMenu = ({
   <FigmaView
     as='div'
     views={navProfileMenuViews}
-    defaultKey='viewport:desktop|manaOwner'
+    component='NavProfileMenu'
     select={{
       values: { viewport },
       booleans: { manaOwner },
@@ -1068,7 +1068,7 @@ export const NavProfileMenu = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

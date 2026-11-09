@@ -8,8 +8,7 @@ export const theme = {
       primaryDark2: 'var(--dcl-primary-primary-dark-2)',
       primaryLight1: 'var(--dcl-primary-primary-light-1)',
       primaryLight2: 'var(--dcl-primary-primary-light-2)',
-      primary20: 'var(--dcl-primary-primary-20)',
-      primaryBlueTest: 'var(--dcl-primary-primary-blue-test)'
+      primary20: 'var(--dcl-primary-primary-20)'
     },
     neutrals: {
       white: 'var(--dcl-neutrals-white)',

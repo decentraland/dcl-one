@@ -6,7 +6,7 @@
 
 The Decentraland's Estate is an ERC721 compliant NFT and runs in Ethereum Mainnet. Therefore a lot of third party marketplaces can trade them. In order to do so, this marketplace must follow certain rules in order to make keep trades secure for the users.
 
-As you may know, each [Estate](/docs/decentraland/faq/#what-is-an-estate) is a group of [LANDs](/docs/decentraland/faq/#what-is-land) and it have a _bytes_ hash associated to the group that it call _`fingerprint`_. Everytime the Estate changes by adding or removing a LAND, its _`fingerprint`_ changes too.
+As you may know, each [Estate](/docs/player/faqs/decentraland-101/) is a group of [LANDs](/docs/player/faqs/decentraland-101/) and it have a _bytes_ hash associated to the group that it call _`fingerprint`_. Everytime the Estate changes by adding or removing a LAND, its _`fingerprint`_ changes too.
 
 For marketplaces, especially the ones without an escrow system, it is 100% recommended to have a record of the Estate's _`fingerprint`_ when someone list it for sale or makes an offer. That way, when the order/offer is successfully executed, the current owner can't change the estate by trying to front-run the order execution.
 

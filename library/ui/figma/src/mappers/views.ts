@@ -333,7 +333,8 @@ const sharesParentWithAbsolute = (parent: Parent) =>
 // computes. Overlapping children paint in their captured layer order, later ones on top.
 function overlapDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const layout = parent?.node.layout
-  if (!layout || layout.gap >= 0 || layout.wrap || node.absolute) return []
+  if (!layout || layout.gap >= 0 || layout.wrap || layout.main === 'SPACE_BETWEEN' || node.absolute)
+    return []
   const flow = (parent.node.children ?? []).filter(
     (child) => !child.absolute && !child.hidden && !child.isMask
   )
@@ -398,7 +399,12 @@ function containerDecls(node: RawNode, env: ViewEnv): [string, string][] {
   ]
   if (node.clipsContent) decls.push(['overflow', 'hidden'])
   if (layout.wrap) decls.push(['flex-wrap', 'wrap'])
-  if (layout.gap > 0) decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
+  // Figma ignores item spacing under space-between ("Auto" spacing) and keeps the last fixed value, which a
+  // CSS gap would turn into a minimum that pushes the trailing children out of a narrower frame. Wrapped
+  // frames keep it: their track spacing needs counterAxisSpacing, which the capture does not record yet.
+  const autoSpacing = layout.main === 'SPACE_BETWEEN' && !layout.wrap
+  if (layout.gap > 0 && !autoSpacing)
+    decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
   // A negative gap overlaps the children through their margins (overlapDecls); wrapped rows stay unsupported.
   else if (layout.gap < 0 && layout.wrap) env.report.notes.add('negative-gap-ignored')
   const inset = strokeLayoutInset(node, env)
@@ -495,8 +501,10 @@ type BuildState = { text: number; icon: number }
 
 function positionDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const decls = offsetDecls(node, parent, env)
-  if (parent?.node.layout && parent.node.layout.gap < 0 && !parent.node.layout.wrap) {
-    const layers = (parent.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
+  // Overlap paint order follows overlapDecls: no overlap under space-between, so no forced layer order either.
+  const layout = parent?.node.layout
+  if (layout && layout.gap < 0 && !layout.wrap && layout.main !== 'SPACE_BETWEEN') {
+    const layers = (parent?.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
     const index = layers.indexOf(node)
     if (index >= 0) decls.push(['z-index', String(index + 1)])
   }
@@ -743,6 +751,8 @@ function instanceNode(
 
 const LINE_TOLERANCE = 0.1
 
+const BOX_ALIGNMENTS = new Set(['CENTER', 'RIGHT', 'JUSTIFIED'])
+
 // How many lines a text node holds, read from its geometry: a hugging height is a whole number of its captured
 // line height. Whole-line geometry remains meaningful in a fixed-height box too. A height between whole
 // lines remains ambiguous.
@@ -756,7 +766,20 @@ function capturedLines(node: RawNode, lineHeight: number): number | 'ambiguous' 
   return 'ambiguous'
 }
 
+// The only place that reads the raw node id: a rename in the capture format changes this line alone.
 function buildNode(
+  node: RawNode,
+  path: number[],
+  parent: Parent,
+  env: ViewEnv,
+  state: BuildState
+): ViewNode | undefined {
+  const built = buildViewNode(node, path, parent, env, state)
+  if (built && node.id) built.figmaId = node.id
+  return built
+}
+
+function buildViewNode(
   node: RawNode,
   path: number[],
   parent: Parent,
@@ -795,6 +818,10 @@ function buildNode(
         : typeof geometryLines === 'number'
           ? widthBound && geometryLines >= 2
           : styleWraps
+    // A single line drops its captured width unless the box matters: wrapped text breaks at it, a FIXED box
+    // occupies it, and centered, right or justified text aligns within it. FILL stays with sizingDecls' flex.
+    const keepsBoxWidth =
+      wraps || node.sizing?.[0] === 'FIXED' || BOX_ALIGNMENTS.has(node.textAlignHorizontal ?? '')
     // Figma text nodes sometimes carry a line height that differs from the matched text style's, which
     // changes the height of hugging containers by a pixel or two; the measured node height is the truth.
     if (!node.lineHeight && node.text && !/[\n\u2028\u2029]/.test(node.text)) {
@@ -816,7 +843,7 @@ function buildNode(
             : ([['white-space', 'nowrap']] as [string, string][])),
         ...decls,
         ...sizingDecls({ ...node, sizing: node.sizing ?? ['HUG', 'HUG'] }, parent, false).filter(
-          ([property]) => property !== 'height' && (wraps || property !== 'width')
+          ([property]) => property !== 'height' && (keepsBoxWidth || property !== 'width')
         ),
         ...positionDecls(node, parent, env),
         ...(node.opacity !== undefined

@@ -26,11 +26,13 @@ jobs:
     outputs:
       ui_changed: ${{ steps.scope.outputs.ui_changed }}
     steps:
+      # The scripts run from the merge commit, so a pull request branched before they existed still gets them.
+      # The scanned range stays on the pull request head, an ancestor of that commit in the full history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          # Only library/ui's LFS content is read; the rest of the monorepo's LFS is not fetched.
+          # LFS content is fetched by oid below, only for the blobs the range adds or changes.
           lfs: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -56,16 +58,37 @@ jobs:
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
           echo "range=$range" >> "$GITHUB_OUTPUT"
-          # Prefetch once with checkout's credentials. Historical UI pointers must already be local when scanned.
-          if [ "$changed" = true ]; then
-            revisions=$(git rev-list "$range")
-            mapfile -t commits <<< "$revisions"
-            git lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"
-          fi
+      # Every LFS object a blob of the range points to, in any path and in commits a later one deletes, is
+      # downloaded by oid from this repository's fixed LFS endpoint, so the scan reads each payload locally.
+      - name: Prefetch the LFS objects the range points to
+        env:
+          RANGE: ${{ steps.scope.outputs.range }}
+          REPOSITORY: ${{ github.repository }}
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          authorization="Basic $(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$authorization"
+          node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
+          LFS_AUTHORIZATION="$authorization" node library/ui/figma/lfs-prefetch.mjs \
+            --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
       - name: Scan every outgoing commit for Figma urls
         env:
           RANGE: ${{ steps.scope.outputs.range }}
         run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"
+      # A change to upstream.lock.json is a port from figma-design-system, where the Figma capture lives. The
+      # checks against that capture run there and locally (pnpm figma fetch-source); this step requires the record
+      # of their results for this exact lock, FDS commit and library tree, and passes untouched for any other change.
+      - name: Require the port verification record when the lock changes
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          base="$BEFORE"
+          [ "$EVENT" != pull_request ] || base="$PR_BASE"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
+          node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
 
   library:
     needs: key-guard
@@ -78,41 +101,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          # The pull request's base parent is checked out for the retirement guard below.
-          fetch-depth: 2
           lfs: false
       - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # Every tracked file under figma/ matches the digest upstream.lock.json pins for it.
+      - run: node figma/lock-digests.mjs
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      # Fails when committed generated output no longer matches the committed snapshot.
-      - run: pnpm figma diff
-      # Retirements, removals and listings must agree with the base: nothing disappears without a committed
-      # retirement or orphan-ledger record. Keyless and secret-free: it reads only the two checkouts.
-      - name: Check retirements and removals against the base
-        if: github.event_name == 'pull_request'
-        run: |
-          git worktree add --detach "$RUNNER_TEMP/figma-base" HEAD^1
-          # Scope, not tolerance: with no library in the base there is nothing to guard against yet.
-          if [ ! -d "$RUNNER_TEMP/figma-base/library/ui/figma" ]; then
-            echo "first introduction of library/ui; no base ledger to compare"
-            exit 0
-          fi
-          git -C "$RUNNER_TEMP/figma-base" lfs pull --include "library/ui/**"
-          pnpm figma guard --base "$RUNNER_TEMP/figma-base/library/ui" --run-kind developer
-      # Fails on any mapping error or Figma drift between *.figma.ts and the saved capture.
-      - run: pnpm figma check-mappings
-      - run: pnpm figma promotion-verify
-      - run: pnpm figma review-manifest
-      - run: git diff --exit-code -- figma/review/src/review/catalog.json figma/review/public/dcl-ui-review/icons
       - run: pnpm review:build
-      - run: pnpm review:check
+      # The built gallery works where it is served: catalog and variant navigation and a non-empty render.
+      - run: node figma/review/scripts/check-build.mjs figma/review/review-dist
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

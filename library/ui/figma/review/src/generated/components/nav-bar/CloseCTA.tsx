@@ -37,7 +37,7 @@ export const CloseCTA = ({
   <FigmaView
     as='button'
     views={closeCTAViews}
-    defaultKey='default'
+    component='CloseCTA'
     select={{
       values: {  },
       booleans: {  },
@@ -45,7 +45,7 @@ export const CloseCTA = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

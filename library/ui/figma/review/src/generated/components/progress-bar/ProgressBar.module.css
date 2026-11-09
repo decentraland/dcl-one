@@ -1,10 +1,12 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 210px;
 padding: var(--dcl-space-0) 266px var(--dcl-space-0) var(--dcl-space-0);
 position: relative;
 width: 400px;
@@ -36,6 +38,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 22px;
 text-transform: capitalize;
+width: 24px;
 flex-shrink: 0;
 position: absolute;
 left: 410px;
@@ -49,7 +52,6 @@ box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 210px;
 padding: var(--dcl-space-0) 133px var(--dcl-space-0) var(--dcl-space-0);
 position: relative;
 width: 400px;
@@ -81,6 +83,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 22px;
 text-transform: capitalize;
+width: 26px;
 flex-shrink: 0;
 position: absolute;
 left: 410px;
@@ -94,7 +97,6 @@ box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 210px;
 padding: var(--dcl-space-0) 266px var(--dcl-space-0) var(--dcl-space-0);
 position: relative;
 width: 400px;
@@ -115,6 +117,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 22px;
 text-transform: capitalize;
+width: 26px;
 flex-shrink: 0;
 position: absolute;
 left: 410px;
@@ -142,6 +145,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: right;
 line-height: 22px;
+width: 75px;
 flex: none;
 position: absolute;
 left: 15px;
@@ -158,4 +162,5 @@ position: absolute;
 left: 0px;
 top: 1.36px;
 background: url("data:image/svg+xml,%3Csvg width='9' height='6' viewBox='0 0 9 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Cpath d='M1.66173e-07 3.80159L2.06101 6L8.48214 0' stroke-width='2.76599' stroke-linecap='round' stroke-linejoin='round' stroke='%2328AC00'/%3E %3C/svg%3E") center / contain no-repeat;
+}
 }

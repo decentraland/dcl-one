@@ -4,7 +4,7 @@
 
 Select an item by clicking on it on the canvas or on the entity tree. You'll then see its components displayed on the properties panel, on the right of the screen. Different items have different components that each display specific settings.
 
-![](/docs/creator/images/editor/components-in-editor.webp)
+![](/docs/creator/images/editor/components-in-editor.webp)
 
 Most non-interactive items have the following components:
 
@@ -25,7 +25,7 @@ You can delete any Component from an Entity by clicking the three dots icon on i
 
 To create a fresh new Entity, right click on the root **Scene** Entity in the Entity tree, or on any other Entity, and select **Add Child**
 
-![](/docs/creator/images/editor/new-entity.webp)
+![](/docs/creator/images/editor/new-entity.webp)
 
 This creates an empty Entity with just a **Transform** Component. The new entity is a child of the parent entity you clicked on. You can then add any other Components you want to it to shape it into anything you desire.
 
@@ -56,7 +56,7 @@ The following Components can be added to any Entity via the Scene Editor UI:
 - **Multiplayer**: Shares any changes that happen to the Entity so that all players in the scene see it too. It can be configured to only share changes on certain components. See [Serverless Multiplayer](/docs/creator/sdk7/networking/serverless-multiplayer/#mark-an-entity-as-synced) for more details.
 - **Animator**: Controls the playback of animations on an Entity with a **GLTF** 3D model. See [3D model animations](/docs/creator/sdk7/3d-essentials/3d-model-animations/).
 - **Tween**: Makes the Entity gradually move, rotate, or scale over a period of time. See [Move entities](/docs/creator/sdk7/3d-essentials/move-entities/).
-- **Billboard**: Makes the Entity always rotate to face the player. See [Face the user](/docs/creator/sdk7/3d-essentials/entity-positioning/#face-the-user).
+- **Billboard**: Makes the Entity always rotate to face the player. See [Face the user](/docs/creator/sdk7/3d-essentials/entity-positioning/#face-the-player).
 - **Avatar Attach**: Attaches the Entity to the player's avatar, so it follows them around. See [Attach an entity to an avatar](/docs/creator/sdk7/3d-essentials/entity-positioning/#attach-an-entity-to-an-avatar).
 - **Video Player**: Plays a video inside the scene, that can be displayed on the Entity via its **Material**. See [Video playing](/docs/creator/sdk7/media/video-playing/).
 - **NFT Shape**: Displays the image of an NFT inside a frame. See [Display an NFT](/docs/creator/scene-editor/build/nfts/).
@@ -69,9 +69,9 @@ The following Components can be added to any Entity via the Scene Editor UI:
 
 > [!WARNING]
 > **📔 Note**: Other components exist on the SDK that are currently only usable via code. You can also create your own [Custom components](/docs/creator/sdk7/architecture/custom-components/) via code, these won't have a UI representation, but can be added and edited via code.
-> 
+>
 > See [Combine with code](/docs/creator/scene-editor/code/overview/) for how to edit the code of your scene.
-> 
+>
 > Also note that an Entity can only hold **one** of each Component. It's not possible to assign a second instance of a Component that already exists in the entity. For example, you can't add two **Actions** components to a same Entity.
 
 

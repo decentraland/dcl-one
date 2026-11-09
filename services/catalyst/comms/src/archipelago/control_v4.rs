@@ -718,7 +718,7 @@ mod tests {
                 epoch: authority.next_connection_epoch().await.unwrap(),
             };
             authority
-                .claim_lanes(&owner, &[lane.clone()])
+                .claim_lanes(&owner, std::slice::from_ref(&lane))
                 .await
                 .unwrap();
             let store = SafetyStore::new(pool.clone());

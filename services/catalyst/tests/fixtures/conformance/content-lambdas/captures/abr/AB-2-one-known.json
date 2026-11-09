@@ -1,0 +1,63 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/profiles",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0x0000000000000000000000000000000000000b00"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "timestamp": "<number>",
+        "avatars": [
+          {
+            "<keys>": [
+              "hasClaimedName",
+              "description",
+              "tutorialStep",
+              "name",
+              "userId",
+              "email",
+              "ethAddress",
+              "version",
+              "unclaimedName",
+              "hasConnectedWeb3",
+              "avatar",
+              "country",
+              "gender",
+              "pronouns",
+              "relationshipStatus",
+              "sexualOrientation",
+              "language",
+              "employmentStatus",
+              "profession",
+              "realName",
+              "hobbies",
+              "birthDate",
+              "links",
+              "blocked",
+              "interests"
+            ],
+            "avatar.snapshots": {
+              "face256": "https://profile-images.decentraland.org/entities/<profile-entity-1>/face.png",
+              "body": "https://profile-images.decentraland.org/entities/<profile-entity-1>/body.png"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "note": "Body reduced to the key order of the element and of avatars[0], and the snapshots object. timestamp was a JSON number. Profile names, the profile entity ids inside thumbnailUrl and the addresses are replaced by placeholders."
+}

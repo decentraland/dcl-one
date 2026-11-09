@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { action } from "./internal.page-not-found";
 
@@ -24,5 +24,26 @@ describe("internal.page-not-found action", () => {
       post(JSON.stringify({ path: "/missing-page?q=1", referrer: "https://example.org/" })),
     );
     expect(accepted.status).toBe(202);
+  });
+
+  it("drops credential parameters from the path and the referrer before Segment", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.SEGMENT_WRITE_KEY = "key-1";
+    try {
+      const res = await call(
+        post(JSON.stringify({ path: "/landings/cast-stream?token=k&q=1", referrer: "https://ref.example/?code=c" })),
+      );
+      expect(res.status).toBe(202);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      const sent = JSON.parse(init.body as string).properties;
+      expect(sent.path).toBe("/landings/cast-stream?q=1");
+      expect(sent.referrer).toBe("https://ref.example/");
+      expect(sent.spa).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.SEGMENT_WRITE_KEY;
+    }
   });
 });

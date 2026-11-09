@@ -24,17 +24,14 @@ const CONFIG = 'figma/figma.config.json'
 const GUARDED_DIRECTORIES = [
   GENERATED,
   'figma/review/src/components',
-  `${PUBLIC}/icons`,
-  `${PUBLIC}/references`,
-  `${PUBLIC}/renders`,
+  // Nothing here is generated or published any more: any file under it is unowned and rejected.
+  PUBLIC,
   SNAPSHOT
 ] as const
 const GUARDED_FILES = [
   LIBRARY_PROMOTION,
   `${REVIEW}/catalog.json`,
-  `${REVIEW}/references.json`,
   `${REVIEW}/promotion.json`,
-  `${PUBLIC}/fidelity.json`,
   CONFIG
 ] as const
 
@@ -44,9 +41,7 @@ const AGGREGATES: Record<string, string> = {
   [`${GENERATED}/components/index.ts`]: 'components-index',
   [`${GENERATED}/components/manifest.ts`]: 'components-manifest',
   [`${REVIEW}/catalog.json`]: 'catalog',
-  [`${REVIEW}/references.json`]: 'references',
   [`${REVIEW}/promotion.json`]: 'promotion-manifest',
-  [`${PUBLIC}/fidelity.json`]: 'fidelity',
   [`${SNAPSHOT}/sync-state.json`]: 'sync-state',
   [`${SNAPSHOT}/live-source.json`]: 'live-source',
   [`${SNAPSHOT}/pages.json`]: 'pages',
@@ -54,6 +49,8 @@ const AGGREGATES: Record<string, string> = {
   [`${SNAPSHOT}/retirements.json`]: 'retirements',
   // Validated as a whole by checkLedger; owning it keeps every managed snapshot file accounted for.
   [LEDGER]: 'orphan-ledger',
+  // Written by `pnpm figma fetch-source` next to the cache it builds: the revision and digest table it came from.
+  [`${SNAPSHOT}/.fds-source.json`]: 'fds-source',
   [CONFIG]: 'config'
 }
 
@@ -66,7 +63,6 @@ const FOUNDATION_FILES = new Set([
   `${SNAPSHOT}/icons-rows.txt`
 ])
 const FOUNDATION_PREFIXES = [
-  `${PUBLIC}/icons/`,
   `${SNAPSHOT}/icons/`,
   `${GENERATED}/tokens/`,
   `${GENERATED}/icons/`,
@@ -264,30 +260,6 @@ async function buildOwnership(root: string): Promise<Ownership> {
       for (const symbol of statement.symbols)
         ownership.artifactIdentity.set(`${LIBRARY_INDEX}#${symbol.key}`, JSON.stringify(owner))
   }
-  const references = (await readJson(path.join(root, REVIEW, 'references.json'))) as
-    Record<string, { file?: string }> | undefined
-  const recordImage = (image: unknown, owner: ComponentOwner) => {
-    if (
-      typeof image !== 'string' ||
-      !/^\/dcl-ui-review\/(?:renders|references)\/[^/]+\.png$/.test(image)
-    )
-      return
-    claim(ownership, 'artifactIdentity', `figma/review/public${image}`, JSON.stringify(owner))
-  }
-  for (const [key, reference] of Object.entries(references ?? {})) {
-    const owner = componentOwner(ownership, key.replace(/-\d+$/, ''))
-    if (owner) recordImage(reference.file, owner)
-  }
-  const fidelity = (await readJson(path.join(root, PUBLIC, 'fidelity.json'))) as
-    { cases?: Record<string, { sourceId?: string; image?: string }> } | undefined
-  for (const entry of Object.values(fidelity?.cases ?? {})) {
-    if (!entry.sourceId) continue
-    const owner = componentOwnerById(
-      ownership,
-      ownership.variantRoot.get(entry.sourceId) ?? entry.sourceId
-    )
-    if (owner) recordImage(entry.image, owner)
-  }
   const promoted = (await readJson(path.join(root, LIBRARY_PROMOTION))) as
     { files?: Record<string, string> } | undefined
   const runtimePrefix = 'figma/review/src/components/'
@@ -380,8 +352,6 @@ function ownerOf(ownership: Ownership, file: string): Owner | null {
       const id = ownership.fileComponentId.get(key.replace(/^export:/, ''))
       return id ? componentOwnerById(ownership, id) : null
     }
-    if (kind === 'references' || kind === 'fidelity')
-      return componentOwner(ownership, key.replace(/-\d+$/, ''))
   }
   if (file.startsWith('figma/review/src/components/')) return { aggregate: 'runtime' }
   const aggregate = AGGREGATES[file]
@@ -406,14 +376,6 @@ function ownerOf(ownership: Ownership, file: string): Owner | null {
   const id = componentIdOfFile(ownership, file)
   if (id) return componentOwnerById(ownership, id)
 
-  const live = /^figma\/review\/public\/dcl-ui-review\/references\/live-(\d+)-(\d+)\.png$/.exec(
-    file
-  )
-  if (live) {
-    const variant = `${live[1]}:${live[2]}`
-    const componentId = ownership.variantRoot.get(variant)
-    return componentOwnerById(ownership, componentId ?? variant)
-  }
   return null
 }
 

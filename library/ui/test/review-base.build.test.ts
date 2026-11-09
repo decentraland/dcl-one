@@ -1,17 +1,16 @@
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { resolvePageUrl, resolveReviewUrl } from '../figma/review/src/review/review-url'
+import { resolvePageUrl } from '../figma/review/src/review/review-url'
 
 // The Review is built once for the root, once with a relative base and once under a CDN prefix. Each build is
 // served the way its base expects, and every URL the app would compute is requested.
 const root = path.resolve(import.meta.dirname, '..')
 const review = path.join(root, 'figma/review')
-const publicSource = path.join(review, 'public/dcl-ui-review')
 
 // The folder the Review is served from, named apart so no path-shaped literal of it is spelled out here.
 const FOLDER = 'dcl-ui-review'
@@ -32,9 +31,6 @@ const types: Record<string, string> = {
 }
 
 let scratch: string
-let publicDir: string
-let reference: string
-let render: string
 const builds = new Map<string, string>()
 
 async function buildReview(base: string, outDir: string) {
@@ -42,7 +38,6 @@ async function buildReview(base: string, outDir: string) {
     configFile: path.join(review, 'review.vite.config.ts'),
     base,
     logLevel: 'silent',
-    publicDir,
     build: { outDir, emptyOutDir: true }
   })
 }
@@ -79,21 +74,6 @@ async function files(directory: string): Promise<string[]> {
 
 beforeAll(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), 'review-base-'))
-  // A small public directory with one reference, one render and the fidelity report, in the logical layout.
-  publicDir = path.join(scratch, 'public')
-  const references = JSON.parse(
-    await readFile(path.join(review, 'src/review/references.json'), 'utf8')
-  ) as Record<string, { file: string }>
-  const fidelity = JSON.parse(await readFile(path.join(publicSource, 'fidelity.json'), 'utf8')) as {
-    cases: Record<string, { image?: string }>
-  }
-  reference = Object.values(references)[0]!.file
-  render = Object.values(fidelity.cases).find((item) => item.image)!.image!
-  for (const logical of [reference, render, '/dcl-ui-review/fidelity.json']) {
-    const target = path.join(publicDir, logical)
-    await mkdir(path.dirname(target), { recursive: true })
-    await copyFile(path.join(review, 'public', logical), target)
-  }
   for (const item of cases) {
     const outDir = path.join(scratch, `out-${cases.indexOf(item)}`)
     await buildReview(item.base, outDir)
@@ -106,7 +86,7 @@ afterAll(async () => {
 })
 
 describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
-  it('should hard-code no logical path in the built scripts or pages beyond the logical data', async () => {
+  it('should hard-code no logical path in the built scripts or pages', async () => {
     const outDir = builds.get(name)!
     // At the root base the pages legitimately name /dcl-ui-review/ themselves; under any other base they must not.
     const built = (await files(outDir)).filter((file) =>
@@ -116,15 +96,13 @@ describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
     expect(built.length).toBeGreaterThan(0)
     for (const file of built) {
       const text = await readFile(file, 'utf8')
-      // The data files keep logical paths, and the helper holds the logical root; nothing else may.
-      const rest = text
-        .replace(/\/dcl-ui-review\/(?:icons|references|renders)\//g, '')
-        .replace(/["'`]\/dcl-ui-review\/["'`]/g, '')
+      // Only the helper holds the logical root.
+      const rest = text.replace(/["'`]\/dcl-ui-review\/["'`]/g, '')
       expect(rest, path.relative(outDir, file)).not.toMatch(/["'`(=]\/dcl-ui-review\//)
     }
   })
 
-  it('should serve the index, the entry, fidelity.json, a reference and a render where the base puts them', async () => {
+  it('should serve the index, the entry script and the stylesheet where the base puts them', async () => {
     const outDir = builds.get(name)!
     const { server, origin } = await serve(outDir, mount)
     try {
@@ -136,24 +114,10 @@ describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
         /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"/.exec(html)![1]!,
         page
       )
-      const moduleUrl = entry.href
-      const appBase = base === '/' ? '/' : base === './' ? './' : base
-      const requested = [
-        entry.href,
-        stylesheet.href,
-        // The URLs the app computes at runtime, from the entry script's own URL for a relative base.
-        resolveReviewUrl('/dcl-ui-review/fidelity.json', appBase, moduleUrl),
-        resolveReviewUrl(reference, appBase, moduleUrl),
-        resolveReviewUrl(render, appBase, moduleUrl)
-      ].map((address) => new URL(address, entry).href)
-
-      for (const address of requested) expect((await fetch(address)).status, address).toBe(200)
+      for (const address of [entry.href, stylesheet.href])
+        expect((await fetch(address)).status, address).toBe(200)
       expect(entry.pathname.startsWith(mount)).toBe(true)
-      if (base !== '/')
-        expect(await fetch(new URL('/dcl-ui-review/fidelity.json', origin))).toHaveProperty(
-          'status',
-          404
-        )
+      expect(stylesheet.pathname.startsWith(mount)).toBe(true)
     } finally {
       server.close()
     }
@@ -222,18 +186,17 @@ describe('a Review build for the root', () => {
 })
 
 describe('a Review build, whatever its base', () => {
-  it('should write the sealed inputs unchanged: the logical data files are not rewritten', async () => {
-    const built = builds.get('the CDN prefix')!
-    const logical = await readFile(path.join(publicDir, '/dcl-ui-review/fidelity.json'), 'utf8')
-
-    expect(await readFile(path.join(built, FOLDER, 'fidelity.json'), 'utf8')).toBe(logical)
-    expect(logical).toContain('"/dcl-ui-review/renders/')
-  })
-
-  it('should leave the sources of the sealed Review inputs untouched', async () => {
-    const references = await readFile(path.join(review, 'src/review/references.json'), 'utf8')
-
-    expect(references).toContain('"/dcl-ui-review/references/')
-    await writeFile(path.join(scratch, 'ok'), 'ok')
+  // The gallery is published (CDN previews), so it must carry no Figma imagery: no reference screenshots, no
+  // renders compared against them, no fidelity report and no exported image fill.
+  it('should publish no Figma evidence or image export', async () => {
+    for (const item of cases) {
+      const built = (await files(builds.get(item.name)!)).map((file) =>
+        path.relative(builds.get(item.name)!, file)
+      )
+      expect(built.filter((file) => /\.(png|jpe?g|webp)$/i.test(file))).toEqual([])
+      expect(
+        built.filter((file) => /fidelity\.json$|\/(references|renders|icons)\//.test(file))
+      ).toEqual([])
+    }
   })
 })

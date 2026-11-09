@@ -62,6 +62,8 @@ const textRunSchema = z.object({
 
 type RawNode = {
   type: string
+  // The Figma node id, when the capture records it (other variants carry it through patch set and replace).
+  id?: string
   name?: string
   w: number
   h: number
@@ -122,6 +124,7 @@ type RawNode = {
 const rawNodeSchema: z.ZodType<RawNode> = z.lazy(() =>
   z.object({
     type: z.string(),
+    id: z.string().optional(),
     name: z.string().optional(),
     w: z.number(),
     h: z.number(),

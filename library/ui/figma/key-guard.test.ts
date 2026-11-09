@@ -6,7 +6,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
-import { enumerateArtifact, main, redact, runGuard, scanBuffer } from './key-guard.mjs'
+import {
+  enumerateArtifact,
+  listLfsObjects,
+  main,
+  redact,
+  runGuard,
+  scanBuffer
+} from './key-guard.mjs'
 
 const FAKE_KEY = 'FAKEKEY000example000000'
 // Built by concatenation so the tree never holds a literal Figma file URL (the guard's own `url`).
@@ -560,13 +567,27 @@ describe('when selecting a main push range', () => {
       )
     ) as { jobs: Record<string, { steps: { run?: string; id?: string }[] }> }
 
-  async function boundary(head: string, name: string) {
+  type Job = { run_id: number; head_sha: string; conclusion: string; name: string }
+
+  // The jobs endpoint returns JSON and the workflow filters it with --jq: the mock applies that exact filter with jq,
+  // so the trust conditions (run id, head, conclusion, name prefix) run in the test.
+  async function boundary(head: string, name: string, decoys: Job[] = []) {
     const output = path.join(root, 'workflow-output')
     await writeFile(output, '')
+    const genuine = name
+      ? name
+          .split('\n')
+          .map((line) => ({ run_id: 123, head_sha: head, conclusion: 'success', name: line }))
+      : []
     const mock = `gh() {
+      local filter='' previous=''
+      for argument in "$@"; do
+        [ "$previous" = --jq ] && filter="$argument"
+        previous="$argument"
+      done
       case "$*" in
         *actions/workflows/ui-library.yml*) echo 42 ;;
-        */jobs*) printf '%s\\n' "$BOUNDARY_NAME" ;;
+        */jobs*) printf '%s' "$JOBS_JSON" | jq -r "$filter" ;;
         */artifacts*) echo 1 ;;
         *) return 1 ;;
       esac
@@ -589,7 +610,7 @@ describe('when selecting a main push range', () => {
           HEAD_SHA: head,
           HEAD_BRANCH: 'main',
           DEFAULT_BRANCH: 'main',
-          BOUNDARY_NAME: name,
+          JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
           GITHUB_OUTPUT: output
         }
       }
@@ -637,6 +658,58 @@ describe('when selecting a main push range', () => {
       expect(result.output).not.toContain('scan=true')
     }
   )
+
+  describe('when the jobs list holds boundary-named jobs the trust filter must reject', () => {
+    const decoysFor = (head: string, other: string): Job[] => [
+      {
+        run_id: 999,
+        head_sha: head,
+        conclusion: 'success',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: other,
+        conclusion: 'success',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: head,
+        conclusion: 'failure',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: head,
+        conclusion: 'success',
+        name: `Decoy UI key push boundary ${other}..${head}`
+      }
+    ]
+
+    it('should fail closed when only another run, another head, a failed job or an unprefixed name carries one', async () => {
+      const head = git('rev-parse', 'HEAD')
+      const result = await boundary(head, '', decoysFor(head, 'a'.repeat(40)))
+
+      expect(result.status).not.toBe(0)
+      expect(result.output).not.toContain('scan=true')
+    })
+
+    it('should take the base from the one trusted job and ignore the decoys', async () => {
+      const before = git('rev-parse', 'HEAD')
+      await put('library/ui/clean.txt', 'clean tip\n')
+      commit('advance the pushed branch')
+      const head = git('rev-parse', 'HEAD')
+      const result = await boundary(
+        head,
+        `UI key push boundary ${before}..${head}`,
+        decoysFor(head, 'a'.repeat(40))
+      )
+
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.base).toBe(before)
+    })
+  })
 
   it('should include the root commit when the first push has no previous head', async () => {
     await put('README.md', FAKE_KEY)
@@ -751,7 +824,7 @@ describe('when build output holds an LFS pointer', () => {
   })
 })
 
-describe('when an artifact or non-UI range contains a pointer', () => {
+describe('when an artifact or a range contains a pointer whose object is not local', () => {
   it('should fail without invoking the LFS client or downloading content', async () => {
     const actualGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
     const bin = path.join(root, 'bin')
@@ -800,5 +873,122 @@ describe('when a historical UI pointer has been prefetched', () => {
       check: 'key',
       location: `${git('rev-parse', '--short=12', 'HEAD')}:library/ui/input.json`
     })
+  })
+})
+
+// A pointer whose payload is stored in the local LFS store, as lfs-prefetch.mjs leaves it.
+const POINTER_PREFIX = 'version https://git-lfs.github.com/spec/v1\noid sha256:'
+async function storeObject(content: string) {
+  const oid = createHash('sha256').update(content).digest('hex')
+  await put(`.git/lfs/objects/${oid.slice(0, 2)}/${oid.slice(2, 4)}/${oid}`, content)
+  return `${POINTER_PREFIX}${oid}\nsize ${Buffer.byteLength(content)}\n`
+}
+const short = (rev: string) => git('rev-parse', '--short=12', rev)
+
+describe('when the range holds an LFS pointer outside library/ui', () => {
+  it('should pass a clean payload read from the local store', async () => {
+    await put('apps/sites/public/clean.bin', await storeObject('clean payload'))
+    commit('clean pointer')
+    expect(guard({ worktree: false, key: FAKE_KEY }).findings).toEqual([])
+  })
+
+  it('should fail a payload that holds the key', async () => {
+    await put('apps/sites/public/leak.bin', await storeObject(`prefix ${FAKE_KEY} suffix`))
+    commit('leaking pointer')
+    expect(guard({ worktree: false, key: FAKE_KEY }).findings).toEqual([
+      { check: 'key', location: `${short('HEAD')}:apps/sites/public/leak.bin` }
+    ])
+  })
+
+  it('should fail a payload that holds a Figma URL', async () => {
+    await put('apps/sites/public/link.bin', await storeObject(FILE_URL))
+    commit('linking pointer')
+    expect(guard({ worktree: false }).findings).toEqual([
+      { check: 'url', location: `${short('HEAD')}:apps/sites/public/link.bin` }
+    ])
+  })
+
+  it('should still scan a leaking payload that a later commit of the range deletes', async () => {
+    await put('apps/sites/public/transient.bin', await storeObject(FAKE_KEY))
+    commit('add leaking pointer')
+    const added = short('HEAD')
+    await rm(path.join(root, 'apps/sites/public/transient.bin'))
+    commit('delete it')
+    expect(guard({ worktree: false, key: FAKE_KEY }).findings).toEqual([
+      { check: 'key', location: `${added}:apps/sites/public/transient.bin` }
+    ])
+  })
+
+  it('should fail a pointer whose object is missing from the local store', async () => {
+    await put('apps/sites/public/absent.bin', `${POINTER_PREFIX}${'a'.repeat(64)}\nsize 4\n`)
+    commit('missing object')
+    expect(guard({ worktree: false, key: FAKE_KEY }).findings).toEqual([
+      { check: 'lfs', location: `${short('HEAD')}:apps/sites/public/absent.bin` }
+    ])
+  })
+
+  it('should fail a stored object whose bytes do not match its pointer', async () => {
+    const pointer = await storeObject('original')
+    const oid = /sha256:([0-9a-f]+)/.exec(pointer)![1]!
+    await put(`.git/lfs/objects/${oid.slice(0, 2)}/${oid.slice(2, 4)}/${oid}`, 'tampered')
+    await put('apps/sites/public/tampered.bin', pointer)
+    commit('tampered object')
+    expect(guard({ worktree: false }).findings).toEqual([
+      { check: 'lfs', location: `${short('HEAD')}:apps/sites/public/tampered.bin` }
+    ])
+  })
+})
+
+describe('when listing the LFS objects a scan will read', () => {
+  it('should list each pointer of the range, deleted ones included, and of the trees, once', async () => {
+    const outside = await storeObject('outside')
+    const ui = await storeObject('ui')
+    await put('apps/sites/public/a.bin', outside)
+    await put('apps/sites/public/b.bin', outside)
+    await put('library/ui/c.bin', ui)
+    await put('apps/sites/plain.txt', 'not a pointer')
+    commit('pointers')
+    await rm(path.join(root, 'apps/sites/public/a.bin'))
+    await rm(path.join(root, 'apps/sites/public/b.bin'))
+    commit('delete the outside ones')
+    const oid = (pointer: string) => /sha256:([0-9a-f]+)/.exec(pointer)![1]!
+    expect(
+      listLfsObjects({ root, range: 'base..HEAD', trees: [{ rev: 'HEAD', prefix: 'library/ui' }] })
+        .map((item) => item.oid)
+        .sort()
+    ).toEqual([oid(outside), oid(ui)].sort())
+  })
+
+  it('should list nothing for a range without pointers', async () => {
+    await put('apps/sites/plain.txt', 'not a pointer')
+    commit('plain')
+    expect(listLfsObjects({ root, range: 'base..HEAD' })).toEqual([])
+  })
+
+  it('should print the objects as JSON lines, with no path, from --lfs-objects', async () => {
+    const pointer = await storeObject('listed')
+    await put(`apps/${FAKE_KEY}/named.bin`, pointer)
+    commit('pointer under a key-named folder')
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, 'key-guard.mjs'),
+        '--root',
+        root,
+        '--range',
+        'base..HEAD',
+        '--no-worktree',
+        '--lfs-objects'
+      ],
+      { encoding: 'utf8', env: { ...process.env, FIGMA_FILE_KEY: FAKE_KEY } }
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).not.toContain(FAKE_KEY)
+    expect(
+      result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+    ).toEqual([{ oid: /sha256:([0-9a-f]+)/.exec(pointer)![1], size: Buffer.byteLength('listed') }])
   })
 })

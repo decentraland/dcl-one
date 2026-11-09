@@ -1,13 +1,14 @@
 import { assertIdentifier } from '../generators/naming.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import type { FigmaConfig } from '../config.js'
-import { TokenIndex } from '../generators/tokens.js'
+import { excludePrimitives, TokenIndex } from '../generators/tokens.js'
 import { splitWords } from './variants.js'
-import type { ComponentSpec, SlotSpec, ViewNode, ViewSpec } from '../ir/components.js'
+import type { ComponentSpec, SlotSpec, TextRole, ViewNode, ViewSpec } from '../ir/components.js'
 import type { RawComponent, RawComponentPage } from '../ir/raw-components.js'
 import type { TextStyle, TokenCollection } from '../ir/schemas.js'
 import { ColorResolver } from './colors.js'
 import { stateMotion, variantLoops } from './motion.js'
+import { applyTextRoles } from './text-roles.js'
 import { mapVariants, viewKey, type MappedVariant, type VariantMapping } from './variants.js'
 import {
   buildView,
@@ -271,6 +272,29 @@ function collisionReason(collision: NameCollision): string {
   return `name-collision:${collision.name}: ${members}`
 }
 
+// Every captured `token` binding in a component, at any depth: fills, strokes, gradient stops, tints.
+function boundTokens(value: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) for (const item of value) boundTokens(item, found)
+  else if (value && typeof value === 'object')
+    for (const [key, item] of Object.entries(value)) {
+      if (key === 'token' && typeof item === 'string') found.add(item)
+      else boundTokens(item, found)
+    }
+  return found
+}
+
+// An excluded primitive has no CSS variable, so a component bound to it fails instead of emitting an
+// undefined var() or silently falling back to a literal colour.
+function assertNoExcludedBindings(pending: Pending[], excluded: readonly string[]) {
+  for (const { raw, page, name } of pending) {
+    const bound = [...boundTokens(raw)].filter((token) => excluded.includes(token))
+    if (bound.length)
+      throw new Error(
+        `Component ${name} (${raw.id}) on page ${page.name} is bound to excluded primitive ${bound.join(', ')}`
+      )
+  }
+}
+
 function buildComponentSpecsWithCollisions(input: SpecInput): {
   specs: ComponentSpec[]
   collisions: NameCollision[]
@@ -290,12 +314,16 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
     }
   }
 
+  const excluded = input.config.excludedPrimitives ?? []
+  assertNoExcludedBindings(pending, excluded)
+  // Value matching only sees the tokens that are emitted, so it never picks an excluded primitive.
+  const collections = excludePrimitives(input.collections, excluded)
   const refsById = refTargets(pending)
   const env: Omit<ViewEnv, 'report'> = {
-    colors: new ColorResolver(input.collections),
+    colors: new ColorResolver(collections),
     textStyles: new Map(input.textStyles.map((style) => [style.name, style])),
     textStyleAliases: input.config.textStyleAliases,
-    numbers: numberTokens(input.collections),
+    numbers: numberTokens(collections),
     icons: input.icons,
     iconAliases: input.config.iconAliases,
     refsById
@@ -304,6 +332,10 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
     const spec = buildSpec(entry, env)
     const exposeTextSlots = input.config.components[entry.raw.name]?.exposeTextSlots
     if (exposeTextSlots !== undefined) spec.exposeTextSlots = exposeTextSlots
+    const textRoles = input.config.components[entry.raw.name]?.textRoles
+    if (textRoles) withTextRoles(spec, textRoles)
+    // Node ids only bind roles: they never reach the spec, its hash, generated code or comparisons.
+    spec.views.forEach((view) => dropFigmaIds(view.root))
     const semantics = input.config.components[entry.raw.name]?.semantics
     if (!semantics) return spec
     const names = new Set<string>()
@@ -323,9 +355,21 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
   return { specs, collisions }
 }
 
+function dropFigmaIds(node: ViewNode): void {
+  delete node.figmaId
+  node.children?.forEach(dropFigmaIds)
+}
+
+// Binds the configured text roles and recollects the slots, since bound nodes now carry the role as their slot.
+function withTextRoles(spec: ComponentSpec, roles: Record<string, TextRole>): ComponentSpec {
+  spec.textRoles = applyTextRoles(spec, roles)
+  spec.slots = collectSlots(spec.views)
+  return spec
+}
+
 function buildComponentSpecs(input: SpecInput): ComponentSpec[] {
   return buildComponentSpecsWithCollisions(input).specs
 }
 
-export { buildComponentSpecs, buildComponentSpecsWithCollisions, collisionReason }
+export { buildComponentSpecs, buildComponentSpecsWithCollisions, collisionReason, withTextRoles }
 export type { ComponentPageInput, NameCollision, SpecInput }

@@ -6,10 +6,9 @@ figma/test/fixtures
 figma/capture
 figma/review/review-dist
 figma/review/src/generated
-figma/review/public/dcl-ui-review
 figma/review/src/review/catalog.json
-figma/review/src/review/references.json
-figma/review/src/review/promotion.json
+# Written by lock-digests --write and fetch-source --seal.
+upstream.lock.json
 
 # Written by promote-reviewed as exact copies of reviewed output; never reformatted by hand.
 components/*

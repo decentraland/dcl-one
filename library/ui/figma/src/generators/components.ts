@@ -8,10 +8,12 @@ import type {
   ViewSpec
 } from '../ir/components.js'
 import { viewLoop, viewMotion, type StateExtras } from './motion.js'
-import { kebabCase, textStyleClass } from './naming.js'
+import { assertIdentifier, kebabCase, textStyleClass } from './naming.js'
+import { inLayer } from './css-layers.js'
 import { header } from './render.js'
+import { replaceRasterFills } from './image-fills.js'
 import { unsafeSvgReason } from './svg-safety.js'
-import type { GeneratedFile, GeneratorContext } from './types.js'
+import type { GeneratedFile, GeneratorContext, ImageFills } from './types.js'
 
 type ManifestEntry = {
   name: string
@@ -105,7 +107,11 @@ function stateCss(
 
 // Props that opt-in semantics add to a component: link targets and activation handlers.
 type SemanticProps = { hrefs: Set<string>; handlers: Set<string> }
-type SemanticContext = { semantics: Record<string, Semantic>; props: SemanticProps }
+type SemanticContext = {
+  semantics: Record<string, Semantic>
+  props: SemanticProps
+  roles: Map<string, NonNullable<ComponentSpec['textRoles']>[number]>
+}
 
 function firstSlot(node: ViewNode): string | undefined {
   if (node.kind === 'text') return node.slot
@@ -115,11 +121,24 @@ function firstSlot(node: ViewNode): string | undefined {
   }
 }
 
+// Semantic href and handler names come from figma.config.json, so they follow the shared identifier rule too.
 function semanticProp(template: string, node: ViewNode): string {
-  if (!template.includes('{slot}')) return template
+  if (!template.includes('{slot}')) return assertIdentifier(template)
   const slot = firstSlot(node)
   if (!slot) throw new Error(`Semantic prop ${template} needs a text slot inside ${node.name}`)
-  return template.replace('{slot}', slot)
+  return assertIdentifier(template.replace('{slot}', slot))
+}
+
+// A link around text bound to a role takes exactly the prop name the role declares, never one built from the role.
+function roleHref(node: ViewNode, context: SemanticContext): string | undefined {
+  const slot = firstSlot(node)
+  const role = slot ? context.roles.get(slot) : undefined
+  if (!role) return undefined
+  if (!role.href)
+    throw new Error(
+      `Text role ${role.name} sits under the linked action ${node.name}: declare its href in textRoles`
+    )
+  return role.href
 }
 
 const ROOT_SEMANTICS = '@root'
@@ -144,7 +163,7 @@ function emitSemantic(node: ViewNode, context: SemanticContext): string | undefi
   const resolved: Record<string, string | boolean> = { role: config.role }
   if (config.label) resolved.label = config.label
   if (config.href) {
-    resolved.href = semanticProp(config.href, node)
+    resolved.href = roleHref(node, context) ?? semanticProp(config.href, node)
     context.props.hrefs.add(resolved.href)
   }
   if (config.onActivate) {
@@ -247,6 +266,23 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
 
 // Sparse axes are a relation, not independent options. Interaction flags keep their existing
 // fallback contract; only captured enum and non-flag boolean combinations constrain the API.
+// A caller that omits every axis prop gets the defaults, so that selection must be a drawn view: the runtime throws
+// for any undrawn one, and a default the generator itself produces must never be one.
+function assertDrawnDefaults(spec: ComponentSpec): void {
+  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  const drawn = spec.views.some((view) =>
+    axes.every((prop) =>
+      prop.kind === 'boolean'
+        ? (view.booleans[prop.name] ?? false) === prop.default
+        : (view.values[prop.name] ?? prop.default) === prop.default
+    )
+  )
+  if (!drawn)
+    throw new Error(
+      `${spec.name}: its default selection (${axes.map((prop) => `${prop.name}=${JSON.stringify(prop.default)}`).join(', ')}) is not a captured view`
+    )
+}
+
 function variantContract(spec: ComponentSpec): string | undefined {
   const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
   const rows = [
@@ -294,8 +330,22 @@ function emitComponent(
   const booleans = spec.props.filter(
     (prop) => prop.kind === 'boolean' && !FLAG_PROPS.includes(prop.name)
   )
-  const slots = spec.slots.filter((slot) => spec.exposeTextSlots !== false || slot.kind !== 'text')
+  // Text roles are public typed props even when the positional text overrides are not.
+  const roles = new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
+  const countRoles = (spec.textRoles ?? []).filter((role) => role.type === 'count')
+  const labelRoles = countRoles.map((role) => role.label!)
+  const slots = spec.slots.filter(
+    (slot) => spec.exposeTextSlots !== false || slot.kind !== 'text' || roles.has(slot.name)
+  )
   const omittedTextSlots = spec.slots.filter((slot) => !slots.includes(slot))
+  const reactNodeSlots = slots.filter((slot) => !roles.has(slot.name))
+  const countContract = countRoles
+    .map(
+      (role) =>
+        `({ ${role.name}?: undefined; ${role.label}?: string } | { ${role.name}: number; ${role.label}: string })`
+    )
+    .join(' & ')
+  assertDrawnDefaults(spec)
   const contract = variantContract(spec)
 
   const refImports = [
@@ -314,7 +364,11 @@ function emitComponent(
 
   // Components without opt-in semantics emit exactly what they did before.
   const semantic: SemanticContext | undefined = spec.semantics
-    ? { semantics: spec.semantics, props: { hrefs: new Set(), handlers: new Set() } }
+    ? {
+        semantics: spec.semantics,
+        props: { hrefs: new Set(), handlers: new Set() },
+        roles: new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
+      }
     : undefined
   const views = spec.views.map((view, index) => emitView(view, index, cssRules, semantic))
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
@@ -325,7 +379,12 @@ function emitComponent(
     ...spec.props
       .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
       .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
-    ...slots.map((slot) => `  ${slot.name}?: ReactNode`),
+    ...slots
+      .map((slot) => {
+        const role = roles.get(slot.name)
+        return role?.type === 'count' ? null : `  ${slot.name}?: ${role ? 'string' : 'ReactNode'}`
+      })
+      .filter((line) => line !== null),
     ...omittedTextSlots.map((slot) => `  ${slot.name}?: never`),
     ...hrefProps.map((name) => `  ${name}?: string`),
     ...handlerProps.map((name) => `  ${name}?: () => void`),
@@ -337,11 +396,16 @@ function emitComponent(
         `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
-    ...omittedTextSlots.map((slot) => `${slot.name}: _${slot.name}`),
+    ...labelRoles,
     ...semanticNames,
     'forceState',
     '...rest'
   ]
+  // Each binding of the parameter destructure is declared once: a role, a declared href and a semantic prop with the
+  // same name would otherwise generate invalid code.
+  const bindingNames = destructure.map((entry) => entry.replace(/^\.\.\./, '').split(' = ')[0]!)
+  const repeated = bindingNames.find((name, index) => bindingNames.indexOf(name) !== index)
+  if (repeated) throw new Error(`${spec.name}: generated prop ${repeated} is declared twice`)
   const selection = [
     `values: { ${enums.map((prop) => prop.name).join(', ')} }`,
     `booleans: { ${booleans.map((prop) => prop.name).join(', ')} }`,
@@ -360,7 +424,7 @@ function emitComponent(
   })
 
   const importLines = [
-    `import type { HTMLAttributes${slots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
+    `import type { HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
     `import styles from './${spec.name}.module.css'`,
     "import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '../../../components/figma-module-runtime'",
     "import type { MatrixCase } from '../../../components/StateMatrix'",
@@ -377,7 +441,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    `}${contract ? ` & ${contract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
+    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -387,21 +451,33 @@ function emitComponent(
     cases.join(',\n'),
     ']',
     '',
+    // Text overrides the type forbids. They are a module constant, not a prop, so no caller can replace the list.
+    ...(omittedTextSlots.length
+      ? [
+          `const ${varName}SuppressedProps = Object.freeze([${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}] as const)`,
+          ''
+        ]
+      : []),
     `export const ${spec.name} = ({`,
     `  ${destructure.join(',\n  ')}`,
     `}: ${spec.name}Props) => (`,
     '  <FigmaView',
     `    as=${quote(spec.tag)}`,
     `    views={${varName}Views}`,
-    `    defaultKey=${quote(spec.defaultKey)}`,
+    `    component=${quote(spec.name)}`,
     '    select={{',
     `      ${selection}`,
     '    }}',
     `    slots={${slotObject}}`,
+    ...(countRoles.length
+      ? [`    counts={{ ${countRoles.map((role) => `${role.name}: ${role.label}`).join(', ')} }}`]
+      : []),
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
-    '    {...rest}',
+    // The caller's props go in as data, never spread over the generated configuration above.
+    '    attributes={rest}',
+    ...(omittedTextSlots.length ? [`    suppressed={${varName}SuppressedProps}`] : []),
     '  />',
     ')',
     '',
@@ -435,6 +511,8 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
   const files: GeneratedFile[] = []
   const manifest: ManifestEntry[] = []
   const assets = new Map<string, string>()
+  const mode: ImageFills = context.imageFills ?? 'assets'
+  const replaced: { component: string; count: number }[] = []
   const folders = new Map(specs.map((spec) => [spec.name, pageFolder(spec.page)]))
   for (const spec of specs) {
     const folder = pageFolder(spec.page)
@@ -443,9 +521,15 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
       path: `components/${folder}/${spec.name}.tsx`,
       content: emitComponent(spec, context, folders, cssRules)
     })
+    let css = cssRules.join('\n\n') + '\n'
+    if (mode === 'placeholder') {
+      const result = replaceRasterFills(css)
+      css = result.css
+      if (result.replaced) replaced.push({ component: spec.name, count: result.replaced })
+    }
     files.push({
       path: `components/${folder}/${spec.name}.module.css`,
-      content: externalizeSvgs(cssRules.join('\n\n') + '\n', assets)
+      content: inLayer('dcl.components', externalizeSvgs(css, assets))
     })
     manifest.push({
       name: spec.name,
@@ -491,11 +575,11 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
       ''
     ].join('\n')
   })
-  return { files, manifest }
+  return { files, manifest, imageFills: { mode, replaced } }
 }
 
 // Figma names are free text; a line terminator would end the `//` comment and turn the rest into code.
 const commentText = (text: string) => text.replace(/[\r\n\u2028\u2029]/g, ' ')
 
-export { externalizeSvgs, generateComponents }
+export { externalizeSvgs, generateComponents, pageFolder }
 export type { ManifestEntry }

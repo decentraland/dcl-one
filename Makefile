@@ -24,7 +24,7 @@ catalyst-build:
 	cd services/catalyst && cargo build --locked --bin catalyst
 
 catalyst-test:
-	cd services/catalyst && cargo test --locked $(NODE_CRATES)
+	tooling/catalyst-test.sh $(NODE_CRATES)
 
 sites-install:
 	pnpm --dir apps/ui3 install --frozen-lockfile

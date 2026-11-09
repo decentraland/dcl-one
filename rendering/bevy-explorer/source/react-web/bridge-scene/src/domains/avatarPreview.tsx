@@ -13,7 +13,7 @@ import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import type { PreviewFocus } from '../../../src/engine/protocol'
+import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '../../../src/engine/protocol'
 import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '../../../src/engine/avatarEquip'
 import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '../../../src/engine/lobbyStage'
@@ -189,6 +189,10 @@ let framing = FRAMING.body
 let framingFrom = FRAMING.body
 let framingTo = FRAMING.body
 let framingT = 1
+// The page's zoom over the framing in use (previewZoom), and how far the view's centre has moved up (metres) to
+// keep the height the page zoomed toward in place: 1 and 0 are the framing as it is.
+let zoom = 1
+let zoomShift = 0
 // Non-persisting preview override (selecting an item in the Backpack): when set, the preview
 // avatar wears these urns instead of the player's actual equipped set. null = no override.
 let previewUrns: string[] | null = null
@@ -381,6 +385,8 @@ function disposePreview(): void {
   showLoad = null
   standbyLoad = null
   shownLoaded = false
+  zoom = 1
+  zoomShift = 0
 }
 
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
@@ -628,6 +634,25 @@ export function registerAvatarPreview(ctx: Ctx): void {
     applyFraming(framing)
   })
 
+  // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
+  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
+  // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
+  ctx.on('previewRotate', (msg) => {
+    if (stage !== 'backpack') return
+    turnAvatar(msg.degrees)
+  })
+  ctx.on('previewZoom', (msg) => {
+    if (stage !== 'backpack') return
+    const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
+    const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
+    // The height under the anchor stays where it is: the same share of the view above the centre, before and after.
+    const above = 0.5 - anchor
+    const height = framing.centerY + shiftWithin(framing, zoom, zoomShift) + (framing.range / zoom) * above
+    zoomShift = shiftWithin(framing, next, height - (framing.range / next) * above - framing.centerY)
+    zoom = next
+    applyFraming(framing)
+  })
+
   // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an
   // empty trigger on a scene's avatar is the engine's stop).
   ctx.on('previewEmote', (msg) => {
@@ -673,11 +698,19 @@ function showPodium(visible: boolean): void {
   })
 }
 
-function applyFraming(f: { range: number; centerY: number }): void {
+// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
+function shiftWithin(f: { range: number }, z: number, shift: number): number {
+  const room = (f.range - f.range / z) / 2
+  return Math.max(-room, Math.min(room, shift))
+}
+
+// The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
+// otherwise), the view kept inside the framing.
+function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift): void {
   if (cameraEntity == null || stage !== 'backpack') return
   const cam = TextureCamera.getMutableOrNull(cameraEntity)
-  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range
-  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + PITCH_DROP, 8 - CAMERA_DISTANCE)
+  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range / z
+  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + shiftWithin(f, z, shift) + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
 /** The preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or null
@@ -688,7 +721,8 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
   const rotation = Transform.get(avatar).rotation
   Transform.getMutable(avatar).rotation = FACING
   framingT = 1
-  applyFraming(FRAMING.body)
+  // The whole body, whatever the page has zoomed to.
+  applyFraming(FRAMING.body, 1, 0)
   const podium = podiumEntities
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {
@@ -709,11 +743,15 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
 }
 
 function rotateAvatar(): void {
-  if (avatarEntity == null) return
   const pointer = PrimaryPointerInfo.getOrNull(engine.RootEntity)
   const deltaX = pointer?.screenDelta?.x ?? 0
-  if (deltaX === 0) return
-  const qY = Quaternion.fromAngleAxis(deltaX * ROTATION_FACTOR, Vector3.create(0, 1, 0))
+  if (deltaX !== 0) turnAvatar(deltaX * ROTATION_FACTOR)
+}
+
+// Turns the preview avatar `degrees` about its vertical axis.
+function turnAvatar(degrees: number): void {
+  if (avatarEntity == null || !Number.isFinite(degrees) || degrees === 0) return
+  const qY = Quaternion.fromAngleAxis(degrees, Vector3.create(0, 1, 0))
   const cur = Transform.get(avatarEntity).rotation
   Transform.getMutable(avatarEntity).rotation = Quaternion.multiply(
     Quaternion.create(cur.x, cur.y, cur.z, cur.w),

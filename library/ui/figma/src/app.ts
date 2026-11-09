@@ -6,6 +6,7 @@ import { EnvTokenProvider, FigmaClient } from './figma/client.js'
 import { generateAll, type GenerateResult } from './generators/index.js'
 import { RestSource } from './sources/rest-source.js'
 import { SnapshotSource } from './sources/snapshot-source.js'
+import { FdsCacheError, verifyFdsCache } from './sources/fds-source.js'
 import type { FigmaSource } from './sources/types.js'
 import { pendingRetirements } from './guard/apply-retirements.js'
 import { checkScope, type RunKind } from './guard/check-scope.js'
@@ -22,13 +23,23 @@ type App = {
   config: FigmaConfig
   cwd: string
   configFile?: string
-  createSource(kind: SourceKind): FigmaSource
+  createSource(kind?: SourceKind): FigmaSource
   resolveOutDir(override?: string): string
+}
+
+type AppOptions = {
+  // Reads the capture directory without checking it against upstream.lock.json. Only tests over the synthetic
+  // capture and the retirement cleanup's staged copy of an already verified cache pass it.
+  unverifiedSnapshot?: boolean
 }
 
 // `configFile` lets a consuming project point at a config that lives elsewhere. Every path in the config
 // (snapshotDir, outDir, contract.mappingRoot) is relative to the config file, not to the process.
-async function createApp(cwd = process.cwd(), configFile?: string): Promise<App> {
+async function createApp(
+  cwd = process.cwd(),
+  configFile?: string,
+  options: AppOptions = {}
+): Promise<App> {
   const loadedConfigFile = path.resolve(configFile ?? path.join(cwd, 'figma.config.json'))
   const config = configFile ? await loadConfigFile(configFile) : await loadConfig(cwd)
   if (configFile) cwd = path.dirname(path.resolve(configFile))
@@ -36,15 +47,26 @@ async function createApp(cwd = process.cwd(), configFile?: string): Promise<App>
     config,
     configFile: loadedConfigFile,
     cwd,
-    createSource(kind) {
-      if (kind === 'snapshot')
-        return new SnapshotSource(
-          path.resolve(cwd, config.snapshotDir),
-          configuredPages(config)
-            .filter((page) => page.id === null)
-            .map((page) => page.name)
+    // `rest` reads the live file for local inspection only (FIGMA_TOKEN and FIGMA_FILE_KEY from the environment).
+    // Everything that writes tracked files reads the verified fetch-source cache: see runSync.
+    createSource(kind = 'snapshot') {
+      if (kind === 'rest')
+        return new RestSource(new FigmaClient(new EnvTokenProvider()), requireFileKey())
+      const dir = path.resolve(cwd, config.snapshotDir)
+      const lock = config.snapshotLock && path.resolve(cwd, config.snapshotLock)
+      // Every command, the MCP server included, reads only the cache fetch-source verified, so a config that
+      // names no lock fails here instead of reading whatever the directory holds.
+      if (!lock && !options.unverifiedSnapshot)
+        throw new FdsCacheError(
+          `${path.basename(loadedConfigFile)} names no snapshotLock, so the Figma capture cannot be verified against upstream.lock.json: set snapshotLock and run \`pnpm figma fetch-source\``
         )
-      return new RestSource(new FigmaClient(new EnvTokenProvider()), requireFileKey())
+      return new SnapshotSource(
+        dir,
+        configuredPages(config)
+          .filter((page) => page.id === null)
+          .map((page) => page.name),
+        lock && !options.unverifiedSnapshot ? () => verifyFdsCache(dir, lock) : undefined
+      )
     },
     resolveOutDir: (override) => path.resolve(cwd, override ?? config.outDir)
   }
@@ -83,10 +105,16 @@ type SyncReport = {
 const repositoryRoot = (app: App) => path.resolve(app.cwd, '..')
 
 async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
-  if (options.applyRetirements && options.source !== 'snapshot')
-    throw new Error('Retirement cleanup reads saved snapshots only')
+  // Shipped output comes from the pinned capture only: a live read may be inspected or diffed, never written.
+  if (options.source !== 'snapshot')
+    throw new Error(
+      'sync writes tracked files and reads only the verified fetch-source cache; use diff to compare against the live file'
+    )
   if (options.applyRetirements && !options.developer)
     throw new Error('Applying retirements is a developer action: pass --developer')
+  // Verify the cache before anything derived from the tree (ownership, retirements) is read.
+  const source = app.createSource('snapshot')
+  await source.ready?.()
   const root = repositoryRoot(app)
   const runKind: RunKind = options.developer ? 'developer' : 'automated'
   const outDir = await validateOutputPath(
@@ -103,7 +131,7 @@ async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
       `Retirements are pending, run sync --developer --apply-retirements:\n  ${pending.join('\n  ')}`
     )
 
-  const generated = await generateAll(app.createSource(options.source), {}, app.config)
+  const generated = await generateAll(source, {}, app.config)
   if (options.applyRetirements) {
     if (
       outDir !== (await canonicalPath(path.join(root, GENERATED))) ||
@@ -169,4 +197,4 @@ async function runDiff(app: App, options: SyncOptions): Promise<SyncReport> {
 }
 
 export { createApp, runDiff, runSync }
-export type { App, SourceKind, SyncOptions, SyncReport }
+export type { App, AppOptions, SourceKind, SyncOptions, SyncReport }

@@ -30,7 +30,7 @@ One of the most common scams are websites, social accounts, emails, and DMs impe
 
 Another common tactic is pretending to be a potential client and sending a file containing a virus. Always be very cautious with messages from people you don't know personally and **never** download files from them.
 
-![](/docs/player/images/players/domains.webp)
+![](/docs/player/images/players/domains.webp)
 
 A good rule is to always take the time to verify urls and email addresses before taking any actions. True Decentraland websites will always have the base [decentraland.org](http://decentraland.org) and the weekly newsletter will only come from hello@decentraland.org.
 

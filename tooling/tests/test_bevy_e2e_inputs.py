@@ -178,7 +178,7 @@ class ResolveTests(unittest.TestCase):
         slept = []
         found = inputs.wait_for_ci(REPO, SHA_PR, 600, poll_seconds=30, sleep=slept.append, clock=lambda: next(clock))
         self.assertEqual(found['id'], 30)
-        self.assertEqual(slept, [30, 30, 30])
+        self.assertEqual(slept, [2, 4, 8])
 
     def test_wait_for_ci_gives_up_on_a_commit_that_started_no_run(self):
         inputs.bench.api = lambda path, raw=False: {'workflow_runs': [run(40, SHA_PR, 'pull_request', branch='x') | {'head_sha': SHA_NEW}]}

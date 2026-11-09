@@ -742,7 +742,7 @@ export const NavProfileButton = ({
   <FigmaView
     as='button'
     views={navProfileButtonViews}
-    defaultKey='variant:desktop|state:default'
+    component='NavProfileButton'
     select={{
       values: { variant, state },
       booleans: {  },
@@ -750,7 +750,7 @@ export const NavProfileButton = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

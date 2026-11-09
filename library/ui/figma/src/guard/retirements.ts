@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { readIfExists } from './fs-safe.js'
 
 // Retirement identities are permanent developer records, so later ready captures cannot readmit them.
-// Keyless: the tool works on the one file FIGMA_FILE_KEY names, so a record is identified by its page
+// Keyless: the tool works on the one Figma file figma-design-system captures, so a record is identified by its page
 // and component ids alone and never stores the file key (it is private). The strict schemas reject a
 // record that carries one.
 const retirementSchema = z.strictObject({

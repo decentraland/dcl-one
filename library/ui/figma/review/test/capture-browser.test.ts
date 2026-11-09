@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { EventEmitter } from 'node:events'
+import { browserArgs } from '../scripts/browser-args.mjs'
 import { findBrowser, openSession } from '../scripts/capture-browser.mjs'
 import { cleanupCapture, installCaptureSignals } from '../scripts/capture-teardown.mjs'
 
@@ -94,4 +95,11 @@ describe('when a capture receives a termination signal', () => {
       dispose()
       assert.equal(target.listenerCount('SIGINT') + target.listenerCount('SIGTERM'), 0)
     })
+})
+
+// Ported from figma-design-system f63bb11 (the launch flag only).
+describe('when a capture launches its browser', () => {
+  it('should turn off Brave canvas farbling, so a screenshot always measures the same', () => {
+    assert.ok(browserArgs('/tmp/profile').includes('--disable-features=BraveFarbling'))
+  })
 })

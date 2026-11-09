@@ -11,6 +11,8 @@
 use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use super::SharedState;
 use super::errors::ApiError;
@@ -336,5 +338,66 @@ mod tests {
         assert_eq!(paginate(Some(10), Some(5)), (10, 5));
         assert_eq!(paginate(Some(0), Some(-3)), (1, 0));
         assert_eq!(paginate(Some(9999), None), (200, 0));
+    }
+}
+
+/// The most wallets one flag names: a linked set, not a dump.
+pub const MAX_FLAGGED_ADDRESSES: usize = 100;
+
+/// A flag as the events-notifier posted it to the credits server's `/flag`
+/// (`{addressesLinked, ip, source}`): the admin's `POST /admin/flags` body
+/// and the `credits.wallet_flags` notification.
+#[derive(Debug, Deserialize)]
+pub struct FlagBody {
+    pub addresses: Vec<String>,
+    pub source: String,
+    #[serde(default)]
+    pub ip: Option<String>,
+}
+
+/// A flag the store takes: one to [`MAX_FLAGGED_ADDRESSES`] distinct
+/// lower-cased addresses, a source and an IP of at most 100 characters.
+pub struct Flag {
+    pub addresses: Vec<String>,
+    pub source: String,
+    pub ip: Option<String>,
+}
+
+impl FlagBody {
+    pub fn validate(self) -> Result<Flag, ApiError> {
+        if self.addresses.is_empty() || self.addresses.len() > MAX_FLAGGED_ADDRESSES {
+            return Err(ApiError::bad_request(
+                "addresses must name 1 to 100 wallets",
+            ));
+        }
+        let mut addresses = self
+            .addresses
+            .iter()
+            .map(|a| normalize_address(a))
+            .collect::<Result<Vec<_>, _>>()?;
+        addresses.sort();
+        addresses.dedup();
+        let source = self.source.trim();
+        if source.is_empty() || source.len() > 100 {
+            return Err(ApiError::bad_request("source is required (max 100)"));
+        }
+        let ip = self
+            .ip
+            .as_deref()
+            .map(str::trim)
+            .filter(|ip| !ip.is_empty() && ip.len() <= 100)
+            .map(str::to_string);
+        Ok(Flag {
+            addresses,
+            source: source.to_string(),
+            ip,
+        })
+    }
+}
+
+impl Flag {
+    /// The `user.flag` audit detail.
+    pub fn detail(&self) -> Value {
+        json!({ "addresses": self.addresses, "source": self.source, "ip": self.ip })
     }
 }

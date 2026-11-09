@@ -8,15 +8,15 @@ import { snapshotSource } from '../../test/snapshot.js'
 import { encodePageFileName } from '../capture/page-file-name.js'
 
 describe('SnapshotSource', () => {
-  describe('when reading the committed snapshot', () => {
-    it('should expose the four variable collections with 83, 36, 16 and 26 variables', async () => {
+  describe('when reading the synthetic snapshot', () => {
+    it('should expose the four variable collections with 10, 5, 8 and 5 variables', async () => {
       const collections = await snapshotSource().getTokenCollections()
 
       expect(collections.map((c) => [c.name, c.variables.length])).toEqual([
-        ['Primitives', 83],
-        ['Semantic', 36],
-        ['Spacing', 16],
-        ['Layout', 26]
+        ['Primitives', 10],
+        ['Semantic', 5],
+        ['Spacing', 8],
+        ['Layout', 5]
       ])
     })
 
@@ -26,44 +26,42 @@ describe('SnapshotSource', () => {
       expect(layout?.modes).toEqual(['desktop', 'large-desktop', 'tablet', 'mobile'])
     })
 
-    it('should expose 32 text styles and 6 gradients', async () => {
+    it('should expose 7 text styles and 2 gradients', async () => {
       const source = snapshotSource()
 
-      expect(await source.getTextStyles()).toHaveLength(32)
-      expect(await source.getGradients()).toHaveLength(6)
+      expect(await source.getTextStyles()).toHaveLength(7)
+      expect(await source.getGradients()).toHaveLength(2)
     })
 
     it('should load every icon with its SVG markup', async () => {
       const icons = await snapshotSource().getIcons()
 
-      expect(icons).toHaveLength(502)
+      expect(icons).toHaveLength(26)
       expect(icons.every((icon) => icon.svg.startsWith('<svg'))).toBe(true)
     })
 
-    it('should read a captured component page with every set of the Buttons page', async () => {
-      const page = await snapshotSource().getComponentPage('Buttons')
+    it('should read a captured component page with every set of the Demo Controls page', async () => {
+      const page = await snapshotSource().getComponentPage('Demo Controls')
 
-      expect(page?.page.name).toBe('Buttons')
-      expect(page?.components).toHaveLength(28)
+      expect(page?.page.name).toBe('Demo Controls')
+      expect(page?.components).toHaveLength(10)
     })
 
     it('should select the configured canonical snapshot by ID without deleting legacy captures', async () => {
-      expect(
-        (await snapshotSource().getComponentPageById('8711:15316', 'Nav bar'))?.page.name
-      ).toBe('Nav bar')
-      expect(
-        (await snapshotSource().getComponentPage('Bars: Nav bar - Tabs bar - Footer'))?.page.id
-      ).toBe('8711:15316')
+      expect((await snapshotSource().getComponentPageById('10:7', 'Demo Nav'))?.page.name).toBe(
+        'Demo Nav'
+      )
+      expect((await snapshotSource().getComponentPage('Demo: Legacy Bars'))?.page.id).toBe('10:7')
     })
 
     it('should reject a canonical snapshot with a different page ID', async () => {
       await expect(
-        snapshotSource().getComponentPageById('different-id', 'Nav bar')
+        snapshotSource().getComponentPageById('different-id', 'Demo Nav')
       ).rejects.toThrow('Snapshot page identity changed')
     })
 
     it('should reject an ambiguous ID when no canonical snapshot is configured', async () => {
-      await expect(snapshotSource().getComponentPageById('8711:15316')).rejects.toThrow(
+      await expect(snapshotSource().getComponentPageById('10:7')).rejects.toThrow(
         'Ambiguous snapshot page ID'
       )
     })
@@ -78,8 +76,8 @@ describe('SnapshotSource', () => {
 describe('when a canonical snapshot is missing', () => {
   let root: string
   let source: SnapshotSource
-  const id = '8711:15316'
-  const legacy = 'Bars: Nav bar - Tabs bar - Footer'
+  const id = '10:7'
+  const legacy = 'Demo: Legacy Bars'
   const save = async (name: string, pageId = id) =>
     writeFile(
       path.join(root, 'components', encodePageFileName(name)),
@@ -99,31 +97,31 @@ describe('when a canonical snapshot is missing', () => {
   })
   it('should use an unclaimed ID match only when the canonical file is absent', async () => {
     await save('Unclaimed')
-    expect((await source.getComponentPageById(id, 'Nav bar'))?.page.name).toBe('Unclaimed')
-    await save('Nav bar')
-    expect((await source.getComponentPageById(id, 'Nav bar'))?.page.name).toBe('Nav bar')
+    expect((await source.getComponentPageById(id, 'Demo Nav'))?.page.name).toBe('Unclaimed')
+    await save('Demo Nav')
+    expect((await source.getComponentPageById(id, 'Demo Nav'))?.page.name).toBe('Demo Nav')
   })
   it('should never scan past a present canonical file, even if another file is malformed', async () => {
-    await save('Nav bar')
+    await save('Demo Nav')
     await writeFile(path.join(root, 'components', 'Unclaimed.json'), 'invalid')
-    expect((await source.getComponentPageById(id, 'Nav bar'))?.page.name).toBe('Nav bar')
+    expect((await source.getComponentPageById(id, 'Demo Nav'))?.page.name).toBe('Demo Nav')
   })
   it('should fail an embedded-ID mismatch instead of falling back to another match', async () => {
-    await save('Nav bar', '9:9')
+    await save('Demo Nav', '9:9')
     await save('Unclaimed')
-    await expect(source.getComponentPageById(id, 'Nav bar')).rejects.toThrow(
+    await expect(source.getComponentPageById(id, 'Demo Nav')).rejects.toThrow(
       'Snapshot page identity changed'
     )
   })
   it('should reject two unclaimed ID matches as ambiguous', async () => {
     await save('First')
     await save('Second')
-    await expect(source.getComponentPageById(id, 'Nav bar')).rejects.toThrow(
+    await expect(source.getComponentPageById(id, 'Demo Nav')).rejects.toThrow(
       'Ambiguous snapshot page ID'
     )
   })
   it('should not use a legacy-claimed file to replace the missing canonical capture', async () => {
-    expect(await source.getComponentPageById(id, 'Nav bar')).toBeUndefined()
+    expect(await source.getComponentPageById(id, 'Demo Nav')).toBeUndefined()
     expect((await source.getComponentPage(legacy))?.page.id).toBe(id)
   })
   it('should obtain legacy exclusions from the app configuration', async () => {
@@ -134,12 +132,12 @@ describe('when a canonical snapshot is missing', () => {
         snapshotDir: '.',
         outDir: 'out',
         pages: {
-          [id]: { id, name: 'Nav bar', kind: 'components' },
+          [id]: { id, name: 'Demo Nav', kind: 'components' },
           [`legacy:${legacy}`]: { id: null, name: legacy, kind: 'components' }
         }
       })
     )
-    const app = await createApp(root)
-    expect(await app.createSource('snapshot').getComponentPageById!(id, 'Nav bar')).toBeUndefined()
+    const app = await createApp(root, undefined, { unverifiedSnapshot: true })
+    expect(await app.createSource('snapshot').getComponentPageById!(id, 'Demo Nav')).toBeUndefined()
   })
 })

@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -341,7 +344,7 @@ box-sizing: border-box;
 width: 73px;
 flex-shrink: 0;
 height: 73px;
-background: url("../assets/ff603fb55081136c.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v1n0_1 {
@@ -812,7 +815,7 @@ box-sizing: border-box;
 width: 73px;
 flex-shrink: 0;
 height: 73px;
-background: url("../assets/b26ab39dc0a16155.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n0_1 {
@@ -1564,4 +1567,5 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 24px;
 opacity: 1;
+}
 }

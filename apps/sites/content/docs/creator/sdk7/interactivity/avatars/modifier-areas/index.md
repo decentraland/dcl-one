@@ -55,9 +55,9 @@ If the area hides avatars, then the players that don't have the area in their lo
 
 > [!WARNING]
 > **📔 Note**: The `AvatarModifierArea`component must be imported via
-> 
+>
 > > `import { AvatarModifierArea } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -201,7 +201,7 @@ export function main() {
 > [!CAUTION]
 > **❗Warning**\
 > If the list of excluded IDs is going to be periodically changed (for example based on players entering or leaving an area), make sure that the list is kept in order. Perform a `.sort()` on the array, so that the list remains in the same order each time it's passed. This way, only the changes to the list are computed. Otherwise, this can have a significant impact on the scene's performance.
-> 
+>
 > ```ts
 > AvatarModifierArea.create(entity, {
 > 	area: Vector3.create(16, 5, 16),
@@ -210,6 +210,38 @@ export function main() {
 > })
 > ```
 
+
+### Overlapping areas and runtime changes
+
+Each avatar carries one on/off flag per effect, not a count of the areas they're standing in. Every area writes that same flag, and the last write wins. Two consequences catch people out:
+
+* **Leaving one area re-shows the avatar, even while they're still inside another.** Walking out of a small area that hides avatars makes the avatar visible again, although a scene-wide hiding area still covers that spot.
+* **An area whose `excludeIds` lists a player writes "visible" for them on entry**, for each effect that area itself lists. That overrides a hide-everyone area they're also standing in.
+
+Prefer one area at a time per avatar. If areas do overlap, make them agree on every effect.
+
+**Removing a modifier in place doesn't undo it.** When you change an area's fields, the client re-applies the modifiers that are listed now. Nothing restores an effect whose modifier you took off the list, so emptying `modifiers`, or swapping `AMT_HIDE_AVATARS` for `AMT_HIDE_NAMETAGS`, leaves avatars hidden. Adding a modifier in place does work.
+
+To switch an area to a different set of modifiers, delete the entity and create the replacement in the same frame:
+
+```ts
+import { AvatarModifierArea, AvatarModifierType, engine, Entity, Transform } from '@dcl/sdk/ecs'
+import { Vector3 } from '@dcl/sdk/math'
+
+// Replace the area instead of editing its modifiers in place
+function setModifiers(oldArea: Entity, modifiers: AvatarModifierType[]): Entity {
+	engine.removeEntity(oldArea) // this also re-shows every avatar inside it
+
+	const area = engine.addEntity()
+	Transform.create(area, { position: Vector3.create(8, 1, 8) })
+	AvatarModifierArea.create(area, {
+		area: Vector3.create(16, 5, 16),
+		modifiers,
+		excludeIds: [],
+	})
+	return area
+}
+```
 
 ### Debug modifier areas
 

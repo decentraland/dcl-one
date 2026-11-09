@@ -47,11 +47,6 @@ describe('when applying a component retirement in a retained page', () => {
     expect(await readFile(path.join(root, 'index.ts'), 'utf8')).not.toContain('First')
     expect(await readFile(path.join(root, `${LIB}/page/Second.tsx`), 'utf8')).toContain('Second')
     expect((await json(root, 'components/promotion.json')).components).toEqual(['Second'])
-    expect(
-      (await json(root, 'figma/review/src/review/promotion.json')).components.map(
-        (component: { name: string }) => component.name
-      )
-    ).toEqual(['Second'])
     await expect(readFile(path.join(root, `${LIB}/page/First.figma.ts`))).rejects.toMatchObject({
       code: 'ENOENT'
     })
@@ -115,11 +110,14 @@ describe('when applying a component retirement in a retained page', () => {
     const copy = await mkdtemp(path.join(os.tmpdir(), 'retirement-checkout-'))
     try {
       await cp(root, copy, { recursive: true })
-      await runSync(await createApp(path.join(copy, 'figma')), {
-        source: 'snapshot',
-        developer: true,
-        applyRetirements: true
-      })
+      await runSync(
+        await createApp(path.join(copy, 'figma'), undefined, { unverifiedSnapshot: true }),
+        {
+          source: 'snapshot',
+          developer: true,
+          applyRetirements: true
+        }
+      )
       expect(
         (await json(copy, `${SNAP}/components/Page.json`)).components.map(
           (component: { id: string }) => component.id

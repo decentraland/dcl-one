@@ -1,0 +1,118 @@
+/* Reward popup (unity-explorer RewardPanel): rays in the rarity colour turn slowly behind a column
+   with the header, the item tile, its name, a note and COLLECT. The root carries data-rarity, so
+   --rm (the rarity's main colour, tokens.css) reaches the rays and the tile's corner flap. Sizes are
+   reference px: the popup layer's dim scrim already applies --ui-scale. */
+.root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 560px;
+  max-width: 100%;
+}
+.rays {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 900px;
+  height: 900px;
+  margin: -450px 0 0 -450px;
+  background: repeating-conic-gradient(
+    color-mix(in srgb, var(--rm) 40%, transparent) 0deg 7deg,
+    transparent 7deg 20deg
+  );
+  mask: radial-gradient(circle, black 0%, transparent 62%);
+  animation: spin 5s linear infinite;
+  pointer-events: none;
+}
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--text);
+  animation: bounceIn var(--dur-slide) var(--ease-spring);
+}
+.header {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.title {
+  margin: 0;
+  font-size: var(--font-title-xl);
+  font-weight: var(--fw-bold);
+}
+.item {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 8px 0;
+  border-radius: var(--r-xl);
+  background-position: top center;
+  background-size: 100% auto;
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+.thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.flap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 60px;
+  height: 60px;
+  filter: drop-shadow(0 1px 2px var(--scrim-40));
+}
+.flapTint {
+  position: absolute;
+  inset: 0;
+  background: var(--rm);
+  mask: url('../../assets/backpack/corner-flap.webp') center / 100% 100% no-repeat;
+}
+.flapIcon {
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  display: flex;
+  color: var(--text);
+}
+.name {
+  margin: 0;
+  font-size: var(--font-title-l);
+  font-weight: var(--fw-semibold);
+}
+.note {
+  max-width: 360px;
+  margin: 0 0 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes bounceIn {
+  from {
+    transform: scale(0);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rays,
+  .content {
+    animation: none;
+  }
+}

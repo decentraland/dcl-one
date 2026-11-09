@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -826,4 +829,5 @@ letter-spacing: 0.5px;
 text-align: center;
 line-height: 16.25px;
 opacity: 1;
+}
 }

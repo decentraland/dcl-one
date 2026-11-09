@@ -49,8 +49,7 @@ def cdn_responses(attempt=1):
     html.headers = {'Content-Type': 'text/html'}
     asset = io.BytesIO(b'console.log("review")')
     asset.headers = {'Content-Type': 'application/javascript'}
-    fidelity = io.BytesIO(b'{"cases": []}')
-    return [identity, html, asset, fidelity]
+    return [identity, html, asset]
 
 
 def cdn_event():
@@ -106,6 +105,50 @@ class PreviewGitHub:
 
 
 class WebPreviewTests(unittest.TestCase):
+    def test_static_package_rejects_retired_comparison_outputs_without_writing_a_package(self):
+        for name in (
+            'references/reference.png',
+            'renders/render.jpg',
+            'fidelity.json',
+            'icons/export.svg',
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / 'input'
+                (source / 'dcl-ui-review').mkdir(parents=True)
+                (source / 'dcl-ui-review/index.html').write_text('<html></html>')
+                evidence = source / 'dcl-ui-review' / name
+                evidence.parent.mkdir(parents=True, exist_ok=True)
+                evidence.write_text('retired comparison output')
+                with self.assertRaisesRegex(ValueError, 'retired'):
+                    preview.package_reviewer(source, root / 'output', 'a' * 40, 123, 1)
+                self.assertFalse((root / 'output').exists())
+
+    def test_static_package_keeps_actual_product_images_and_icons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'input'
+            assets = source / 'dcl-ui-review/assets'
+            assets.mkdir(parents=True)
+            (source / 'dcl-ui-review/index.html').write_text('<html></html>')
+            for name, data in (('product.svg', b'<svg/>'), ('product.png', b'\x89PNG\r\n\x1a\n')):
+                (assets / name).write_bytes(data)
+            preview.package_reviewer(source, root / 'output', 'a' * 40, 123, 1)
+            for name in ('product.svg', 'product.png'):
+                self.assertEqual(
+                    (root / 'output/dcl-ui-review/assets' / name).read_bytes(),
+                    (assets / name).read_bytes(),
+                )
+
+    def test_cdn_readiness_needs_only_the_bound_receipt_entry_and_runtime_asset(self):
+        responses = cdn_responses()[:3]
+        with patch.object(preview, 'urlopen', side_effect=responses) as request:
+            url = preview.verify_cdn(
+                '0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1
+            )
+        self.assertTrue(url.endswith('/dcl-ui-review/index.html'))
+        self.assertEqual(request.call_count, 3)
+
     def test_workflow_reports_successful_uploads_and_keeps_other_events_out(self):
         workflow = (
             Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
@@ -307,7 +350,7 @@ class WebPreviewTests(unittest.TestCase):
     def test_all_cdn_requests_send_the_preview_user_agent(self):
         with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
             preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
-        self.assertEqual(fetch.call_count, 4)
+        self.assertEqual(fetch.call_count, 3)
         for call in fetch.call_args_list:
             self.assertIsInstance(call.args[0], preview.Request)
             self.assertEqual(call.args[0].get_header('User-agent'), preview.CDN_USER_AGENT)
@@ -496,7 +539,6 @@ class WebPreviewTests(unittest.TestCase):
         for path in [
             'tooling/web-preview.py',
             'tooling/tests/test_web_preview.py',
-            'tooling/web-preview-browser.mjs',
             '.github/workflows/web-previews.yml',
             '.github/workflows/web-previews-publish.yml',
         ]:
@@ -624,9 +666,6 @@ class WebPreviewTests(unittest.TestCase):
                 fetch.call_args_list[2]
                 .args[0]
                 .full_url.endswith('/dcl-ui-review/assets/main-Abc123.js')
-            )
-            self.assertTrue(
-                fetch.call_args_list[3].args[0].full_url.endswith('/dcl-ui-review/fidelity.json')
             )
 
     def test_cdn_rejects_non_html_entries_and_invalid_versions(self):
@@ -797,8 +836,8 @@ class WebPreviewTests(unittest.TestCase):
         ):
             preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
 
-    def test_cdn_retries_missing_fidelity_data(self):
-        failed = cdn_responses()[:3] + [
+    def test_cdn_retries_a_missing_runtime_bundle(self):
+        failed = cdn_responses()[:2] + [
             preview.HTTPError('https://cdn.example', 404, 'missing', {}, None)
         ]
         with (
@@ -1433,8 +1472,8 @@ class WebPreviewTests(unittest.TestCase):
             self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
             resolve.assert_not_called()
 
-    def test_cdn_retries_transient_fallback_assets_fidelity_and_invalid_utf8(self):
-        for scenario in ('mime', 'empty_asset', 'fidelity', 'utf8', 'missing_bundle'):
+    def test_cdn_retries_transient_fallback_assets_and_invalid_utf8(self):
+        for scenario in ('mime', 'empty_asset', 'utf8', 'missing_bundle'):
             bad = cdn_responses()
             if scenario == 'mime':
                 bad[2].headers = {'Content-Type': 'text/html'}
@@ -1443,8 +1482,6 @@ class WebPreviewTests(unittest.TestCase):
                 bad[2] = io.BytesIO(b'')
                 bad[2].headers = {'Content-Type': 'application/javascript'}
                 bad = bad[:3]
-            elif scenario == 'fidelity':
-                bad[3] = io.BytesIO(b'null')
             else:
                 bad[1] = io.BytesIO(b'\xff' if scenario == 'utf8' else b'<html>propagating</html>')
                 bad[1].status = 200

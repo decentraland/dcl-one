@@ -1,5 +1,4 @@
-import { download } from '../automation/exports.js'
-import { svgProblem } from '../capture/ingest-chunks.js'
+import { download, svgProblem } from './rest-assets.js'
 import type { FigmaClient } from '../figma/client.js'
 import type { RawComponentPage } from '../ir/raw-components.js'
 import type {

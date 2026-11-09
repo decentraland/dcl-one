@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runnable } from "./lib/session.mts";
 import { PAGES } from "./pages.mts";
 import { assertFreshBuild, buildSites, dclOneIdentity } from "./lib/build.mts";
 import { GATE_FILE, RECORDINGS, STATE } from "./lib/paths.mts";
@@ -33,7 +34,7 @@ export async function capture(opts: { set: string; pages?: string[]; viewports?:
   // Comparing a build of other sources would label its result with these.
   const identity = dclOneIdentity();
   assertFreshBuild(identity);
-  const specs = opts.pages ? PAGES.filter((p) => opts.pages!.includes(p.id)) : PAGES;
+  const specs = runnable(opts.pages ? PAGES.filter((p) => opts.pages!.includes(p.id)) : PAGES);
   mkdirSync(opts.out, { recursive: true });
   const startedAt = new Date().toISOString();
   const { results, executable } = await runAll(recording, specs, selectViewports(opts.viewports), {

@@ -28,7 +28,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 
-use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldAdmission};
+use crate::access::{Access, LandOperators, SceneRef, WorldAdmission};
 use crate::shared::cache::TtlMap;
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -375,17 +375,47 @@ pub async fn has_world_access_permission(
     scene_id: Option<&str>,
     secret: Option<&str>,
     device_id: Option<&str>,
+    caller: &str,
 ) -> Result<bool, ApiError> {
     let Some(world) = world_of(world_name) else {
         return Ok(false);
     };
     let scene = scene_id.and_then(|id| SceneId::parse(id).ok());
     let now = chrono::Utc::now().naive_utc();
-    match state
+    let admission = state
         .policy
-        .can_access(&world, identity, secret, scene.as_ref(), device_id, now)
+        .world_admission(&world, now)
         .await
-    {
+        .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?;
+    if !matches!(admission, WorldAdmission::Open(_)) {
+        return Ok(false);
+    }
+    let throttle = super::world_mint::SecretThrottle {
+        pool: &state.pool,
+        world: world.key(),
+        subject: caller,
+        max_attempts: state.world_mint.max_secret_attempts,
+    };
+    // A no-secret decision also catches an access-type change since world_admission.
+    let mut access = state
+        .policy
+        .can_access(&world, identity, None, scene.as_ref(), device_id, now)
+        .await;
+    if matches!(access, Ok(Access::InvalidSecret)) || (access.is_err() && secret.is_some()) {
+        let reservation = throttle
+            .reserve(now)
+            .await
+            .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?
+            .ok_or_else(|| ApiError::http(429, "Too many shared-secret attempts"))?;
+        access = state
+            .policy
+            .can_access(&world, identity, secret, scene.as_ref(), device_id, now)
+            .await;
+        throttle
+            .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
+            .await;
+    }
+    match access {
         Ok(Access::Allowed(_)) => Ok(true),
         Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => Ok(false),
         Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(false),
@@ -939,60 +969,47 @@ pub(crate) async fn live_world_rooms(
     state: &CommsState,
     world: &WorldName,
 ) -> Result<Vec<String>, String> {
-    use crate::rooms::RoomClassification;
     let rooms = state
         .room_service()
         .list_rooms()
         .await
         .map_err(|error| error.to_string())?;
-    let mut selected = Vec::new();
-    for room in rooms {
-        // Reversible ownership survives normal redeployment. Admission, relay
-        // and metadata still require an exact current catalogue tuple.
-        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(&room) {
-            if owner == *world {
-                selected.push(room);
-            }
-            continue;
-        }
-        match crate::rooms::classify_room_name(state.scenes.as_ref(), &room)
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            RoomClassification::Canonical(resolved) if resolved.realm.world() == Some(world) => {
-                selected.push(room)
-            }
-            RoomClassification::Canonical(_) | RoomClassification::Unrelated => {}
-            RoomClassification::RelevantRefused { room, reason } => {
-                return Err(format!("incomplete room inventory: {room:?}: {reason:?}"));
-            }
-        }
-    }
-    Ok(selected)
+    Ok(inventory_world_rooms(world, &rooms))
 }
 
-/// Evicts from `world`'s rooms every participant the access setting no
-/// longer admits, as WCS's access-change handler: switching to unrestricted
-/// evicts nobody; the owner and the deployment/streaming grantees of the
-/// world or of a live scene (`protected_addresses`) stay; a shared-secret
-/// participant must mint again with the new secret; an allow-list edit
-/// evicts only who lost access; an undetermined decision evicts nobody.
-/// Only participants that joined by `cutoff` (unix seconds) are considered:
-/// a later joiner was admitted under the new setting, e.g. with the new secret.
-/// `Ok(false)`: some roster, decision or eviction did not complete; the pass may run again.
-pub(crate) async fn readmit_world_rooms(
+fn inventory_world_rooms(world: &WorldName, rooms: &[String]) -> Vec<String> {
+    let lobby = crate::rooms::worlds_service_world_room(world);
+    rooms
+        .iter()
+        .filter(|room| {
+            **room == lobby
+                || crate::rooms::decode_world_scene_room(room)
+                    .is_some_and(|(owner, _)| owner == *world)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Recheck against a durable edit cutoff. Shared-secret evidence is signed by
+/// the gatekeeper; a later LiveKit reconnect does not make an old token current.
+pub(crate) async fn readmit_world_rooms_in_inventory(
     state: &CommsState,
     world: &WorldName,
-    cutoff: i64,
-) -> Result<bool, String> {
+    cutoff: Option<chrono::NaiveDateTime>,
+    inventory: &[String],
+) -> Result<(), String> {
     let now = chrono::Utc::now().naive_utc();
-    match state.policy.world_admission(world, now).await {
-        Ok(WorldAdmission::Open(AccessType::Unrestricted)) => return Ok(true),
-        Ok(_) => {}
-        Err(error) => return Err(format!("access setting undetermined: {error}")),
-    }
-    let rooms = live_world_rooms(state, world).await?;
-    let (protected, undecided) = readmit_protected(state, world, &rooms).await?;
+    let admission = state
+        .policy
+        .world_admission(world, now)
+        .await
+        .map_err(|error| format!("access setting undetermined: {error}"))?;
+    let rooms = inventory_world_rooms(world, inventory);
+    let (protected, undecided) = if matches!(admission, WorldAdmission::Open(_)) {
+        readmit_protected(state, world, &rooms).await?
+    } else {
+        (BTreeSet::new(), BTreeSet::new())
+    };
     let mut complete = undecided.is_empty();
     let client = state.room_service();
     for room in rooms {
@@ -1003,44 +1020,101 @@ pub(crate) async fn readmit_world_rooms(
             Ok(participants) => participants,
             Err(error) => {
                 complete = false;
-                tracing::warn!(%error, room = %room, "roster unavailable; participants kept for now");
+                tracing::warn!(%error, %room, "roster unavailable; participants kept for now");
                 continue;
             }
         };
-        for participant in participants {
-            if participant.joined_at.is_some_and(|joined| joined > cutoff) {
-                continue;
-            }
-            let identity = participant.identity;
-            let Ok(address) = Address::parse(&identity) else {
-                continue;
-            };
-            if protected.contains(&address) {
-                continue;
-            }
-            match state
-                .policy
-                .can_access(world, &address, None, None, None, now)
-                .await
-            {
-                Ok(Access::Allowed(_)) => {}
-                Ok(_) => {
-                    if let Err(error) = client.remove_participant(&room, &identity).await {
-                        complete = false;
-                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant");
-                    }
-                }
+        let room_scene = crate::rooms::decode_world_scene_room(&room).map(|(_, scene)| scene);
+        let missing_scene = if let Some(scene) = &room_scene {
+            match state.scenes.world_scene(world, scene).await {
+                Ok(deployment) => deployment.is_none(),
                 Err(error) => {
                     complete = false;
-                    tracing::warn!(%error, room = %room, %address, "access undetermined; participant kept for now")
+                    tracing::warn!(%error, %room, "scene authority unavailable");
+                    continue;
                 }
+            }
+        } else {
+            false
+        };
+        for participant in participants {
+            let Ok(address) = Address::parse(&participant.identity) else {
+                continue;
+            };
+            let remove = if missing_scene || !matches!(admission, WorldAdmission::Open(_)) {
+                true
+            } else {
+                match state
+                    .policy
+                    .can_access(world, &address, None, room_scene.as_ref(), None, now)
+                    .await
+                {
+                    Ok(Access::Banned(_)) => true,
+                    Ok(_) if protected.contains(&address) => false,
+                    Ok(Access::Allowed(_)) => false,
+                    Ok(Access::InvalidSecret) => cutoff.is_some_and(|cutoff| {
+                        !super::world_mint::authorized_after(
+                            &state.livekit.api_secret,
+                            world,
+                            &participant.identity,
+                            &room,
+                            participant
+                                .attributes
+                                .get(super::world_mint::AUTHORIZATION_ATTRIBUTE)
+                                .map(String::as_str)
+                                .or(participant.metadata.as_deref()),
+                            cutoff,
+                        )
+                    }),
+                    Ok(Access::NotAllowed) => true,
+                    Err(error) => {
+                        complete = false;
+                        tracing::warn!(%error, %room, %address, "access undetermined; participant kept for now");
+                        false
+                    }
+                }
+            };
+            if remove
+                && let Err(error) = client
+                    .remove_participant(&room, &participant.identity)
+                    .await
+            {
+                complete = false;
+                tracing::warn!(%error, %room, %address, "failed to evict a revoked participant");
             }
         }
     }
-    Ok(complete)
+    if complete {
+        Ok(())
+    } else {
+        Err("world readmission incomplete".into())
+    }
 }
 
-/// [`readmit_world_rooms`] again after each of `delays` until a pass completes; false if none did.
+#[cfg(test)]
+pub(crate) async fn readmit_world_rooms(
+    state: &CommsState,
+    world: &WorldName,
+    cutoff: i64,
+) -> Result<bool, String> {
+    let rooms = state
+        .room_service()
+        .list_rooms()
+        .await
+        .map_err(|error| error.to_string())?;
+    let cutoff = Some(
+        chrono::DateTime::from_timestamp(cutoff, 0)
+            .map(|at| at.naive_utc())
+            .unwrap_or(chrono::NaiveDateTime::MAX),
+    );
+    Ok(
+        readmit_world_rooms_in_inventory(state, world, cutoff, &rooms)
+            .await
+            .is_ok(),
+    )
+}
+
+#[cfg(test)]
 pub(crate) async fn readmit_until_settled(
     state: &CommsState,
     world: &WorldName,
@@ -1049,10 +1123,8 @@ pub(crate) async fn readmit_until_settled(
     let cutoff = chrono::Utc::now().timestamp();
     let mut delays = delays.iter();
     loop {
-        match readmit_world_rooms(state, world, cutoff).await {
-            Ok(true) => return true,
-            Ok(false) => tracing::warn!(%world, "access-change readmission incomplete"),
-            Err(error) => tracing::warn!(%error, %world, "access-change readmission failed"),
+        if matches!(readmit_world_rooms(state, world, cutoff).await, Ok(true)) {
+            return true;
         }
         let Some(delay) = delays.next() else {
             return false;

@@ -34,8 +34,8 @@ async function loadComponentSpecs(
   const pages: ComponentPageInput[] = []
   const skippedPages: string[] = []
   const inventory = await source.getGenerationInventory?.()
-  // Single-file by construction: the snapshot, its inventory and retirements carry no file key (it
-  // comes from FIGMA_FILE_KEY only), so there is no file-identity check to make here.
+  // Single-file by construction: the snapshot, its inventory and retirements carry no file key (the capture
+  // covers one file), so there is no file-identity check to make here.
   const retirements = await sourceRetirements(source)
   if (config.selection?.readyOnly && !inventory)
     throw new Error('Generation inventory required for ready-only generation')

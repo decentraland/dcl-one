@@ -30,6 +30,12 @@ pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
 
+/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
+/// route's field cap.
+pub fn too_many_fields_message(max_fields: usize) -> String {
+    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
+}
+
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
 
 pub const MAX_MULTIPART_FIELDS: usize = 100;
@@ -394,6 +400,12 @@ pub fn source_limit_response() -> axum::response::Response {
 // `ApiError` renders them too.
 pub use crate::comms::worlds_envelope::{DeployRejection, shed_response, timeout_response};
 
+/// 413 `{"error":"Payload Too Large","message":…}`, as upstream's multipart
+/// parser answers a size or count limit (`upload-error-handler.ts`).
+pub fn too_large(message: impl Into<String>) -> crate::comms::worlds_envelope::ApiError {
+    crate::comms::worlds_envelope::ApiError::http(413, message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,6 +612,34 @@ mod tests {
             err.to_string(),
             "MAX_CONCURRENT_UPLOADS must be a positive integer, got 0"
         );
+    }
+
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` is shared with content's
+    /// deploys: the config refuses what this check would refuse at startup.
+    #[test]
+    fn the_shared_per_source_byte_floor_is_one_world_deploy() {
+        let max_upload = super::super::deploy::MAX_UPLOAD_SIZE_BYTES as u64;
+        let parse = |bytes: u64| {
+            crate::config::Config::parse_for_tests(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-in-flight-upload-bytes-per-source",
+                &bytes.to_string(),
+            ])
+        };
+        assert!(parse(max_upload - 1).is_err());
+        let set = parse(max_upload)
+            .unwrap()
+            .content
+            .max_in_flight_upload_bytes_per_source
+            .unwrap();
+        let limits = UploadLimits {
+            max_in_flight_upload_bytes_per_source: set,
+            ..UploadLimits::default()
+        };
+        assert!(limits.validate(max_upload).is_ok());
+        assert!(DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE >= max_upload);
     }
 
     #[test]

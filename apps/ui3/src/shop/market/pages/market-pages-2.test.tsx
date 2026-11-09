@@ -111,10 +111,10 @@ describe("One list: a private list is never rendered to another account", () => 
     expect(m.shop.requests.some((r) => r.url.pathname.endsWith("/picks"))).toBe(false);
   });
 
-  it("signed out, upstream's sign-in page is drawn in place (ListPage.tsx:105 redirects to it)", async () => {
-    mountShop({ path: "/shop/my-favorites/list-private", who: "signedOut", routes: [{ method: "GET", path: /^\/v1\/lists\/list-private$/, reply: () => ({ status: 401, body: { ok: false, message: "unauthorized" } }) }] });
-    expect(await screen.findByTestId("shop-list-signin")).toHaveTextContent("Get Started");
-    expect(screen.queryByTestId("shop-list-unavailable")).toBeNull();
+  it("lists are the Marketplace's: signed out, a list link goes to the overview without reading the list", async () => {
+    const m = mountShop({ path: "/shop/my-favorites/list-private", who: "signedOut", routes: [{ method: "GET", path: /^\/v1\/lists\/list-private$/, reply: () => ({ status: 401, body: { ok: false, message: "unauthorized" } }) }] });
+    await waitFor(() => expect(m.router.state.location.pathname).toBe("/shop/overview"));
+    expect(m.shop.requests.some((r) => r.url.pathname.startsWith("/v1/lists"))).toBe(false);
   });
 
   it("the owner sees it, edits it, and can remove items", async () => {
@@ -141,10 +141,10 @@ describe("One list: a private list is never rendered to another account", () => 
     await waitFor(() => expect(m.shop.requests.find((r) => r.method === "PUT")?.body).toEqual({ name: "Winter 2026", private: true, description: "Only for me" }));
   });
 
-  it("a shared list is readable by anyone, without edit controls", async () => {
+  it("a shared list is readable by any web3 visitor, without edit controls", async () => {
     mountShop({
       path: "/shop/my-favorites/list-shared",
-      who: "signedOut",
+      who: "web3",
       routes: [{ method: "GET", path: /^\/v1\/lists\/list-shared$/, reply: () => ({ body: { ok: true, data: LISTS[2] } }) }, picks([`${BOOK.collection}-7`]), catalog],
     });
     expect(await screen.findByRole("heading", { name: "Party pack" })).toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("One list: a private list is never rendered to another account", () => 
 
   it("the default list is never shown as someone else's", async () => {
     const m = mountShop({ path: `/shop/my-favorites/${DEFAULT_LIST_ID}`, who: "signedOut", routes: [{ method: "GET", path: /^\/v1\/lists\/[^/]+$/, reply: () => ({ body: { ok: true, data: LISTS[0] } }) }] });
-    expect(await screen.findByTestId("shop-list-signin")).toBeInTheDocument();
+    await waitFor(() => expect(m.router.state.location.pathname).toBe("/shop/overview"));
     expect(m.shop.requests.some((r) => r.url.pathname.endsWith("/picks"))).toBe(false);
   });
 });
@@ -167,13 +167,13 @@ describe("loading states", () => {
     let view = mountShop({ path: "/shop/my-items", who: "web3", routes: [pending(/^\/v1\/nfts$/), pending(/^\/v3\/catalog\/importable$/)] });
     expect(await screen.findByText("Loading your wearables…")).toBeInTheDocument();
     view.unmount();
-    view = mountShop({ path: "/shop/rankings", who: "signedOut", routes: [pending(/^\/v1\/volume\//), pending(/^\/v1\/rankings\//)] });
+    view = mountShop({ path: "/shop/rankings", who: "web3", routes: [pending(/^\/v1\/volume\//), pending(/^\/v1\/rankings\//)] });
     expect(await screen.findByText("Loading rankings…")).toBeInTheDocument();
     view.unmount();
-    view = mountShop({ path: "/shop/my-favorites/list-shared", who: "signedOut", routes: [pending(/^\/v1\/lists\/list-shared$/)] });
+    view = mountShop({ path: "/shop/my-favorites/list-shared", who: "web3", routes: [pending(/^\/v1\/lists\/list-shared$/)] });
     expect(await screen.findByText("Loading the list…")).toBeInTheDocument();
     view.unmount();
-    mountShop({ path: `/shop/token/${BOOK.collection}/1/bids`, who: "signedOut", routes: [pending(/^\/v1\/nfts$/)] });
+    mountShop({ path: `/shop/token/${BOOK.collection}/1/bids`, who: "web3", routes: [pending(/^\/v1\/nfts$/)] });
     expect(await screen.findByText("Loading the item…")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,15 @@
 import type { RawComponentPage, RawNode } from '../ir/raw-components.js'
-import { checksum } from './ingest-chunks.js'
+
+// The capture's transport checksum (FNV-1a, base 36). It must match `checksum` in figma-design-system's
+// capture scripts, which write it; this tree only recomputes it after stripping metadata.
+function checksum(text: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(36)
+}
 
 // Raster images inside a capture (Figma's SVG exports embed them, and image fills are data URIs) can
 // carry editor metadata: Adobe XMP edit history, document ids, EXIF, timestamps. None of it renders,
@@ -132,6 +142,7 @@ function stripImageMetadata(page: RawComponentPage): RawComponentPage {
 }
 
 export {
+  checksum,
   NON_RENDERING,
   pageRasters,
   stripEmbedded as stripSvgImageMetadata,

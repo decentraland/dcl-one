@@ -18,4 +18,14 @@ describe("itemsGrid", () => {
     expect(isUnified).toBe(false);
     expect(key).toEqual(["catalog-items", expect.objectContaining({ isOnSale: false })]);
   });
+
+  it("without the Marketplace a ?listingType= selects nothing and the read asks for primary sales", () => {
+    const resale = { ...itemsFilterDefaults("", false), status: "on_sale", listingType: "secondary" };
+    const off = itemsGrid(resale, "");
+    expect(off.listingType).toBeUndefined();
+    expect(off.key?.[1]).toMatchObject({ listingType: "primary" });
+    const on = itemsGrid(resale, "", { marketplace: true });
+    expect(on.listingType).toBe("secondary");
+    expect(on.key?.[1]).toMatchObject({ listingType: "secondary" });
+  });
 });

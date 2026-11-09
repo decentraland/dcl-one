@@ -219,9 +219,7 @@ pub fn verify_webhook_token(
     };
     let now = now.as_secs();
     const LEEWAY: u64 = 60;
-    let Some(exp) = payload.get("exp").and_then(json_u64) else {
-        return None;
-    };
+    let exp = payload.get("exp").and_then(json_u64)?;
     if now > exp.saturating_add(LEEWAY) {
         return None;
     }
@@ -233,12 +231,8 @@ pub fn verify_webhook_token(
     if payload.get("iss").and_then(|v| v.as_str()) != Some(api_key) {
         return None;
     }
-    let Some(claim) = payload.get("sha256").and_then(|v| v.as_str()) else {
-        return None;
-    };
-    let Some(expected) = decode_body_digest(claim) else {
-        return None;
-    };
+    let claim = payload.get("sha256").and_then(|v| v.as_str())?;
+    let expected = decode_body_digest(claim)?;
     crate::auth::admin_bearer::timing_safe_eq(&expected, &Sha256::digest(body))
         .then_some(exp.saturating_add(LEEWAY))
 }
@@ -254,6 +248,7 @@ pub struct ParticipantInfo {
     pub sid: String,
     pub identity: String,
     pub metadata: Option<String>,
+    pub attributes: std::collections::BTreeMap<String, String>,
     /// `permission.canUpdateMetadata` (either proto-JSON spelling); `None`
     /// when the two spellings disagree or the value is not a bool.
     pub can_update_metadata: Option<bool>,
@@ -444,6 +439,18 @@ pub struct OccupancyRoom {
 pub struct OccupancyParticipant {
     pub identity: String,
     pub sid: String,
+    /// When the participant joined, in milliseconds (`joinedAtMs`, else
+    /// `joinedAt` seconds); 0 when LiveKit sent neither.
+    pub joined_at_ms: i64,
+}
+
+/// A protojson int64, which LiveKit's Twirp JSON writes as a string.
+fn json_i64(value: Option<&serde_json::Value>) -> Option<i64> {
+    match value? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
 }
 
 fn recovery_field(value: &serde_json::Value, field: &str) -> Result<String, RoomServiceError> {
@@ -492,7 +499,15 @@ fn recovery_participants(
             if !identities.insert(identity.clone()) || !sids.insert(sid.clone()) {
                 return Err(RoomServiceError::InvalidResponse);
             }
-            Ok(OccupancyParticipant { identity, sid })
+            let joined_at_ms = json_i64(value.get("joinedAtMs"))
+                .filter(|ms| *ms > 0)
+                .or_else(|| json_i64(value.get("joinedAt")).map(|s| s.saturating_mul(1000)))
+                .unwrap_or(0);
+            Ok(OccupancyParticipant {
+                identity,
+                sid,
+                joined_at_ms,
+            })
         })
         .collect()
 }
@@ -544,6 +559,16 @@ mod recovery_contract_tests {
         .unwrap();
         assert_eq!(raw[0].identity, "a");
         assert_eq!(raw[1].identity, "A");
+        let joined = recovery_participants(&json!({"participants":[
+            {"identity":"a","sid":"1","joinedAt":"1700000000","joinedAtMs":"1700000000123"},
+            {"identity":"b","sid":"2","joinedAt":1700000001},
+            {"identity":"c","sid":"3"},
+        ]}))
+        .unwrap();
+        assert_eq!(
+            joined.iter().map(|p| p.joined_at_ms).collect::<Vec<_>>(),
+            [1_700_000_000_123, 1_700_000_001_000, 0]
+        );
     }
 
     #[test]
@@ -943,7 +968,7 @@ impl<'a> RoomServiceClient<'a> {
         identity: &str,
         patch: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), RoomServiceError> {
-        let metadata = self.merged_metadata(room, identity, patch).await;
+        let metadata = self.merged_metadata(room, identity, patch).await?;
         self.update_participant(room, identity, Some(&metadata), None)
             .await
     }
@@ -956,7 +981,7 @@ impl<'a> RoomServiceClient<'a> {
         patch: serde_json::Map<String, serde_json::Value>,
         permission: serde_json::Value,
     ) -> Result<(), RoomServiceError> {
-        let metadata = self.merged_metadata(room, identity, patch).await;
+        let metadata = self.merged_metadata(room, identity, patch).await?;
         self.update_participant(room, identity, Some(&metadata), Some(permission))
             .await
     }
@@ -966,12 +991,10 @@ impl<'a> RoomServiceClient<'a> {
         room: &str,
         identity: &str,
         patch: serde_json::Map<String, serde_json::Value>,
-    ) -> String {
+    ) -> Result<String, RoomServiceError> {
         let existing = self
             .get_participant(room, identity)
-            .await
-            .ok()
-            .flatten()
+            .await?
             .and_then(|p| p.metadata);
         let mut merged: serde_json::Map<String, serde_json::Value> = existing
             .as_deref()
@@ -980,7 +1003,7 @@ impl<'a> RoomServiceClient<'a> {
         for (k, v) in patch {
             merged.insert(k, v);
         }
-        serde_json::Value::Object(merged).to_string()
+        Ok(serde_json::Value::Object(merged).to_string())
     }
 
     pub async fn list_rooms(&self) -> Result<Vec<String>, RoomServiceError> {
@@ -1340,6 +1363,10 @@ fn parse_participant(p: &serde_json::Value) -> ParticipantInfo {
             .and_then(|i| i.as_str())
             .unwrap_or_default()
             .to_string(),
+        attributes: p
+            .get("attributes")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default(),
         metadata: p.get("metadata").and_then(|m| m.as_str()).map(String::from),
         can_update_metadata: p
             .get("permission")
@@ -1947,6 +1974,34 @@ mod tests {
                 .await,
             Err(RoomServiceError::Status(500))
         ));
+    }
+
+    #[tokio::test]
+    async fn participant_metadata_read_failure_never_writes_an_empty_base() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let count = socket.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..count]).contains("GetParticipant"));
+            socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            drop(socket);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        let http = reqwest::Client::new();
+        assert!(
+            RoomServiceClient::new(&http, &host, "key", "secret")
+                .merge_participant_metadata("room", "wallet", serde_json::Map::new())
+                .await
+                .is_err()
+        );
+        task.await.unwrap();
     }
 
     #[tokio::test]

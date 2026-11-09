@@ -13,13 +13,14 @@ describe('sidebar parity', () => {
     expect(button.querySelector('span[aria-hidden="true"]')).not.toBeNull()
   })
 
-  it('Shop opens the shop with the web client utm source, between Backpack and Gallery', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    render(<Sidebar session={fakeSession()} />)
+  // Where it leads (the in-world Shop page, or the web Shop with ?shop=old) is inWorldShopWiring's.
+  it('Shop sits between Backpack and Gallery and opens the in-world Shop', async () => {
+    const session = fakeSession()
+    render(<Sidebar session={session} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
     expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Gallery') + 1)).toEqual(['Backpack', 'Shop', 'Gallery'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
-    expect(open).toHaveBeenCalledWith('https://decentraland.org/shop?utm_source=bevy-web-client', '_blank', 'noopener')
+    expect(session.shop.toggle).toHaveBeenCalled()
   })
 
   it('Bug report follows Help and opens public support', async () => {

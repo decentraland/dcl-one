@@ -165,7 +165,7 @@ impl Settings {
     pub(crate) fn auth_timeout(&self) -> Duration {
         let configured = self
             .ws_auth_timeout_ms
-            .unwrap_or_else(|| self.auth_window_secs as f64 * 1000.0);
+            .unwrap_or(self.auth_window_secs as f64 * 1000.0);
         // Node setTimeout inserts into an integer millisecond bucket and uses
         // one millisecond outside its supported positive signed-32-bit range.
         let ms = if (1.0..=i32::MAX as f64).contains(&configured) {
@@ -177,7 +177,7 @@ impl Settings {
     }
     pub(crate) fn auth_signature_expiration_ms(&self) -> f64 {
         self.ws_auth_signature_expiration_ms
-            .unwrap_or_else(|| self.auth_window_secs as f64 * 1000.0)
+            .unwrap_or(self.auth_window_secs as f64 * 1000.0)
     }
 }
 

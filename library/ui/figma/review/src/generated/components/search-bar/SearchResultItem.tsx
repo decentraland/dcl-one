@@ -146,7 +146,7 @@ export const SearchResultItem = ({
   <FigmaView
     as='button'
     views={searchResultItemViews}
-    defaultKey='product:explorer'
+    component='SearchResultItem'
     select={{
       values: { product },
       booleans: {  },
@@ -154,7 +154,7 @@ export const SearchResultItem = ({
     }}
     slots={{ label, label2 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

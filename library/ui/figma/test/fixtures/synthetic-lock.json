@@ -1,0 +1,58 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/decentraland/figma-design-system",
+      "revision": "cccccccccccccccccccccccccccccccccccccccc",
+      "note": "Test fixture: pins the synthetic capture in synthetic-snapshot/ so tests read it through the same verified-cache boundary as production.",
+      "snapshot": {
+        "revision": "cccccccccccccccccccccccccccccccccccccccc",
+        "digests": {
+          "README.md": "e4c1d0f1b7df9adf5c49ccc69f0824386154f2c385263bbb3633529b5ddf8702",
+          "components/Demo Controls.json": "b45b6d242b0199d84bb470ac420ac49a5cc50c28520f2313d795d21b5064fa63",
+          "components/Demo Cursors.json": "8c42b5eb883e603b5898d8e35d3d65c1ba50fb940be3ae6d77495ff0174bf5c3",
+          "components/Demo Dialogs.json": "d752004bde6d7c8878a4c022fb0db99b00cbe71a3bfaec424943d83c62494967",
+          "components/Demo Feedback.json": "54f5df08c59d8517e615ab2cb061f0843db39c1c9dbb4f753da39b102d311c83",
+          "components/Demo Field.json": "ac65eab265343d61d33248a1c2f75442ae39c00c4b863cc2d22d3989479d2369",
+          "components/Demo Nav.json": "e31bd2628239b801d64dcfd1cbb49bcb0112d7bba3757cccd8981f2f5a81c08d",
+          "components/Demo Search.json": "4c51b01c66a84589b968aa6564f621cfea5e49df117bd53c9dc594c8983dfd72",
+          "components/Demo Toggles.json": "9ffa8482c64f9f21f5c61fed8b23a097dccacd4c3c46a689792e8279c02fd727",
+          "components/Demo%3A Legacy Bars.json": "8a4469e94fae56e84770c4bb95150ab91967d9ab5a00d7e742f9bef3dad17236",
+          "generation-inventory.json": "81d02fcb01d49e70993af170ec80d0f052dd92952d9e67465331da07cb3bb1da",
+          "icons.json": "47a48736244206462ae7d748bb4d31a404a7d08ce354fc5cd74e30d64120811e",
+          "icons/3-1.svg": "6bdb163edb0296c5d83d80d95ab58001d2fc3e50755303486fb4d2a7d6967166",
+          "icons/3-10.svg": "95fd1ea1c1943f0c304ce6f3ce810b3048fef96bfe346b0a8fb1004a8635bf15",
+          "icons/3-11.svg": "46a86ea87608d5e132ac8057cd7fe40986cb49f5c9236323ae8995bbeef15e0b",
+          "icons/3-12.svg": "c685c46307ad8548169f9d52878e284f212c29132f47151ec91f826788cb362b",
+          "icons/3-13.svg": "06cebbbd3de4996dc75fd35cb22e1595835356579547978ea017e4d11a920ef0",
+          "icons/3-14.svg": "012bf539a4c80d1113a5e3f7f209acb874d8a96e9fbf349b7e123e18566c10a7",
+          "icons/3-15.svg": "53becdc6da556eb2d9dbadb2c991e8a4fe551e69dd51aa4324f1d84d8432d180",
+          "icons/3-16.svg": "9bee286d2bebb402bb3248af89e1d4c57351e5976d3cb38c47c4e862153474cf",
+          "icons/3-17.svg": "0ca5d03f8b48f05d87221c3f0c1d685c9d556a4d00bbbae7075987d7d9d623cc",
+          "icons/3-18.svg": "c3c5df7990a349c38bf3a83ac03e7a95608a9092971770589da3d1c9d661ca16",
+          "icons/3-19.svg": "b205213bd1844fb825ac11f3c884f1ddf736441872a4a3cfd76723ec4695c153",
+          "icons/3-2.svg": "b6cd75992be13fff0097fde02d6a3991a652d9b41d14c77beb63b0544e879ec7",
+          "icons/3-20.svg": "c4a539e779023e81ac1b1e9f903abfeb11983e995cdd92fc5496e4b6a7cf7f2d",
+          "icons/3-21.svg": "d618739207b9b20f362b876e08cb8d6992f75edc9dcbd9d693a0f8be1f2cd503",
+          "icons/3-22.svg": "b8032e8aad5841f9020cbdcd72c40d0ce06f3dc5e59407615edd93788aacb967",
+          "icons/3-23.svg": "dea76e7998e388042fac2ef06f9c1243bba48e9ba9aefbca64d2f7142de49cf7",
+          "icons/3-24.svg": "bee1400e1f55d5d60deed02fdc9e30d50d5e1aae2438c85062e4d156190b6f44",
+          "icons/3-25.svg": "4867460cd758fd6860bf061129bf1c3f5de5fe02fe9ed2088ebdc933e7673f5e",
+          "icons/3-26.svg": "a966b5006ec2e80217a603f97bc6d3e89d734e789185e54ecfd0bbf9de73f874",
+          "icons/3-3.svg": "dace081b26c1351de5186aa5648d5977b1f3288578c5d51ca07b6362d5d5f397",
+          "icons/3-4.svg": "1d8567daaf3f8ca6e1bc9f05bfd640a8f2fd7373270d55102f68b6947e31b16f",
+          "icons/3-5.svg": "32008589558dbf48990566db8b8d6837f57bd2f00c471b04bf5ac853d46b98a4",
+          "icons/3-6.svg": "d7329fae4f49a077fa9c9b192f5ff4d05170fc60772ae919e348e5ae1bc60952",
+          "icons/3-7.svg": "c505f808c079dc09d64bd6fbd8c7d98898c2415e0fa3ac4482cb0919483cc160",
+          "icons/3-8.svg": "b030f923996f1ac5c032a73c5fda7efe2b7236178ac710559887a3d39cd660a8",
+          "icons/3-9.svg": "594b3983d2bb52dee12f1ee82371105fe5c1a99c4b23e7291dbcdc64af89e430",
+          "live-source.json": "33159c814b93738647ae8092daf4c1c36adc7a4ec51434185a76f739a2aa79cc",
+          "pages.json": "ab80b674f991ddb253b52ae59bc8c29a2fedcdbc28fe6f662b2c9c751c5503ae",
+          "paint-styles.json": "3cc4ebe7673d2affdc85f7eb820323f0827c8a0b0617b5e6c6a257b7d24dd129",
+          "sync-state.json": "84990889ae3d18229006dc4073871aa240b649d10e718a5efcf57ec6ea06e42d",
+          "text-styles.json": "1b96ec1c3b2d4a89ca98106817e64575965e0fa624d3b8b6e2c944f62d130658",
+          "variables.json": "6440c4baf9e86d4957661c68e56d7d3a760195a725157eb2622057ba1507884c"
+        }
+      }
+    }
+  ]
+}

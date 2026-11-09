@@ -83,8 +83,6 @@ async function removeAggregateEntries(root: string, artifacts: string[]): Promis
                   }
                 : {})
             }))
-      else if (kind === 'fidelity') for (const key of keys) delete data.cases[key]
-      else if (kind === 'references') for (const key of keys) delete data[key]
       else throw new Error(`Unsupported retirement aggregate: ${file}`)
       next = JSON.stringify(data, null, 2) + '\n'
     }

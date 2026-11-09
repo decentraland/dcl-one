@@ -1,47 +1,32 @@
 #!/usr/bin/env node
 import { componentOwnerById } from './guard/component-identity.js'
-import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { main as keyGuard } from '../key-guard.mjs'
-import {
-  PROMOTION_MANIFEST,
-  staleSeal,
-  verifyPromotionManifest,
-  writePromotionManifest
-} from './promotion/manifest.js'
-import { promoteReviewed } from './promotion/promote.js'
-import { pullLive } from './automation/pull-live.js'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
-import { redactFileKey, requireFileKey } from './config.js'
+import { errorText } from './server-errors.js'
 import { checkMappings, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
 import { buildOwnership } from './guard/ownership.js'
 import { RETIREMENTS_PATH, loadRetirements, serializeRetirements } from './guard/retirements.js'
 import { createRuntime } from './runtime.js'
+import { requireFileKey } from './config.js'
 import { EnvTokenProvider, FigmaClient } from './figma/client.js'
-import { configuredPages } from './page-identity.js'
-import { ingestChunkFiles } from './capture/ingest-chunks.js'
-import { mergeChunkFiles } from './capture/merge-component-chunks.js'
 import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
+import { fetchFdsSource } from './sources/fds-source.js'
 
 const USAGE = `Usage:
-  dcl-figma promotion-manifest
-  dcl-figma promotion-verify
+  dcl-figma fetch-source [--seal]
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
-  dcl-figma promote-reviewed
   dcl-figma probe
-  dcl-figma pull-live [--apply] [--report <file>] [--page <name>] [--config <file>]
-  dcl-figma sync [--source snapshot|rest] [--out <dir>] [--developer [--apply-retirements]]
+  dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
-  dcl-figma capture-merge <out.json> <chunk.json>...
-  dcl-figma capture-ingest <chunk.json>...
   dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
@@ -49,6 +34,8 @@ const USAGE = `Usage:
 
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 
+// `rest` reads the live file for local inspection (FIGMA_TOKEN and FIGMA_FILE_KEY from the environment); sync
+// refuses it, because shipped output comes from the verified fetch-source cache.
 function sourceKind(value: string | undefined): SourceKind {
   if (value === undefined || value === 'snapshot') return 'snapshot'
   if (value === 'rest') return 'rest'
@@ -58,14 +45,19 @@ function sourceKind(value: string | undefined): SourceKind {
 async function main(argv: string[]): Promise<number> {
   // The guard has its own flags (--range, --path, ...) and needs no Figma config.
   if (argv[0] === 'key-guard') return keyGuard(argv.slice(1))
+  // Materializes the figma-design-system capture pinned in upstream.lock.json; maintainers only, never CI.
+  if (argv[0] === 'fetch-source') {
+    const rest = argv.slice(1)
+    if (rest.some((arg) => arg !== '--seal')) throw new Error('fetch-source takes only --seal')
+    const result = await fetchFdsSource({ figmaRoot: process.cwd(), seal: rest.includes('--seal') })
+    print({ ...result, sealed: rest.includes('--seal') })
+    return 0
+  }
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
       source: { type: 'string' },
-      apply: { type: 'boolean' },
-      page: { type: 'string' },
-      report: { type: 'string' },
       out: { type: 'string' },
       developer: { type: 'boolean' },
       'page-id': { type: 'string' },
@@ -87,41 +79,6 @@ async function main(argv: string[]): Promise<number> {
     }
   })
   const [command] = positionals
-
-  if (command === 'promotion-verify') {
-    const manifest = await verifyPromotionManifest(await createApp(process.cwd(), values.config))
-    print({
-      verified: true,
-      components: manifest.components.length,
-      files: Object.keys(manifest.files).length
-    })
-    return 0
-  }
-
-  if (command === 'promotion-manifest' || command === 'promote-reviewed') {
-    const app = await createApp(process.cwd(), values.config)
-    const result = await (command === 'promotion-manifest'
-      ? writePromotionManifest(app)
-      : promoteReviewed(app))
-    if (values.report) {
-      const file = path.resolve(values.report)
-      await mkdir(path.dirname(file), { recursive: true })
-      await writeFile(file, `${JSON.stringify(result, null, 2)}\n`)
-    }
-    print(result)
-    return 0
-  }
-
-  if (command === 'pull-live') {
-    print(
-      await pullLive(await createApp(process.cwd(), values.config), {
-        apply: values.apply,
-        report: values.report ?? '.figma-cache/live-report.json',
-        page: values.page
-      })
-    )
-    return 0
-  }
 
   if (command === 'review-manifest') {
     print(await writeReviewManifest(await createApp(process.cwd(), values.config), values.out))
@@ -164,36 +121,22 @@ async function main(argv: string[]): Promise<number> {
     return result.file === 'ok' ? 0 : 1
   }
 
-  if (command === 'capture-merge') {
-    const [, output, ...chunks] = positionals
-    if (!output || chunks.length === 0) throw new Error(USAGE)
-    const merged = await mergeChunkFiles(output, chunks)
-    print({ page: merged.page.name, components: merged.components.length })
-    return 0
-  }
-
-  if (command === 'capture-ingest') {
-    const [, ...chunks] = positionals
-    if (chunks.length === 0) throw new Error(USAGE)
-    const app = await createApp(process.cwd(), values.config)
-    print(
-      await ingestChunkFiles(
-        path.resolve(app.cwd, app.config.snapshotDir),
-        chunks,
-        configuredPages(app.config)
-          .filter((page) => page.id === null)
-          .map((page) => page.name)
-      )
-    )
-    return 0
-  }
-
   // A developer records a retirement: the only way output is ever removed. The owned artifacts are
   // computed from the ownership map and written into the record for the reviewer to read.
   if (command === 'retire') {
     const pageId = values['page-id']
     if (!pageId || !values.reason) throw new Error(USAGE)
+    // Ownership is derived from the capture at figma/figma-snapshot, so that exact directory is verified first:
+    // a --config naming another snapshotDir would verify one cache and read another.
+    const app = await createApp(process.cwd(), values.config)
     const root = path.resolve(process.cwd(), '..')
+    if (
+      path.resolve(app.cwd, app.config.snapshotDir) !== path.resolve(root, 'figma/figma-snapshot')
+    )
+      throw new Error(
+        'retire reads the capture at figma/figma-snapshot, but the config names another snapshotDir'
+      )
+    await app.createSource('snapshot').ready?.()
     const ownership = await buildOwnership(root)
     const componentId = values['component-id']
     const name = values.name ?? (componentId ? ownership.componentById.get(componentId) : undefined)
@@ -252,26 +195,7 @@ async function main(argv: string[]): Promise<number> {
           }
         : {})
     })
-    // A developer or review change to sealed source must reseal the review promotion manifest in the
-    // same tree, or promotion of the next proposal fails on an entry no capture owns.
-    const sealIssues =
-      runKind === 'developer' &&
-      !values['library-only'] &&
-      existsSync(path.join(stagedDir, PROMOTION_MANIFEST))
-        ? await staleSeal(await createApp(path.join(stagedDir, 'figma')))
-        : []
-    const combined = {
-      ok: result.ok && sealIssues.length === 0,
-      violations: [
-        ...result.violations,
-        ...sealIssues.map((entry) => ({
-          path: PROMOTION_MANIFEST,
-          owner: { aggregate: 'promotion-manifest' },
-          kind: 'out-of-scope-change',
-          cause: `sealed ${entry} does not match the tree; run cli promotion-manifest`
-        }))
-      ]
-    }
+    const combined = { ok: result.ok, violations: result.violations }
     print(combined)
     return combined.ok ? 0 : 1
   }
@@ -296,9 +220,7 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
-    process.stderr.write(
-      `${redactFileKey(error instanceof Error ? error.message : String(error))}\n`
-    )
+    process.stderr.write(`${errorText(error)}\n`)
     process.exit(1)
   }
 )

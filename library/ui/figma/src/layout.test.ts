@@ -13,10 +13,9 @@ const SOURCE = /\.(ts|tsx|mts|mjs|cjs|js|json|html|css|md|yaml|yml)$/
 const SKIPPED_DIRS = new Map([
   ['node_modules', 'installed dependencies'],
   ['review-dist', 'the Review build output, gitignored'],
-  ['figma/figma-snapshot', 'capture data, not code: Figma metadata, upstream-origin names allowed'],
   [
-    'figma/test/fixtures/figma-snapshot',
-    'frozen capture data for the tests, same as figma-snapshot'
+    'figma/figma-snapshot',
+    'the gitignored capture cache, not code: Figma metadata, upstream-origin names allowed'
   ],
   ['figma/review/public', 'the served Review evidence (images and their records), not code']
 ])
@@ -24,7 +23,16 @@ const SKIPPED_DIRS = new Map([
 const SKIPPED_FILES = new Map([
   ['figma/src/layout.ts', 'defines the upstream-to-library map, so it names the upstream roots'],
   ['figma/src/layout.test.ts', 'this gate, which names the upstream roots to find them'],
-  ['upstream.lock.json', 'the provenance record, which names upstream paths by design']
+  ['upstream.lock.json', 'the provenance record, which names upstream paths by design'],
+  [
+    'figma/src/sources/fds-source.ts',
+    'reads the capture from figma-design-system, so it names that repository path by design'
+  ],
+  [
+    'figma/src/sources/fds-source.test.ts',
+    'builds a stand-in figma-design-system repository, so it names its paths'
+  ],
+  ['figma/lock-digests.test.ts', 'records figma-design-system counterpart paths, as the lock does']
 ])
 const REPO_ROOT_PATH = /(?<![/\w-])(dcl-mcp-figma|dcl-ui-review|component-library)\//
 // The Review serves itself from a folder named dcl-ui-review (figma/review/dcl-ui-review, and

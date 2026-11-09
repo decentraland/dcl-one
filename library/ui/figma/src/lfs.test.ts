@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LfsPointerError, readMaterialized } from './lfs.js'
 import { createRuntime } from './runtime.js'
+import { pinTestCapture } from '../test/snapshot.js'
 
 const POINTER = 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n'
 
@@ -51,6 +52,8 @@ describe('the MCP runtime', () => {
         })
       )
       await writeFile(path.join(directory, 'snapshot/components/Nav bar.json'), POINTER)
+      // A pointer that fetch-source would have pinned: the cache verifies, and reading it must still fail.
+      await pinTestCapture(directory)
 
       const runtime = await createRuntime({ cwd: directory, env: {} })
 

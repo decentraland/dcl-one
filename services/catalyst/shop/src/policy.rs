@@ -587,6 +587,13 @@ enum OfferPrice {
     Mana(ManaWei),
 }
 
+/// Whether [`quote`] prices the offer in USD and converts it to MANA at the
+/// rate: a USD-pegged trade, which the marketplace converts at its own feed
+/// in the block that settles it.
+pub fn priced_in_usd(offer: &Offer) -> bool {
+    matches!(offer_price(offer), Ok((OfferPrice::Usd(_), _)))
+}
+
 fn offer_price(offer: &Offer) -> Result<(OfferPrice, Option<u32>), Refusal> {
     match offer {
         Offer::Trade { trade, coupon } => {
@@ -654,7 +661,7 @@ fn credits_quote(line: &Authoritative, rate: Option<&ManaUsdRate>) -> Result<Usd
 /// Whether the line's price is set in USD (a USD-pegged trade), which the
 /// marketplace converts to MANA at its own feed when the trade settles.
 pub fn prices_in_usd(line: &Authoritative) -> bool {
-    matches!(offer_price(&line.offer), Ok((OfferPrice::Usd(_), _)))
+    priced_in_usd(&line.offer)
 }
 
 /// The most a credit for `lines` may sign, from the lines alone: the one
@@ -1243,9 +1250,49 @@ pub fn guard_group_credit_spend(
 mod tests {
     use super::*;
     use crate::types::EvmAddress;
+    use alloy_primitives::U256;
 
     fn account() -> EvmAddress {
         EvmAddress::parse("0x00000000000000000000000000000000000000a1").unwrap()
+    }
+
+    #[test]
+    fn only_a_usd_pegged_trade_is_priced_in_usd() {
+        let trade = |asset_type| Offer::Trade {
+            trade: SignedTrade {
+                venue: ContractRef {
+                    chain_id: ChainId::POLYGON,
+                    contract: account(),
+                },
+                signer: account(),
+                sent: vec![TradeAsset {
+                    asset_type: TradeAssetType::Erc721,
+                    contract: account(),
+                    value: U256::from(1u8),
+                }],
+                received: vec![TradeAsset {
+                    asset_type,
+                    contract: account(),
+                    value: U256::from(10u8),
+                }],
+            },
+            coupon: None,
+        };
+        assert!(priced_in_usd(&trade(TradeAssetType::UsdPeggedMana)));
+        assert!(
+            !priced_in_usd(&trade(TradeAssetType::Erc20)),
+            "a fixed-MANA trade's approval stays exact"
+        );
+        let store = Offer::StoreMint {
+            venue: ContractRef {
+                chain_id: ChainId::POLYGON,
+                contract: account(),
+            },
+            collection: account(),
+            item_id: U256::ZERO,
+            price: ManaWei::new(U256::from(10u8)),
+        };
+        assert!(!priced_in_usd(&store));
     }
 
     fn sessions() -> [Session; 3] {

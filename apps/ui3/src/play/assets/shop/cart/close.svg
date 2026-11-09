@@ -1,0 +1,13 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="CTAX">
+<rect width="30" height="30" rx="7.5" fill="black" fill-opacity="0.4"/>
+<g id="Stroke 3">
+<path d="M19.4121 10.5879L10.5888 19.4112Z" fill-rule="evenodd" clip-rule="evenodd" fill="black" fill-opacity="0.1"/>
+<path d="M19.4121 10.5879L10.5888 19.4112" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" stroke="#FCFCFC"/>
+</g>
+<g id="Stroke 4">
+<path d="M19.4121 19.4121L10.5888 10.5888Z" fill-rule="evenodd" clip-rule="evenodd" fill="black" fill-opacity="0.1"/>
+<path d="M19.4121 19.4121L10.5888 10.5888" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" stroke="#FCFCFC"/>
+</g>
+</g>
+</svg>

@@ -33,6 +33,13 @@ test("preserves member rows when profiles are unavailable", async () => {
   expect(result.current[0]).toMatchObject({ memberAddress: first, name: "", profilePictureUrl: "" });
 });
 
+test("keeps a name whose profile leaves its passport fields null, as the Catalyst serves an unfilled one", async () => {
+  const unfilled = { country: null, gender: null, pronouns: null, relationshipStatus: null, sexualOrientation: null, language: null, profession: null, realName: null, hobbies: null };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{ avatars: [{ ethAddress: first, name: "MetaWolf", hasClaimedName: false, ...unfilled }] }])));
+  const profiles = await fetchCommunityProfiles([first]);
+  expect(profiles[first]).toMatchObject({ name: "MetaWolf", claimed: false });
+});
+
 test("reads every profile of a batch even when one carries a null birthdate or an unreadable shape", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
     { avatars: [{ ethAddress: first, name: "First member", birthdate: null }] },

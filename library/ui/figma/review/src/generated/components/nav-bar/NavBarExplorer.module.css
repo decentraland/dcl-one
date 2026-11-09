@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: inline-flex;
 box-sizing: border-box;
@@ -58,7 +61,7 @@ box-sizing: border-box;
 width: 40px;
 flex-shrink: 0;
 height: 40px;
-background: url("../assets/497b500bf9aa38ae.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v0n2_1 {
@@ -129,6 +132,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 145.96px;
 flex: none;
 position: absolute;
 left: -3.5px;
@@ -217,6 +221,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 145.96px;
 flex: none;
 position: absolute;
 left: -3.5px;
@@ -271,6 +276,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 129px;
 flex: none;
 position: absolute;
 left: 6px;
@@ -335,6 +341,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 60px;
 flex: none;
 position: absolute;
 left: 39px;
@@ -388,6 +395,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 102px;
 flex: none;
 position: absolute;
 left: 16px;
@@ -476,6 +484,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 140px;
 flex: none;
 position: absolute;
 left: 0px;
@@ -530,6 +539,7 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: center;
 line-height: 16.94px;
+width: 95px;
 flex: none;
 position: absolute;
 left: 23px;
@@ -614,4 +624,5 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
 opacity: 1;
+}
 }

@@ -34,6 +34,10 @@ function ReviewNavigation({
   return (
     <aside className={styles.sidebar}>
       <h1>DCL One UI</h1>
+      <p>
+        Generated components rendered live. Figma image fills are not provided; their layers show a
+        neutral fill.
+      </p>
       <label className={styles.navigationControl}>
         Browse
         <select

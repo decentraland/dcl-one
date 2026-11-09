@@ -32,21 +32,35 @@ const iconsFile = z.object({ icons: z.array(iconRecordSchema) })
 class SnapshotSource implements FigmaSource {
   readonly name = 'snapshot' as const
 
+  private verified: Promise<void> | undefined
+
+  // `verify`, when given, runs once before the first read: the configured capture is the cache materialized from
+  // figma-design-system, and a missing, stale or edited cache must fail instead of being read.
   constructor(
     private readonly dir: string,
-    private readonly legacySnapshotNames: readonly string[] = []
+    private readonly legacySnapshotNames: readonly string[] = [],
+    private readonly verify?: () => Promise<void>
   ) {}
 
+  // Public so a command can verify the cache before it reads anything else derived from it.
+  ready(): Promise<void> {
+    this.verified ??= this.verify ? this.verify() : Promise.resolve()
+    return this.verified
+  }
+
   private async readJson<S extends z.ZodType>(file: string, schema: S): Promise<z.infer<S>> {
+    await this.ready()
     const raw = await readText(path.join(this.dir, file))
     return schema.parse(JSON.parse(raw))
   }
 
   async listPages(): Promise<FigmaPage[]> {
+    await this.ready()
     return (await this.readJson('pages.json', pagesFile)).pages
   }
 
   async getSyncState() {
+    await this.ready()
     const raw = await readText(path.join(this.dir, 'sync-state.json')).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return undefined
@@ -65,11 +79,13 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getRetirements() {
+    await this.ready()
     const raw = await readIfExists(path.join(this.dir, 'retirements.json'))
     return raw === undefined ? emptyRetirements() : retirementsSchema.parse(JSON.parse(raw))
   }
 
   async getGenerationInventory() {
+    await this.ready()
     const raw = await readIfExists(path.join(this.dir, 'generation-inventory.json'))
     return raw === undefined ? undefined : generationInventorySchema.parse(JSON.parse(raw))
   }
@@ -78,6 +94,7 @@ class SnapshotSource implements FigmaSource {
     pageId: string,
     snapshotName?: string
   ): Promise<RawComponentPage | undefined> {
+    await this.ready()
     if (snapshotName) {
       const canonical = await this.getComponentPage(snapshotName)
       if (canonical) {
@@ -104,18 +121,22 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getTokenCollections(): Promise<TokenCollection[]> {
+    await this.ready()
     return (await this.readJson('variables.json', variablesFile)).collections
   }
 
   async getTextStyles(): Promise<TextStyle[]> {
+    await this.ready()
     return (await this.readJson('text-styles.json', textStylesFile)).styles
   }
 
   async getGradients(): Promise<GradientStyle[]> {
+    await this.ready()
     return (await this.readJson('paint-styles.json', paintStylesFile)).gradients
   }
 
   async getComponentPage(pageName: string): Promise<RawComponentPage | undefined> {
+    await this.ready()
     const name = encodePageFileName(pageName)
     const names = await readdir(path.join(this.dir, 'components')).catch(
       (error: NodeJS.ErrnoException) => {
@@ -133,6 +154,7 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getIcons(): Promise<IconSpec[]> {
+    await this.ready()
     const { icons } = await this.readJson('icons.json', iconsFile)
     return Promise.all(
       icons.map(async (icon) => ({

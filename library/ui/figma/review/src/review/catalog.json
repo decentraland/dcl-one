@@ -680,7 +680,8 @@
             "unblock"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Button",
@@ -6689,7 +6690,8 @@
           "height": 44,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "JumpInCTA",
@@ -7618,7 +7620,8 @@
           "height": 44,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CreditsButton",
@@ -7841,7 +7844,8 @@
           "height": 48,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CardActionButton",
@@ -7885,7 +7889,8 @@
           "height": 46,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "InputExplorerNames",
@@ -8060,7 +8065,8 @@
             "password123"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "InputWebCreatorTools",
@@ -8473,7 +8479,8 @@
             "0/50"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ShopModals",
@@ -8634,7 +8641,8 @@
             "BUY"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 3
     },
     {
       "name": "ConnectionStatus",
@@ -8679,7 +8687,8 @@
           "height": 10,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ProfilePic",
@@ -8832,7 +8841,8 @@
           "height": 20,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 8
     },
     {
       "name": "ProgressBar",
@@ -8921,7 +8931,8 @@
             "Completed"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "SearchBar",
@@ -9274,7 +9285,8 @@
             "See more results"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 20
     },
     {
       "name": "SearchResultItem",
@@ -9373,7 +9385,8 @@
             "By OHDE"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "BlogSearchResultItem",
@@ -9472,7 +9485,8 @@
             "Learn how to spot scams in Decentraland. Protect your wallet, NAMEs, and assets with tips on impersonation, phishing, fake giveaways and more."
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Spinner",
@@ -9646,7 +9660,8 @@
           "height": 30,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Skeleton",
@@ -9691,7 +9706,8 @@
           "height": 112,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "PlaceCard",
@@ -11005,7 +11021,8 @@
           "height": 135,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 101
     },
     {
       "name": "WebTheme",
@@ -11208,7 +11225,8 @@
             "© 2026 Decentraland"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "WebThemeDarkMode",
@@ -11315,7 +11333,8 @@
             "© 2026 Decentraland"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 2
     },
     {
       "name": "NavMenuTab",
@@ -11959,7 +11978,8 @@
             "Merch"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuItem",
@@ -12009,7 +12029,8 @@
             "Whats On"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuTabMobile",
@@ -12061,7 +12082,8 @@
             "Learn"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuDropdown",
@@ -12261,7 +12283,8 @@
             "Whats On"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavBar",
@@ -12776,7 +12799,8 @@
             "12"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 12
     },
     {
       "name": "NavCreditsBalance",
@@ -12850,7 +12874,8 @@
             "0"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavProfileButton",
@@ -12965,7 +12990,8 @@
           "height": 40,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 6
     },
     {
       "name": "NavProfileMenu",
@@ -13096,7 +13122,8 @@
             "Logout"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 2
     },
     {
       "name": "NavNetworkSelector",
@@ -13203,7 +13230,8 @@
             "NETWORK 1"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavNetworkOption",
@@ -13270,7 +13298,8 @@
             "Ethereum"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavNotificationsButton",
@@ -13362,7 +13391,8 @@
             "12"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 6
     },
     {
       "name": "NavNotificationItem",
@@ -13461,7 +13491,8 @@
             "Just now"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "NavBarExplorer",
@@ -13497,7 +13528,8 @@
             "Lobby"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 1
     },
     {
       "name": "Settings",
@@ -13546,7 +13578,8 @@
             "settings [P] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Communities",
@@ -13595,7 +13628,8 @@
             "Communities [O] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Market",
@@ -13644,7 +13678,8 @@
             "shop [-] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CameraReel",
@@ -13693,7 +13728,8 @@
             "Gallery [K] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Map",
@@ -13742,7 +13778,8 @@
             "map [m]"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Backpack",
@@ -13793,7 +13830,8 @@
             "1"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Quest",
@@ -13842,7 +13880,8 @@
             "quest [p]"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Events",
@@ -13893,7 +13932,8 @@
             "3"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Places",
@@ -13942,7 +13982,8 @@
             "Places [z] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CloseCTA",
@@ -13986,7 +14027,8 @@
           "height": 46,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "TabsBar",
@@ -14239,7 +14281,8 @@
             "Sort by"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Tabs",
@@ -14356,7 +14399,8 @@
             "Overview"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "TitleBar",
@@ -14500,7 +14544,8 @@
             "Names"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ShopFilters",
@@ -14626,7 +14671,8 @@
             "sort by"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     }
   ],
   "pages": [
@@ -15823,17 +15869,6 @@
         "cssName": "--dcl-brand-purple-dark",
         "value": {
           "hex": "#4c147c",
-          "alpha": 1
-        }
-      },
-      {
-        "collection": "Primitives",
-        "mode": "Value",
-        "name": "Primary/Primary blue TEST",
-        "type": "COLOR",
-        "cssName": "--dcl-primary-primary-blue-test",
-        "value": {
-          "hex": "#0400ff",
           "alpha": 1
         }
       },
@@ -17577,8 +17612,7 @@
         "group": "navbar",
         "variant": null,
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/13989-1692.svg"
+        "height": 36
       },
       {
         "name": "navbar/_deprecated/credits-old",
@@ -17588,8 +17622,7 @@
         "group": "navbar/_deprecated",
         "variant": null,
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/8611-2245.svg"
+        "height": 36
       },
       {
         "name": "navbar/wallet",
@@ -17599,8 +17632,7 @@
         "group": "navbar/wallet",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7695-3839.svg"
+        "height": 36
       },
       {
         "name": "navbar/wallet",
@@ -17610,8 +17642,7 @@
         "group": "navbar/wallet",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/12872-3556.svg"
+        "height": 36
       },
       {
         "name": "navbar/notifications",
@@ -17621,8 +17652,7 @@
         "group": "navbar/notifications",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7603-1698.svg"
+        "height": 36
       },
       {
         "name": "navbar/notifications",
@@ -17632,8 +17662,7 @@
         "group": "navbar/notifications",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7603-1665.svg"
+        "height": 36
       },
       {
         "name": "navbar/map",
@@ -17643,8 +17672,7 @@
         "group": "navbar/map",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1385.svg"
+        "height": 36
       },
       {
         "name": "navbar/map",
@@ -17654,8 +17682,7 @@
         "group": "navbar/map",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1384.svg"
+        "height": 36
       },
       {
         "name": "navbar/backpack",
@@ -17665,8 +17692,7 @@
         "group": "navbar/backpack",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1382.svg"
+        "height": 36
       },
       {
         "name": "navbar/backpack",
@@ -17676,8 +17702,7 @@
         "group": "navbar/backpack",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1383.svg"
+        "height": 36
       },
       {
         "name": "navbar/discover",
@@ -17687,8 +17712,7 @@
         "group": "navbar/discover",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1378.svg"
+        "height": 36
       },
       {
         "name": "navbar/discover",
@@ -17698,8 +17722,7 @@
         "group": "navbar/discover",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1379.svg"
+        "height": 36
       },
       {
         "name": "navbar/places",
@@ -17709,8 +17732,7 @@
         "group": "navbar/places",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11472-786.svg"
+        "height": 36
       },
       {
         "name": "navbar/places",
@@ -17720,8 +17742,7 @@
         "group": "navbar/places",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11472-787.svg"
+        "height": 36
       },
       {
         "name": "navbar/events",
@@ -17731,8 +17752,7 @@
         "group": "navbar/events",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11472-785.svg"
+        "height": 36
       },
       {
         "name": "navbar/events",
@@ -17742,8 +17762,7 @@
         "group": "navbar/events",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11472-784.svg"
+        "height": 36
       },
       {
         "name": "navbar/communities",
@@ -17753,8 +17772,7 @@
         "group": "navbar/communities",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/9035-830.svg"
+        "height": 36
       },
       {
         "name": "navbar/communities",
@@ -17764,8 +17782,7 @@
         "group": "navbar/communities",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/9095-570.svg"
+        "height": 36
       },
       {
         "name": "navbar/photos",
@@ -17775,8 +17792,7 @@
         "group": "navbar/photos",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/3327-1659.svg"
+        "height": 36
       },
       {
         "name": "navbar/photos",
@@ -17786,8 +17802,7 @@
         "group": "navbar/photos",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/3328-1617.svg"
+        "height": 36
       },
       {
         "name": "navbar/marketplace",
@@ -17797,8 +17812,7 @@
         "group": "navbar/marketplace",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11143-974.svg"
+        "height": 36
       },
       {
         "name": "navbar/marketplace",
@@ -17808,8 +17822,7 @@
         "group": "navbar/marketplace",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/11143-973.svg"
+        "height": 36
       },
       {
         "name": "navbar/settings",
@@ -17819,8 +17832,7 @@
         "group": "navbar/settings",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1390.svg"
+        "height": 36
       },
       {
         "name": "navbar/settings",
@@ -17830,8 +17842,7 @@
         "group": "navbar/settings",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/92-1391.svg"
+        "height": 36
       },
       {
         "name": "navbar/help",
@@ -17841,8 +17852,7 @@
         "group": "navbar/help",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/3684-1304.svg"
+        "height": 36
       },
       {
         "name": "navbar/help",
@@ -17852,8 +17862,7 @@
         "group": "navbar/help",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7695-3844.svg"
+        "height": 36
       },
       {
         "name": "navbar/camera",
@@ -17863,8 +17872,7 @@
         "group": "navbar/camera",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/4362-2064.svg"
+        "height": 36
       },
       {
         "name": "navbar/camera",
@@ -17874,8 +17882,7 @@
         "group": "navbar/camera",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7903-1596.svg"
+        "height": 36
       },
       {
         "name": "navbar/smart-items",
@@ -17885,8 +17892,7 @@
         "group": "navbar/smart-items",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/705-934.svg"
+        "height": 36
       },
       {
         "name": "navbar/smart-items",
@@ -17896,8 +17902,7 @@
         "group": "navbar/smart-items",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/705-909.svg"
+        "height": 36
       },
       {
         "name": "navbar/friends",
@@ -17907,8 +17912,7 @@
         "group": "navbar/friends",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/3684-1215.svg"
+        "height": 36
       },
       {
         "name": "navbar/friends",
@@ -17918,8 +17922,7 @@
         "group": "navbar/friends",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/3684-1216.svg"
+        "height": 36
       },
       {
         "name": "navbar/emotes",
@@ -17929,8 +17932,7 @@
         "group": "navbar/emotes",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/261-386.svg"
+        "height": 36
       },
       {
         "name": "navbar/emotes",
@@ -17940,8 +17942,7 @@
         "group": "navbar/emotes",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7643-3097.svg"
+        "height": 36
       },
       {
         "name": "navbar/chat",
@@ -17951,8 +17952,7 @@
         "group": "navbar/chat",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/182-486.svg"
+        "height": 36
       },
       {
         "name": "navbar/chat",
@@ -17962,8 +17962,7 @@
         "group": "navbar/chat",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/182-485.svg"
+        "height": 36
       },
       {
         "name": "navbar/night-day",
@@ -17973,8 +17972,7 @@
         "group": "navbar/night-day",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/8115-4417.svg"
+        "height": 36
       },
       {
         "name": "navbar/night-day",
@@ -17984,8 +17982,7 @@
         "group": "navbar/night-day",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/7695-3845.svg"
+        "height": 36
       },
       {
         "name": "navbar/quests",
@@ -17995,8 +17992,7 @@
         "group": "navbar/quests",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/8659-2271.svg"
+        "height": 36
       },
       {
         "name": "navbar/quests",
@@ -18006,8 +18002,7 @@
         "group": "navbar/quests",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/8659-2270.svg"
+        "height": 36
       },
       {
         "name": "navbar/quests-rocket",
@@ -18017,8 +18012,7 @@
         "group": "navbar/quests-rocket",
         "variant": "active=false",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/15845-83.svg"
+        "height": 36
       },
       {
         "name": "navbar/quests-rocket",
@@ -18028,8 +18022,7 @@
         "group": "navbar/quests-rocket",
         "variant": "active=true",
         "width": 36,
-        "height": 36,
-        "file": "/dcl-ui-review/icons/15845-110.svg"
+        "height": 36
       },
       {
         "name": "backpack/body",
@@ -18039,8 +18032,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-524.svg"
+        "height": 40
       },
       {
         "name": "backpack/mouth",
@@ -18050,8 +18042,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-525.svg"
+        "height": 40
       },
       {
         "name": "backpack/tiara",
@@ -18061,8 +18052,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-526.svg"
+        "height": 40
       },
       {
         "name": "backpack/eyes",
@@ -18072,8 +18062,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-527.svg"
+        "height": 40
       },
       {
         "name": "backpack/hair",
@@ -18083,8 +18072,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-528.svg"
+        "height": 40
       },
       {
         "name": "backpack/handwear",
@@ -18094,8 +18082,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-530.svg"
+        "height": 40
       },
       {
         "name": "backpack/lower-body",
@@ -18105,8 +18092,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-531.svg"
+        "height": 40
       },
       {
         "name": "backpack/eyewear",
@@ -18116,8 +18102,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-532.svg"
+        "height": 40
       },
       {
         "name": "backpack/head",
@@ -18127,8 +18112,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-533.svg"
+        "height": 40
       },
       {
         "name": "backpack/mask",
@@ -18138,8 +18122,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-534.svg"
+        "height": 40
       },
       {
         "name": "backpack/upper-body",
@@ -18149,8 +18132,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-535.svg"
+        "height": 40
       },
       {
         "name": "backpack/eyebrows",
@@ -18160,8 +18142,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-536.svg"
+        "height": 40
       },
       {
         "name": "backpack/helmet",
@@ -18171,8 +18152,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-537.svg"
+        "height": 40
       },
       {
         "name": "backpack/skins",
@@ -18182,8 +18162,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-538.svg"
+        "height": 40
       },
       {
         "name": "backpack/feet",
@@ -18193,8 +18172,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-553.svg"
+        "height": 40
       },
       {
         "name": "backpack/earrings",
@@ -18204,8 +18182,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-552.svg"
+        "height": 40
       },
       {
         "name": "backpack/hat",
@@ -18215,8 +18192,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-551.svg"
+        "height": 40
       },
       {
         "name": "backpack/facial-hair",
@@ -18226,8 +18202,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-550.svg"
+        "height": 40
       },
       {
         "name": "backpack/empty",
@@ -18237,8 +18212,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-548.svg"
+        "height": 40
       },
       {
         "name": "backpack/vrm",
@@ -18248,8 +18222,7 @@
         "group": "backpack",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/8759-546.svg"
+        "height": 40
       },
       {
         "name": "backpack/slot1",
@@ -18259,8 +18232,7 @@
         "group": "backpack",
         "variant": null,
         "width": 49.11817932128906,
-        "height": 49.16666793823242,
-        "file": "/dcl-ui-review/icons/8759-542.svg"
+        "height": 49.16666793823242
       },
       {
         "name": "backpack/all",
@@ -18270,8 +18242,7 @@
         "group": "backpack",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8759-545.svg"
+        "height": 24
       },
       {
         "name": "backpack/categories",
@@ -18281,8 +18252,7 @@
         "group": "backpack",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/10870-3349.svg"
+        "height": 24
       },
       {
         "name": "backpack/outfit",
@@ -18292,8 +18262,7 @@
         "group": "backpack",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/10536-4314.svg"
+        "height": 24
       },
       {
         "name": "backpack/pex",
@@ -18303,8 +18272,7 @@
         "group": "backpack",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8759-544.svg"
+        "height": 24
       },
       {
         "name": "backpack/gender/unisex",
@@ -18314,8 +18282,7 @@
         "group": "backpack/gender",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15521-20143.svg"
+        "height": 40
       },
       {
         "name": "backpack/gender/male",
@@ -18325,8 +18292,7 @@
         "group": "backpack/gender",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15521-20144.svg"
+        "height": 40
       },
       {
         "name": "backpack/gender/female",
@@ -18336,8 +18302,7 @@
         "group": "backpack/gender",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15521-20145.svg"
+        "height": 40
       },
       {
         "name": "shop/cart",
@@ -18347,8 +18312,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1021.svg"
+        "height": 40
       },
       {
         "name": "shop/cart-filled",
@@ -18358,8 +18322,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1026.svg"
+        "height": 40
       },
       {
         "name": "shop/offer",
@@ -18369,8 +18332,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1025.svg"
+        "height": 40
       },
       {
         "name": "shop/offer-filled",
@@ -18380,8 +18342,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1022.svg"
+        "height": 40
       },
       {
         "name": "shop/delete",
@@ -18391,8 +18352,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1024.svg"
+        "height": 40
       },
       {
         "name": "shop/view",
@@ -18402,8 +18362,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1020.svg"
+        "height": 40
       },
       {
         "name": "shop/credits",
@@ -18413,8 +18372,7 @@
         "group": "shop",
         "variant": null,
         "width": 38,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1023.svg"
+        "height": 40
       },
       {
         "name": "shop/credits-filled",
@@ -18424,8 +18382,7 @@
         "group": "shop",
         "variant": null,
         "width": 38,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1019.svg"
+        "height": 40
       },
       {
         "name": "shop/sale",
@@ -18435,8 +18392,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1017.svg"
+        "height": 40
       },
       {
         "name": "shop/sale-filled",
@@ -18446,8 +18402,7 @@
         "group": "shop",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/15512-1018.svg"
+        "height": 40
       },
       {
         "name": "emotes/dance",
@@ -18457,8 +18412,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7028.svg"
+        "height": 40
       },
       {
         "name": "emotes/poses",
@@ -18468,8 +18422,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7027.svg"
+        "height": 40
       },
       {
         "name": "emotes/fun",
@@ -18479,8 +18432,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7026.svg"
+        "height": 40
       },
       {
         "name": "emotes/greetings",
@@ -18490,8 +18442,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7025.svg"
+        "height": 40
       },
       {
         "name": "emotes/horror",
@@ -18501,8 +18452,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7024.svg"
+        "height": 40
       },
       {
         "name": "emotes/miscellaneous",
@@ -18512,8 +18462,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7022.svg"
+        "height": 40
       },
       {
         "name": "emotes/stunt",
@@ -18523,8 +18472,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7023.svg"
+        "height": 40
       },
       {
         "name": "emotes/reactions",
@@ -18534,8 +18482,7 @@
         "group": "emotes",
         "variant": null,
         "width": 40,
-        "height": 40,
-        "file": "/dcl-ui-review/icons/14015-7021.svg"
+        "height": 40
       },
       {
         "name": "chat/emojis-off",
@@ -18545,8 +18492,7 @@
         "group": "chat",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4177.svg"
+        "height": 24
       },
       {
         "name": "chat/emojis-on",
@@ -18556,8 +18502,7 @@
         "group": "chat",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4182.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/recent",
@@ -18567,8 +18512,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4190.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/face",
@@ -18578,8 +18522,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4194.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/food",
@@ -18589,8 +18532,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4200.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/animals",
@@ -18600,8 +18542,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4203.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/sports",
@@ -18611,8 +18552,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4212.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/buildings",
@@ -18622,8 +18562,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4222.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/objects",
@@ -18633,8 +18572,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4226.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/symbols",
@@ -18644,8 +18582,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4234.svg"
+        "height": 24
       },
       {
         "name": "chat/emoji-category/flag",
@@ -18655,8 +18592,7 @@
         "group": "chat/emoji-category",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-4240.svg"
+        "height": 24
       },
       {
         "name": "chat/microphone-off",
@@ -18666,8 +18602,7 @@
         "group": "chat",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/342-350.svg"
+        "height": 24
       },
       {
         "name": "chat/microphone-on",
@@ -18677,8 +18612,7 @@
         "group": "chat",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/342-355.svg"
+        "height": 24
       },
       {
         "name": "chat/call",
@@ -18688,8 +18622,7 @@
         "group": "chat",
         "variant": null,
         "width": 23,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/343-357.svg"
+        "height": 24
       },
       {
         "name": "chat/end-call",
@@ -18699,8 +18632,7 @@
         "group": "chat",
         "variant": null,
         "width": 23,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/342-351.svg"
+        "height": 24
       },
       {
         "name": "chat/call-blocked",
@@ -18710,8 +18642,7 @@
         "group": "chat",
         "variant": null,
         "width": 23,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9169-2202.svg"
+        "height": 24
       },
       {
         "name": "map/all",
@@ -18721,8 +18652,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4089.svg"
+        "height": 26
       },
       {
         "name": "map/social",
@@ -18732,8 +18662,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4017.svg"
+        "height": 26
       },
       {
         "name": "map/music",
@@ -18743,8 +18672,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4039.svg"
+        "height": 26
       },
       {
         "name": "map/art",
@@ -18754,8 +18682,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-3997.svg"
+        "height": 26
       },
       {
         "name": "map/games",
@@ -18765,8 +18692,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4019.svg"
+        "height": 26
       },
       {
         "name": "map/fashion",
@@ -18776,8 +18702,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4045.svg"
+        "height": 26
       },
       {
         "name": "map/education",
@@ -18787,8 +18712,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4032.svg"
+        "height": 26
       },
       {
         "name": "map/shop",
@@ -18798,8 +18722,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4023.svg"
+        "height": 26
       },
       {
         "name": "map/sports",
@@ -18809,8 +18732,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4064.svg"
+        "height": 26
       },
       {
         "name": "map/business",
@@ -18820,8 +18742,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4074.svg"
+        "height": 26
       },
       {
         "name": "map/live",
@@ -18831,8 +18752,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-3988.svg"
+        "height": 26
       },
       {
         "name": "map/favourite",
@@ -18842,8 +18762,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-3993.svg"
+        "height": 26
       },
       {
         "name": "map/poi",
@@ -18853,8 +18772,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-3995.svg"
+        "height": 26
       },
       {
         "name": "map/crypto",
@@ -18864,8 +18782,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4005.svg"
+        "height": 26
       },
       {
         "name": "map/casino",
@@ -18875,8 +18792,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4047.svg"
+        "height": 26
       },
       {
         "name": "map/entertainment",
@@ -18886,8 +18802,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4080.svg"
+        "height": 26
       },
       {
         "name": "map/for-sale",
@@ -18897,8 +18812,7 @@
         "group": "map",
         "variant": null,
         "width": 26,
-        "height": 26,
-        "file": "/dcl-ui-review/icons/8706-4084.svg"
+        "height": 26
       },
       {
         "name": "map/estates",
@@ -18908,8 +18822,7 @@
         "group": "map",
         "variant": null,
         "width": 28,
-        "height": 28,
-        "file": "/dcl-ui-review/icons/8706-4094.svg"
+        "height": 28
       },
       {
         "name": "map/updates",
@@ -18919,8 +18832,7 @@
         "group": "map",
         "variant": null,
         "width": 28,
-        "height": 28,
-        "file": "/dcl-ui-review/icons/8706-4100.svg"
+        "height": 28
       },
       {
         "name": "map/people",
@@ -18930,8 +18842,7 @@
         "group": "map",
         "variant": null,
         "width": 28,
-        "height": 28,
-        "file": "/dcl-ui-review/icons/8706-4106.svg"
+        "height": 28
       },
       {
         "name": "map/avatar-pic",
@@ -18941,8 +18852,7 @@
         "group": "map",
         "variant": null,
         "width": 28,
-        "height": 28,
-        "file": "/dcl-ui-review/icons/8706-4112.svg"
+        "height": 28
       },
       {
         "name": "map/home-pin",
@@ -18952,8 +18862,7 @@
         "group": "map",
         "variant": null,
         "width": 30,
-        "height": 43,
-        "file": "/dcl-ui-review/icons/8706-4114.svg"
+        "height": 43
       },
       {
         "name": "general/players-filled",
@@ -18963,8 +18872,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/1448-954.svg"
+        "height": 24
       },
       {
         "name": "general/players",
@@ -18974,8 +18882,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9616-2722.svg"
+        "height": 24
       },
       {
         "name": "general/like",
@@ -18985,8 +18892,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/43-415.svg"
+        "height": 24
       },
       {
         "name": "general/like-filled",
@@ -18996,8 +18902,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/44-427.svg"
+        "height": 24
       },
       {
         "name": "general/dislike",
@@ -19007,8 +18912,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/43-416.svg"
+        "height": 24
       },
       {
         "name": "general/dislike-filled",
@@ -19018,8 +18922,7 @@
         "group": "general",
         "variant": null,
         "width": 24.000001907348633,
-        "height": 23.999998092651367,
-        "file": "/dcl-ui-review/icons/44-428.svg"
+        "height": 23.999998092651367
       },
       {
         "name": "general/star",
@@ -19029,8 +18932,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4620.svg"
+        "height": 24
       },
       {
         "name": "general/star-filled",
@@ -19040,8 +18942,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4619.svg"
+        "height": 24
       },
       {
         "name": "general/home2",
@@ -19051,8 +18952,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4628.svg"
+        "height": 24
       },
       {
         "name": "general/home",
@@ -19062,8 +18962,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4627.svg"
+        "height": 24
       },
       {
         "name": "general/home-filled",
@@ -19073,8 +18972,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4626.svg"
+        "height": 24
       },
       {
         "name": "general/favorites",
@@ -19084,8 +18982,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4651.svg"
+        "height": 24
       },
       {
         "name": "general/favorites-filled",
@@ -19095,8 +18992,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11487-3425.svg"
+        "height": 24
       },
       {
         "name": "general/reminder-off",
@@ -19106,8 +19002,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4624.svg"
+        "height": 24
       },
       {
         "name": "general/reminder-filled",
@@ -19117,8 +19012,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4625.svg"
+        "height": 24
       },
       {
         "name": "general/reminder-on",
@@ -19128,8 +19022,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/12877-149.svg"
+        "height": 24
       },
       {
         "name": "general/delete",
@@ -19139,8 +19032,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4703.svg"
+        "height": 24
       },
       {
         "name": "general/delete-filled",
@@ -19150,8 +19042,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/320-595.svg"
+        "height": 24
       },
       {
         "name": "general/map-pin",
@@ -19161,8 +19052,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4648.svg"
+        "height": 24
       },
       {
         "name": "general/map-pin-filled",
@@ -19172,8 +19062,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4650.svg"
+        "height": 24
       },
       {
         "name": "general/private",
@@ -19183,8 +19072,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11963-2054.svg"
+        "height": 24
       },
       {
         "name": "general/private-allowed",
@@ -19194,8 +19082,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11963-2086.svg"
+        "height": 24
       },
       {
         "name": "general/check",
@@ -19205,8 +19092,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/150-797.svg"
+        "height": 24
       },
       {
         "name": "general/tools",
@@ -19216,8 +19102,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/698-733.svg"
+        "height": 24
       },
       {
         "name": "general/logout",
@@ -19227,8 +19112,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/2529-1859.svg"
+        "height": 24
       },
       {
         "name": "general/gallery",
@@ -19238,8 +19122,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/14082-5854.svg"
+        "height": 24
       },
       {
         "name": "general/time",
@@ -19249,8 +19132,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/34-229.svg"
+        "height": 24
       },
       {
         "name": "general/featured",
@@ -19260,8 +19142,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/14081-5570.svg"
+        "height": 24
       },
       {
         "name": "general/support",
@@ -19271,8 +19152,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/2644-1766.svg"
+        "height": 24
       },
       {
         "name": "general/listen",
@@ -19282,8 +19162,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9487-2758.svg"
+        "height": 24
       },
       {
         "name": "general/down-arrow",
@@ -19293,8 +19172,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4601.svg"
+        "height": 24
       },
       {
         "name": "general/up-arrow",
@@ -19304,8 +19182,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-3717.svg"
+        "height": 24
       },
       {
         "name": "general/left-arrow",
@@ -19315,8 +19192,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4602.svg"
+        "height": 24
       },
       {
         "name": "general/right-arrow",
@@ -19326,8 +19202,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4603.svg"
+        "height": 24
       },
       {
         "name": "general/search",
@@ -19337,8 +19212,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4605.svg"
+        "height": 24
       },
       {
         "name": "general/edit",
@@ -19348,8 +19222,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4606.svg"
+        "height": 24
       },
       {
         "name": "general/edit-filled",
@@ -19359,8 +19232,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4607.svg"
+        "height": 24
       },
       {
         "name": "general/new-chat",
@@ -19370,8 +19242,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4609.svg"
+        "height": 24
       },
       {
         "name": "general/tutorial",
@@ -19381,8 +19252,7 @@
         "group": "general",
         "variant": null,
         "width": 24.000022888183594,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4610.svg"
+        "height": 24
       },
       {
         "name": "general/image",
@@ -19392,8 +19262,7 @@
         "group": "general",
         "variant": null,
         "width": 24.000022888183594,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4611.svg"
+        "height": 24
       },
       {
         "name": "general/close",
@@ -19403,8 +19272,7 @@
         "group": "general",
         "variant": null,
         "width": 24.000022888183594,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4612.svg"
+        "height": 24
       },
       {
         "name": "general/keyboard",
@@ -19414,8 +19282,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4613.svg"
+        "height": 24
       },
       {
         "name": "general/info-button",
@@ -19425,8 +19292,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4614.svg"
+        "height": 24
       },
       {
         "name": "general/warning",
@@ -19436,8 +19302,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4629.svg"
+        "height": 24
       },
       {
         "name": "general/warning-error",
@@ -19447,8 +19312,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4678.svg"
+        "height": 24
       },
       {
         "name": "general/forbidden",
@@ -19458,8 +19322,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4691.svg"
+        "height": 24
       },
       {
         "name": "general/download-desktop",
@@ -19469,8 +19332,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4618.svg"
+        "height": 24
       },
       {
         "name": "general/props",
@@ -19480,8 +19342,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4621.svg"
+        "height": 24
       },
       {
         "name": "general/browse-channel",
@@ -19491,8 +19352,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4622.svg"
+        "height": 24
       },
       {
         "name": "general/pin-filled",
@@ -19502,8 +19362,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4630.svg"
+        "height": 24
       },
       {
         "name": "general/video-cam",
@@ -19513,8 +19372,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4631.svg"
+        "height": 24
       },
       {
         "name": "general/envelope",
@@ -19524,8 +19382,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4632.svg"
+        "height": 24
       },
       {
         "name": "general/camera",
@@ -19535,8 +19392,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4633.svg"
+        "height": 24
       },
       {
         "name": "general/color-palette",
@@ -19546,8 +19402,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4635.svg"
+        "height": 24
       },
       {
         "name": "general/lock",
@@ -19557,8 +19412,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4636.svg"
+        "height": 24
       },
       {
         "name": "general/wallet",
@@ -19568,8 +19422,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4637.svg"
+        "height": 24
       },
       {
         "name": "general/interactive",
@@ -19579,8 +19432,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4638.svg"
+        "height": 24
       },
       {
         "name": "general/middle-click",
@@ -19590,8 +19442,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11400-3208.svg"
+        "height": 24
       },
       {
         "name": "general/left-click",
@@ -19601,8 +19452,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11400-3206.svg"
+        "height": 24
       },
       {
         "name": "general/right-click",
@@ -19612,8 +19462,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11400-3207.svg"
+        "height": 24
       },
       {
         "name": "general/key",
@@ -19623,8 +19472,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11816-665.svg"
+        "height": 24
       },
       {
         "name": "general/fxs",
@@ -19634,8 +19482,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4642.svg"
+        "height": 24
       },
       {
         "name": "general/live",
@@ -19645,8 +19492,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4643.svg"
+        "height": 24
       },
       {
         "name": "general/stream",
@@ -19656,8 +19502,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9643-10048.svg"
+        "height": 24
       },
       {
         "name": "general/end-stream",
@@ -19667,8 +19512,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11171-3533.svg"
+        "height": 24
       },
       {
         "name": "general/smart-item",
@@ -19678,8 +19522,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4644.svg"
+        "height": 24
       },
       {
         "name": "general/menu",
@@ -19689,8 +19532,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4645.svg"
+        "height": 24
       },
       {
         "name": "general/link",
@@ -19700,8 +19542,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4646.svg"
+        "height": 24
       },
       {
         "name": "general/navigation",
@@ -19711,8 +19552,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4649.svg"
+        "height": 24
       },
       {
         "name": "general/discover",
@@ -19722,8 +19562,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11470-4792.svg"
+        "height": 24
       },
       {
         "name": "general/visited",
@@ -19733,8 +19572,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11470-4815.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-my-places",
@@ -19744,8 +19582,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11470-4888.svg"
+        "height": 24
       },
       {
         "name": "general/add-to-calendar",
@@ -19755,8 +19592,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4653.svg"
+        "height": 24
       },
       {
         "name": "general/calendar",
@@ -19766,8 +19602,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/11978-84.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-settings-outline",
@@ -19777,8 +19612,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/12872-994.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-outfits",
@@ -19788,8 +19622,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4654.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-wearables",
@@ -19799,8 +19632,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4655.svg"
+        "height": 24
       },
       {
         "name": "general/controls",
@@ -19810,8 +19642,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4712.svg"
+        "height": 24
       },
       {
         "name": "general/graphics",
@@ -19821,8 +19652,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4661.svg"
+        "height": 24
       },
       {
         "name": "general/chat",
@@ -19832,8 +19662,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4662.svg"
+        "height": 24
       },
       {
         "name": "general/audio",
@@ -19843,8 +19672,7 @@
         "group": "general",
         "variant": null,
         "width": 25,
-        "height": 25.51744270324707,
-        "file": "/dcl-ui-review/icons/9180-3753.svg"
+        "height": 25.51744270324707
       },
       {
         "name": "general/general",
@@ -19854,8 +19682,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4663.svg"
+        "height": 24
       },
       {
         "name": "general/marketplace",
@@ -19865,8 +19692,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4664.svg"
+        "height": 24
       },
       {
         "name": "general/projects",
@@ -19876,8 +19702,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4665.svg"
+        "height": 24
       },
       {
         "name": "general/filters",
@@ -19887,8 +19712,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4666.svg"
+        "height": 24
       },
       {
         "name": "general/gift",
@@ -19898,8 +19722,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4667.svg"
+        "height": 24
       },
       {
         "name": "general/sale",
@@ -19909,8 +19732,7 @@
         "group": "general",
         "variant": null,
         "width": 24.000022888183594,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4668.svg"
+        "height": 24
       },
       {
         "name": "general/layer",
@@ -19920,8 +19742,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4670.svg"
+        "height": 24
       },
       {
         "name": "general/ethereum",
@@ -19931,8 +19752,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4671.svg"
+        "height": 24
       },
       {
         "name": "general/polygon-matic",
@@ -19942,8 +19762,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4672.svg"
+        "height": 24
       },
       {
         "name": "general/mana",
@@ -19953,8 +19772,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4673.svg"
+        "height": 24
       },
       {
         "name": "general/polygon-mana",
@@ -19964,8 +19782,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4674.svg"
+        "height": 24
       },
       {
         "name": "general/entity-list",
@@ -19975,8 +19792,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4694.svg"
+        "height": 24
       },
       {
         "name": "general/catalog",
@@ -19986,8 +19802,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4695.svg"
+        "height": 24
       },
       {
         "name": "general/magnet",
@@ -19997,8 +19812,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4696.svg"
+        "height": 24
       },
       {
         "name": "general/move",
@@ -20008,8 +19822,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4697.svg"
+        "height": 24
       },
       {
         "name": "general/code",
@@ -20019,8 +19832,7 @@
         "group": "general",
         "variant": null,
         "width": 23.999998092651367,
-        "height": 24.000001907348633,
-        "file": "/dcl-ui-review/icons/8727-4604.svg"
+        "height": 24.000001907348633
       },
       {
         "name": "general/debug",
@@ -20030,8 +19842,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/698-721.svg"
+        "height": 24
       },
       {
         "name": "general/console",
@@ -20041,8 +19852,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8936-123.svg"
+        "height": 24
       },
       {
         "name": "general/rotate",
@@ -20052,8 +19862,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4698.svg"
+        "height": 24
       },
       {
         "name": "general/scale",
@@ -20063,8 +19872,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4699.svg"
+        "height": 24
       },
       {
         "name": "general/undo",
@@ -20074,8 +19882,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4700.svg"
+        "height": 24
       },
       {
         "name": "general/redo",
@@ -20085,8 +19892,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4701.svg"
+        "height": 24
       },
       {
         "name": "general/reset",
@@ -20096,8 +19902,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/7874-1623.svg"
+        "height": 24
       },
       {
         "name": "general/copy",
@@ -20107,8 +19912,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4702.svg"
+        "height": 24
       },
       {
         "name": "general/preview",
@@ -20118,8 +19922,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4704.svg"
+        "height": 24
       },
       {
         "name": "general/play",
@@ -20129,8 +19932,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4705.svg"
+        "height": 24
       },
       {
         "name": "general/import-project",
@@ -20140,8 +19942,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4706.svg"
+        "height": 24
       },
       {
         "name": "general/previous-versions",
@@ -20151,8 +19952,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4708.svg"
+        "height": 24
       },
       {
         "name": "general/reset-2",
@@ -20162,8 +19962,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4709.svg"
+        "height": 24
       },
       {
         "name": "general/details",
@@ -20173,8 +19972,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4710.svg"
+        "height": 24
       },
       {
         "name": "general/upload",
@@ -20184,8 +19982,7 @@
         "group": "general",
         "variant": null,
         "width": 23.999998092651367,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4634.svg"
+        "height": 24
       },
       {
         "name": "general/exit",
@@ -20195,8 +19992,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4600.svg"
+        "height": 24
       },
       {
         "name": "general/download",
@@ -20206,8 +20002,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4707.svg"
+        "height": 24
       },
       {
         "name": "general/details-2",
@@ -20217,8 +20012,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4711.svg"
+        "height": 24
       },
       {
         "name": "general/reset-cam",
@@ -20228,8 +20022,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4713.svg"
+        "height": 24
       },
       {
         "name": "general/hide-ui",
@@ -20239,8 +20032,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4714.svg"
+        "height": 24
       },
       {
         "name": "general/leave",
@@ -20250,8 +20042,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9143-4023.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-emotes",
@@ -20261,8 +20052,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4656.svg"
+        "height": 24
       },
       {
         "name": "general/secondary-bar-social-emotes",
@@ -20272,8 +20062,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/10536-4325.svg"
+        "height": 24
       },
       {
         "name": "general/add",
@@ -20283,8 +20072,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3706.svg"
+        "height": 24
       },
       {
         "name": "general/remove",
@@ -20294,8 +20082,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3705.svg"
+        "height": 24
       },
       {
         "name": "general/resume",
@@ -20305,8 +20092,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3704.svg"
+        "height": 24
       },
       {
         "name": "general/stop",
@@ -20316,8 +20102,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3703.svg"
+        "height": 24
       },
       {
         "name": "general/audio-off",
@@ -20327,8 +20112,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3702.svg"
+        "height": 24
       },
       {
         "name": "general/audio-on",
@@ -20338,8 +20122,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/9180-3689.svg"
+        "height": 24
       },
       {
         "name": "general/connection",
@@ -20349,8 +20132,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8962-1590.svg"
+        "height": 24
       },
       {
         "name": "general/bug",
@@ -20360,8 +20142,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8962-1624.svg"
+        "height": 24
       },
       {
         "name": "general/mana-colour",
@@ -20371,8 +20152,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4675.svg"
+        "height": 24
       },
       {
         "name": "general/polygon-mana-2",
@@ -20382,8 +20162,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4676.svg"
+        "height": 24
       },
       {
         "name": "general/warning-color",
@@ -20393,8 +20172,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4677.svg"
+        "height": 24
       },
       {
         "name": "general/verified-outline",
@@ -20404,8 +20182,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4679.svg"
+        "height": 24
       },
       {
         "name": "general/verified",
@@ -20415,8 +20192,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4680.svg"
+        "height": 24
       },
       {
         "name": "general/decentraland-color",
@@ -20426,8 +20202,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4681.svg"
+        "height": 24
       },
       {
         "name": "general/worlds-color",
@@ -20437,8 +20212,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4683.svg"
+        "height": 24
       },
       {
         "name": "general/jump-in",
@@ -20448,8 +20222,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4686.svg"
+        "height": 24
       },
       {
         "name": "general/metamask-logo",
@@ -20459,8 +20232,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4715.svg"
+        "height": 24
       },
       {
         "name": "general/coinbase-logo",
@@ -20470,8 +20242,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4716.svg"
+        "height": 24
       },
       {
         "name": "general/wallet-connect-logo",
@@ -20481,8 +20252,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4718.svg"
+        "height": 24
       },
       {
         "name": "general/owner",
@@ -20492,8 +20262,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4692.svg"
+        "height": 24
       },
       {
         "name": "general/operator",
@@ -20503,8 +20272,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8727-4693.svg"
+        "height": 24
       },
       {
         "name": "general/history",
@@ -20514,8 +20282,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15809-1168.svg"
+        "height": 24
       },
       {
         "name": "general/external-link",
@@ -20525,8 +20292,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15819-60.svg"
+        "height": 24
       },
       {
         "name": "general/flag-en",
@@ -20536,8 +20302,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15819-185.svg"
+        "height": 24
       },
       {
         "name": "general/blog",
@@ -20547,8 +20312,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15823-160.svg"
+        "height": 24
       },
       {
         "name": "general/vote",
@@ -20558,8 +20322,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15823-11302.svg"
+        "height": 24
       },
       {
         "name": "general/decentraland",
@@ -20569,8 +20332,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15825-62.svg"
+        "height": 24
       },
       {
         "name": "general/question",
@@ -20580,8 +20342,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15825-70.svg"
+        "height": 24
       },
       {
         "name": "general/stream",
@@ -20591,8 +20352,7 @@
         "group": "general",
         "variant": null,
         "width": 17,
-        "height": 17,
-        "file": "/dcl-ui-review/icons/15845-123.svg"
+        "height": 17
       },
       {
         "name": "general/lobby",
@@ -20602,8 +20362,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15845-1770.svg"
+        "height": 24
       },
       {
         "name": "general/bell",
@@ -20613,8 +20372,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15852-555.svg"
+        "height": 24
       },
       {
         "name": "general/host",
@@ -20624,8 +20382,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15852-560.svg"
+        "height": 24
       },
       {
         "name": "general/name",
@@ -20635,8 +20392,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15852-565.svg"
+        "height": 24
       },
       {
         "name": "general/all",
@@ -20646,8 +20402,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15852-572.svg"
+        "height": 24
       },
       {
         "name": "general/send-emote",
@@ -20657,8 +20412,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15852-633.svg"
+        "height": 24
       },
       {
         "name": "general/search-bold",
@@ -20668,8 +20422,7 @@
         "group": "general",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/15854-757.svg"
+        "height": 20
       },
       {
         "name": "general/windows",
@@ -20679,8 +20432,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-301.svg"
+        "height": 24
       },
       {
         "name": "general/apple",
@@ -20690,8 +20442,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-306.svg"
+        "height": 24
       },
       {
         "name": "general/local-assets",
@@ -20701,8 +20452,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-311.svg"
+        "height": 24
       },
       {
         "name": "general/folder-open",
@@ -20712,8 +20462,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-316.svg"
+        "height": 24
       },
       {
         "name": "general/custom-item",
@@ -20723,8 +20472,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-321.svg"
+        "height": 24
       },
       {
         "name": "general/asset-pack",
@@ -20734,8 +20482,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-326.svg"
+        "height": 24
       },
       {
         "name": "general/hide-preview",
@@ -20745,8 +20492,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-333.svg"
+        "height": 24
       },
       {
         "name": "general/show-preview",
@@ -20756,8 +20502,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-342.svg"
+        "height": 24
       },
       {
         "name": "general/collapse-expand-horizontally",
@@ -20767,8 +20512,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-351.svg"
+        "height": 24
       },
       {
         "name": "general/sync",
@@ -20778,8 +20522,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-356.svg"
+        "height": 24
       },
       {
         "name": "general/browse-folder",
@@ -20789,8 +20532,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-361.svg"
+        "height": 24
       },
       {
         "name": "general/cleanup",
@@ -20800,8 +20542,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-366.svg"
+        "height": 24
       },
       {
         "name": "general/cloud",
@@ -20811,8 +20552,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-371.svg"
+        "height": 24
       },
       {
         "name": "general/reload",
@@ -20822,8 +20562,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-376.svg"
+        "height": 24
       },
       {
         "name": "general/help",
@@ -20833,8 +20572,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-381.svg"
+        "height": 24
       },
       {
         "name": "general/expand",
@@ -20844,8 +20582,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-386.svg"
+        "height": 24
       },
       {
         "name": "general/grid",
@@ -20855,8 +20592,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-391.svg"
+        "height": 24
       },
       {
         "name": "general/player-location",
@@ -20866,8 +20602,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-396.svg"
+        "height": 24
       },
       {
         "name": "general/zoom-out",
@@ -20877,8 +20612,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-401.svg"
+        "height": 24
       },
       {
         "name": "general/zoom-in",
@@ -20888,8 +20622,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-406.svg"
+        "height": 24
       },
       {
         "name": "general/templates",
@@ -20899,8 +20632,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-411.svg"
+        "height": 24
       },
       {
         "name": "general/tip",
@@ -20910,8 +20642,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-416.svg"
+        "height": 24
       },
       {
         "name": "general/podium",
@@ -20921,8 +20652,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-421.svg"
+        "height": 24
       },
       {
         "name": "general/no-connection",
@@ -20932,8 +20662,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-426.svg"
+        "height": 24
       },
       {
         "name": "general/export",
@@ -20943,8 +20672,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-431.svg"
+        "height": 24
       },
       {
         "name": "general/public",
@@ -20954,8 +20682,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-436.svg"
+        "height": 24
       },
       {
         "name": "general/create-event",
@@ -20965,8 +20692,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-441.svg"
+        "height": 24
       },
       {
         "name": "general/link-alt",
@@ -20976,8 +20702,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-450.svg"
+        "height": 24
       },
       {
         "name": "general/cut",
@@ -20987,8 +20712,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-455.svg"
+        "height": 24
       },
       {
         "name": "general/file",
@@ -20998,8 +20722,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-460.svg"
+        "height": 24
       },
       {
         "name": "general/paste",
@@ -21009,8 +20732,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-465.svg"
+        "height": 24
       },
       {
         "name": "general/duplicate",
@@ -21020,8 +20742,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-470.svg"
+        "height": 24
       },
       {
         "name": "general/layout",
@@ -21031,8 +20752,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-475.svg"
+        "height": 24
       },
       {
         "name": "general/layout-outline",
@@ -21042,8 +20762,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-480.svg"
+        "height": 24
       },
       {
         "name": "general/scenes",
@@ -21053,8 +20772,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-485.svg"
+        "height": 24
       },
       {
         "name": "general/code-tag",
@@ -21064,8 +20782,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-492.svg"
+        "height": 24
       },
       {
         "name": "general/storage",
@@ -21075,8 +20792,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-497.svg"
+        "height": 24
       },
       {
         "name": "general/transfer",
@@ -21086,8 +20802,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-502.svg"
+        "height": 24
       },
       {
         "name": "general/play-circle",
@@ -21097,8 +20812,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-507.svg"
+        "height": 24
       },
       {
         "name": "general/check-circle",
@@ -21108,8 +20822,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-512.svg"
+        "height": 24
       },
       {
         "name": "general/videos",
@@ -21119,8 +20832,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-517.svg"
+        "height": 24
       },
       {
         "name": "general/documents",
@@ -21130,8 +20842,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-522.svg"
+        "height": 24
       },
       {
         "name": "general/attach",
@@ -21141,8 +20852,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-527.svg"
+        "height": 24
       },
       {
         "name": "general/dev-workflow",
@@ -21152,8 +20862,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-532.svg"
+        "height": 24
       },
       {
         "name": "general/build-metaverse",
@@ -21163,8 +20872,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-537.svg"
+        "height": 24
       },
       {
         "name": "general/code-bash",
@@ -21174,8 +20882,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-542.svg"
+        "height": 24
       },
       {
         "name": "general/scene-stats",
@@ -21185,8 +20892,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-547.svg"
+        "height": 24
       },
       {
         "name": "general/variable",
@@ -21196,8 +20902,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-552.svg"
+        "height": 24
       },
       {
         "name": "general/unlock",
@@ -21207,8 +20912,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-557.svg"
+        "height": 24
       },
       {
         "name": "general/ai-agent",
@@ -21218,8 +20922,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-568.svg"
+        "height": 24
       },
       {
         "name": "general/optimize",
@@ -21229,8 +20932,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-573.svg"
+        "height": 24
       },
       {
         "name": "general/collapse-vertically",
@@ -21240,8 +20942,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-578.svg"
+        "height": 24
       },
       {
         "name": "general/expand-vertically",
@@ -21251,8 +20952,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-583.svg"
+        "height": 24
       },
       {
         "name": "general/pin",
@@ -21262,8 +20962,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-588.svg"
+        "height": 24
       },
       {
         "name": "general/favorite-star",
@@ -21273,8 +20972,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-598.svg"
+        "height": 24
       },
       {
         "name": "general/close-thin",
@@ -21284,8 +20982,7 @@
         "group": "general",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15912-60.svg"
+        "height": 24
       },
       {
         "name": "menus/bug",
@@ -21295,8 +20992,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/14051-534.svg"
+        "height": 22
       },
       {
         "name": "menus/players",
@@ -21306,8 +21002,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/14051-535.svg"
+        "height": 22
       },
       {
         "name": "menus/settings",
@@ -21317,8 +21012,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/14051-536.svg"
+        "height": 22
       },
       {
         "name": "menus/player",
@@ -21328,8 +21022,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3592.svg"
+        "height": 22
       },
       {
         "name": "menus/add",
@@ -21339,8 +21032,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3595.svg"
+        "height": 22
       },
       {
         "name": "menus/following",
@@ -21350,8 +21042,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3602.svg"
+        "height": 22
       },
       {
         "name": "menus/friends",
@@ -21361,8 +21052,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3608.svg"
+        "height": 22
       },
       {
         "name": "menus/block",
@@ -21372,8 +21062,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3613.svg"
+        "height": 22
       },
       {
         "name": "menus/pending",
@@ -21383,8 +21072,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3620.svg"
+        "height": 22
       },
       {
         "name": "menus/unfriend",
@@ -21394,8 +21082,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3627.svg"
+        "height": 22
       },
       {
         "name": "menus/edit-profile",
@@ -21405,8 +21092,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3634.svg"
+        "height": 22
       },
       {
         "name": "menus/mention",
@@ -21416,8 +21102,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3640.svg"
+        "height": 22
       },
       {
         "name": "menus/report",
@@ -21427,8 +21112,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3643.svg"
+        "height": 22
       },
       {
         "name": "menus/chat-dm",
@@ -21438,8 +21122,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3649.svg"
+        "height": 22
       },
       {
         "name": "menus/clear-chat-messages",
@@ -21449,8 +21132,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8893-326.svg"
+        "height": 22
       },
       {
         "name": "menus/channel",
@@ -21460,8 +21142,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3654.svg"
+        "height": 22
       },
       {
         "name": "menus/passport",
@@ -21471,8 +21152,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3656.svg"
+        "height": 22
       },
       {
         "name": "menus/call",
@@ -21482,8 +21162,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3664.svg"
+        "height": 22
       },
       {
         "name": "menus/call-blocked",
@@ -21493,8 +21172,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9968-57.svg"
+        "height": 22
       },
       {
         "name": "menus/settings-outline",
@@ -21504,8 +21182,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3678.svg"
+        "height": 22
       },
       {
         "name": "menus/delete",
@@ -21515,8 +21192,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3682.svg"
+        "height": 22
       },
       {
         "name": "menus/publish",
@@ -21526,8 +21202,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3691.svg"
+        "height": 22
       },
       {
         "name": "menus/share",
@@ -21537,8 +21212,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3695.svg"
+        "height": 22
       },
       {
         "name": "menus/quit-icon-outline",
@@ -21548,8 +21222,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3701.svg"
+        "height": 22
       },
       {
         "name": "menus/unpublish",
@@ -21559,8 +21232,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3709.svg"
+        "height": 22
       },
       {
         "name": "menus/download",
@@ -21570,8 +21242,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3714.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/grant-op",
@@ -21581,8 +21252,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3720.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/revoke-op",
@@ -21592,8 +21262,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3724.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/kick",
@@ -21603,8 +21272,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3730.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/ban",
@@ -21614,8 +21282,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3735.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/ban-member",
@@ -21625,8 +21292,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/9169-2171.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/remove-member",
@@ -21636,8 +21302,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3737.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/copy",
@@ -21647,8 +21312,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3741.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/info",
@@ -21658,8 +21322,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3746.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/translate",
@@ -21669,8 +21332,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/10851-3133.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/link",
@@ -21680,8 +21342,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3748.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/x",
@@ -21691,8 +21352,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3750.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/jump",
@@ -21702,8 +21362,7 @@
         "group": "menus",
         "variant": null,
         "width": 22.000001907348633,
-        "height": 22.000001907348633,
-        "file": "/dcl-ui-review/icons/8706-3752.svg"
+        "height": 22.000001907348633
       },
       {
         "name": "menus/pin",
@@ -21713,8 +21372,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3755.svg"
+        "height": 22
       },
       {
         "name": "menus/bubbles",
@@ -21724,8 +21382,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-3757.svg"
+        "height": 22
       },
       {
         "name": "menus/leave",
@@ -21735,8 +21392,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9150-4230.svg"
+        "height": 22
       },
       {
         "name": "menus/make-speaker",
@@ -21746,8 +21402,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9600-2580.svg"
+        "height": 22
       },
       {
         "name": "menus/demote-speaker",
@@ -21757,8 +21412,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9957-3811.svg"
+        "height": 22
       },
       {
         "name": "menus/notifications",
@@ -21768,8 +21422,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9758-4325.svg"
+        "height": 22
       },
       {
         "name": "menus/community",
@@ -21779,8 +21432,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9759-4365.svg"
+        "height": 22
       },
       {
         "name": "menus/transfer-community",
@@ -21790,8 +21442,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/11017-1541.svg"
+        "height": 22
       },
       {
         "name": "menus/send-emote",
@@ -21801,8 +21452,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/10618-2173.svg"
+        "height": 22
       },
       {
         "name": "menus/gift",
@@ -21812,8 +21462,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/10978-540.svg"
+        "height": 22
       },
       {
         "name": "menus/hush",
@@ -21823,8 +21472,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/12750-4554.svg"
+        "height": 22
       },
       {
         "name": "menus/unhush",
@@ -21834,8 +21482,7 @@
         "group": "menus",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/12750-4570.svg"
+        "height": 22
       },
       {
         "name": "social/mail",
@@ -21845,8 +21492,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15515-20111.svg"
+        "height": 24
       },
       {
         "name": "social/youtube",
@@ -21856,8 +21502,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15515-20108.svg"
+        "height": 24
       },
       {
         "name": "social/linkedin",
@@ -21867,8 +21512,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15515-20105.svg"
+        "height": 24
       },
       {
         "name": "social/tiktok",
@@ -21878,8 +21522,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15515-20102.svg"
+        "height": 24
       },
       {
         "name": "social/x",
@@ -21889,8 +21532,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7642.svg"
+        "height": 24
       },
       {
         "name": "social/facebook",
@@ -21900,8 +21542,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7647.svg"
+        "height": 24
       },
       {
         "name": "social/link",
@@ -21911,8 +21552,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7650.svg"
+        "height": 24
       },
       {
         "name": "social/discord",
@@ -21922,8 +21562,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7657.svg"
+        "height": 24
       },
       {
         "name": "social/reddit",
@@ -21933,8 +21572,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7663.svg"
+        "height": 24
       },
       {
         "name": "social/git-hub",
@@ -21944,8 +21582,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7670.svg"
+        "height": 24
       },
       {
         "name": "social/instagram",
@@ -21955,8 +21592,7 @@
         "group": "social",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/8706-7673.svg"
+        "height": 24
       },
       {
         "name": "profile/gender",
@@ -21966,8 +21602,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4122.svg"
+        "height": 20
       },
       {
         "name": "profile/country",
@@ -21977,8 +21612,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4129.svg"
+        "height": 20
       },
       {
         "name": "profile/birthday",
@@ -21988,8 +21622,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4131.svg"
+        "height": 20
       },
       {
         "name": "profile/pronouns",
@@ -21999,8 +21632,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4133.svg"
+        "height": 20
       },
       {
         "name": "profile/relationship",
@@ -22010,8 +21642,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4138.svg"
+        "height": 20
       },
       {
         "name": "profile/sex-orientation",
@@ -22021,8 +21652,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4140.svg"
+        "height": 20
       },
       {
         "name": "profile/language",
@@ -22032,8 +21662,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4150.svg"
+        "height": 20
       },
       {
         "name": "profile/profession",
@@ -22043,8 +21672,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4154.svg"
+        "height": 20
       },
       {
         "name": "profile/hobbies",
@@ -22054,8 +21682,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4161.svg"
+        "height": 20
       },
       {
         "name": "profile/real-name",
@@ -22065,8 +21692,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4165.svg"
+        "height": 20
       },
       {
         "name": "profile/employment-status",
@@ -22076,8 +21702,7 @@
         "group": "profile",
         "variant": null,
         "width": 20,
-        "height": 20,
-        "file": "/dcl-ui-review/icons/8706-4167.svg"
+        "height": 20
       },
       {
         "name": "notifications/reward",
@@ -22087,8 +21712,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4256.svg"
+        "height": 22
       },
       {
         "name": "notifications/friend",
@@ -22098,8 +21722,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4266.svg"
+        "height": 22
       },
       {
         "name": "notifications/default",
@@ -22109,8 +21732,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4268.svg"
+        "height": 22
       },
       {
         "name": "notifications/event-started",
@@ -22120,8 +21742,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4272.svg"
+        "height": 22
       },
       {
         "name": "notifications/event-one-hour",
@@ -22131,8 +21752,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4279.svg"
+        "height": 22
       },
       {
         "name": "notifications/event-cancelled",
@@ -22142,8 +21762,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4283.svg"
+        "height": 22
       },
       {
         "name": "notifications/quest",
@@ -22153,8 +21772,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4287.svg"
+        "height": 22
       },
       {
         "name": "notifications/item-airdropped",
@@ -22164,8 +21782,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4291.svg"
+        "height": 22
       },
       {
         "name": "notifications/land-rented",
@@ -22175,8 +21792,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4293.svg"
+        "height": 22
       },
       {
         "name": "notifications/world-time-up",
@@ -22186,8 +21802,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4297.svg"
+        "height": 22
       },
       {
         "name": "notifications/world-unaccessible",
@@ -22197,8 +21812,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4302.svg"
+        "height": 22
       },
       {
         "name": "notifications/world-access-restored",
@@ -22208,8 +21822,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4307.svg"
+        "height": 22
       },
       {
         "name": "notifications/project-enacted",
@@ -22219,8 +21832,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4312.svg"
+        "height": 22
       },
       {
         "name": "notifications/coauthor",
@@ -22230,8 +21842,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4314.svg"
+        "height": 22
       },
       {
         "name": "notifications/tip",
@@ -22241,8 +21852,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/11197-3318.svg"
+        "height": 22
       },
       {
         "name": "notifications/community",
@@ -22252,8 +21862,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9767-4546.svg"
+        "height": 22
       },
       {
         "name": "notifications/gift",
@@ -22263,8 +21872,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/10973-1533.svg"
+        "height": 22
       },
       {
         "name": "notifications/proposal-finished",
@@ -22274,8 +21882,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4316.svg"
+        "height": 22
       },
       {
         "name": "notifications/rent-period-end",
@@ -22285,8 +21892,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4324.svg"
+        "height": 22
       },
       {
         "name": "notifications/new-comment",
@@ -22296,8 +21902,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/8706-4326.svg"
+        "height": 22
       },
       {
         "name": "notifications/referral-friend",
@@ -22307,8 +21912,7 @@
         "group": "notifications",
         "variant": null,
         "width": 22,
-        "height": 22,
-        "file": "/dcl-ui-review/icons/9308-289.svg"
+        "height": 22
       },
       {
         "name": "component/smart-item",
@@ -22318,8 +21922,7 @@
         "group": "component",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-796.svg"
+        "height": 16
       },
       {
         "name": "component/credits",
@@ -22329,8 +21932,7 @@
         "group": "component",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-817.svg"
+        "height": 24
       },
       {
         "name": "component/jump-in",
@@ -22340,8 +21942,7 @@
         "group": "component",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-821.svg"
+        "height": 24
       },
       {
         "name": "editor/list-all",
@@ -22351,8 +21952,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-602.svg"
+        "height": 24
       },
       {
         "name": "editor/camera-hierarchy",
@@ -22362,8 +21962,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-605.svg"
+        "height": 24
       },
       {
         "name": "editor/layers",
@@ -22373,8 +21972,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-608.svg"
+        "height": 24
       },
       {
         "name": "editor/search-cloud",
@@ -22384,8 +21982,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-611.svg"
+        "height": 24
       },
       {
         "name": "editor/save",
@@ -22395,8 +21992,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-614.svg"
+        "height": 24
       },
       {
         "name": "editor/camera",
@@ -22406,8 +22002,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-617.svg"
+        "height": 24
       },
       {
         "name": "editor/audio-on",
@@ -22417,8 +22012,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-620.svg"
+        "height": 24
       },
       {
         "name": "editor/audio-off",
@@ -22428,8 +22022,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-623.svg"
+        "height": 24
       },
       {
         "name": "editor/undo",
@@ -22439,8 +22032,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-626.svg"
+        "height": 24
       },
       {
         "name": "editor/redo",
@@ -22450,8 +22042,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-629.svg"
+        "height": 24
       },
       {
         "name": "editor/move",
@@ -22461,8 +22052,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-632.svg"
+        "height": 24
       },
       {
         "name": "editor/translation",
@@ -22472,8 +22062,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-635.svg"
+        "height": 24
       },
       {
         "name": "editor/rotate",
@@ -22483,8 +22072,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-638.svg"
+        "height": 24
       },
       {
         "name": "editor/scale",
@@ -22494,8 +22082,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-641.svg"
+        "height": 24
       },
       {
         "name": "editor/more-options",
@@ -22505,8 +22092,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-644.svg"
+        "height": 24
       },
       {
         "name": "editor/snap",
@@ -22516,8 +22102,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-647.svg"
+        "height": 24
       },
       {
         "name": "editor/align-to-world",
@@ -22527,8 +22112,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-650.svg"
+        "height": 24
       },
       {
         "name": "editor/joystick",
@@ -22538,8 +22122,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-653.svg"
+        "height": 24
       },
       {
         "name": "editor/edit",
@@ -22549,8 +22132,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-656.svg"
+        "height": 24
       },
       {
         "name": "editor/details",
@@ -22560,8 +22142,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-659.svg"
+        "height": 24
       },
       {
         "name": "editor/layout-small",
@@ -22571,8 +22152,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-662.svg"
+        "height": 24
       },
       {
         "name": "editor/layout-outline-small",
@@ -22582,8 +22162,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-665.svg"
+        "height": 24
       },
       {
         "name": "editor/layout-warning",
@@ -22593,8 +22172,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-670.svg"
+        "height": 24
       },
       {
         "name": "editor/flow",
@@ -22604,8 +22182,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-673.svg"
+        "height": 24
       },
       {
         "name": "editor/player",
@@ -22615,8 +22192,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-678.svg"
+        "height": 24
       },
       {
         "name": "editor/photo",
@@ -22626,8 +22202,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-681.svg"
+        "height": 24
       },
       {
         "name": "editor/hexagon",
@@ -22637,8 +22212,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-684.svg"
+        "height": 24
       },
       {
         "name": "editor/hexagons",
@@ -22648,8 +22222,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-687.svg"
+        "height": 24
       },
       {
         "name": "editor/custom-item-outline",
@@ -22659,8 +22232,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-691.svg"
+        "height": 24
       },
       {
         "name": "editor/variable-small",
@@ -22670,8 +22242,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-694.svg"
+        "height": 24
       },
       {
         "name": "editor/paint",
@@ -22681,8 +22252,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-697.svg"
+        "height": 24
       },
       {
         "name": "editor/paint-outline",
@@ -22692,8 +22262,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-700.svg"
+        "height": 24
       },
       {
         "name": "editor/smart",
@@ -22703,8 +22272,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-703.svg"
+        "height": 24
       },
       {
         "name": "editor/smart-outline",
@@ -22714,8 +22282,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-706.svg"
+        "height": 24
       },
       {
         "name": "editor/checkmark",
@@ -22725,8 +22292,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-709.svg"
+        "height": 24
       },
       {
         "name": "editor/play",
@@ -22736,8 +22302,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-712.svg"
+        "height": 24
       },
       {
         "name": "editor/stop",
@@ -22747,8 +22312,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-715.svg"
+        "height": 24
       },
       {
         "name": "editor/pause",
@@ -22758,8 +22322,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-718.svg"
+        "height": 24
       },
       {
         "name": "editor/kebab-small",
@@ -22769,8 +22332,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-721.svg"
+        "height": 24
       },
       {
         "name": "editor/hide",
@@ -22780,8 +22342,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-724.svg"
+        "height": 24
       },
       {
         "name": "editor/show",
@@ -22791,8 +22352,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-727.svg"
+        "height": 24
       },
       {
         "name": "editor/link",
@@ -22802,8 +22362,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-730.svg"
+        "height": 24
       },
       {
         "name": "editor/tag",
@@ -22813,8 +22372,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-733.svg"
+        "height": 24
       },
       {
         "name": "editor/list-bullets",
@@ -22824,8 +22382,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-736.svg"
+        "height": 24
       },
       {
         "name": "editor/desktop",
@@ -22835,8 +22392,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-739.svg"
+        "height": 24
       },
       {
         "name": "editor/mobile",
@@ -22846,8 +22402,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-742.svg"
+        "height": 24
       },
       {
         "name": "editor/safe-area",
@@ -22857,8 +22412,7 @@
         "group": "editor",
         "variant": null,
         "width": 24,
-        "height": 24,
-        "file": "/dcl-ui-review/icons/15879-745.svg"
+        "height": 24
       },
       {
         "name": "editor/node-type-container",
@@ -22868,8 +22422,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-748.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-image",
@@ -22879,8 +22432,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-751.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-button",
@@ -22890,8 +22442,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-754.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-label",
@@ -22901,8 +22452,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-757.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-input",
@@ -22912,8 +22462,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-760.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-dropdown",
@@ -22923,8 +22472,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-763.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-prefab",
@@ -22934,8 +22482,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-766.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-guiroot",
@@ -22945,8 +22492,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-769.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-desktop",
@@ -22956,8 +22502,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-772.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-mobile",
@@ -22967,8 +22512,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-775.svg"
+        "height": 16
       },
       {
         "name": "editor/node-type-full-screen",
@@ -22978,8 +22522,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-778.svg"
+        "height": 16
       },
       {
         "name": "editor/fill-paint",
@@ -22989,8 +22532,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-781.svg"
+        "height": 16
       },
       {
         "name": "editor/fill-image",
@@ -23000,8 +22542,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-784.svg"
+        "height": 16
       },
       {
         "name": "editor/fill-video",
@@ -23011,8 +22552,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-787.svg"
+        "height": 16
       },
       {
         "name": "editor/fill-avatar",
@@ -23022,8 +22562,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-790.svg"
+        "height": 16
       },
       {
         "name": "editor/fill-none",
@@ -23033,8 +22572,7 @@
         "group": "editor",
         "variant": null,
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15879-793.svg"
+        "height": 16
       },
       {
         "name": "AssetsFilters",
@@ -23044,8 +22582,7 @@
         "group": "AssetsFilters",
         "variant": "Type=All",
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15875-5221.svg"
+        "height": 16
       },
       {
         "name": "AssetsFilters",
@@ -23055,8 +22592,7 @@
         "group": "AssetsFilters",
         "variant": "Type=Models",
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15875-5223.svg"
+        "height": 16
       },
       {
         "name": "AssetsFilters",
@@ -23066,8 +22602,7 @@
         "group": "AssetsFilters",
         "variant": "Type=Avatar Animations",
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15875-5225.svg"
+        "height": 16
       },
       {
         "name": "AssetsFilters",
@@ -23077,8 +22612,7 @@
         "group": "AssetsFilters",
         "variant": "Type=Images",
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15875-5227.svg"
+        "height": 16
       },
       {
         "name": "AssetsFilters",
@@ -23088,8 +22622,7 @@
         "group": "AssetsFilters",
         "variant": "Type=Others",
         "width": 16,
-        "height": 16,
-        "file": "/dcl-ui-review/icons/15875-5229.svg"
+        "height": 16
       }
     ],
     "effects": {

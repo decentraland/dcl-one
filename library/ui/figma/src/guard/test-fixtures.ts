@@ -62,18 +62,6 @@ export async function writeTree(root: string) {
     ],
     foundations: { tokens: [] }
   })
-  await put(root, `${REVIEW}/references.json`, {
-    'Button-0': { file: '/a.png' },
-    'PlaceCard-0': { file: '/b.png' }
-  })
-  await put(root, 'figma/review/public/dcl-ui-review/fidelity.json', {
-    cases: {
-      'Button-0': { sourceId: '10:1', image: '/dcl-ui-review/renders/Button-0.png' },
-      'PlaceCard-0': { sourceId: '20:1', image: '/dcl-ui-review/renders/PlaceCard-0.png' }
-    }
-  })
-  await put(root, 'figma/review/public/dcl-ui-review/renders/PlaceCard-0.png', 'png1')
-  await put(root, 'figma/review/public/dcl-ui-review/references/live-20-1.png', 'png1')
   // The promoted library: generated copies, public exports (value and Props type) and a hand-written Modal.
   await put(root, 'components/buttons/Button.tsx', 'lib button')
   await put(root, 'components/places/PlaceCard.tsx', 'lib place')

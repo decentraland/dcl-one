@@ -417,7 +417,7 @@ export const NavMenuDropdown = ({
   <FigmaView
     as='button'
     views={navMenuDropdownViews}
-    defaultKey='state:default|tab:whatsOn'
+    component='NavMenuDropdown'
     select={{
       values: { state, tab },
       booleans: {  },
@@ -425,7 +425,7 @@ export const NavMenuDropdown = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

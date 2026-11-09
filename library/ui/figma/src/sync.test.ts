@@ -1,14 +1,13 @@
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadConfig } from './config.js'
-import { projectRoot, snapshotSource } from '../test/snapshot.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { snapshotSource, testConfig } from '../test/snapshot.js'
 import { generateAll } from './generators/index.js'
 import { diffFiles, isEmptyDiff, writeFiles } from './sync.js'
 
 const context = {}
-const generate = async () => generateAll(snapshotSource(), context, await loadConfig(projectRoot))
+const generate = async () => generateAll(snapshotSource(), context, await testConfig())
 
 describe('sync', () => {
   let outDir: string
@@ -34,17 +33,12 @@ describe('sync', () => {
     })
   })
 
-  describe('when the file key is configured', () => {
-    afterEach(() => vi.unstubAllEnvs())
-
-    it('should generate no file that carries it or a Figma file URL', async () => {
-      vi.stubEnv('FIGMA_FILE_KEY', 'FAKEKEY000example000000')
+  describe('when generating from the capture', () => {
+    it('should generate no file that carries a Figma file URL', async () => {
       const { files } = await generate()
 
-      for (const file of files) {
-        expect(file.content, file.path).not.toContain('FAKEKEY000example000000')
+      for (const file of files)
         expect(file.content, file.path).not.toMatch(/figma\.com\/(design|file|proto|board)\//)
-      }
     })
   })
 

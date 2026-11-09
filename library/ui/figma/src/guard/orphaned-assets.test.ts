@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, runDiff, runSync, type App } from '../app.js'
-import { writePromotionManifest } from '../promotion/manifest.js'
 import { LEDGER } from './consumers.js'
 import { lifecycleFixture, fixtureBytes, put, json, SNAP, GEN } from './lifecycle-fixture.js'
 import { checkLedger, loadLedger, serializeLedger, sha256 } from './orphaned-assets.js'
@@ -12,6 +11,7 @@ import { checkScope } from './check-scope.js'
 import { emptyRetirements } from './retirements.js'
 import { GUARDED_DIRECTORIES, buildOwnership, ownerOf } from './ownership.js'
 import { listFiles, toPosix } from './fs-safe.js'
+import { pinTestCapture } from '../../test/snapshot.js'
 
 const ASSETS = 'figma/review/src/generated/components/assets'
 const temps: string[] = []
@@ -36,7 +36,7 @@ async function recapture(root: string, stroke: string) {
       `<path d="${stroke}"/>`
     )
   await put(root, `${SNAP}/components/Page.json`, page)
-  const app = await createApp(path.join(root, 'figma'))
+  const app = await createApp(path.join(root, 'figma'), undefined, { unverifiedSnapshot: true })
   // As live capture runs it; its guard then validates the ledger against the base before publishing.
   const report = await runSync(app, {
     source: 'snapshot',
@@ -76,7 +76,7 @@ describe('when a sync other than live capture stops generating an asset', () => 
         '<path d="M3 3h14v14H3z"/>'
       )
     await put(base, `${SNAP}/components/Page.json`, page)
-    const app = await createApp(path.join(base, 'figma'))
+    const app = await createApp(path.join(base, 'figma'), undefined, { unverifiedSnapshot: true })
     const report = await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
     expect(report.orphaned).toBeUndefined()
     await expect(readFile(path.join(base, LEDGER))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -103,13 +103,6 @@ describe('when a recapture stops generating an asset', () => {
   })
 
   it('should admit the entry against the base in the guard', async () => {
-    expect(await causes(base, head)).toEqual([])
-  })
-
-  it('should admit it after the review promotion manifest is regenerated', async () => {
-    await writePromotionManifest(app)
-    const manifest = await json(head, 'figma/review/src/review/promotion.json')
-    expect(Object.keys(manifest.files)).toContain(orphan)
     expect(await causes(base, head)).toEqual([])
   })
 
@@ -173,14 +166,6 @@ describe('when a recapture stops generating an asset', () => {
     ])('should reject admission for %s', async (_, file, content) => {
       await put(head, file, content(path.basename(orphan)))
       expect((await causes(base, head)).join('\n')).toContain('the asset is still used by')
-    })
-
-    it('should reject a path elsewhere in the review promotion manifest', async () => {
-      const manifest = await json(head, 'figma/review/src/review/promotion.json')
-      await put(head, 'figma/review/src/review/promotion.json', { ...manifest, note: orphan })
-      expect((await causes(base, head)).join('\n')).toContain(
-        'figma/review/src/review/promotion.json'
-      )
     })
 
     it('should fail closed on an unreadable text file', async () => {
@@ -445,7 +430,7 @@ describe('when a developer reactivates or drains a ledgered asset', () => {
     )
   })
   const drain = async (root: string) => {
-    const app = await createApp(path.join(root, 'figma'))
+    const app = await createApp(path.join(root, 'figma'), undefined, { unverifiedSnapshot: true })
     return runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
   }
 
@@ -552,8 +537,12 @@ describe('when a developer reactivates or drains a ledgered asset', () => {
 // The CLI exit status, run as CI runs it: `npm run cli -- diff` from the package directory.
 const CLI = path.resolve(import.meta.dirname, '../cli.ts')
 const TSX = path.resolve(import.meta.dirname, '../../../node_modules/.bin/tsx')
-const cliDiff = (root: string) =>
-  spawnSync(TSX, [CLI, 'diff'], { cwd: path.join(root, 'figma'), encoding: 'utf8' }).status
+// The tree's capture is pinned right before the run, so the CLI reads it through the verified boundary and an
+// exit 1 comes from the ledger, never from an unverifiable cache.
+const cliDiff = async (root: string) => {
+  await pinTestCapture(path.join(root, 'figma'))
+  return spawnSync(TSX, [CLI, 'diff'], { cwd: path.join(root, 'figma'), encoding: 'utf8' }).status
+}
 
 describe('when cli diff checks a tree with ledgered orphans', () => {
   let head: string
@@ -562,8 +551,8 @@ describe('when cli diff checks a tree with ledgered orphans', () => {
     ;({ head, orphan } = await scenario())
   })
 
-  it('should exit 0 with valid retained entries alone', () => {
-    expect(cliDiff(head)).toBe(0)
+  it('should exit 0 with valid retained entries alone', async () => {
+    expect(await cliDiff(head)).toBe(0)
   })
 
   it('should exit 1 on a ledger issue', async () => {
@@ -572,21 +561,21 @@ describe('when cli diff checks a tree with ledgered orphans', () => {
       'figma/review/src/Hero.tsx',
       `import a from './generated/components/assets/${path.basename(orphan)}'`
     )
-    expect(cliDiff(head)).toBe(1)
+    expect(await cliDiff(head)).toBe(1)
   })
 
   it('should exit 1 on added drift', async () => {
     await rm(path.join(head, GEN, 'page/Second.tsx'))
-    expect(cliDiff(head)).toBe(1)
+    expect(await cliDiff(head)).toBe(1)
   })
 
   it('should exit 1 on changed drift', async () => {
     await writeFile(path.join(head, GEN, 'page/Second.tsx'), '// edited by hand\n')
-    expect(cliDiff(head)).toBe(1)
+    expect(await cliDiff(head)).toBe(1)
   })
 
   it('should exit 1 on removed drift beside a retained orphan', async () => {
     await put(head, `${GEN}/page/Stray.tsx`, '// not generated\n')
-    expect(cliDiff(head)).toBe(1)
+    expect(await cliDiff(head)).toBe(1)
   })
 })

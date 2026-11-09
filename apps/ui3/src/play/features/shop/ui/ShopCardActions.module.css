@@ -1,7 +1,12 @@
-/* Two actions share the card's width. */
+/* Two actions share the card's width, as the design system's button at md: 40px, radius/md, button/md
+   (Inter Bold 14, 0.5px tracking, uppercase). */
 .action {
   flex: 1;
   gap: 8px;
   padding: 0 8px;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
   font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
 }

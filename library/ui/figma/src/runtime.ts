@@ -1,3 +1,4 @@
+import { FdsCacheError } from './sources/fds-source.js'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -6,7 +7,7 @@ import { resolveContractConfig } from './contract/config.js'
 import { buildFigmaIndex } from './contract/figma-index.js'
 import { LfsPointerError } from './lfs.js'
 import type { ResolveContext } from './contract/resolve.js'
-import { promotionExclusion } from './promotion/manifest.js'
+import { promotionExclusion } from './promotion/eligibility.js'
 import { loadSpecsFromSource } from './specs.js'
 import type { ComponentSpec } from './ir/components.js'
 
@@ -45,9 +46,9 @@ async function syncedComponents(app: App): Promise<Map<string, string[]>> {
   try {
     specs = (await loadSpecsFromSource(app.createSource('snapshot'), app.config)).specs
   } catch (error) {
-    // Without a complete capture, hand-written mappings are validated as before; an unmaterialized
-    // capture is a broken checkout, not a missing one.
-    if (error instanceof LfsPointerError) throw error
+    // Without a complete capture, hand-written mappings are validated as before; an unmaterialized LFS
+    // capture or a missing, stale or edited fetch-source cache is a broken checkout, not a missing capture.
+    if (error instanceof LfsPointerError || error instanceof FdsCacheError) throw error
     return new Map()
   }
   const record = await readFile(path.resolve(app.cwd, '..', 'components/promotion.json'), 'utf8')
@@ -87,15 +88,9 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
           : undefined
       })
       let figmaSets: ResolveContext['figmaSets'] = []
-      if (app) {
-        try {
-          figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
-        } catch (error) {
-          // A missing capture means resolve-only mode; an unmaterialized one is a broken checkout.
-          if (error instanceof LfsPointerError) throw error
-          figmaSets = []
-        }
-      }
+      // Only a missing Figma configuration means resolve-only mode: a configured capture that fails to load
+      // (malformed, or an unmaterialized LFS pointer) is a broken checkout and fails closed.
+      if (app) figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
       return {
         mappingRoot: contract.mappingRoot,
         libraryRange: contract.libraryRange,

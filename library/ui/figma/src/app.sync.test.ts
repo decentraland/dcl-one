@@ -5,11 +5,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { createApp, runSync, type App } from './app.js'
 import { GENERATED, SNAPSHOT } from './guard/ownership.js'
 import { fixtureBytes } from './guard/lifecycle-fixture.js'
-import { projectRoot } from '../test/snapshot.js'
+import { copySnapshot, testConfigFile } from '../test/snapshot.js'
 import { initializeFixtureGit } from './guard/git-fixture.js'
 import { encodePageFileName } from './capture/page-file-name.js'
 
-// A throwaway repository: figma with a frozen snapshot, and the generated folder beside it.
+// A throwaway repository: figma with the synthetic snapshot, and the generated folder beside it.
 describe('runSync guard and retirements', () => {
   let root: string
   let app: App
@@ -20,29 +20,19 @@ describe('runSync guard and retirements', () => {
     template = await mkdtemp(path.join(os.tmpdir(), 'dcl-app-sync-template-'))
     const mcp = path.join(template, 'figma')
     await mkdir(mcp, { recursive: true })
-    await cp(
-      path.join(projectRoot, 'test/fixtures/figma-snapshot'),
-      path.join(mcp, 'figma-snapshot'),
-      {
-        recursive: true
-      }
-    )
-    // The frozen fixture keeps a historical Buttons copy of the component now native to Tabs bar.
-    const historical = path.join(mcp, 'figma-snapshot/components/Buttons.json')
-    const saved = JSON.parse(await readFile(historical, 'utf8'))
-    saved.components.find((component: { id: string }) => component.id === '15674:34262').external =
-      true
-    await writeFile(historical, JSON.stringify(saved))
-    const config = JSON.parse(
-      await readFile(path.join(projectRoot, 'test/fixtures/figma.config.json'), 'utf8')
-    )
+    await copySnapshot(path.join(mcp, 'figma-snapshot'))
+    const config = JSON.parse(await readFile(testConfigFile, 'utf8'))
+    config.snapshotDir = 'figma-snapshot'
     config.outDir = `../${GENERATED}`
     await writeFile(path.join(mcp, 'figma.config.json'), JSON.stringify(config))
     // The first generation is a developer action, as it is in a real checkout.
-    await runSync(await createApp(mcp, path.join(mcp, 'figma.config.json')), {
-      source: 'snapshot',
-      developer: true
-    })
+    await runSync(
+      await createApp(mcp, path.join(mcp, 'figma.config.json'), { unverifiedSnapshot: true }),
+      {
+        source: 'snapshot',
+        developer: true
+      }
+    )
   })
 
   afterAll(async () => {
@@ -53,7 +43,7 @@ describe('runSync guard and retirements', () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'dcl-app-sync-'))
     await cp(template, root, { recursive: true, verbatimSymlinks: true })
     const mcp = path.join(root, 'figma')
-    app = await createApp(mcp, path.join(mcp, 'figma.config.json'))
+    app = await createApp(mcp, path.join(mcp, 'figma.config.json'), { unverifiedSnapshot: true })
   })
 
   afterEach(async () => {
@@ -195,7 +185,7 @@ describe('runSync guard and retirements', () => {
   })
 
   describe('when the capturedPageIds API selects a page beside a populated library', () => {
-    const selectedPageId = '8711:14600'
+    const selectedPageId = '10:5'
     type SavedBytes = Awaited<ReturnType<typeof fixtureBytes>>
     const expectSameBytes = (actual: SavedBytes, expected: SavedBytes) => {
       expect(actual.map(([file]) => file)).toEqual(expected.map(([file]) => file))
@@ -211,7 +201,7 @@ describe('runSync guard and retirements', () => {
         return (
           relative.startsWith('components' + path.sep) &&
           relative.split(path.sep).length > 2 &&
-          !relative.startsWith(path.join('components', 'text-input') + path.sep)
+          !relative.startsWith(path.join('components', 'demo-field') + path.sep)
         )
       })
     let libraryBefore: Awaited<ReturnType<typeof fixtureBytes>>
@@ -239,15 +229,15 @@ describe('runSync guard and retirements', () => {
       libraryBefore = await fixtureBytes(library())
       frozenBefore = await frozenOutputs()
       expect(frozenBefore.length).toBeGreaterThan(0)
-      const captureFile = path.join(root, SNAPSHOT, 'components/Text Input.json')
+      const captureFile = path.join(root, SNAPSHOT, 'components/Demo Field.json')
       const page = JSON.parse(await readFile(captureFile, 'utf8'))
       expect(page.page.id).toBe(selectedPageId)
-      const selectedStyle = (await readdir(generated('components/text-input'))).find((file) =>
+      const selectedStyle = (await readdir(generated('components/demo-field'))).find((file) =>
         file.endsWith('.module.css')
       )
       expect(selectedStyle).toBeDefined()
       await writeFile(
-        generated(path.join('components/text-input', selectedStyle!)),
+        generated(path.join('components/demo-field', selectedStyle!)),
         '/* stale output belonging to the captured page */\n'
       )
     })
@@ -256,7 +246,7 @@ describe('runSync guard and retirements', () => {
         source: 'snapshot',
         capturedPageIds: [selectedPageId]
       })
-      expect(result.diff.changed.some((file) => file.startsWith('components/text-input/'))).toBe(
+      expect(result.diff.changed.some((file) => file.startsWith('components/demo-field/'))).toBe(
         true
       )
       expectSameBytes(await fixtureBytes(library()), libraryBefore)
@@ -265,10 +255,10 @@ describe('runSync guard and retirements', () => {
     describe('and a Review token used by an unselected page differs', () => {
       let generatedBefore: Awaited<ReturnType<typeof fixtureBytes>>
       beforeEach(async () => {
-        expect(await alterUsedReviewToken('text-input')).toBe(true)
+        expect(await alterUsedReviewToken('demo-field')).toBe(true)
         generatedBefore = await fixtureBytes(path.join(root, GENERATED))
       })
-      it('should reject the real frozen dependency through the API without publishing output', async () => {
+      it('should reject the frozen dependency through the API without publishing output', async () => {
         await expect(
           runSync(app, {
             source: 'snapshot',
@@ -288,11 +278,6 @@ describe('runSync guard and retirements', () => {
       )
     })
 
-    it('should refuse a live source for retirement cleanup before reading it', async () => {
-      await expect(
-        runSync(app, { source: 'rest', developer: true, applyRetirements: true })
-      ).rejects.toThrow('saved snapshots only')
-    })
     it('should block an automated sync while a retirement is pending', async () => {
       const manifest = await read('components/manifest.ts')
       const entry = JSON.parse(manifest.slice(manifest.indexOf('= [') + 2))[0] as {

@@ -22,7 +22,6 @@ PIPELINE_INPUTS = {
     '.github/workflows/web-previews-publish.yml',
     'tooling/web-preview.py',
     'tooling/tests/test_web_preview.py',
-    'tooling/web-preview-browser.mjs',
 }
 PACKAGE = '@dcl-regenesislabs/dcl-one-ui-review'
 MARKER = '<!-- web-pr-previews -->'
@@ -119,6 +118,12 @@ def package_reviewer(source, target, revision, run_id, attempt):
         relative = path.relative_to(source)
         if path.is_symlink() or any(part.startswith('.') for part in relative.parts):
             raise ValueError(f'Unsafe static preview path: {relative}')
+        if (
+            len(relative.parts) > 1
+            and relative.parts[0] == 'dcl-ui-review'
+            and relative.parts[1] in {'references', 'renders', 'fidelity.json', 'icons'}
+        ):
+            raise ValueError(f'Unexpected retired reviewer output: {relative}')
         if path.is_dir():
             continue
         if (
@@ -413,10 +418,6 @@ def verify_reviewer_resources(url, entry, html):
         expected = 'text/css' if asset.endswith('.css') else 'javascript'
         if expected not in content_type or not response.read(1):
             raise CdnResourceNotReady('CDN reviewer asset is not JavaScript or CSS')
-    with cdn_open(f'{url}/dcl-ui-review/fidelity.json') as response:
-        fidelity = json.load(response)
-        if not isinstance(fidelity, (dict, list)):
-            raise CdnResourceNotReady('CDN reviewer fidelity data is not a JSON object or array')
 
 
 def verify_cdn(version, revision, run_id, timeout=60, *, attempt):

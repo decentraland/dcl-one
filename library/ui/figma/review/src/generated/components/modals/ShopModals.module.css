@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -32,7 +35,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-4);
 align-self: stretch;
 flex-shrink: 0;
 }
@@ -445,7 +447,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-4);
 align-self: stretch;
 flex-shrink: 0;
 }
@@ -859,7 +860,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-4);
 align-self: stretch;
 flex-shrink: 0;
 }
@@ -1398,7 +1398,7 @@ box-sizing: border-box;
 width: 14px;
 flex-shrink: 0;
 height: 14px;
-background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAQSURBVHgBAQUA+v8AAAAAAAAFAAFkeJU4AAAAAElFTkSuQmCC") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n1_0_1_2_3_1 {
@@ -1560,7 +1560,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-4);
 align-self: stretch;
 flex-shrink: 0;
 }
@@ -2098,7 +2097,7 @@ box-sizing: border-box;
 width: 14px;
 flex-shrink: 0;
 height: 14px;
-background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAQSURBVHgBAQUA+v8AAAAAAAAFAAFkeJU4AAAAAElFTkSuQmCC") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v3n1_0_1_2_3_1 {
@@ -2196,7 +2195,7 @@ box-sizing: border-box;
 width: 14px;
 flex-shrink: 0;
 height: 14px;
-background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAABYlAAAWJQFJUiTwAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAQSURBVHgBAQUA+v8AAAAAAAAFAAFkeJU4AAAAAElFTkSuQmCC") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v3n1_0_1_3_2_1 {
@@ -2320,4 +2319,5 @@ left: 348px;
 top: 121px;
 border-radius: var(--dcl-radius-full);
 background: var(--dcl-transparencies-white-20);
+}
 }

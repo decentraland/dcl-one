@@ -711,16 +711,49 @@ pub(super) async fn set_speaker(
     target: &str,
     speaker: bool,
 ) -> Result<(), ApiError> {
-    state
-        .room_service()
+    let room = crate::rooms::community_voice_chat_room_name(&community_id);
+    let service = state.room_service();
+    let result = service
         .merge_participant_metadata_with_permission(
-            &crate::rooms::community_voice_chat_room_name(&community_id),
+            &room,
             target,
-            patch(&[("isRequestingToSpeak", serde_json::json!(false)), ("isSpeaker", serde_json::json!(speaker))]),
+            patch(&[
+                ("isRequestingToSpeak", serde_json::json!(false)),
+                ("isSpeaker", serde_json::json!(speaker)),
+            ]),
             serde_json::json!({ "canPublish": speaker, "canSubscribe": true, "canPublishData": true }),
         )
-        .await
-        .map_err(|e| ApiError::internal(format!("livekit update participant permissions: {e}")))
+        .await;
+    if let Err(error) = result {
+        if !speaker {
+            // A failed metadata read must not prevent revoking publishing. Omit
+            // metadata so an unread value is never replaced. Permission is a full
+            // replacement, so retain the authorized listener permissions. Only
+            // demotion may fall back; a failed promotion never grants publishing.
+            service
+                .update_participant(
+                    &room,
+                    target,
+                    None,
+                    Some(serde_json::json!({
+                        "canPublish": false, "canSubscribe": true, "canPublishData": true
+                    })),
+                )
+                .await
+                .map_err(|fallback| {
+                    ApiError::internal(format!(
+                        "livekit demotion incomplete: participant update: {error}; permission revocation: {fallback}"
+                    ))
+                })?;
+            return Err(ApiError::internal(format!(
+                "livekit demotion incomplete: permission revocation completed but participant update failed: {error}"
+            )));
+        }
+        return Err(ApiError::internal(format!(
+            "livekit update participant permissions: {error}"
+        )));
+    }
+    Ok(())
 }
 
 pub async fn community_promote_speaker(
@@ -919,9 +952,9 @@ pub(super) async fn delete_webhook_room(state: &CommsState, room: &str) -> Resul
     .map_err(|_| ApiError::internal("webhook room deletion failed"))
 }
 
-// Persist the notification before deleting its source rows, using the provider
-// event ID as a stable broadcast key. Failed notification/DB work retains the
-// participant count and moderator state for a complete retry.
+// Record the ended stream before deleting its source rows, using the provider
+// event ID as a stable ranking key. Failed DB work retains the participant
+// count and moderator state for a complete retry.
 async fn finish_webhook_community(
     state: &CommsState,
     community_id: CommunityId,
@@ -947,7 +980,7 @@ async fn finish_webhook_community(
         );
         state
             .social
-            .notify_community_voice_ended(community_id, &key, &event, now)
+            .record_community_voice_ended(community_id, &key, &event, now)
             .await?;
     }
     state
@@ -1024,7 +1057,7 @@ const EVENT_TYPE_STREAMING: &str = "streaming";
 const EVENT_SUBTYPE_COMMUNITY_STREAMING_ENDED: &str = "community-streaming-ended";
 
 /// The @dcl/schemas `CommunityStreamingEnded` event document (the old SNS
-/// payload), kept as the notification's metadata.
+/// payload) social's ranking reads.
 fn community_streaming_ended_event(
     community_id: &str,
     participant_count: i64,
@@ -1040,12 +1073,9 @@ fn community_streaming_ended_event(
     })
 }
 
-/// The old crate wrote an SNS outbox row the notifications service fanned
-/// out; on one database the in-app notification lands in
-/// `social.notifications` directly, one row per community member, idempotent
-/// per recipient on `broadcast_key` (the old event key). Rooms already
-/// deleted (count 0) are skipped. The notifications module owns the
-/// out-of-process channels; none is enqueued here.
+/// Hands the ended stream to social's community ranking, idempotent on the
+/// event key; upstream's notification processor ignored this event, so no
+/// member notice is written. Rooms already deleted (count 0) are skipped.
 async fn notify_community_streaming_ended(state: &CommsState, rooms: &[(CommunityId, i64)]) {
     let now = now_utc();
     let now_ms = now.and_utc().timestamp_millis();
@@ -1064,20 +1094,17 @@ async fn notify_community_streaming_ended(state: &CommsState, rooms: &[(Communit
         );
         let res = state
             .social
-            .notify_community_voice_ended(*community_id, &key, &event, now)
+            .record_community_voice_ended(*community_id, &key, &event, now)
             .await;
         match res {
             Ok(_) => count += 1,
             Err(e) => {
-                tracing::error!(error = %e, %community_id, "failed to write the CommunityStreamingEnded notifications")
+                tracing::error!(error = %e, %community_id, "failed to record CommunityStreamingEnded")
             }
         }
     }
     if count > 0 {
-        tracing::info!(
-            rooms = count,
-            "published CommunityStreamingEnded notifications"
-        );
+        tracing::info!(rooms = count, "recorded CommunityStreamingEnded");
     }
 }
 
@@ -1252,6 +1279,9 @@ pub async fn expire_voice_chats(state: &CommsState) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("community voice chat expiration: {e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod speaker_tests;
 
 #[cfg(test)]
 mod tests {

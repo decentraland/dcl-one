@@ -1248,7 +1248,7 @@ export const InputWebCreatorTools = ({
   <FigmaView
     as='button'
     views={inputWebCreatorToolsViews}
-    defaultKey='state:default|viewport:desktop'
+    component='InputWebCreatorTools'
     select={{
       values: { state, viewport },
       booleans: {  },
@@ -1257,7 +1257,7 @@ export const InputWebCreatorTools = ({
     slots={{ label, label2, label3, label4, label5 }}
     forceState={forceState}
     disabled={disabled}
-    {...rest}
+    attributes={rest}
   />
 )
 

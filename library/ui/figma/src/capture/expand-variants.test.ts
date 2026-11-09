@@ -46,18 +46,21 @@ describe('expandVariants', () => {
     })
   })
 
-  describe('when expanding every component of the captured Buttons page', () => {
+  describe('when expanding a set of the synthetic Demo Controls page', () => {
     it('should return one tree per Figma variant', async () => {
-      const raw = await readFile(path.join(snapshotDir, 'components/Buttons.json'), 'utf8')
+      const raw = await readFile(path.join(snapshotDir, 'components/Demo Controls.json'), 'utf8')
       const page = rawComponentPageSchema.parse(JSON.parse(raw))
 
       const friend = page.components.find((component) => component.name === 'FriendCTA')!
       const variants = expandVariants(friend)
 
-      expect(variants).toHaveLength(15)
+      expect(variants).toHaveLength(9)
       const hover = variants.find((variant) => variant.name === 'Property 1=AddFriendHover')!
-      expect(hover.tree.fills?.[0]).toMatchObject({ token: 'Primitives/Primary/Primary Dark 1' })
+      expect(hover.tree.fills?.[0]).toMatchObject({ token: 'Primitives/Brand/Primary Dark' })
       expect(hover.tree.children).toHaveLength(2)
+      // A partial variant inherits the base tree, never its node ids or the properties it overrides.
+      expect(variants[0]!.tree.fills?.[0]).toMatchObject({ token: 'Primitives/Brand/Primary' })
+      expect(hover.tree.name).toBe('Property 1=AddFriendHover')
     })
   })
 })

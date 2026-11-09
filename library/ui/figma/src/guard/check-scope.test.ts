@@ -376,13 +376,15 @@ describe('checkScope', () => {
     })
 
     it('should reject a changed unselected entry in a shared aggregate', async () => {
-      const refs = JSON.parse(
-        await readFile(path.join(staged, `${REVIEW}/references.json`), 'utf8')
+      const catalog = JSON.parse(
+        await readFile(path.join(staged, `${REVIEW}/catalog.json`), 'utf8')
       )
-      refs['PlaceCard-0'].file = '/changed.png'
-      await put(staged, `${REVIEW}/references.json`, refs)
+      catalog.components.find((entry: { name: string }) => entry.name === 'PlaceCard').variants = [
+        'changed'
+      ]
+      await put(staged, `${REVIEW}/catalog.json`, catalog)
 
-      expect(await kinds()).toEqual([`aggregate-entry-changed:${REVIEW}/references.json`])
+      expect(await kinds()).toEqual([`aggregate-entry-changed:${REVIEW}/catalog.json`])
     })
 
     it('should reject a reordered catalog of unselected entries', async () => {

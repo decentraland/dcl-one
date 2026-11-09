@@ -140,6 +140,8 @@ these by hand (or have an agent drive the Chrome extension against a live world)
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
 - [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
       show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
+      avatar and, for other players, on theirs, without a rename or a reload.
 - [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
       like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
       or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely

@@ -6,8 +6,10 @@ import { access, readFile, mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
-import { CaptureTimeout } from './capture-retry.mjs'
+import { browserArgs } from './browser-args.mjs'
 import { cleanupCapture, removeProfile, stopBrowser } from './capture-teardown.mjs'
+
+class CaptureTimeout extends Error {}
 
 async function findBrowser(candidates) {
   for (const candidate of candidates.filter(Boolean)) {
@@ -23,19 +25,7 @@ async function findBrowser(candidates) {
 
 async function openSession(executable, { signal } = {}) {
   const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
-  const browser = spawn(
-    executable,
-    [
-      '--headless=new',
-      '--no-sandbox',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--force-color-profile=srgb',
-      '--remote-debugging-port=0',
-      '--user-data-dir=' + profile
-    ],
-    { stdio: 'ignore' }
-  )
+  const browser = spawn(executable, browserArgs(profile), { stdio: 'ignore' })
   let socket
   let closing
   const pending = new Map()
@@ -118,6 +108,7 @@ async function openSession(executable, { signal } = {}) {
     signal?.addEventListener('abort', abort, { once: true })
     const session = {
       runtimeErrors: [],
+      consoleErrors: [],
       close: async () => {
         signal?.removeEventListener('abort', abort)
         await close()
@@ -132,6 +123,10 @@ async function openSession(executable, { signal } = {}) {
         session.runtimeErrors.push(
           message.params.exceptionDetails.exception?.description ??
             message.params.exceptionDetails.text
+        )
+      else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error')
+        session.consoleErrors.push(
+          message.params.args.map((arg) => String(arg.value ?? arg.description ?? '')).join(' ')
         )
     })
     session.send = (method, params = {}) =>

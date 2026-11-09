@@ -4,6 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { lifecycleFixture, put, json, SNAP } from './lifecycle-fixture.js'
+import { pinTestCapture } from '../../test/snapshot.js'
 
 const execute = promisify(execFile)
 describe('when recording a retirement through the CLI', () => {
@@ -14,6 +15,8 @@ describe('when recording a retirement through the CLI', () => {
     const config = await json(root, 'figma/figma.config.json')
     config.pages['1:2'] = { id: '1:2', name: 'Other', kind: 'components' }
     await put(root, 'figma/figma.config.json', config)
+    // retire verifies the capture before it reads ownership, as fetch-source would have pinned it.
+    await pinTestCapture(path.join(root, 'figma'))
     run = (args) =>
       execute(
         process.execPath,

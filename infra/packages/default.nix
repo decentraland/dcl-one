@@ -15,4 +15,5 @@ in {
     name = "foundation-image-tools";
     paths = [ pkgs.skopeo pkgs.jq pkgs.python3 pkgs.curl ];
   };
-} // import ../containers/images.nix { inherit pkgs catalyst sites gateway revision; }
+} // import ./tools.nix { inherit pkgs; }
+  // import ../containers/images.nix { inherit pkgs catalyst sites gateway revision; }

@@ -817,7 +817,7 @@ mod tests {
             vec![0u8; 32],
         );
         assert_eq!(
-            routed_price(137, venue, &[transfer.clone()], signed),
+            routed_price(137, venue, std::slice::from_ref(&transfer), signed),
             Ok(signed)
         );
         assert!(

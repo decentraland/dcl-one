@@ -77,7 +77,7 @@ VideoPlayer.create(screen, {
 })
 ```
 
-See [Streaming using Decentraland cast](/docs/creator/sdk7/media/video-playing/#streaming-using-decentraland-cast) for details on how to use this third alternative method.
+See [Live streaming](/docs/creator/sdk7/media/video-playing/#live-streaming) for details on how to use this third alternative method.
 
 ## About External Streaming
 
@@ -184,7 +184,7 @@ Material.setPbrMaterial(screen, {
 
 > [!NOTE]
 > **💡 Tip**: Since the video is a texture that's added to a material, you can also experiment with other properties of materials, like tinting it with a color, or adding other texture layers, for example to produce a dirty screen effect.
-> 
+>
 > See [materials](/docs/creator/sdk7/3d-essentials/materials/) for more details.
 
 
@@ -394,7 +394,7 @@ A neat trick to have non-rectangular video screens is to apply an alpha texture 
 
 Use the following image to cut your video into a circular shape, with transparent corners.
 
-![](/docs/creator/images/circle_mask.webp)
+![](/docs/creator/images/circle_mask.webp)
 
 ```ts
 const videoTexture = Material.Texture.Video({
@@ -411,7 +411,7 @@ Material.setBasicMaterial(screen, {
 })
 ```
 
-![](/docs/creator/images/circular-video-screen.webp)
+![](/docs/creator/images/circular-video-screen.webp)
 
 
 > [!WARNING]

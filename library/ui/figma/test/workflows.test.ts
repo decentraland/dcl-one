@@ -82,6 +82,26 @@ const triggers = (workflow: Workflow) =>
       : Object.keys(workflow.on)
 const SECRET = 'secrets.FIGMA_FILE_KEY'
 
+describe('the ui-library.yml url scan', () => {
+  const workflow = load('ui-library.yml')
+  const guardSteps = workflow.jobs['key-guard']!.steps
+
+  it('should prefetch every LFS object of the outgoing range, unfiltered, before scanning it', () => {
+    const prefetch = guardSteps.findIndex((step) => step.run?.includes('lfs-prefetch.mjs'))
+    const scan = guardSteps.findIndex(
+      (step) =>
+        step.run?.trim() === 'node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"'
+    )
+    expect(prefetch).toBeGreaterThan(-1)
+    expect(scan).toBeGreaterThan(prefetch)
+    const run = guardSteps[prefetch]!.run!
+    expect(run).toContain('key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects')
+    expect(run).toContain('--endpoint "https://github.com/$REPOSITORY.git/info/lfs"')
+    expect(run).not.toMatch(/--include|lfs fetch|lfs pull|ui_changed|\$changed/)
+    expect(guardSteps[scan]!.env ?? {}).not.toHaveProperty('READ_TOKEN')
+  })
+})
+
 describe('the Figma file key secret', () => {
   it.each(workflowFiles)(
     'should not be referenced by %s if a pull request can trigger it',
@@ -193,17 +213,25 @@ describe('ui-library-key-scan.yml', () => {
     })
   })
 
-  it('should fetch LFS from the fixed repository endpoint, for library/ui only, with an unpersisted token', () => {
-    const lfs = allSteps.find((step) => step.run?.includes('lfs fetch'))!
-    expect(lfs.run).toContain('GIT_CONFIG_KEY_1=lfs.url')
-    expect(lfs.run).toContain('GIT_CONFIG_VALUE_1="https://github.com/$REPOSITORY.git/info/lfs"')
+  it('should prefetch every LFS object the scan reads, by oid, from the fixed repository endpoint', () => {
+    const lfs = allSteps.find((step) => step.run?.includes('lfs-prefetch.mjs'))!
     expect(lfs.run).toContain(
-      'lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"'
+      'node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range"'
     )
+    expect(lfs.run).toContain('--lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"')
+    expect(lfs.run).toContain('[ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")')
+    expect(lfs.run).toContain(
+      '--endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"'
+    )
+    // No path filter may narrow the history the scan covers.
+    expect(lfs.run).not.toMatch(/--include|lfs fetch|lfs pull/)
     expect(lfs.run).toContain('::add-mask::')
     expect(lfs.run).not.toMatch(/git (config|credential)|--global|--system|\.lfsconfig/)
     expect(lfs.env).toMatchObject({ REPOSITORY: '${{ github.repository }}' })
     expect(JSON.stringify(lfs)).not.toContain(SECRET)
+    const scan = allSteps.find((step) => JSON.stringify(step).includes(SECRET))!
+    expect(allSteps.indexOf(lfs)).toBeLessThan(allSteps.indexOf(scan))
+    expect(JSON.stringify(scan)).not.toMatch(/READ_TOKEN|LFS_AUTHORIZATION|github\.token/)
   })
 
   it('should build the check summary from the scanner stdout alone', () => {
@@ -220,6 +248,50 @@ describe('ui-library-key-scan.yml', () => {
     const scan = allSteps.find((step) => JSON.stringify(step).includes(SECRET))!
     expect(scan.run).toContain('--artifact "$RUNNER_TEMP/pr-artifact"')
     expect(scan.run).not.toContain('--path')
+  })
+})
+
+describe('when the Figma capture lives in figma-design-system', () => {
+  const ui = () => load('ui-library.yml')
+  const runs = (job: string) => ui().jobs[job]!.steps.map((step) => step.run ?? '')
+
+  it('should require the port verification record on every pull request and push, before any install', () => {
+    const step = ui().jobs['key-guard']!.steps.find((item) =>
+      item.run?.includes('port-verification.mjs')
+    )!
+    expect(step.run).toContain('--base "$base" --head "$HEAD_SHA"')
+    expect(step.env).toMatchObject({
+      PR_BASE: '${{ github.event.pull_request.base.sha }}',
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+    })
+    expect(JSON.stringify(ui().jobs['key-guard'])).not.toContain('pnpm install')
+  })
+
+  it('should check the lock digests before installing, and the built gallery after building it', () => {
+    const steps = runs('library')
+    const digests = steps.findIndex((run) => run === 'node figma/lock-digests.mjs')
+    const install = steps.findIndex((run) => run.startsWith('pnpm install'))
+    const build = steps.findIndex((run) => run === 'pnpm review:build')
+    const check = steps.findIndex((run) =>
+      run.startsWith('node figma/review/scripts/check-build.mjs')
+    )
+    expect(digests).toBeGreaterThanOrEqual(0)
+    expect(digests).toBeLessThan(install)
+    expect(check).toBeGreaterThan(build)
+  })
+
+  it('should run no check that needs the capture in this repository', () => {
+    const all = [...runs('key-guard'), ...runs('library')].join('\n')
+    for (const command of [
+      'figma diff',
+      'figma guard',
+      'check-mappings',
+      'promotion-verify',
+      'review-manifest',
+      'review:check',
+      'fetch-source'
+    ])
+      expect(all).not.toContain(command)
   })
 })
 
@@ -260,6 +332,18 @@ describe('when key scanning covers the whole repository', () => {
     )
     expect((ui.jobs.library as unknown as { if: string }).if).toContain('ui_changed')
   })
+  it('should run the key guard from the merge commit so a branch older than the scripts still has them', () => {
+    const job = load('ui-library.yml').jobs['key-guard']!
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))!
+    expect(checkout.with).toMatchObject({ ref: '${{ github.sha }}', 'fetch-depth': 0 })
+    expect(JSON.stringify(checkout.with)).not.toContain('pull_request.head')
+    const scope = job.steps.find((step) => step.run?.includes('range="$base..$HEAD_SHA"'))!
+    expect(scope.env).toMatchObject({
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}',
+      PR_BASE: '${{ github.event.pull_request.base.sha }}'
+    })
+  })
+
   it('should let checkout use its temporary global config while isolating the Git run steps', () => {
     const ui = load('ui-library-key-scan.yml')
     expect(ui.env?.GIT_CONFIG_GLOBAL).toBeUndefined()

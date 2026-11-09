@@ -20,8 +20,9 @@ def cache_plan(arch, event, ref, derivations):
     if arch not in ('amd64', 'arm64'):
         raise ValueError('Unsupported image architecture')
     pr = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', ref)
-    scope = f'pr-{pr[1]}' if event == 'pull_request' and pr else 'main'
-    save = (event == 'push' and ref == 'refs/heads/main') or (event == 'pull_request' and pr is not None)
+    pr_scope = event == 'pull_request' and pr is not None
+    scope = f'pr-{pr[1]}' if pr_scope else 'main'
+    save = (event == 'push' and ref == 'refs/heads/main') or pr_scope
     result = {'save': str(save).lower()}
     for group, packages in PACKAGES.items():
         inputs = [(package, derivations[package]) for package in packages]
@@ -31,6 +32,8 @@ def cache_plan(arch, event, ref, derivations):
         suffix = f'{group}-{arch}-{digest}'
         result[f'{group}-key'] = f'images-v2-{scope}-{suffix}'
         result[f'{group}-main-key'] = f'images-v2-main-{suffix}'
+        result[f'{group}-main-prefix'] = (
+            f'images-v2-main-{group}-{arch}-' if pr_scope and group != 'apis' else '')
     return result
 
 

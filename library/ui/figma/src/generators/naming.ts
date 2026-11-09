@@ -40,4 +40,4 @@ function assertIdentifier(value: string): string {
     throw new Error(`Invalid generated TypeScript identifier: ${JSON.stringify(value)}`)
   return value
 }
-export { assertIdentifier }
+export { assertIdentifier, RESERVED as RESERVED_IDENTIFIERS }

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
+import { recordSignIn } from "@/data/lib/auth/signin-kind";
 
 import appleIcon from "./assets/apple.svg?url";
 import coinbaseIcon from "./assets/coinbase.svg?url";
@@ -309,6 +310,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey }: Lo
             if (live()) setModal({ state: phase, detail: null, pairing: null });
           });
           if (!live()) return;
+          recordSignIn(identity.signer, "web3");
           setIdentity(identity);
           rememberEmail(null);
           finish();

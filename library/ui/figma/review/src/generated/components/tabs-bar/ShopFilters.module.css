@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -331,7 +334,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-8);
 align-self: stretch;
 flex-shrink: 0;
 opacity: 1;
@@ -1208,7 +1210,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-8);
 padding: 6px 6px 6px 14px;
 width: 150px;
 height: 42px;
@@ -1469,7 +1470,6 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-8);
 padding: 6px 6px 6px 14px;
 width: 150px;
 height: 42px;
@@ -1499,4 +1499,5 @@ width: 25px;
 flex-shrink: 0;
 height: 24px;
 background: url("data:image/svg+xml,%3Csvg width='25' height='24' viewBox='0 0 25 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Cpath d='M6.42076 10.4751L7.33151 9.65396C7.5592 9.44868 7.9235 9.44868 8.15118 9.65396L12.0902 13.2053C12.3179 13.4106 12.6821 13.4106 12.9098 13.2053L16.8488 9.67449C17.0765 9.46921 17.4408 9.46921 17.6685 9.67449L18.5792 10.4956C18.8069 10.7009 18.8069 11.0293 18.5792 11.2346L12.9098 16.346C12.6821 16.5513 12.3179 16.5513 12.0902 16.346L6.42076 11.2346C6.19308 11.0293 6.19308 10.7009 6.42076 10.4751Z' fill='%23161518'/%3E %3C/svg%3E") center / contain no-repeat;
+}
 }

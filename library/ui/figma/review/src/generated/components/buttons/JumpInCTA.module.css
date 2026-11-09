@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -1014,4 +1017,5 @@ position: absolute;
 left: 46.5px;
 top: 14px;
 background: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Ccircle cx='8' cy='8' r='8' stroke='black' stroke-opacity='0.2' stroke-width='2.13333'/%3E %3Cpath d='M8 0C12.4183 0 16 3.58172 16 8' stroke-width='2.13333' stroke-linecap='round' stroke-linejoin='round' stroke='white'/%3E %3C/svg%3E") center / contain no-repeat;
+}
 }

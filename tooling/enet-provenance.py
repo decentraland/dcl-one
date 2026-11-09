@@ -115,7 +115,7 @@ def validate_workflow(workflow):
             "online provenance Rust job can drop its Linux leg")
     steps = re.findall(r"^      - name: Verify the exact public ENet source pin\n(.*?)(?=^      - |\Z)",
                        jobs[0], re.M | re.S)
-    require(steps == ["        run: nix develop --command python3 tooling/enet-provenance.py\n"],
+    require(steps == ["        run: nix develop .#ci --command python3 tooling/enet-provenance.py\n"],
             "online provenance step missing/conditional/changed; retain explicit failure")
 
 

@@ -38,12 +38,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Fetch reviewer media
-        run: git lfs pull --include='library/ui/**'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Verify pinned Figma source and port record
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          base_sha="$(git merge-base "$HEAD_SHA" "refs/remotes/origin/$DEFAULT_BRANCH")"
+          node library/ui/figma/lock-digests.mjs
+          node library/ui/figma/port-verification.mjs --base "$base_sha" --head "$HEAD_SHA"
       - name: Enable the pinned package manager
         working-directory: library/ui
         run: corepack enable
@@ -53,8 +62,8 @@ jobs:
       - name: Build the static reviewer with relative assets
         working-directory: library/ui
         run: pnpm review:build --base ./
-      - name: Verify reviewer navigation and resources under a versioned CDN path
-        run: node tooling/web-preview-browser.mjs library/ui/figma/review/review-dist
+      - name: Verify functional gallery navigation under a versioned CDN path
+        run: node library/ui/figma/review/scripts/check-build.mjs library/ui/figma/review/review-dist --prefix /@scope/package/0.1.0-preview/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-preview-reviewer

@@ -648,7 +648,7 @@ export const NavMenuTab = ({
   <FigmaView
     as='button'
     views={navMenuTabViews}
-    defaultKey='tab:whatsOn|size:md'
+    component='NavMenuTab'
     select={{
       values: { tab, size },
       booleans: {  },
@@ -656,7 +656,7 @@ export const NavMenuTab = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 
