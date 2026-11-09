@@ -33,6 +33,11 @@ pub struct JsString {
 }
 
 impl JsString {
+    /// Whether the units are valid UTF-16 (no lone surrogate).
+    pub fn is_well_formed(&self) -> bool {
+        self.ill_formed.is_none()
+    }
+
     pub fn from_units(units: Vec<u16>) -> Self {
         match String::from_utf16(&units) {
             Ok(text) => Self {

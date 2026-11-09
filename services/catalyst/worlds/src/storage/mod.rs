@@ -843,6 +843,7 @@ async fn resolve_and_authorize(
         .get(AUTHORITATIVE_SCOPE_HEADER)
         .and_then(|v| v.to_str().ok());
     let scene_id = verified.metadata.scene_id().map(str::to_string);
+    let claim_scene_id = verified.metadata.claim_scene_id().to_string();
     let signer = verified.signer;
 
     let resolved = rooms::resolve(
@@ -872,7 +873,7 @@ async fn resolve_and_authorize(
         &signer,
         &target,
         &deployment,
-        scene_id.as_deref().unwrap_or(""),
+        &claim_scene_id,
         scope_header,
         policy,
     )

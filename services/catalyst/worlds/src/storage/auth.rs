@@ -78,6 +78,15 @@ impl SceneAuthMetadata {
     pub fn scene_id(&self) -> Option<&str> {
         self.get("sceneId").and_then(JsValue::as_str)
     }
+
+    /// `sceneId` as the delegation compares it: `""` (never a claim's) when
+    /// absent, not a string, or holding a lone surrogate no claim can carry.
+    pub fn claim_scene_id(&self) -> &str {
+        match self.get("sceneId") {
+            Some(JsValue::String(s)) if s.is_well_formed() => s,
+            _ => "",
+        }
+    }
 }
 
 /// world-storage's wire mapping over the chain errors: upstream status codes
@@ -657,6 +666,14 @@ mod tests {
         assert_eq!(m.realm(), None);
         assert_eq!(m.parcel(), Some(&JsValue::String("1,2".into())));
         assert_eq!(m.scene_id(), Some("c"), "JSON.parse keeps the last value");
+    }
+
+    #[test]
+    fn a_lone_surrogate_scene_id_never_matches_a_claim() {
+        let m = SceneAuthMetadata::parse(r#"{"sceneId":"\ud800"}"#).unwrap();
+        assert_eq!(m.claim_scene_id(), "");
+        let m = SceneAuthMetadata::parse(r#"{"sceneId":"bafy"}"#).unwrap();
+        assert_eq!(m.claim_scene_id(), "bafy");
     }
 
     /// A contract wallet answering every `isValidSignature` with `valid`.
