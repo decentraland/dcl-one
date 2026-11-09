@@ -26,10 +26,13 @@ describe('runSync guard and retirements', () => {
     config.outDir = `../${GENERATED}`
     await writeFile(path.join(mcp, 'figma.config.json'), JSON.stringify(config))
     // The first generation is a developer action, as it is in a real checkout.
-    await runSync(await createApp(mcp, path.join(mcp, 'figma.config.json')), {
-      source: 'snapshot',
-      developer: true
-    })
+    await runSync(
+      await createApp(mcp, path.join(mcp, 'figma.config.json'), { unverifiedSnapshot: true }),
+      {
+        source: 'snapshot',
+        developer: true
+      }
+    )
   })
 
   afterAll(async () => {
@@ -40,7 +43,7 @@ describe('runSync guard and retirements', () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'dcl-app-sync-'))
     await cp(template, root, { recursive: true, verbatimSymlinks: true })
     const mcp = path.join(root, 'figma')
-    app = await createApp(mcp, path.join(mcp, 'figma.config.json'))
+    app = await createApp(mcp, path.join(mcp, 'figma.config.json'), { unverifiedSnapshot: true })
   })
 
   afterEach(async () => {

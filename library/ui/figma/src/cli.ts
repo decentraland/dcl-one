@@ -5,13 +5,16 @@ import path from 'node:path'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
-import { stripFileKeyText } from './capture/strip-file-key.js'
+import { errorText } from './server-errors.js'
 import { checkMappings, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
 import { buildOwnership } from './guard/ownership.js'
 import { RETIREMENTS_PATH, loadRetirements, serializeRetirements } from './guard/retirements.js'
 import { createRuntime } from './runtime.js'
+import { requireFileKey } from './config.js'
+import { EnvTokenProvider, FigmaClient } from './figma/client.js'
+import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
 import { fetchFdsSource } from './sources/fds-source.js'
@@ -19,8 +22,9 @@ import { fetchFdsSource } from './sources/fds-source.js'
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
+  dcl-figma probe
   dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
-  dcl-figma diff [--out <dir>]
+  dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
   dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--mapping-root <dir>] [--config <file>]
@@ -30,12 +34,12 @@ const USAGE = `Usage:
 
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 
-// The fetch-source cache is the only source; figma-design-system owns live Figma access.
+// `rest` reads the live file for local inspection (FIGMA_TOKEN and FIGMA_FILE_KEY from the environment); sync
+// refuses it, because shipped output comes from the verified fetch-source cache.
 function sourceKind(value: string | undefined): SourceKind {
   if (value === undefined || value === 'snapshot') return 'snapshot'
-  throw new Error(
-    `Unknown --source "${value}". This tree reads only the fetch-source cache (snapshot); figma-design-system reads Figma.`
-  )
+  if (value === 'rest') return 'rest'
+  throw new Error(`Unknown --source "${value}". Use snapshot or rest.`)
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -111,11 +115,21 @@ async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1
   }
 
+  if (command === 'probe') {
+    const result = await probeAccess(new FigmaClient(new EnvTokenProvider()), requireFileKey())
+    print(result)
+    return result.file === 'ok' ? 0 : 1
+  }
+
   // A developer records a retirement: the only way output is ever removed. The owned artifacts are
   // computed from the ownership map and written into the record for the reviewer to read.
   if (command === 'retire') {
     const pageId = values['page-id']
     if (!pageId || !values.reason) throw new Error(USAGE)
+    // Ownership is derived from the capture, so it is read only after the cache is verified.
+    await createApp(process.cwd(), values.config).then((app) =>
+      app.createSource('snapshot').ready?.()
+    )
     const root = path.resolve(process.cwd(), '..')
     const ownership = await buildOwnership(root)
     const componentId = values['component-id']
@@ -200,9 +214,7 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
-    process.stderr.write(
-      `${stripFileKeyText(error instanceof Error ? error.message : String(error))}\n`
-    )
+    process.stderr.write(`${errorText(error)}\n`)
     process.exit(1)
   }
 )

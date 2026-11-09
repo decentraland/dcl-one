@@ -23,7 +23,9 @@ describe('when a captured component changes its stroke weight', () => {
       (component: { name: string }) => component.name === 'First'
     ).base.tree.strokeWeight = 3
     await put(staged, `${SNAP}/components/Page.json`, page)
-    await writeReviewManifest(await createApp(path.join(staged, 'figma')))
+    await writeReviewManifest(
+      await createApp(path.join(staged, 'figma'), undefined, { unverifiedSnapshot: true })
+    )
   })
 
   afterEach(async () => {

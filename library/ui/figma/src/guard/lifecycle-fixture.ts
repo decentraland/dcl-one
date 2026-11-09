@@ -98,7 +98,7 @@ async function buildLifecycleFixture(splitPages: boolean, duplicateNames: boolea
     inventory.promotion.push({ pageId: '1:2' })
     await put(root, `${SNAP}/generation-inventory.json`, inventory)
   }
-  const app = await createApp(path.join(root, 'figma'))
+  const app = await createApp(path.join(root, 'figma'), undefined, { unverifiedSnapshot: true })
   await runSync(app, { source: 'snapshot', developer: true })
   await writeReviewManifest(app)
   for (const name of runtimeFiles)
@@ -162,7 +162,10 @@ async function lifecycleFixture(splitPages = false, duplicateNames = false) {
   const templateFolder = process.env.DCL_FIXTURE_TEMPLATES
   if (!templateFolder) {
     const built = await buildLifecycleFixture(splitPages, duplicateNames, os.tmpdir())
-    return { ...built, app: await createApp(path.join(built.root, 'figma')) }
+    return {
+      ...built,
+      app: await createApp(path.join(built.root, 'figma'), undefined, { unverifiedSnapshot: true })
+    }
   }
   const key = `${splitPages}:${duplicateNames}`
   if (!templates.has(key))
@@ -170,7 +173,7 @@ async function lifecycleFixture(splitPages = false, duplicateNames = false) {
   const template = await templates.get(key)!
   const root = await mkdtemp(path.join(os.tmpdir(), 'retirement-lifecycle-'))
   await cp(template.root, root, { recursive: true, verbatimSymlinks: true })
-  const app = await createApp(path.join(root, 'figma'))
+  const app = await createApp(path.join(root, 'figma'), undefined, { unverifiedSnapshot: true })
   return { root, app, shared: template.shared, records: structuredClone(template.records) }
 }
 const fixtureBytes = async (root: string) =>

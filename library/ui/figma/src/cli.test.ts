@@ -25,6 +25,7 @@ describe('when the CLI receives an explicit configuration outside its working di
       JSON.stringify({
         pages: {},
         snapshotDir: 'captures',
+        snapshotLock: 'captures.lock.json',
         outDir: 'output'
       })
     )
@@ -56,8 +57,8 @@ describe('when the CLI receives an explicit configuration outside its working di
     await rm(directory, { recursive: true, force: true })
   })
 
-  // Live Figma access and capture ingest belong to figma-design-system: this tree reads only the fetch-source cache.
-  it.each(['pull-live', 'probe', 'capture-ingest', 'capture-merge'])(
+  // Capture writing and chunk ingest are gone: the live file is only read for inspection.
+  it.each(['pull-live', 'capture-ingest', 'capture-merge'])(
     'should not offer the removed %s command',
     async (command) => {
       await expect(run([command, chunk])).rejects.toMatchObject({
@@ -69,21 +70,43 @@ describe('when the CLI receives an explicit configuration outside its working di
     }
   )
 
-  it('should refuse a live --source', async () => {
+  it('should refuse sync from the live source, which only diff may read', async () => {
     await expect(run(['sync', '--source', 'rest'])).rejects.toMatchObject({
-      stderr: expect.stringContaining('only the fetch-source cache')
+      stderr: expect.stringContaining('reads only the verified fetch-source cache')
     })
   })
 
-  it('should resolve sync source paths against the explicit configuration', async () => {
+  it('should resolve the sync capture pin against the explicit configuration', async () => {
     await expect(run(['sync', '--developer'])).rejects.toMatchObject({
-      stderr: expect.stringContaining(path.join(directory, 'captures'))
+      stderr: expect.stringContaining(path.join(directory, 'captures.lock.json'))
     })
   })
 
-  it('should resolve diff source paths against the explicit configuration', async () => {
+  it('should resolve the diff capture pin against the explicit configuration', async () => {
     await expect(run(['diff'])).rejects.toMatchObject({
-      stderr: expect.stringContaining(path.join(directory, 'captures'))
+      stderr: expect.stringContaining(path.join(directory, 'captures.lock.json'))
     })
+  })
+
+  it('should refuse a configuration that names no capture pin', async () => {
+    const config2 = path.join(directory, 'unpinned.config.json')
+    await writeFile(
+      config2,
+      JSON.stringify({ pages: {}, snapshotDir: 'captures', outDir: 'output' })
+    )
+    await expect(
+      execute(
+        process.execPath,
+        [
+          '--import',
+          import.meta.resolve('tsx'),
+          path.join(import.meta.dirname, 'cli.ts'),
+          'diff',
+          '--config',
+          config2
+        ],
+        { cwd }
+      )
+    ).rejects.toMatchObject({ stderr: expect.stringContaining('names no snapshotLock') })
   })
 })

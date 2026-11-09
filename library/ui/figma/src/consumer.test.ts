@@ -89,7 +89,7 @@ describe('figma from a consuming project', () => {
       const resolved = await call('figma_resolve_component', { name: 'Synthetic Button' })
       await client.close()
 
-      expect(tools).toHaveLength(9)
+      expect(tools).toHaveLength(10)
       expect(resolved.body.resolved.provenance.figma.identity).toBe('verified-against-capture')
       expect(resolved.body.resolved.provenance.library).toEqual({
         name: '@dcl/one-ui',

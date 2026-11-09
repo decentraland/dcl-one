@@ -137,7 +137,7 @@ describe('when a canonical snapshot is missing', () => {
         }
       })
     )
-    const app = await createApp(root)
+    const app = await createApp(root, undefined, { unverifiedSnapshot: true })
     expect(await app.createSource('snapshot').getComponentPageById!(id, 'Demo Nav')).toBeUndefined()
   })
 })

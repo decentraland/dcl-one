@@ -4,6 +4,9 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { isWindowsSafeName } from '../capture/page-file-name.js'
 import { z } from 'zod'
+import { requireFileKey } from '../config.js'
+import { EnvTokenProvider, FigmaClient } from '../figma/client.js'
+import { download } from '../sources/rest-assets.js'
 import { runDiff, runSync, type App } from '../app.js'
 import type { IconSpec } from '../ir/schemas.js'
 import { collisionReason } from '../mappers/component-spec.js'
@@ -17,10 +20,10 @@ type ToolDefinition<Shape extends z.ZodRawShape = z.ZodRawShape> = {
 }
 
 const sourceSchema = z
-  .enum(['snapshot'])
+  .enum(['snapshot', 'rest'])
   .default('snapshot')
   .describe(
-    'The fetch-source cache of the pinned figma-design-system capture, the only source; figma-design-system reads Figma itself.'
+    'Where to read the design from: "snapshot" is the verified fetch-source cache; "rest" reads the live file for inspection (needs FIGMA_TOKEN and FIGMA_FILE_KEY in the environment). Writing tools accept only "snapshot".'
   )
 
 const MAX_INLINE_SVGS = 20
@@ -239,6 +242,11 @@ function createTools(app: App): ToolDefinition[] {
         outDir: z.string().optional()
       },
       handler: async ({ source, names, category, outDir }) => {
+        // Files written into the workspace come from the verified cache only; a live read is returned inline.
+        if (outDir && source === 'rest')
+          throw new Error(
+            'figma_export_icons writes files only from the verified cache (source "snapshot"); omit outDir to read the live file inline'
+          )
         const icons = (await app.createSource(source).getIcons()).filter((icon) =>
           matchesIcon(icon, { names, category })
         )
@@ -284,6 +292,29 @@ function createTools(app: App): ToolDefinition[] {
       inputSchema: { source: sourceSchema, outDir: z.string().optional() },
       handler: async ({ source, outDir }) =>
         runDiff(app, { source, outDir: outDir ? await insideWorkspace(app, outDir) : undefined })
+    }),
+    tool({
+      name: 'figma_screenshot',
+      description:
+        'Render a node through the Figma REST API and return the PNG to the caller. Live inspection only: nothing is written to disk. Needs FIGMA_TOKEN and FIGMA_FILE_KEY in the environment.',
+      inputSchema: {
+        nodeId: z
+          .string()
+          .regex(/^\d+[:-]\d+$/)
+          .describe('Node id such as "1:5239".'),
+        scale: z.number().min(0.01).max(4).default(1)
+      },
+      handler: async ({ nodeId, scale }) => {
+        const client = new FigmaClient(new EnvTokenProvider())
+        const id = nodeId.replace('-', ':')
+        const response = await client.get<{ images: Record<string, string | null> }>(
+          `/v1/images/${requireFileKey()}?ids=${encodeURIComponent(id)}&format=png&scale=${scale}`
+        )
+        const url = response.images[id]
+        if (!url) throw new Error(`Figma returned no image for node ${id}`)
+        const png = await download(client, url, `node ${id}`)
+        return { nodeId: id, mimeType: 'image/png', data: png.toString('base64') }
+      }
     })
   ]
 }

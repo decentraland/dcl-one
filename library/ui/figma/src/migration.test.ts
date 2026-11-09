@@ -33,7 +33,7 @@ describe('when a legacy capture shares its page id with a canonical page', () =>
   let app: App
   beforeEach(async () => {
     config = await testConfig()
-    app = await createApp(projectRoot, testConfigFile)
+    app = await createApp(projectRoot, testConfigFile, { unverifiedSnapshot: true })
   })
   it('should preserve the unresolved legacy capture outside both inventory scopes', async () => {
     const legacy = 'Demo: Legacy Bars'

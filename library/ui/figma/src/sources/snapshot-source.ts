@@ -42,7 +42,8 @@ class SnapshotSource implements FigmaSource {
     private readonly verify?: () => Promise<void>
   ) {}
 
-  private ready(): Promise<void> {
+  // Public so a command can verify the cache before it reads anything else derived from it.
+  ready(): Promise<void> {
     this.verified ??= this.verify ? this.verify() : Promise.resolve()
     return this.verified
   }

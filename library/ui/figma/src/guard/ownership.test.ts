@@ -53,10 +53,13 @@ describe('ownership of a generated tree', () => {
       path.join(figma, 'figma.config.json'),
       JSON.stringify({ ...config, snapshotDir: 'figma-snapshot', outDir: `../${GENERATED}` })
     )
-    await runSync(await createApp(figma, path.join(figma, 'figma.config.json')), {
-      source: 'snapshot',
-      developer: true
-    })
+    await runSync(
+      await createApp(figma, path.join(figma, 'figma.config.json'), { unverifiedSnapshot: true }),
+      {
+        source: 'snapshot',
+        developer: true
+      }
+    )
   }, 60_000)
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })

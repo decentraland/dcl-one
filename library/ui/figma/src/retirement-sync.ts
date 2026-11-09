@@ -14,7 +14,7 @@ async function runRetirementSync(
   app: App,
   generated: GenerateResult,
   retirements: Retirements,
-  createApp: (cwd: string, file: string) => Promise<App>
+  createApp: (cwd: string, file: string, options: { unverifiedSnapshot: boolean }) => Promise<App>
 ) {
   const root = path.resolve(app.cwd, '..')
   const staged = await stageWorkspace(
@@ -22,7 +22,10 @@ async function runRetirementSync(
     app.configFile ?? path.join(app.cwd, 'figma.config.json')
   )
   try {
-    const stagedApp = await createApp(path.dirname(staged.configFile), staged.configFile)
+    // The staged copy of the verified cache is about to have retirements applied, so it is read unverified.
+    const stagedApp = await createApp(path.dirname(staged.configFile), staged.configFile, {
+      unverifiedSnapshot: true
+    })
     stagedApp.config.outDir = path.join(staged.stagedDir, 'figma/review/src/generated')
     stagedApp.config.snapshotDir = path.join(staged.stagedDir, 'figma/figma-snapshot')
     const retired = await applyRetirements(staged.stagedDir, retirements)

@@ -1,5 +1,6 @@
 {
   "snapshotDir": "synthetic-snapshot",
+  "snapshotLock": "synthetic-lock.json",
   "outDir": "generated",
   "pages": {
     "1:1": { "id": "1:1", "name": "Colors", "kind": "tokens" },

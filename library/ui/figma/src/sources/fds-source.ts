@@ -484,18 +484,24 @@ async function verifyFdsCache(dir: string, lockFile: string): Promise<void> {
     throw new FdsCacheError(
       `The Figma capture is not materialized (${path.basename(dir)}): ${repair}`
     )
-  const marker = JSON.parse(await readFile(path.join(dir, MARKER), 'utf8')) as {
-    revision?: unknown
-    digests?: unknown
+  let marker: { revision?: unknown; digests?: unknown }
+  try {
+    marker = JSON.parse(await readFile(path.join(dir, MARKER), 'utf8'))
+  } catch (error) {
+    throw new FdsCacheError(`The Figma capture marker is unreadable: ${repair}`, { cause: error })
   }
   if (marker.revision !== pin.snapshotRevision || marker.digests !== digestTableHash(pin.digests))
-    throw new Error(
+    throw new FdsCacheError(
       `The Figma capture was built for another pin than upstream.lock.json: ${repair}`
     )
   const files = new Map<string, Buffer>()
-  for (const file of await listFiles(dir)) {
-    if (file === MARKER) continue
-    files.set(file, await readFile(path.join(dir, file)))
+  try {
+    for (const file of await listFiles(dir)) {
+      if (file === MARKER) continue
+      files.set(file, await readFile(path.join(dir, file)))
+    }
+  } catch (error) {
+    throw new FdsCacheError(`The Figma capture cannot be read: ${repair}`, { cause: error })
   }
   try {
     assertDigests(files, pin.digests)

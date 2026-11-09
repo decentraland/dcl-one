@@ -110,11 +110,14 @@ describe('when applying a component retirement in a retained page', () => {
     const copy = await mkdtemp(path.join(os.tmpdir(), 'retirement-checkout-'))
     try {
       await cp(root, copy, { recursive: true })
-      await runSync(await createApp(path.join(copy, 'figma')), {
-        source: 'snapshot',
-        developer: true,
-        applyRetirements: true
-      })
+      await runSync(
+        await createApp(path.join(copy, 'figma'), undefined, { unverifiedSnapshot: true }),
+        {
+          source: 'snapshot',
+          developer: true,
+          applyRetirements: true
+        }
+      )
       expect(
         (await json(copy, `${SNAP}/components/Page.json`)).components.map(
           (component: { id: string }) => component.id

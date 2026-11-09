@@ -1,8 +1,9 @@
 import { stripFileKeyText } from './capture/strip-file-key.js'
+import { redactFileKey } from './config.js'
 
-/** The text a tool error or a fatal startup error shows, with any Figma file URL replaced by the placeholder. */
+/** The text a tool error or a fatal startup error shows, with Figma file URLs and the configured key redacted. */
 function errorText(error: unknown): string {
-  return stripFileKeyText(error instanceof Error ? error.message : String(error))
+  return redactFileKey(stripFileKeyText(error instanceof Error ? error.message : String(error)))
 }
 
 export { errorText }
