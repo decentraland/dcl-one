@@ -130,6 +130,18 @@
   line-height: 16px;
   text-align: center;
 }
+/* The close button takes this corner while hovered. */
+.railLive {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.railTab:hover .railLive {
+  visibility: hidden;
+}
 /* A community tab whose unread lines @-mention you. */
 .railMention {
   position: absolute;
@@ -318,6 +330,66 @@
 .dim {
   opacity: 0.4;
   transition: opacity var(--chat-dur-idle) var(--ease-outquad);
+}
+
+/* Fades out with the title bar while the chat is unfocused. */
+.streamBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  margin: 5px 5px 0;
+  padding: 0 10px;
+  flex: none;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--chat-head);
+  box-shadow: inset 0 0 0 2px transparent;
+  color: var(--text);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition:
+    box-shadow var(--dur-fast) ease,
+    opacity var(--chat-dur-chrome) var(--ease-outquad),
+    visibility 0s;
+}
+.streamBanner:hover,
+.streamBanner:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--voice-live);
+  outline: none;
+}
+.open:not(.active) .streamBanner {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--chat-dur-chrome) var(--ease-outquad),
+    visibility 0s var(--chat-dur-chrome);
+}
+.focused .streamBanner {
+  transition: none;
+}
+.streamLive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--voice-stream);
+  font-size: var(--type-13);
+}
+.streamCount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  color: var(--text);
+  opacity: 0.5;
+}
+.streamJoin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-10);
+  font-weight: var(--fw-bold);
 }
 
 @keyframes arrive {
@@ -835,6 +907,7 @@ button.autoTranslateOff:hover {
 
 /* Members view: covers the panel with its own title bar and list; the feed and input hide under it. */
 .membersOpen .main > .nav,
+.membersOpen .streamBanner,
 .membersOpen .messages,
 .membersOpen .inputRow,
 .membersOpen .suggest,

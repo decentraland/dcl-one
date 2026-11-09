@@ -25,15 +25,15 @@ type ActiveChatRaw = {
   moderatorCount?: number
 }
 
-/** Unity `ActiveCommunityVoiceChatsResponse`: `{ data: { activeChats, total } }`. */
-async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[]> {
-  const res = await signed<{ data?: { activeChats?: ActiveChatRaw[] } }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).catch(
+/** The answer is `{ data: { activeChats, total } }`; `signed` has already taken off `data`. */
+export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[]> {
+  const res = await signed<{ activeChats?: ActiveChatRaw[] }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).catch(
     (e: unknown) => {
       console.error('[voiceChat] active streams failed', e)
       return undefined
     }
   )
-  return (res?.data?.activeChats ?? [])
+  return (res?.activeChats ?? [])
     .filter((c) => c.communityId != null && c.communityId !== '')
     .map((c) => ({
       communityId: c.communityId ?? '',
@@ -66,11 +66,6 @@ export function registerVoiceChat(ctx: Ctx): void {
     api.action(msg.action)
   })
 
-  relay('voiceChatState', async () => api.getStateStream(), (state) => {
-    // the engine's strings are the wire's unions
-    ctx.send({ kind: 'voiceChatState', state: state as WireVoiceChatState })
-  })
-
   // The live streams: read on start, and again whenever one starts or ends.
   let active: ActiveCommunityVoiceChat[] = []
   let publishedHere = ''
@@ -79,6 +74,20 @@ export function registerVoiceChat(ctx: Ctx): void {
     ctx.send({ kind: 'activeCommunityVoiceChats', chats: active })
     publishedHere = ''
   }
+
+  // The social service broadcasts a stream's start and end to everyone but the user who started or
+  // ended it, so the list is also re-read when the user's own community stream is entered or left.
+  let inStream = ''
+  relay('voiceChatState', async () => api.getStateStream(), (state) => {
+    // the engine's strings are the wire's unions
+    const wire = state as WireVoiceChatState
+    ctx.send({ kind: 'voiceChatState', state: wire })
+    const now = wire.kind === 'community' && wire.status === 'inCall' ? (wire.communityId ?? '') : ''
+    if (now !== inStream) {
+      inStream = now
+      void refreshActive()
+    }
+  })
   ctx.on('hello', () => {
     void refreshActive()
   })

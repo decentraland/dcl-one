@@ -413,7 +413,7 @@ function Hud(): React.JSX.Element {
             <ProfilePanel profile={session.profile} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Notifications" open={session.notifications.open} onCrash={session.closeAllPanels}>
-            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
+            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Skybox" open={session.skybox.open} onCrash={session.closeAllPanels}>
             <SkyboxMenu skybox={session.skybox} />
@@ -490,7 +490,7 @@ function Hud(): React.JSX.Element {
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
-      <NotificationToastHost notifications={session.notifications} friends={session.friends} />
+      <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

@@ -56,6 +56,7 @@ const INTERNAL_PARAMS = [
   'simerror',
   'simhover',
   'mockcall',
+  'mockstream',
   'previousLogin',
   'perm',
   'worldpw',

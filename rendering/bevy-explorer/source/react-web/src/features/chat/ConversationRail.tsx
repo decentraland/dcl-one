@@ -1,11 +1,15 @@
 // The conversation rail beside the chat: the chat's close button, Nearby pinned first, then the
 // open DM tabs, then the open community chats. Each tab carries its unread count; a community's
-// also whether one of those lines @-mentions the local user.
+// also whether one of those lines @-mentions the local user, and whether it is streaming.
 
 import type { ChatState, CommunityConversation, Conversation } from '../session/useEngineSession'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '../../design'
+import { useOptionalSession } from '../session/SessionContext'
+import { inCommunityStream } from '../voiceChat/callGate'
 import { splitName, usePartner } from './chatIdentity'
 import closeIcon from '../../assets/chat/close-thin.png'
+import streamActiveIcon from '../../assets/voice/stream-active.png'
+import streamListeningIcon from '../../assets/voice/stream-listening.png'
 import styles from './Chat.module.css'
 
 function badge(count: number): React.JSX.Element | null {
@@ -31,15 +35,27 @@ function RailTab({ conversation, active, onSelect, onClose }: { conversation: Co
   )
 }
 
-/** One community chat on the rail: its thumbnail (the initial while it has none), unread count and
- *  mention mark. */
-function CommunityRailTab({ community, active, onSelect, onClose }: { community: CommunityConversation; active: boolean; onSelect: () => void; onClose: () => void }): React.JSX.Element {
+type RailStream = 'live' | 'listening' | null
+
+/** One community chat on the rail: its thumbnail (the initial while it has none), unread count,
+ *  mention mark and live-stream mark. */
+function CommunityRailTab({ community, active, stream, onSelect, onClose }: { community: CommunityConversation; active: boolean; stream: RailStream; onSelect: () => void; onClose: () => void }): React.JSX.Element {
   return (
     <Tooltip label={community.name} side="left" variant="rail">
       <div className={`${styles.railTab} ${active ? styles.railActive : ''}`.trim()}>
         <button type="button" className={styles.railBtn} aria-label={`Chat in ${community.name}`} aria-pressed={active} onClick={onSelect}>
           <Avatar src={community.thumbnail || undefined} name={community.name} size={32} />
           {community.mention && <span className={styles.railMention} role="img" aria-label="Mentions you" />}
+          {stream != null && (
+            <img
+              className={styles.railLive}
+              src={stream === 'listening' ? streamListeningIcon : streamActiveIcon}
+              alt={stream === 'listening' ? 'In this voice stream' : 'Live voice stream'}
+              width={14}
+              height={14}
+              draggable={false}
+            />
+          )}
           {badge(community.unread)}
         </button>
         <button type="button" className={styles.railClose} aria-label={`Close chat in ${community.name}`} onClick={onClose}>
@@ -51,6 +67,12 @@ function CommunityRailTab({ community, active, onSelect, onClose }: { community:
 }
 
 export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: () => void }): React.JSX.Element {
+  const voiceChat = useOptionalSession()?.voiceChat
+  const stream = (id: string): RailStream => {
+    if (voiceChat == null) return null
+    if (inCommunityStream(voiceChat.state, id)) return 'listening'
+    return voiceChat.active.some((c) => c.communityId === id) ? 'live' : null
+  }
   return (
     <nav className={styles.rail} aria-label="Conversations">
       <div className={styles.railHead}>
@@ -74,7 +96,7 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
         <RailTab key={c.address} conversation={c} active={chat.channel === c.address} onSelect={() => chat.select(c.address)} onClose={() => chat.closeConversation(c.address)} />
       ))}
       {chat.communities.map((c) => (
-        <CommunityRailTab key={c.id} community={c} active={chat.channel === c.key} onSelect={() => chat.select(c.key)} onClose={() => chat.closeCommunity(c.id)} />
+        <CommunityRailTab key={c.id} community={c} active={chat.channel === c.key} stream={stream(c.id)} onSelect={() => chat.select(c.key)} onClose={() => chat.closeCommunity(c.id)} />
       ))}
     </nav>
   )

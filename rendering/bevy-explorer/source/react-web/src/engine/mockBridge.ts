@@ -366,6 +366,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     { id: 'n4', type: 'event_started', read: true, timestamp: new Date(mockNow - 86_400_000).toISOString(), metadata: { title: 'Event live', description: 'Music Festival is happening now in Genesis Plaza.' } },
     // Title-less types (server sends only structured fields) — formatted client-side in the panel.
     { id: 'n5', type: 'community_post_added', read: false, timestamp: new Date(mockNow - 2400_000).toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
+    { id: 'n10', type: 'community_voice_chat_started', read: false, timestamp: new Date(mockNow - 600_000).toISOString(), metadata: { communityId: 'c1', communityName: 'Decentraland Foundation', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
     { id: 'n6', type: 'credits_reminder_claim_credits', read: false, timestamp: new Date(mockNow - 5400_000).toISOString(), metadata: {} }
   ]
   // Mock camera-reel gallery — ~3-day spacing spans two months (exercises month grouping).
@@ -584,9 +585,27 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     setTimeout(() => {
       pushVoice({})
-      reply({ kind: 'activeCommunityVoiceChats', chats: MOCK_ACTIVE_CHATS })
+      reply({ kind: 'activeCommunityVoiceChats', chats: [...MOCK_ACTIVE_CHATS] })
       reply({ kind: 'sceneVoiceChat', chat: MOCK_ACTIVE_CHATS[0] })
     }, 1600)
+    const setLive = (id: string, live: boolean): void => {
+      const c = mockCommunities.find((m) => m.id === id)
+      if (c == null) return
+      const at = MOCK_ACTIVE_CHATS.findIndex((a) => a.communityId === id)
+      if (live && at < 0) MOCK_ACTIVE_CHATS.push({ communityId: id, communityName: c.name, isMember: c.role !== 'none', positions: [], worlds: [], participantCount: 1, moderatorCount: 1 })
+      if (!live && at >= 0) MOCK_ACTIVE_CHATS.splice(at, 1)
+      reply({ kind: 'activeCommunityVoiceChats', chats: [...MOCK_ACTIVE_CHATS] })
+    }
+    // ?mockstream=start: Toxic Events goes live a few seconds in, with its broadcast and notification.
+    if (new URLSearchParams(location.search).get('mockstream') === 'start') {
+      setTimeout(() => {
+        reply({ kind: 'communityVoiceUpdate', communityId: 'c5', status: 'started', createdAt: Date.now(), endedAt: null, positions: [], worlds: [], isMember: true, communityName: 'Toxic Events', communityImage: null })
+        setLive('c5', true)
+        const started: AppNotification = { id: 'n-stream-c5', type: 'community_voice_chat_started', read: false, timestamp: new Date().toISOString(), metadata: { communityId: 'c5', communityName: 'Toxic Events', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } }
+        mockNotifications.unshift(started)
+        reply({ kind: 'notificationsNew', notifications: [started] })
+      }, 5000)
+    }
     const mockCall = new URLSearchParams(location.search).get('mockcall')
     if (mockCall === 'incoming') {
       setTimeout(() => pushVoice({ status: 'receivedCall', kind: 'private', callId: 'mock-call', peer: MOCK_NEARBY[0].address }), 2000)
@@ -643,14 +662,21 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           const id = action.communityId
           const owner = id === 'c8'
           pushVoice({ ...idleVoice, status: 'startingCall', kind: 'community', communityId: id })
-          voiceLater(600, () => pushVoice({ status: 'inCall', connection: 'connecting', localSpeaker: owner, localRole: owner ? 'owner' : 'user' }))
+          voiceLater(600, () => {
+            pushVoice({ status: 'inCall', connection: 'connecting', localSpeaker: owner, localRole: owner ? 'owner' : 'user' })
+            // the bridge re-reads the live list on entering the stream
+            if (action.op === 'startCommunityCall') setLive(id, true)
+          })
           voiceLater(1400, () => pushVoice({ connection: 'connected', micEnabled: owner, participants: community(id) }))
           break
         }
-        case 'endCommunityCall':
+        case 'endCommunityCall': {
           clearVoiceTimers()
+          const id = voice.communityId
           pushVoice({ ...idleVoice })
+          if (id != null) setLive(id, false)
           break
+        }
         case 'requestToSpeak':
           pushVoice({ localRequestingToSpeak: action.raise })
           break

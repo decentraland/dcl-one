@@ -4,13 +4,13 @@
 
 import { ControlButton } from '../../design'
 import type { AppNotification } from '../../engine/protocol'
-import type { FriendsState, NotificationsState, VoiceChatSession } from '../session/useEngineSession'
+import type { ChatState, FriendsState, NotificationsState, VoiceChatSession } from '../session/useEngineSession'
 import { ago, friendshipTarget, streamTarget, summarize } from './summary'
 import styles from './NotificationsPanel.module.css'
 
-function NotificationRow({ n, friends, voiceChat }: { n: AppNotification; friends?: FriendsState; voiceChat?: VoiceChatSession }): React.JSX.Element {
+function NotificationRow({ n, friends, voiceChat, chat }: { n: AppNotification; friends?: FriendsState; voiceChat?: VoiceChatSession; chat?: ChatState }): React.JSX.Element {
   const { title, body, image } = summarize(n)
-  const onOpen = friendshipTarget(n, friends) ?? streamTarget(n, voiceChat)
+  const onOpen = friendshipTarget(n, friends) ?? streamTarget(n, voiceChat, chat)
   return (
     <div
       className={`${styles.row} ${n.read ? '' : styles.unread} ${onOpen ? styles.clickable : ''}`.trim()}
@@ -36,6 +36,7 @@ export function NotificationsPanel({
   notifications,
   friends,
   voiceChat,
+  chat,
   anchor = 'rail'
 }: {
   notifications: NotificationsState
@@ -45,6 +46,8 @@ export function NotificationsPanel({
   friends?: FriendsState
   /** Makes a community stream notification join the stream. */
   voiceChat?: VoiceChatSession
+  /** A stream notification opens the community's chat. */
+  chat?: ChatState
 }): React.JSX.Element | null {
   if (!notifications.open) return null
   return (
@@ -64,7 +67,7 @@ export function NotificationsPanel({
         {notifications.list.length === 0 ? (
           <div className={styles.empty}>You’re all caught up.</div>
         ) : (
-          notifications.list.map((n) => <NotificationRow key={n.id} n={n} friends={friends} voiceChat={voiceChat} />)
+          notifications.list.map((n) => <NotificationRow key={n.id} n={n} friends={friends} voiceChat={voiceChat} chat={chat} />)
         )}
       </div>
     </div>

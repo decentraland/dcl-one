@@ -16,6 +16,22 @@ describe('sidebar parity', () => {
     expect(button.querySelector('span[aria-hidden="true"]')).not.toBeNull()
   })
 
+  it.each([
+    [true, true],
+    [false, false]
+  ])('Communities carries the live badge when a member community streams (member %s)', (isMember, shown) => {
+    const s = fakeSession()
+    s.voiceChat = { ...s.voiceChat, active: [{ communityId: 'c1', communityName: 'C', isMember, positions: [], worlds: [], participantCount: 3, moderatorCount: 1 }] }
+    render(<Sidebar session={s} />)
+    const badge = within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })
+    expect(badge != null).toBe(shown)
+  })
+
+  it('Communities has no live badge while nothing streams', () => {
+    render(<Sidebar session={fakeSession()} />)
+    expect(within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })).toBeNull()
+  })
+
   it('Shop opens the shop with the web client utm source, between Backpack and Camera', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     render(<Sidebar session={fakeSession()} />)

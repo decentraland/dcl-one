@@ -6,9 +6,9 @@ import react from '@vitejs/plugin-react'
 // The real-engine e2e (tier 2) lives under e2e/ and runs via Playwright, not Vitest.
 export default defineConfig({
   plugins: [react(), {
-    name: 'scene-restricted-actions',
-    // The scene runtime supplies this virtual module. Tests provide its methods with vi.mock.
-    resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
+    name: 'scene-system-modules',
+    // The scene runtime supplies the `~system/*` virtual modules. Tests provide their methods with vi.mock.
+    resolveId(id) { return id.startsWith('~system/') ? id : null }
   }],
   test: {
     environment: 'jsdom',

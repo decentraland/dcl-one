@@ -35,6 +35,7 @@ import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
 import { EmoteSlot } from '../features/emotes/EmoteSlot'
 import { catalystThumbUrl } from '../lib/identity'
+import streamBadge from '../assets/voice/stream-badge.png'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.
 const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
@@ -436,6 +437,7 @@ export function Showcase(): React.JSX.Element {
           ))}
           <IconButton icon="profile" label="Profile (avatar)" avatar={{ name: 'Mojito', color: 'var(--lavender)' }} />
           <IconButton icon="voice-hearing" label="Voice (connected)" indicator />
+          <IconButton icon="communities" label="Communities (live stream)" cornerArt={{ src: streamBadge, label: 'A community stream is live' }} />
         </Panel>
       </Section>
 

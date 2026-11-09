@@ -39,6 +39,14 @@ export function callGate(
   }
 }
 
+/** Whether the user may join a community stream. Another call does not block it: the engine hangs
+ *  up first. */
+export function streamGate(voice: VoiceChatState | null, isGuest: boolean): CallGate {
+  if (isGuest) return { allowed: false, reason: 'Voice chat is not available for guest accounts.' }
+  if (voice == null) return { allowed: false, reason: 'Voice chat is not available.' }
+  return { allowed: true }
+}
+
 /** The call is being set up, rings, or runs. */
 export function voiceActive(voice: VoiceChatState | null): boolean {
   return voice != null && voice.status !== 'disconnected' && voice.status !== 'busy' && voice.status !== 'genericError'

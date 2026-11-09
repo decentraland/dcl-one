@@ -2,7 +2,7 @@
 // age, and where clicking it leads. Shared by the panel and the new-notification toast.
 
 import type { AppNotification } from '../../engine/protocol'
-import type { FriendsState, VoiceChatSession } from '../session/useEngineSession'
+import type { ChatState, FriendsState, VoiceChatSession } from '../session/useEngineSession'
 import { nativeProfileImage } from '../../lib/baseDomain'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { relationshipOf } from '../../lib/relationship'
@@ -111,10 +111,20 @@ export function friendshipTarget(n: AppNotification, friends?: FriendsState): ((
   return () => openPassport(address)
 }
 
-/** A community stream notification joins the stream (unity-explorer's NewNotificationController). */
-export function streamTarget(n: AppNotification, voiceChat?: VoiceChatSession): (() => void) | undefined {
+/** A community stream notification joins the stream, then opens that community's chat. */
+export function streamTarget(n: AppNotification, voiceChat?: VoiceChatSession, chat?: ChatState): (() => void) | undefined {
   if (n.type !== 'community_voice_chat_started' || voiceChat == null) return undefined
   const communityId = str(n.metadata, 'communityId')
   if (communityId == null) return undefined
-  return () => voiceChat.act({ op: 'joinCommunityCall', communityId })
+  return () => {
+    voiceChat.act({ op: 'joinCommunityCall', communityId })
+    if (chat == null) return
+    const known = chat.communities.find((c) => c.id === communityId)
+    chat.openCommunity({
+      id: communityId,
+      name: known?.name ?? str(n.metadata, 'communityName') ?? '',
+      thumbnail: known?.thumbnail ?? str(n.metadata, 'communityImage', 'thumbnail', 'thumbnailUrl') ?? '',
+      role: known?.role ?? 'member'
+    })
+  }
 }

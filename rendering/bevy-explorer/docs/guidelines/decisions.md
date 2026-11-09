@@ -47,9 +47,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     them a second time. Their spatial track is unsubscribed for the call's duration.
   - The reconnection budget is spent regardless of remote participants (Unity skips the re-dial
     when nobody else is in the room).
-  - The chat has no community channels, so Unity's stream buttons in the community chat title
-    and subtitle have no place; the community card, the Communities page, the scene banner and
-    the notification carry Start / Join.
+  - The community chat's "Live Voice Stream" banner counts the backend's participants for the
+    stream; Unity's counts the user's own call room, which is wrong until the user is in it. The
+    banner is hidden, not just transparent, while the chat is unfocused, so it never catches a
+    click there.
+  - The social service does not broadcast a stream's start or end to the user who started or
+    ended it. Unity flips its live flags on those replies; the bridge re-reads the live list when
+    the user's own community stream is entered or left.
 - **Community chat (#223).** A community packet is taken only from the server's message
   router, which checks membership and stamps the author; unity-explorer also accepts one
   straight from a peer under the peer's own identity. Community history is stored like a DM's

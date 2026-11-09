@@ -44,6 +44,7 @@ import newTag from '../../assets/chat/new-tag.png'
 import arrowLeftIcon from '../../assets/chat/arrow-left.png'
 import { callGate } from '../voiceChat/callGate'
 import { useOptionalSession } from '../session/SessionContext'
+import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 
 const MAX_LEN = 500
@@ -1139,6 +1140,7 @@ export function Chat({
           onClose={() => chat.closeCommunity(community.id)}
         />
       )}
+      {open && community != null && <CommunityStreamBanner communityId={community.id} />}
       {open && conversation == null && community == null && (
         <header className={styles.nav}>
           <div className={styles.navLeft}>
