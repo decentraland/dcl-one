@@ -338,6 +338,11 @@ function CreditsScreen() {
           clearTopUpHandoffs();
           setError("We couldn't add your Credits. If you were charged, the payment is refunded.");
           setPhase("error");
+        } else if (result.status === "missing") {
+          // Never a "your payment went through" for an order nobody made.
+          clearTopUpHandoffs();
+          setError("We couldn't find that Credits purchase, so no Credits were added for it.");
+          setPhase("error");
         } else {
           clearTopUpHandoffs();
           setPhase("pending");

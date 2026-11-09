@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFakeShop } from "../checkout/fakes";
 import { creditsNoun, creditsSrLabel, formatAmount, usdCentsToCredits, usdCentsToCreditsFloor } from "../checkout/lib/currency";
@@ -20,6 +20,8 @@ import { parseSseChunk } from "./program";
 import { RESUME_CART_KEY } from "../checkout/purchase/cart";
 import { stashNameResume } from "../names/resume";
 import { bindBuyNowTopUp, bindTopUpReturn, clearTopUpHandoffs, dropBuyNowTopUp, keepHandoffsOf, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
@@ -149,18 +151,30 @@ describe("packs", () => {
   });
 
   it("a mock order id is granted only with mock payments on; otherwise the server is asked, so a link shows no Credits never bought", async () => {
-    const shop = createFakeShop({ packOrder: () => ({ status: "initiated" }) });
+    const shop = createFakeShop({ packOrder: () => ({ status: 404, body: { error: "not found" } }) });
     let t = 0;
     const now = () => (t += 1000);
-    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, timeoutMs: 2500, now }, shop.client)).toEqual({ status: "initiated" });
+    // The server does not know it: past the grace it is no order at all.
+    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, now }, shop.client)).toEqual({ status: "missing" });
     expect(shop.log.some((r) => r.name === "packOrder")).toBe(true);
-    const w = window as Window & { __SHOP_PAYMENTS__?: string };
-    w.__SHOP_PAYMENTS__ = "mock";
-    try {
-      expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, packs: CREDIT_PACKS }, shop.client)).toMatchObject({ status: "credited" });
-    } finally {
-      delete w.__SHOP_PAYMENTS__;
-    }
+    vi.stubGlobal("__SHOP_PAYMENTS__", "mock");
+    const asked = shop.log.length;
+    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1 }, shop.client)).toMatchObject({ status: "credited" });
+    // Granted without asking the server.
+    expect(shop.log.length).toBe(asked);
+  });
+
+  it("an order the server never finds is missing past the grace a lagging replica needs; one it saw stays pending at the deadline", async () => {
+    let t = 0;
+    const now = () => (t += 1000);
+    const unknown = createFakeShop({ packOrder: () => ({ status: 404, body: { error: "not found" } }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
+    expect(unknown.log.filter((r) => r.name === "packOrder").length).toBeLessThan(8);
+    // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
+    t = 0;
+    let calls = 0;
+    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : { status: 404, body: { error: "not found" } }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, flaky.client)).toEqual({ status: "pending" });
   });
 });
 

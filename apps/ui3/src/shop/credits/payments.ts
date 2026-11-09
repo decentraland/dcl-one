@@ -98,7 +98,8 @@ export type CheckoutSession = {
 };
 
 /** The server's order vocabulary plus 'pending': the poll gave up with money in and the grant not written. */
-export type OrderStatus = { status: PackOrderStatus["status"] | "initiated" | "crediting" | "abandoned" | "pending"; creditsGranted?: number; newBalance?: number; error?: string };
+/** `missing`: the server never knew the order (a made-up or mistyped `?order=`), so nothing is on its way. */
+export type OrderStatus = { status: PackOrderStatus["status"] | "initiated" | "crediting" | "abandoned" | "pending" | "missing"; creditsGranted?: number; newBalance?: number; error?: string };
 
 export const MOCK_ORDER_PREFIX = "mock_cs_";
 
@@ -126,7 +127,7 @@ export async function createPackCheckout(packId: string, client: ShopClient = sh
  */
 export async function pollCreditGrant(
   orderId: string,
-  opts: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal; now?: () => number; packs?: CreditPack[] } = {},
+  opts: { intervalMs?: number; timeoutMs?: number; missingGraceMs?: number; signal?: AbortSignal; now?: () => number; packs?: CreditPack[] } = {},
   client: ShopClient = shopClient(),
 ): Promise<OrderStatus> {
   if (isMockPayments() && orderId.startsWith(MOCK_ORDER_PREFIX)) {

@@ -148,6 +148,21 @@ describe("the credits page", () => {
     expect((await screen.findByTestId("credits-pending")).textContent).toContain("Your Credits are on the way");
   });
 
+  it("an order nobody made ends on 'we couldn't find it', never on 'your payment went through'", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderCredits({ path: "/shop/credits?order=made-up", handlers: { packOrder: () => ({ status: 404, body: { error: "not found" } }) } });
+      // Past the grace a lagging replica needs, while the poll would still be waiting for a payment.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect((await screen.findByTestId("credits-error")).textContent).toContain("We couldn't find that Credits purchase");
+      expect(screen.queryByTestId("credits-pending")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a failed grant says so; an unpaid order goes back to the packs with the canceled note", async () => {
     renderCredits({ path: "/shop/credits?order=order-1", handlers: { packOrder: () => ({ status: "failed", error: "declined" }) } });
     expect((await screen.findByTestId("credits-error")).textContent).toContain("We couldn't add your Credits");

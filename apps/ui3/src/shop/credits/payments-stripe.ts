@@ -25,9 +25,9 @@ export async function createPackCheckoutReal(packId: string, client: ShopClient)
   return { orderId, ...(url ? { url } : {}), mock: false };
 }
 
-/** Statuses the poll keeps waiting on: money in without the grant, or a return that beat the webhook. */
+/** Statuses the poll keeps waiting on: money in without the grant, a return that beat the webhook, or an order not found yet. */
 function stillWaiting(status: OrderStatus["status"]): boolean {
-  return status === "processing" || status === "crediting" || status === "initiated";
+  return status === "processing" || status === "crediting" || status === "initiated" || status === "missing";
 }
 
 const delay = (ms: number, signal?: AbortSignal) =>
@@ -48,23 +48,29 @@ async function fetchOrderStatus(orderId: string, client: ShopClient, signal?: Ab
     const answer = (await client.packs.orderStatus(orderId, { signal })) as OrderStatus | null;
     return answer && typeof answer.status === "string" ? answer : { status: "processing" };
   } catch (e) {
-    if (isShopApiError(e) && e.status === 404) return { status: "processing" };
+    // Not known (yet): a replica behind the write, or no such order. The poll tells the two apart by how long it lasts.
+    if (isShopApiError(e) && e.status === 404) return { status: "missing" };
     throw e;
   }
 }
 
 export async function pollCreditGrantReal(
   orderId: string,
-  opts: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal; now?: () => number } = {},
+  opts: { intervalMs?: number; timeoutMs?: number; missingGraceMs?: number; signal?: AbortSignal; now?: () => number } = {},
   client: ShopClient,
 ): Promise<OrderStatus> {
-  const { intervalMs = 1500, timeoutMs = 60_000, signal } = opts;
+  const { intervalMs = 1500, timeoutMs = 60_000, missingGraceMs = 15_000, signal } = opts;
   const now = opts.now ?? Date.now;
-  const deadline = now() + timeoutMs;
+  const started = now();
+  const deadline = started + timeoutMs;
+  let seen = false;
   for (;;) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const status = await fetchOrderStatus(orderId, client, signal);
+    if (status.status !== "missing") seen = true;
     if (!stillWaiting(status.status)) return status;
+    // Never found past the moments a lagging replica needs: there is no such order, and nothing is on its way.
+    if (!seen && now() - started > missingGraceMs) return { status: "missing" };
     if (now() > deadline) {
       // Still 'initiated': nobody paid, so nothing is on its way. Anything else is money in.
       if (status.status === "initiated") return status;
