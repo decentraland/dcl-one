@@ -13,6 +13,9 @@ proto type comes from `dcl_component`; never redeclare it.
 
 ## A new engine-to-system-scene stream
 
+State the engine owns reaches the HUD this way, sent on subscribe and on change; the HUD shows
+what the stream last said rather than polling a request.
+
 Template: the proximity stream, `GetProximityStream` in
 `crates/scene_runner/src/update_scene/pointer_results.rs` and
 `react-web/bridge-scene/src/domains/proximity.ts`, added whole in #764. Not the chat stream,
@@ -42,6 +45,17 @@ reference: `getBlockUpdateStream` (#844). The file set:
 Run `just ts-bindings` before touching the TypeScript: the generated types under
 `react-web/src/engine/generated/` are gitignored, and CI regenerates them before every TS
 build, so a Rust struct change that breaks the page fails `tsc` there.
+
+## Pausing a scene
+
+To hold a scene for a while, insert a named reason into its `RendererSceneContext.blocked` and
+remove it when the cause ends: the scene loop skips a blocked scene (a super-user scene runs
+regardless), which keeps its entities and
+JS state and resumes where it stopped. References: imposter baking (`"imposter_baking"`), the
+inspector's freeze (`FROZEN_BLOCK`), `portableExperiences: disabled`
+(`PORTABLE_EXPERIENCES_BLOCK` in `crates/scene_runner/src/portables.rs`). Compare before writing
+so the context is not marked changed every frame, and hide its UI through the `ui_scenes` filter
+in `scene_ui` if it should not show. `LiveSceneInfo.is_blocked` reports it.
 
 ## The ts-rs boundary
 

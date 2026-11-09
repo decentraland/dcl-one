@@ -67,6 +67,18 @@ clipboard, anything that touches the host OS or a page) must be excluded from th
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
 
+**On the scene server every hosted scene is a portable.** `reconcile_scene_rooms` (in
+`src/bin/headless.rs`) re-inserts any wanted scene missing from `PortableScenes`, so a
+scene-callable path that adds or removes portables (`spawn`, `kill`, `exit`) refuses in
+`server_mode()` and answers the promise with a denial; otherwise a tenant scene restarts itself
+in a loop on the shared engine.
+
+**Every scene asks through one permission path: the stored rules, then the per-use prompt.**
+A new kind of scene or portable (a smart wearable, say) resolves there too, with no gate that
+answers first from a manifest or an up-front grant; the per-use prompt shows the player what is
+asked each time. Fetch and WebSocket are deliberately ungated for every scene: scene code can
+always reach raw `fetch`, so a check on them would be bypassable.
+
 ## Network capabilities
 
 Use the existing engine-assigned scene identity and the transport's Rust address policy when

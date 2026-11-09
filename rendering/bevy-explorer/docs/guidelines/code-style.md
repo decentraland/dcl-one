@@ -64,12 +64,19 @@ side map is not allowed and will fail a review.
 - Cancellation tokens are threaded through outer layers unchanged. The `select!` sits at the
   one await that can actually hang (the network read, the lock), not around the whole task.
 - On web there is no `Send` and tasks run on the JS event loop. See the platforms page.
+- Anything the scene loader reads, a scene's `EntityDefinition` first, is an asset load: an
+  `AssetLoader` reached through a content path, keyed where needed by an alias in the owning
+  collection (as `request_collectibles` adds `collectible.{ext}`). `SceneIpfsLocation` stays a
+  location. A bad input then fails the load and the scene ends `SceneLoading::Failed` like any
+  other.
 
 ## Errors and invariants
 
 - Scene data is untrusted and malformed scene data must never take the client down. Systems
   handling it warn and skip; they do not `unwrap` or `panic`. The `dcl_assert!` macro is for
   engine invariants and compiles out of release builds unless the `dcl-assert` feature is on.
+- `SceneMeta` is parsed for every scene, so a field added to it parses leniently: a malformed
+  value reads as absent and the scene still loads. Add a field only with the code that reads it.
 - `anyhow` at boundaries (ops, loaders, fetches). A named error enum where a caller branches
   on the kind.
 - When one variant of a `match` is filtered by a flag, the guard goes inside that arm, not in
