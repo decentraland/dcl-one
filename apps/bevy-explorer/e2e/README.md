@@ -241,8 +241,10 @@ Kept from explorer-automation's guides:
 
 `specs/debug-panel.test.ts` checks every registered diagnostic field and the
 `/memory_reclaim` simulation modes, reset, budget validation and cumulative cache
-counters. A separate scenario loads wave, waits for the emote cache to become
-empty under pressure, then verifies that replay reacquires a pin. Simulation is preview-only; the
+counters. A separate scenario measures the active emote baseline, loads wave,
+waits for playback to finish and its extra pin to leave, then verifies that replay
+reacquires a pin. Active scene movement animations may keep the baseline nonzero.
+Simulation is preview-only; the
 scenarios restore the session settings after exercising it. The control scenario
 checks mutation denial when `controlsAvailable` is false; the release scenario
 explicitly skips that non-preview session. Run mutations against a native preview client using

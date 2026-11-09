@@ -68,20 +68,25 @@ scenario('memory pressure releases an idle emote pin and preserves replay', asyn
   const emote = (state: MemoryState) => state.caches.find(cache => cache.name === 'emote')!
   try {
     await explorer.run('/memory_reclaim both')
-    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state => emote(state).entries === 0,
-      { timeoutMs: 30_000, what: 'an empty emote cache before loading wave' })
+    const baseline = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      emote(state).completedScans > emote(before).completedScans && emote(state).scanStatus === 'no_eligible',
+    { timeoutMs: 30_000, what: 'only active emote pins to remain before loading wave' })
     await explorer.run('/memory_reclaim off')
     await explorer.run('/emote ' + wave)
-    const loaded = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state => emote(state).entries > 0,
-      { timeoutMs: 30_000, what: 'wave to populate the emote representation cache' })
+    const loaded = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      emote(state).entries > emote(baseline).entries,
+    { timeoutMs: 30_000, what: 'wave to add a representation pin above the active baseline' })
     await explorer.run('/memory_reclaim both')
+    await until(() => explorer.myAvatar(), avatar =>
+      avatar.emote?.urn !== wave || avatar.emote.finished,
+    { timeoutMs: 30_000, what: 'wave to finish before checking its idle pin' })
     await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
-      emote(state).entries === 0 && emote(state).released > emote(loaded).released &&
+      emote(state).entries <= emote(baseline).entries && emote(state).released > emote(loaded).released &&
       emote(state).completedScans > emote(loaded).completedScans,
-    { timeoutMs: 30_000, what: 'the emote cache, including wave, to release its pins under pressure' })
+    { timeoutMs: 30_000, what: 'wave to release its idle pin while active scene emotes remain' })
     await explorer.run('/memory_reclaim off')
     await explorer.run('/emote ' + wave)
-    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state => emote(state).entries > 0,
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state => emote(state).entries > emote(baseline).entries,
       { timeoutMs: 30_000, what: 'wave replay to reacquire an emote cache pin' })
     await until(() => explorer.myAvatar(), avatar =>
       !!avatar.rendered?.processed && !avatar.rendered.failed &&
