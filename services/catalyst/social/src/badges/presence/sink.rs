@@ -3,7 +3,10 @@
 //! webhook, and a writer task inserts the queue into
 //! `social.presence_events` in batches (keyed by LiveKit's event id, so a
 //! redelivered webhook is one row). The engine applies the rows later.
+//! Only events in a place a presence badge could count are stored: the
+//! writer checks them against a short-lived snapshot of those places.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,12 +18,72 @@ use tokio::sync::mpsc;
 use crate::comms::gatekeeper::events::RoomEventSink;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 use crate::identity::Address;
+use crate::shared::cache::TtlMap;
+
+use super::Settings;
+use super::engine::naive;
 
 /// Events queued between the webhook and the writer; past it they are dropped.
 pub const QUEUE: usize = 10_000;
 const BATCH: usize = 500;
+/// How long a badge configured, published or archived waits to be seen.
+const PLACES_TTL: Duration = Duration::from_secs(30);
 /// The pause before a failed batch insert is tried once more.
 const RETRY_BACKOFF: Duration = Duration::from_secs(1);
+
+/// The places of the badges whose windows an event now could count for (the
+/// engine's join lookahead and leave lookback): worlds by name, scenes by
+/// every entity ever deployed on one of their parcels.
+#[derive(Debug, Default)]
+struct ActivePlaces {
+    worlds: HashSet<String>,
+    scenes: HashSet<String>,
+}
+
+impl ActivePlaces {
+    async fn load(pool: &PgPool, now: i64, settings: &Settings) -> sqlx::Result<Self> {
+        let (worlds, parcels): (Vec<String>, Vec<String>) = sqlx::query_as(
+            "SELECT COALESCE(array_agg(DISTINCT lower(p.world_name)) \
+                       FILTER (WHERE p.location_kind = 'world' AND p.world_name IS NOT NULL), '{}'), \
+                    COALESCE(array_agg(DISTINCT lower(trim(p.parcel))) \
+                       FILTER (WHERE p.location_kind = 'scene' AND p.parcel IS NOT NULL), '{}') \
+             FROM social.presence_badges p \
+             JOIN social.badge_definitions d ON d.id = p.badge_id \
+              AND d.published_at IS NOT NULL AND d.archived_at IS NULL \
+             WHERE p.window_end > $1 AND p.window_start <= $2",
+        )
+        .bind(naive(now - settings.max_age_ms))
+        .bind(naive(now + settings.lookahead_ms))
+        .fetch_one(pool)
+        .await?;
+        let scenes = if parcels.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_scalar(
+                "SELECT entity_id FROM content.deployments \
+                 WHERE entity_type = 'scene' AND entity_pointers && $1",
+            )
+            .bind(&parcels)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(Self {
+            worlds: worlds.into_iter().collect(),
+            scenes: scenes.into_iter().collect(),
+        })
+    }
+
+    fn counts(&self, event: &PresenceEvent) -> bool {
+        if event.world {
+            self.worlds.contains(&event.realm_name)
+        } else {
+            event
+                .scene_id
+                .as_ref()
+                .is_some_and(|s| self.scenes.contains(s))
+        }
+    }
+}
 
 /// One row of `social.presence_events`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +141,8 @@ impl PresenceEvent {
 pub struct EventSink {
     tx: mpsc::Sender<PresenceEvent>,
     rx: Mutex<Option<mpsc::Receiver<PresenceEvent>>>,
+    settings: Settings,
+    places: TtlMap<(), Arc<ActivePlaces>>,
 }
 
 impl Default for EventSink {
@@ -92,11 +157,38 @@ impl EventSink {
         Self {
             tx,
             rx: Mutex::new(Some(rx)),
+            settings: Settings::default(),
+            places: TtlMap::new(PLACES_TTL),
         }
     }
 
-    /// Stores `batch`, trying once more after a pause.
-    async fn store(&self, pool: &PgPool, batch: Vec<PresenceEvent>) -> Result<u64, sqlx::Error> {
+    /// The events a presence badge could count. When the places cannot be
+    /// read every event is kept: the engine decides again.
+    async fn counted(&self, pool: &PgPool, batch: &mut Vec<PresenceEvent>) {
+        let places = self
+            .places
+            .get_or_fetch((), || async {
+                let now = chrono::Utc::now().timestamp_millis();
+                ActivePlaces::load(pool, now, &self.settings)
+                    .await
+                    .map(Arc::new)
+            })
+            .await;
+        match places {
+            Ok(places) => batch.retain(|e| places.counts(e)),
+            Err(error) => {
+                tracing::warn!(%error, "presence badge places not read; keeping every event")
+            }
+        }
+    }
+
+    /// Stores the counted events of `batch`, trying once more after a pause.
+    async fn store(
+        &self,
+        pool: &PgPool,
+        mut batch: Vec<PresenceEvent>,
+    ) -> Result<u64, sqlx::Error> {
+        self.counted(pool, &mut batch).await;
         retry_once(RETRY_BACKOFF, || insert(pool, &batch)).await
     }
 

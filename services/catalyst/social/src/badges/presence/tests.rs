@@ -806,6 +806,25 @@ async fn the_prune_continues_until_a_short_batch_up_to_its_bound() {
 
 // ── the sink ────────────────────────────────────────────────────────────
 
+impl T {
+    /// Moves a badge's window to `[now + from_h, now + to_h)` of the real
+    /// clock, which is what the sink's places read.
+    async fn window_around_now(&self, id: &str, from_h: i32, to_h: i32) {
+        sqlx::query(
+            "UPDATE social.presence_badges SET \
+               window_start = timezone('UTC', now()) + make_interval(hours => $2), \
+               window_end = timezone('UTC', now()) + make_interval(hours => $3) \
+             WHERE badge_id = $1",
+        )
+        .bind(id)
+        .bind(from_h)
+        .bind(to_h)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+}
+
 fn room_event(identity: &str, event_id: &str) -> RoomEvent {
     RoomEvent {
         kind: RoomEventKind::Joined as i32,
@@ -851,6 +870,8 @@ fn only_wallet_joins_and_leaves_of_scene_and_world_rooms_are_inputs() {
 #[tokio::test]
 async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
     let Some(t) = T::new().await else { return };
+    t.badge("world", At::World(None), 0).await;
+    t.window_around_now("world", -1, 1).await;
     let sink = super::EventSink::with_capacity(2);
     sink.observe_room_event(&room_event(ALICE, "EV_a"));
     sink.observe_room_event(&room_event(ALICE, "EV_a"));
@@ -870,6 +891,39 @@ async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
         rows,
         [("EV_a".into(), "join".into(), "world".into(), "PA_1".into())]
     );
+}
+
+#[tokio::test]
+async fn the_sink_stores_only_events_in_places_a_badge_could_count() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene", At::Scene(PARCEL), 0).await;
+    t.window_around_now("scene", -1, 1).await;
+    // a world badge whose window closed days ago counts nothing now
+    t.badge("world", At::World(None), 0).await;
+    t.window_around_now("world", -240, -216).await;
+    let sink = super::EventSink::default();
+    let scene = |id: &str, scene: &str| RoomEvent {
+        room: format!("scene-{scene}"),
+        room_type: RoomType::Scene as i32,
+        realm_name: REALM.into(),
+        scene_id: scene.into(),
+        ..room_event(ALICE, id)
+    };
+    for event in [
+        room_event(ALICE, "EV_world"),
+        scene("EV_scene", SCENE),
+        scene("EV_redeployed", SCENE_REDEPLOYED),
+        scene("EV_other", OTHER_SCENE),
+    ] {
+        sink.observe_room_event(&event);
+    }
+    assert_eq!(sink.flush(&t.pool).await.unwrap(), 2);
+    let stored: Vec<String> =
+        sqlx::query_scalar("SELECT event_id FROM social.presence_events ORDER BY event_id")
+            .fetch_all(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, ["EV_redeployed", "EV_scene"]);
 }
 
 #[tokio::test]
