@@ -43,10 +43,9 @@ jobs:
             runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
-    runs-on: ${{ contains(matrix.runner, 'windows') && (vars.RUNNER_WINDOWS || matrix.runner)
-      || contains(matrix.runner, 'macos') && (vars.RUNNER_MACOS || matrix.runner)
-      || endsWith(matrix.runner, '-arm') && (vars.RUNNER_LINUX_ARM || matrix.runner)
-      || vars.RUNNER_LINUX || matrix.runner }}
+    runs-on: ${{ matrix.runner == 'ubuntu-24.04' && (vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04')
+      || matrix.runner == 'ubuntu-24.04-arm' && (vars.RUNNER_LINUX_ARM_UBUNTU_24_04 || 'ubuntu-24.04-arm')
+      || matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,7 +82,7 @@ jobs:
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       ((github.event_name == 'push' && vars.QUAY_GATEWAY_REPOSITORY != '') ||
        (github.event_name == 'workflow_dispatch' && inputs.publish))
-    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
     timeout-minutes: 30
     env:
       QUAY_GATEWAY_REPOSITORY: ${{ vars.QUAY_GATEWAY_REPOSITORY }}

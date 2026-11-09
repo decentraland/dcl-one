@@ -23,10 +23,10 @@ jobs:
     concurrency:
       group: headless-build-${{ github.event_name }}-${{ github.ref }}-${{ matrix.platform }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
       cancel-in-progress: true
-    runs-on: ${{ matrix.runner == 'windows-2025' && (vars.RUNNER_WINDOWS || 'windows-2025-16core')
-      || matrix.runner == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15-xlarge')
-      || contains(matrix.runner, 'macos') && (vars.RUNNER_MACOS || matrix.runner)
-      || vars.RUNNER_LINUX || matrix.runner }}
+    runs-on: ${{ matrix.runner == 'windows-2025' && (vars.RUNNER_WINDOWS_16CORE || 'windows-2025-16core')
+      || matrix.runner == 'macos-15' && (vars.RUNNER_MACOS_XLARGE || 'macos-15-xlarge')
+      || matrix.runner == 'ubuntu-22.04' && (vars.RUNNER_LINUX_X86_UBUNTU_22_04 || 'ubuntu-22.04')
+      || matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
