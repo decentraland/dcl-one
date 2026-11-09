@@ -185,6 +185,16 @@ describe("packs", () => {
     let hops = 0;
     const mixed = createFakeShop({ packOrder: () => (++hops === 1 ? { status: 404, body: "Not Found" } : ORDER_NOT_FOUND) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, mixed.client)).toEqual({ status: "missing" });
+    // Nor is an empty answer after the node's "not found": still missing.
+    t = 0;
+    let empties = 0;
+    const blank = createFakeShop({ packOrder: () => (++empties === 2 ? null : ORDER_NOT_FOUND) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, blank.client)).toEqual({ status: "missing" });
+    // A status from the node, then only a gateway's 404s: the order exists, and a payment may still land.
+    t = 0;
+    let after = 0;
+    const known = createFakeShop({ packOrder: () => (++after === 1 ? { status: "processing" } : { status: 404, body: "Not Found" }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, known.client)).toEqual({ status: "pending" });
     // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
     t = 0;
     let calls = 0;
