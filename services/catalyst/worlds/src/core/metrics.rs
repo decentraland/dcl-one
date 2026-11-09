@@ -14,6 +14,7 @@ use super::upload_limits;
 
 pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";
+// prom-client's default (duration-style) buckets, as upstream WKC's metric (set in comms::metrics).
 pub const HTTP_REQUEST_SIZE_BYTES: &str = "http_request_size_bytes";
 pub const WORLD_DEPLOYMENTS_COUNTER: &str = "world_deployments_counter";
 pub const DEPLOYMENT_PROCESSING_STAGE_DURATION_SECONDS: &str =

@@ -199,20 +199,6 @@ pub fn check_freshness(raw: Option<&str>, now_ms: i64) -> Result<f64, AuthChainE
     Ok(timestamp)
 }
 
-pub async fn validate_signature(
-    chain: &AuthChain,
-    payload: &str,
-    now_ms: i64,
-    eip1654_validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, AuthChainError> {
-    crate::auth::verify_auth_chain_async(chain, payload, Some(now_ms), eip1654_validator)
-        .await
-        .map_err(map_auth_error)?;
-    Address::parse(&chain[0].payload).map_err(|_| AuthChainError::MalformedChain {
-        detail: "SIGNER link is not an address".to_string(),
-    })
-}
-
 pub struct VerifiedRequest {
     pub signer: Address,
     pub metadata: SceneAuthMetadata,
@@ -314,23 +300,35 @@ pub fn assert_legacy_metadata_keys(
     Ok(())
 }
 
-/// The one verdict a path attempt may move past is a signature comparison
-/// failure; every other failure is deterministic in the path.
-async fn validate_over_paths(
+/// The chain's final authority. The walk reads the signed payload only at its
+/// last step, the final-authority comparison, so one walk (and its EIP-1654
+/// contract calls) answers every candidate payload; a failure before that step
+/// is the same for every candidate.
+async fn chain_authority(
     chain: &AuthChain,
-    payloads: &[String],
+    probe: &str,
     now_ms: i64,
     validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, AuthChainError> {
-    let mut last = AuthChainError::InvalidSignature("no payload verified".to_string());
-    for payload in payloads {
-        match validate_signature(chain, payload, now_ms, validator).await {
-            Ok(signer) => return Ok(signer),
-            Err(e @ AuthChainError::InvalidSignature(_)) => last = e,
-            Err(other) => return Err(other),
-        }
+) -> Result<String, AuthChainError> {
+    match crate::auth::verify_auth_chain_async(chain, probe, Some(now_ms), validator).await {
+        Ok(()) => Ok(probe.to_string()),
+        Err(AuthError::FinalAuthorityMismatch { actual, .. }) => Ok(actual),
+        Err(e) => Err(map_auth_error(e)),
     }
-    Err(last)
+}
+
+/// Upstream tries the candidates in order and answers the last one's refusal.
+fn match_payloads(authority: &str, payloads: &[String]) -> Result<(), AuthChainError> {
+    if payloads.iter().any(|p| p == authority) {
+        return Ok(());
+    }
+    Err(match payloads.last() {
+        Some(last) => map_auth_error(AuthError::FinalAuthorityMismatch {
+            expected: last.clone(),
+            actual: authority.to_string(),
+        }),
+        None => AuthChainError::InvalidSignature("no payload verified".to_string()),
+    })
 }
 
 /// Stage order as upstream's `verify()`: chain, timestamp, freshness,
@@ -363,8 +361,14 @@ pub async fn verify_request(
         .iter()
         .map(|p| build_payload_v6(method, p, &ts, signed_metadata))
         .collect();
-    let signer = match validate_over_paths(&chain, &v6, now_ms, eip1654_validator).await {
-        Ok(signer) => signer,
+    let probe = v6.first().map_or("", String::as_str);
+    let authority = chain_authority(&chain, probe, now_ms, eip1654_validator).await;
+    let v6_verdict = match &authority {
+        Ok(authority) => match_payloads(authority, &v6),
+        Err(err) => Err(err.clone()),
+    };
+    match v6_verdict {
+        Ok(()) => {}
         Err(err @ AuthChainError::InvalidSignature(_)) => {
             assert_legacy_metadata_keys(&metadata, CANONICAL_METADATA_KEYS)?;
             let legacy: Vec<String> = paths
@@ -374,10 +378,14 @@ pub async fn verify_request(
             if legacy == v6 {
                 return Err(err);
             }
-            validate_over_paths(&chain, &legacy, now_ms, eip1654_validator).await?
+            // A chain failure answers the legacy attempt the same way.
+            match_payloads(&authority?, &legacy)?;
         }
         Err(err) => return Err(err),
-    };
+    }
+    let signer = Address::parse(&chain[0].payload).map_err(|_| AuthChainError::MalformedChain {
+        detail: "SIGNER link is not an address".to_string(),
+    })?;
 
     Ok(VerifiedRequest {
         signer,
@@ -649,5 +657,144 @@ mod tests {
         assert_eq!(m.realm(), None);
         assert_eq!(m.parcel(), Some(&JsValue::String("1,2".into())));
         assert_eq!(m.scene_id(), Some("c"), "JSON.parse keeps the last value");
+    }
+
+    /// A contract wallet answering every `isValidSignature` with `valid`.
+    struct CountingValidator {
+        valid: bool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Eip1654Validator for CountingValidator {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, AuthError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.valid)
+        }
+    }
+
+    const CONTRACT: &str = "0x00000000000000000000000000000000000c0de1";
+    // Mixed case, so the legacy (all-lowercase) payload differs from the 6.x one.
+    const METADATA: &str = r#"{"sceneId":"bafkreiABC"}"#;
+
+    fn paths() -> Vec<String> {
+        ["/world-storage/values/k", "/values/k", "/values/k/"]
+            .map(String::from)
+            .to_vec()
+    }
+
+    /// SIGNER (contract) -> EIP-1654 ephemeral -> the request payload the
+    /// ephemeral key signs; `expires_in_ms` places the link's expiration.
+    fn contract_wallet_headers(signed: impl Fn(&str) -> String, expires_in_ms: i64) -> HeaderMap {
+        let ephemeral = crate::auth::wallet::Wallet::random().unwrap();
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let expiration = (chrono::Utc::now() + chrono::Duration::milliseconds(expires_in_ms))
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ");
+        let payload = signed(&timestamp);
+        let links = [
+            serde_json::json!({"type": "SIGNER", "payload": CONTRACT, "signature": ""}),
+            serde_json::json!({"type": "ECDSA_EIP_1654_EPHEMERAL",
+                "payload": format!("Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}", ephemeral.address()),
+                "signature": format!("0x{}", "11".repeat(65))}),
+            serde_json::json!({"type": "ECDSA_SIGNED_ENTITY", "payload": payload,
+                "signature": ephemeral.sign_message(payload.as_bytes()).unwrap()}),
+        ];
+        let mut headers = HeaderMap::new();
+        for (index, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+                link.to_string().parse().unwrap(),
+            );
+        }
+        headers.insert(AUTH_TIMESTAMP_HEADER, timestamp.parse().unwrap());
+        headers.insert(AUTH_METADATA_HEADER, METADATA.parse().unwrap());
+        headers
+    }
+
+    async fn verify_counting(
+        headers: &HeaderMap,
+        valid: bool,
+    ) -> (Result<VerifiedRequest, AuthChainError>, usize) {
+        let validator = CountingValidator {
+            valid,
+            calls: Default::default(),
+        };
+        let result = verify_request(headers, "get", &paths(), Some(&validator)).await;
+        (result, validator.calls.into_inner())
+    }
+
+    #[tokio::test]
+    async fn a_rejected_contract_link_is_asked_once_across_every_candidate() {
+        let headers = contract_wallet_headers(
+            |ts| build_payload_v6("get", "/values/k", ts, METADATA),
+            3_600_000,
+        );
+        let (result, calls) = verify_counting(&headers, false).await;
+        // One verify_eip1654: the raw hash, then the EIP-191 hash.
+        assert_eq!(calls, 2);
+        let Err(err) = result else {
+            panic!("a rejected contract link verified")
+        };
+        assert_eq!(
+            err,
+            map_auth_error(AuthError::Eip1654Rejected {
+                contract: CONTRACT.to_string()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_expired_contract_link_asks_no_contract_and_answers_once() {
+        let headers = contract_wallet_headers(
+            |ts| build_payload_v6("get", "/values/k", ts, METADATA),
+            -1_000,
+        );
+        let (result, calls) = verify_counting(&headers, true).await;
+        assert_eq!(calls, 0);
+        let Err(err @ AuthChainError::InvalidSignature(_)) = result else {
+            panic!("an expired link verified")
+        };
+        assert!(
+            err.raw_message().contains("Ephemeral key expired"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_accepted_contract_link_is_asked_once_whichever_candidate_matches() {
+        for (signed, accepted) in [
+            (
+                build_payload_v6 as fn(&str, &str, &str, &str) -> String,
+                "/values/k/",
+            ),
+            (build_legacy_payload, "/values/k/"),
+            (build_payload_v6, "/elsewhere"),
+        ] {
+            let headers =
+                contract_wallet_headers(|ts| signed("get", accepted, ts, METADATA), 3_600_000);
+            let ts = headers[AUTH_TIMESTAMP_HEADER].to_str().unwrap().to_string();
+            let (result, calls) = verify_counting(&headers, true).await;
+            assert_eq!(calls, 1, "{accepted}");
+            if accepted == "/elsewhere" {
+                // Upstream's refusal names the last candidate it tried.
+                let Err(err) = result else {
+                    panic!("a payload no candidate signs verified")
+                };
+                assert_eq!(
+                    err,
+                    map_auth_error(AuthError::FinalAuthorityMismatch {
+                        expected: build_legacy_payload("get", "/values/k/", &ts, METADATA),
+                        actual: signed("get", accepted, &ts, METADATA),
+                    })
+                );
+            } else {
+                assert_eq!(result.unwrap().signer.to_string(), CONTRACT);
+            }
+        }
     }
 }
