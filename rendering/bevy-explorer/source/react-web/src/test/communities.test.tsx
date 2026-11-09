@@ -55,4 +55,51 @@ describe('communities domain', () => {
     expect(h.session().communities.detail?.id).toBe('c1')
     expect(h.session().communities.detail?.members).toHaveLength(1)
   })
+
+  // A save's answer belongs to the form that asked: one that comes after the form closed is dropped.
+  it('drops a save answer that arrives after the form closed', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true }))
+    expect(h.session().communities.save).toEqual({ status: 'saving' })
+    act(() => h.session().communities.clearSave())
+    act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'create', id: 'late' }))
+    expect(h.session().communities.save).toBeNull()
+  })
+
+  it('keeps the answer to the save in flight', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true }))
+    act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'create', id: 'c-new' }))
+    expect(h.session().communities.save).toEqual({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', id: 'c-new' } })
+  })
+
+  // The picture's URL does not change on update, so the saved picture is shown from then on.
+  it('shows a picture saved by an edit, also after the list is read again', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const withThumb = { ...community, thumbnail: 'https://cdn/c1.png' }
+    act(() => h.driver.emit({ kind: 'communities', communities: [withThumb] }))
+    act(() => h.session().communities.update({ id: 'c1', thumbnail: 'data:image/png;base64,AAAA' }))
+    act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'update', id: 'c1' }))
+    expect(h.session().communities.list[0].thumbnail).toBe('data:image/png;base64,AAAA')
+    act(() => h.driver.emit({ kind: 'communities', communities: [withThumb] }))
+    expect(h.session().communities.list[0].thumbnail).toBe('data:image/png;base64,AAAA')
+  })
+
+  it('logout forgets the save, the deleted community and saved pictures', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const withThumb = { ...community, thumbnail: 'https://cdn/c1.png' }
+    act(() => h.driver.emit({ kind: 'communities', communities: [withThumb] }))
+    act(() => h.session().communities.update({ id: 'c1', thumbnail: 'data:image/png;base64,AAAA' }))
+    act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'update', id: 'c1' }))
+    act(() => h.driver.emit({ kind: 'communityDeleted', id: 'c2' }))
+    act(() => h.session().logout())
+    expect(h.session().communities.save).toBeNull()
+    expect(h.session().communities.deleted).toBeNull()
+    act(() => h.driver.emit({ kind: 'communities', communities: [withThumb] }))
+    expect(h.session().communities.list[0].thumbnail).toBe('https://cdn/c1.png')
+  })
 })
