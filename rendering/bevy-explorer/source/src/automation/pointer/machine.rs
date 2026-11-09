@@ -2,9 +2,7 @@
 //! frame by frame, and the refusals and diagnoses it words.
 
 use common::inputs::InputIdentifier;
-use scene_runner::update_scene::pointer_results::CURSOR_RAY_MAX_DISTANCE;
 
-const BEYOND_RAY: &str = "beyond 100 m";
 pub(super) const ENTITY_NOT_LIVE: &str = "entity not live";
 pub(super) const HUD_HOLDS_INPUT: &str = "input held by the HUD";
 
@@ -52,8 +50,6 @@ pub struct Observed {
     pub release_played: bool,
     /// the scene still maps the entity to the aimed bevy entity
     pub entity_live: bool,
-    /// from the camera to the aimed point, when the entity has one
-    pub anchor_distance: Option<f32>,
 }
 
 impl Default for Observed {
@@ -65,7 +61,6 @@ impl Default for Observed {
             up_logged: false,
             release_played: false,
             entity_live: true,
-            anchor_distance: None,
         }
     }
 }
@@ -164,12 +159,6 @@ impl ClickMachine {
                 vec![Effect::Release]
             }
             Stage::Target => match observed.target {
-                None if observed
-                    .anchor_distance
-                    .is_some_and(|distance| distance > CURSOR_RAY_MAX_DISTANCE) =>
-                {
-                    self.finish(Err(BEYOND_RAY.to_owned()))
-                }
                 None => Vec::new(),
                 Some(target) if !target.matches(self.entity) => {
                     self.finish(Err(format!("blocked by entity {}", target.container)))
@@ -419,6 +408,10 @@ mod tests {
             binding_error("pointer", &InputIdentifier::Mouse(MouseButton::Left)),
             None
         );
+        assert_eq!(
+            binding_error("primary", &InputIdentifier::Key(KeyCode::KeyE)),
+            None
+        );
     }
 
     #[test]
@@ -475,13 +468,7 @@ mod tests {
     fn target_waits_for_a_loading_collider() {
         let mut m = ClickMachine::new(ClickKind::Click, 7, 600, 0);
         for frame in 2..6 {
-            let fx = m.step(
-                frame,
-                Observed {
-                    anchor_distance: Some(8.0),
-                    ..Default::default()
-                },
-            );
+            let fx = m.step(frame, Observed::default());
             assert!(fx.is_empty(), "frame {frame}: {fx:?}");
         }
         assert_eq!(
@@ -489,7 +476,6 @@ mod tests {
                 6,
                 Observed {
                     target: seen(7),
-                    anchor_distance: Some(8.0),
                     ..Default::default()
                 }
             ),
@@ -607,39 +593,6 @@ mod tests {
         assert!(gone.holds_press());
         // a finished machine stays finished
         assert!(gone.step(3, Observed::default()).is_empty());
-    }
-
-    #[test]
-    fn a_miss_past_the_rays_reach_reads_beyond_100_m() {
-        let miss = |distance| Observed {
-            anchor_distance: distance,
-            ..Default::default()
-        };
-        let mut far = ClickMachine::new(ClickKind::Hover(30), 7, 600, 0);
-        assert_eq!(
-            far.step(2, miss(Some(150.0))),
-            vec![Effect::Finish(Err("beyond 100 m".into()))]
-        );
-        let mut near = ClickMachine::new(ClickKind::Hover(30), 7, 600, 0);
-        assert!(near.step(2, miss(Some(50.0))).is_empty());
-        assert!(near.step(3, miss(None)).is_empty());
-        // a resolved target that is not the entity is blocked, however far the aimed point
-        let mut blocked = ClickMachine::new(ClickKind::Click, 7, 600, 0);
-        assert_eq!(
-            blocked.step(
-                2,
-                Observed {
-                    target: seen(9),
-                    anchor_distance: Some(150.0),
-                    ..Default::default()
-                }
-            ),
-            vec![Effect::Finish(Err("blocked by entity 9".into()))]
-        );
-        assert_eq!(
-            binding_error("primary", &InputIdentifier::Key(KeyCode::KeyE)),
-            None
-        );
     }
 
     #[test]

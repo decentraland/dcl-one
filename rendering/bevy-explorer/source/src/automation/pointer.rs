@@ -30,7 +30,6 @@ use common::{
     inputs::{CommonInputAction, InputIdentifier, InputMap},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
-    structs::PrimaryCamera,
 };
 use console::{DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::{proto_components::sdk::components::common::PointerEventType, SceneEntityId};
@@ -200,7 +199,6 @@ pub struct Job {
     scene: Entity,
     entity: SceneEntityId,
     target: Entity,
-    anchor: Anchor,
     started: u32,
     // what the frames since the start saw, so an aim that expires loses nothing
     hit: Option<HitReport>,
@@ -471,14 +469,9 @@ impl PointerControl<'_, '_> {
         }
 
         let frame = self.frame.0;
-        let (scene, target, anchor, binding) = if let Some(held) = self.jobs.held.take() {
+        let (scene, target, binding) = if let Some(held) = self.jobs.held.take() {
             // an up releases the held press on the aim the down left open
-            let anchor = self
-                .synthetic
-                .0
-                .as_ref()
-                .map_or(Anchor::Origin, |aim| aim.anchor);
-            (held.scene, held.target, anchor, Some(held.binding))
+            (held.scene, held.target, Some(held.binding))
         } else {
             let (scene, ctx) = match self.resolver.resolve() {
                 Ok(resolved) => resolved,
@@ -516,7 +509,7 @@ impl PointerControl<'_, '_> {
                 hold,
                 started_frame: frame,
             });
-            (scene, target, anchor, request.binding)
+            (scene, target, request.binding)
         };
         self.log.0.clear();
 
@@ -528,7 +521,6 @@ impl PointerControl<'_, '_> {
             scene,
             entity: id,
             target,
-            anchor,
             started: frame,
             hit: None,
             entries: Vec::new(),
@@ -701,10 +693,6 @@ fn drive_pointer_job(
     ids: Query<(Option<&SceneEntity>, Option<&ContainerEntity>)>,
     parents: Query<&ChildOf>,
     pointer_events: Query<&PointerEvents>,
-    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
-    transforms: Query<&GlobalTransform>,
-    meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
-    children: Query<&Children>,
 ) {
     let frame = frame.0;
     let Some(job) = jobs.job.as_mut() else {
@@ -769,15 +757,6 @@ fn drive_pointer_job(
     };
     let ctx = scenes.get(job.scene).ok();
     let target = seen.map(|(_, seen)| seen);
-    // only a missing target needs it, to tell a loading collider from one past the ray's reach
-    let anchor_distance = if target.is_none() {
-        camera.single().ok().and_then(|camera| {
-            anchor_point(job.target, job.anchor, &transforms, &meshes, &children)
-                .map(|point| point.distance(camera.translation()))
-        })
-    } else {
-        None
-    };
     let observed = Observed {
         target,
         scene_tick: ctx.map(|ctx| ctx.tick_number),
@@ -785,7 +764,6 @@ fn drive_pointer_job(
         up_logged: logged(PointerEventType::PetUp),
         release_played: job.release_step.is_some_and(|step| script.played() >= step),
         entity_live: ctx.and_then(|ctx| ctx.bevy_entity(job.entity)) == Some(job.target),
-        anchor_distance,
     };
 
     let mut finished = None;

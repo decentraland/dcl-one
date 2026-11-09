@@ -43,7 +43,6 @@ use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
-use raycast_budget::RaycastBudgetSetting;
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
 use video_threads::VideoThreadsSetting;
@@ -75,7 +74,6 @@ pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
-pub mod raycast_budget;
 #[cfg(target_arch = "wasm32")]
 pub mod render_scale_setting;
 pub mod scene_threads;
@@ -222,8 +220,6 @@ impl Plugin for SettingBridgePlugin {
 
         add_int_setting::<VideoThreadsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxDownloadsSetting>(app, &mut settings, &mut schedule, &config);
-        add_int_setting::<RaycastBudgetSetting>(app, &mut settings, &mut schedule, &config);
-        raycast_budget::register(app);
         // Only the native IPFS disk cache is trimmed against this setting.
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);

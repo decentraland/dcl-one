@@ -13,38 +13,43 @@ Paths are relative to `source/`; the pointer code is in `crates/scene_runner/src
 | Proximity reach | 3 m from the player, for a PROXIMITY entry that sets no distance | `PROXIMITY_DEFAULT_MAX_DISTANCE` |
 | Proximity cone | 120 degrees wide, horizontal, around the body's forward direction | `PROXIMITY_FOV_ANGLE_DEGREES` |
 | Scenes considered | The scenes within 16 m of the player (`get_area(player, PARCEL_SIZE)`) | `pointer_results.rs`, `update_pointer_target` |
-| Cursor ray | 100 m from the camera; a scene entity farther away is never hovered or clicked, whatever its `max_camera_distance` | `CURSOR_RAY_MAX_DISTANCE` |
-
-The trigger-area ray (`update_world/trigger_area.rs`) does not use the 100 m limit.
+| Cursor ray | Unbounded: it ends at the first hit in the scenes considered, and the entry's distances decide whether that hit is in reach | `pointer_results.rs`, `update_pointer_target` |
 
 ## Scene raycasts
 
-Every scene's raycast requests share one time budget per frame (`update_scene/raycast_budget.rs`,
+Scene raycast requests run in two tiers each frame (`update_scene/raycast_budget.rs`,
 `raycast_result.rs`).
 
-- **Budget.** `raycast_budget_ms` in `AppConfig`, 2 by default, an integer from 0 to 10. It is the
-  "Raycast budget" setting (Performance category) and the `/raycast_budget [ms]` command: without
-  an argument it answers `raycast budget: <n> ms`; a value over 10 fails with `raycast budget must
-  be between 0 and 10 ms`; a larger value written into the config file by hand counts as 10.
-- **Order.** Requests due this frame run in this order: requests deferred for 60 frames or more
-  first (the longest-deferred first), so a scene that fills the budget every frame cannot starve the
-  others; then the player's scene, then lower scene priority (the nearer scene), then requests that
-  never ran, then the longest-waiting, then entity id so the order is stable.
-- **Deferral.** Casting stops once the time spent reaches the budget. A cast that starts under
-  budget finishes, so the last one may cross the line. The requests left wait for a later frame;
-  none is dropped.
-- **At least one per frame.** A budget of 0 runs one raycast per frame.
-- **`/raycast_stats`.** JSON for the last frame that had at least one raycast to cast (frames
-  between scene ticks usually have none and leave it as it was): `budgetMs`, `ran`, `deferred` and
-  `spentMs`.
-- **Debug panel.** The "Raycasts" section shows the same four values and has a number input for
-  the budget (0 to 10) that sends `/raycast_budget`.
+- **Uncapped.** Requests of the system scene (`SuperUserScene`), every portable and the scenes the
+  player stands in (`get_area(player, PLAYER_COLLIDER_RADIUS)`) all run every frame they are due.
+  Scenes drive movement from their results (`movement-scene` casts continuous `RS_AVATAR` rays for
+  ground and walls), so these never wait.
+- **Capped.** Requests of every other scene run nearest scene first (`RendererSceneContext::priority`),
+  then the one that ran longest ago (never-run first), then entity id, while the time spent is
+  under the budget. A cast that starts under budget finishes, so the last one may cross the line.
+  The rest wait for a later frame. When the player walks into a capped scene it becomes uncapped,
+  so its requests run then.
+- **Budget.** A tenth of the target frame: `SceneUpdates::frame_target`, which `run_scene_loop`
+  sets from the vsync refresh rate or the fps target (with the session override). That is 1.67 ms
+  at 60 fps, 0.69 ms at 144 and 0.42 ms at 240. It follows the target, not the measured frame, so a
+  slow frame does not raise the next one's budget. Raycasts run before the scene loop, so they use
+  the previous frame's target. With an uncapped frame rate (fps 0) it is a tenth of a 60 fps frame.
+- **`/raycast_budget [ms|auto]`.** Without an argument it answers
+  `raycast budget: <ms> ms (auto|override)`. A value from 0 to 10 overrides the capped budget for
+  the session (0 defers every capped request); `auto` returns it to the frame share. Anything else
+  fails with ``raycast budget must be `auto` or between 0 and 10 ms``. It is not a setting.
+- **`/raycast_stats`.** JSON: `budgetMs`, and for the capped tier's last frame with a request to
+  cast `ran`, `deferred` and `spentMs`; for the uncapped tier's last such frame `uncappedRan` and
+  `uncappedSpentMs`. A frame with nothing due in a tier (most frames between scene ticks) leaves
+  that tier's values as they were.
+- **Debug panel.** The "Raycasts" section shows those values, has a number input that overrides
+  the capped budget (0 to 10) and an "Automatic budget" action that sends `/raycast_budget auto`.
 
 ### Unity reference
 
-unity-explorer casts one 100 m camera ray per frame, shares a 3 ms raycast budget between scene
-worlds, runs scene raycasts for the current scene only, and defers the ones that do not fit. Ours
-differ on purpose: see [Decisions](decisions.md).
+unity-explorer casts one 100 m camera ray per frame, caps scene raycasts at 3 ms, runs them for the
+current scene only, and defers the ones that do not fit. Ours differ on purpose: see
+[Decisions](decisions.md).
 
 ## Driving the pointer
 
@@ -109,10 +114,9 @@ A diagnosis is a resolved reply with `diagnosis` set, not a failure: read it fro
 | `diagnosis` | Meaning |
 | --- | --- |
 | `blocked by entity <id>` | The ray hit another entity's collider first; `<id>` is that container |
-| `beyond 100 m` | No collider hit, and the aimed point is past the 100 m cursor ray |
 | `entity not live` | The scene has no live entity for the id, or it was replaced while the job ran |
 | `input held by the HUD` | The HUD holds the bound input, so the press would not reach the scene |
-| `timed out waiting for <stage>` | The job passed its deadline; `<stage>` is `target` (the ray hit nothing within 100 m before the deadline: no collider, or one still loading), `hover` (a hover did not finish), `tick` (the scene never logged the press) or `release` (the release was never played) |
+| `timed out waiting for <stage>` | The job passed its deadline; `<stage>` is `target` (the ray hit nothing before the deadline: no collider, or one still loading), `hover` (a hover did not finish), `tick` (the scene never logged the press) or `release` (the release was never played) |
 
 ### Refusals
 

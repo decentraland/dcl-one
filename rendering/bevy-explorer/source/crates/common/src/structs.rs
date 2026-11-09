@@ -588,9 +588,6 @@ pub struct AppConfig {
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
-    /// Milliseconds per frame scene raycasts may spend before the rest wait for a later frame;
-    /// at least one raycast runs every frame.
-    pub raycast_budget_ms: u32,
     pub user_id: String,
     pub default_permissions: HashMap<PermissionType, PermissionValue>,
     pub realm_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
@@ -654,7 +651,6 @@ impl Default for AppConfig {
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,
-            raycast_budget_ms: 2,
             user_id: uuid::Uuid::new_v4().to_string(),
             default_permissions: Default::default(),
             realm_permissions: Default::default(),

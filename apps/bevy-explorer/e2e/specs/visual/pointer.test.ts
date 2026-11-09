@@ -1,8 +1,8 @@
 // The pointer pipeline, driven through `/hover_entity` and `/click_entity` on the
 // `pointer-targets` scene (`scenes/pointer-targets`): a hover reports the hit and its hover
 // entries, a click reaches the scene as a Down and an Up on different ticks, a wall blocks the
-// box behind it, the cursor ray ends at 100 m, a 50 m target with a camera-distance reach hovers,
-// and a glTF model is clicked by its container entity.
+// box behind it, a 50 m target with a camera-distance reach hovers, and a glTF model is clicked
+// by its container entity.
 //
 // Each scenario teleports to the scene and waits for its `pointer-targets ready` log line; the
 // targets are found by their hover text (`/scene_entities PointerEvents`, then each one's
@@ -97,18 +97,6 @@ scenario(
     t.diagnostic(JSON.stringify(report))
     assert.match(report.diagnosis ?? '', /^blocked by entity \d+$/)
     assert.deepEqual(report.events, [])
-  },
-  { session: SESSION, timeoutMs: SCENARIO_TIMEOUT_MS }
-)
-
-scenario(
-  'the box at 150 m is beyond the cursor ray',
-  async ({ explorer, t }) => {
-    await arrive(explorer)
-    const beyond = await entityNamed(explorer, 'Beyond')
-    const report = await explorer.hoverEntity(beyond, { bounds: true })
-    t.diagnostic(JSON.stringify(report))
-    assert.equal(report.diagnosis, 'beyond 100 m')
   },
   { session: SESSION, timeoutMs: SCENARIO_TIMEOUT_MS }
 )

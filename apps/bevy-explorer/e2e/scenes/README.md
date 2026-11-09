@@ -30,9 +30,8 @@ reference:
 - `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)` facing +X: the targets of
   `specs/visual/pointer.test.ts`, which hovers and clicks them through `/hover_entity` and
   `/click_entity`. A near box with a Down and an Up (`Near`), a wall and the box it hides
-  (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`), a box
-  150 m out past the cursor ray (`Beyond`) and the avocado glTF (`Model`, its pointer events on
-  the container). It logs `pointer-targets ready` once the entities exist, then
+  (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`) and
+  the avocado glTF (`Model`, its pointer events on the container). It logs `pointer-targets ready` once the entities exist, then
   `pointer down entity=<id> tick=<tick>` and `pointer up entity=<id> tick=<tick>` once per new
   input command on a target.
 - `raycast-storm`, parcel `0,22`: 200 invisible entities in a 10 by 20 grid, each with a

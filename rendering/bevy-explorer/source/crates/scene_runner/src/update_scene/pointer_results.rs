@@ -323,11 +323,6 @@ pub struct ProximityCandidate {
     pub entity_position: Vec3,
 }
 
-/// The cursor ray stops at 100 m: a scene entity farther away is never hovered or
-/// clicked, whatever its `max_camera_distance`. The trigger-area ray
-/// (`update_world/trigger_area.rs`) is deliberately untouched.
-pub const CURSOR_RAY_MAX_DISTANCE: f32 = 100.0;
-
 #[allow(clippy::too_many_arguments)]
 fn update_pointer_target(
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
@@ -400,7 +395,7 @@ fn update_pointer_target(
                 let maybe_nearest = collider_data.cast_ray_nearest(
                     ray.origin,
                     ray.direction.into(),
-                    CURSOR_RAY_MAX_DISTANCE,
+                    f32::MAX,
                     ColliderLayer::ClPointer as u32,
                     true,
                     false,
@@ -426,7 +421,7 @@ fn update_pointer_target(
         maybe_nearest_hit
             .as_ref()
             .map(|(_, hit)| hit.toi)
-            .unwrap_or(CURSOR_RAY_MAX_DISTANCE),
+            .unwrap_or(f32::MAX),
         u32::MAX,
         true,
         false,

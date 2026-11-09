@@ -30,11 +30,14 @@ export interface PointerReport {
   diagnosis: string | null
 }
 
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
 export interface RaycastStats {
   budgetMs: number
   ran: number
   deferred: number
   spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
 }
 
 export interface Control {
@@ -427,7 +430,7 @@ export class Explorer {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
   }
 
-  /** Aims the pointer at an entity and reports what it hovers; a blocked or beyond outcome resolves with `diagnosis` set; a refusal rejects. */
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
   hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
     let line = `/hover_entity ${entity}`
     if (options.bounds) line += ' --bounds'
@@ -456,10 +459,10 @@ export class Explorer {
     return this.json<RaycastStats>('/raycast_stats')
   }
 
-  /** The raycast budget in ms; with `ms`, sets it first. */
-  async raycastBudget(ms?: number): Promise<number> {
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
     const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
-    const match = /^raycast budget: ([0-9.]+) ms$/.exec(reply.trim())
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
     if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
     return Number(match[1])
   }

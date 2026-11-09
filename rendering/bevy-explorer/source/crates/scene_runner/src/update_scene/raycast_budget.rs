@@ -1,133 +1,183 @@
-//! Ordering and per-frame time budget for scene raycasts. Requests deferred for 60 frames or more
-//! go first, then those in the player's scene, then by scene priority, then the longest-waiting;
-//! casting stops once the frame's budget is spent and the rest wait for a later frame.
+//! Per-frame time cap for the raycasts of scenes the player is not in. Raycasts of the system
+//! scene, every portable and the scenes the player stands in run every frame without a cap, as
+//! scenes drive movement and other frame-sensitive logic from their results. The rest are capped
+//! at a tenth of the target frame and run nearest scene first, then the longest since it last ran;
+//! what does not fit waits for a later frame. A capped scene becomes uncapped once the player
+//! enters it, so no capped request can hold back the scene the player is in.
 
 use std::{cmp::Ordering, time::Duration};
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::AppConfig;
 use web_time::Instant;
 
-/// What the raycast pass did on the last frame that had at least one eligible raycast: casts run,
-/// casts left for a later frame, and the time spent casting. A frame with nothing to cast (most
-/// frames between scene ticks) leaves it as it was.
-#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
-pub struct RaycastStats {
+use crate::SceneUpdates;
+
+/// The capped tier may spend one tenth of the target frame.
+pub const BUDGET_DIVISOR: u32 = 10;
+
+/// The frame length assumed when the frame rate is uncapped: 60 fps.
+pub const UNCAPPED_FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
+
+/// The most `/raycast_budget` can set, in milliseconds.
+pub const MAX_OVERRIDE_MS: f32 = 10.0;
+
+/// What one tier of the raycast pass did on the last frame it had at least one eligible raycast:
+/// casts run, casts left for a later frame, and the time spent casting. A frame with nothing to
+/// cast in the tier (most frames between scene ticks) leaves it as it was.
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub struct TierStats {
     pub ran: u32,
     pub deferred: u32,
     pub spent: Duration,
 }
 
-/// Report, as JSON, what the raycast pass did on the last frame that had at least one raycast to
-/// cast: `budgetMs`, `ran`, `deferred` and `spentMs`.
+/// The last pass of each tier, and the budget the capped tier ran under.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct RaycastStats {
+    pub budget: Duration,
+    pub capped: TierStats,
+    pub uncapped: TierStats,
+}
+
+/// A console override of the capped tier's budget, for tests and the debug panel; None follows
+/// the target frame.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct RaycastBudgetOverride(pub Option<Duration>);
+
+/// The capped tier's budget: the override, or a tenth of the target frame (of 60 fps when the
+/// frame rate is uncapped). The target, not the measured frame, so a slow frame does not raise
+/// the next frame's budget.
+pub fn budget(frame_target: Option<Duration>, budget_override: RaycastBudgetOverride) -> Duration {
+    budget_override
+        .0
+        .unwrap_or_else(|| frame_target.unwrap_or(UNCAPPED_FRAME) / BUDGET_DIVISOR)
+}
+
+/// Report, as JSON, the capped tier's `budgetMs` and its last pass (`ran`, `deferred`,
+/// `spentMs`), and the uncapped tier's last pass (`uncappedRan`, `uncappedSpentMs`).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/raycast_stats")]
 pub(super) struct RaycastStatsCommand;
 
+fn ms(duration: Duration) -> f32 {
+    duration.as_secs_f32() * 1000.0
+}
+
 pub(super) fn raycast_stats(
     mut input: ConsoleCommand<RaycastStatsCommand>,
     stats: Res<RaycastStats>,
-    config: Res<AppConfig>,
 ) {
     if let Some(Ok(_)) = input.take() {
         input.reply_ok(
             serde_json::json!({
-                "budgetMs": config.raycast_budget_ms,
-                "ran": stats.ran,
-                "deferred": stats.deferred,
-                "spentMs": stats.spent.as_secs_f32() * 1000.0,
+                "budgetMs": ms(stats.budget),
+                "ran": stats.capped.ran,
+                "deferred": stats.capped.deferred,
+                "spentMs": ms(stats.capped.spent),
+                "uncappedRan": stats.uncapped.ran,
+                "uncappedSpentMs": ms(stats.uncapped.spent),
             })
             .to_string(),
         );
     }
 }
 
-/// The most a hand-edited `raycast_budget_ms` can make the budget, as the setting's range allows.
-pub const MAX_BUDGET_MS: u32 = 10;
-
-/// A request deferred for this many frames is starved and runs ahead of the scene order.
-pub const STARVED_AFTER_FRAMES: u32 = 60;
-
-/// The frame's budget for a configured `raycast_budget_ms`, capped at [`MAX_BUDGET_MS`].
-pub fn budget(raycast_budget_ms: u32) -> Duration {
-    Duration::from_millis(raycast_budget_ms.min(MAX_BUDGET_MS) as u64)
+/// Show the capped raycast tier's per-frame budget, override it in milliseconds (0 to 10), or
+/// return it to a tenth of the target frame with `auto`.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/raycast_budget")]
+pub(super) struct RaycastBudgetCommand {
+    /// Milliseconds, or `auto`
+    value: Option<String>,
 }
 
-/// The fields a pending raycast request is ordered by.
+/// The override `/raycast_budget <value>` asks for.
+pub fn parse_override(value: &str) -> Result<RaycastBudgetOverride, String> {
+    if value == "auto" {
+        return Ok(RaycastBudgetOverride(None));
+    }
+    match value.parse::<f32>() {
+        Ok(ms) if (0.0..=MAX_OVERRIDE_MS).contains(&ms) => Ok(RaycastBudgetOverride(Some(
+            Duration::from_secs_f32(ms / 1000.0),
+        ))),
+        _ => Err(format!(
+            "raycast budget must be `auto` or between 0 and {MAX_OVERRIDE_MS} ms"
+        )),
+    }
+}
+
+pub(super) fn raycast_budget(
+    mut input: ConsoleCommand<RaycastBudgetCommand>,
+    mut budget_override: ResMut<RaycastBudgetOverride>,
+    updates: Res<SceneUpdates>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        if let Some(value) = command.value {
+            match parse_override(&value) {
+                Ok(value) => *budget_override = value,
+                Err(e) => {
+                    input.reply_failed(e);
+                    return;
+                }
+            }
+        }
+        let mode = if budget_override.0.is_some() {
+            "override"
+        } else {
+            "auto"
+        };
+        input.reply_ok(format!(
+            "raycast budget: {:.2} ms ({mode})",
+            ms(budget(updates.frame_target, *budget_override))
+        ));
+    }
+}
+
+/// The fields a pending capped raycast request is ordered by.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Candidate {
-    /// The frame the request was first deferred on, 0 if it is not waiting.
-    pub deferred_since: u32,
-    /// The request's scene contains the player.
-    pub in_player_scene: bool,
-    /// The scene's `RendererSceneContext::priority` (lower runs sooner).
+    /// The scene's `RendererSceneContext::priority`, its squared distance (lower runs sooner).
     pub priority: f32,
-    /// The frame the request last ran, 0 if never.
+    /// The scene frame the request last ran, 0 if never.
     pub last_run: u32,
     /// Final tie-break so the order is stable across frames.
     pub entity_id: u32,
 }
 
-impl Candidate {
-    /// Deferred for [`STARVED_AFTER_FRAMES`] or more as of `frame`.
-    pub fn starved(&self, frame: u32) -> bool {
-        self.deferred_since != 0
-            && frame.saturating_sub(self.deferred_since) >= STARVED_AFTER_FRAMES
-    }
-}
-
-/// Starved requests first (the longest-deferred first), so a scene that fills the budget every
-/// frame cannot hold the others back forever; then the player's scene, then lower priority, then
-/// never-run, then the oldest run, then entity id. `frame` is the current engine frame.
-pub fn candidate_order(a: &Candidate, b: &Candidate, frame: u32) -> Ordering {
-    let (a_starved, b_starved) = (a.starved(frame), b.starved(frame));
-    b_starved
-        .cmp(&a_starved)
-        .then_with(|| {
-            if a_starved && b_starved {
-                a.deferred_since.cmp(&b.deferred_since)
-            } else {
-                Ordering::Equal
-            }
-        })
-        .then_with(|| b.in_player_scene.cmp(&a.in_player_scene))
-        .then_with(|| a.priority.total_cmp(&b.priority))
-        .then_with(|| (a.last_run != 0).cmp(&(b.last_run != 0)))
+/// The nearest scene first, then the longest since it last ran (never-run first), then entity id.
+pub fn candidate_order(a: &Candidate, b: &Candidate) -> Ordering {
+    a.priority
+        .total_cmp(&b.priority)
         .then_with(|| a.last_run.cmp(&b.last_run))
         .then_with(|| a.entity_id.cmp(&b.entity_id))
 }
 
-/// Runs `items` in order until `budget` is spent, always running at least one. `now` is read once
-/// before the first item and once after each `run`; an item starts only while the time spent is
-/// under budget, so the item that crosses the line still finishes. `run` returns `false` when it
-/// declined the item, which then counts as neither ran nor deferred. Items left when the budget
-/// runs out count as deferred. `spent` is zero when no item ran.
+/// Runs `items` in order while the time spent is under `budget`. `now` is read once before the
+/// first item and once after each `run`; the item that crosses the line still finishes. `run`
+/// returns `false` when it declined the item, which then counts as neither ran nor deferred.
+/// Items left when the budget runs out count as deferred.
 pub fn run_within_budget<T>(
     items: Vec<T>,
     budget: Duration,
     now: &mut dyn FnMut() -> Instant,
     run: &mut dyn FnMut(T) -> bool,
-) -> RaycastStats {
-    let mut stats = RaycastStats::default();
+) -> TierStats {
+    let mut stats = TierStats::default();
     let total = items.len();
     if total == 0 {
         return stats;
     }
     let start = now();
-    let mut spent = Duration::ZERO;
     for (index, item) in items.into_iter().enumerate() {
-        if spent >= budget && stats.ran >= 1 {
+        if stats.spent >= budget {
             stats.deferred = (total - index) as u32;
             break;
         }
         if run(item) {
             stats.ran += 1;
         }
-        spent = now().saturating_duration_since(start);
-    }
-    if stats.ran > 0 {
-        stats.spent = spent;
+        stats.spent = now().saturating_duration_since(start);
     }
     stats
 }
@@ -135,8 +185,6 @@ pub fn run_within_budget<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use web_time::Instant;
 
     fn clock(step_ms: u64) -> impl FnMut() -> Instant {
         let start = Instant::now();
@@ -148,22 +196,20 @@ mod tests {
     }
 
     #[test]
-    fn order_player_scene_then_priority_then_oldest_then_entity() {
-        let c = |p, pr, lr, e| Candidate {
-            deferred_since: 0,
-            in_player_scene: p,
-            priority: pr,
-            last_run: lr,
-            entity_id: e,
+    fn order_is_nearest_scene_then_oldest_then_entity() {
+        let c = |priority, last_run, entity_id| Candidate {
+            priority,
+            last_run,
+            entity_id,
         };
         let mut v = [
-            c(false, 1.0, 5, 9),
-            c(true, 9.0, 7, 1),
-            c(true, 9.0, 0, 3),
-            c(true, 9.0, 0, 2),
-            c(false, 0.5, 1, 4),
+            c(4.0, 5, 9),
+            c(1.0, 7, 1),
+            c(1.0, 0, 3),
+            c(1.0, 0, 2),
+            c(2.0, 1, 4),
         ];
-        v.sort_by(|a, b| candidate_order(a, b, 100));
+        v.sort_by(candidate_order);
         assert_eq!(
             v.iter().map(|c| c.entity_id).collect::<Vec<_>>(),
             vec![2, 3, 1, 4, 9]
@@ -171,48 +217,53 @@ mod tests {
     }
 
     #[test]
-    fn starved_requests_run_ahead_of_the_scene_order() {
-        let c = |deferred_since, in_player_scene, e| Candidate {
-            deferred_since,
-            in_player_scene,
-            priority: 1.0,
-            last_run: 5,
-            entity_id: e,
-        };
-        // at frame 200: 1 and 2 are in the player's scene; 3 waited 60 frames, 4 waited 100,
-        // 5 only 59 (not yet starved), 6 is not waiting
-        let mut v = [
-            c(0, true, 1),
-            c(150, true, 2),
-            c(140, false, 3),
-            c(100, false, 4),
-            c(141, false, 5),
-            c(0, false, 6),
-        ];
-        v.sort_by(|a, b| candidate_order(a, b, 200));
+    fn budget_is_a_tenth_of_the_target_frame() {
+        let auto = RaycastBudgetOverride(None);
+        let at = |fps: u64| budget(Some(Duration::from_nanos(1_000_000_000 / fps)), auto);
+        assert_eq!(at(60).as_micros(), 1666);
+        assert_eq!(at(144).as_micros(), 694);
+        assert_eq!(at(240).as_micros(), 416);
+        assert_eq!(budget(None, auto), at(60));
+    }
+
+    #[test]
+    fn an_override_replaces_the_frame_share() {
+        let set = RaycastBudgetOverride(Some(Duration::ZERO));
+        assert_eq!(budget(Some(Duration::from_millis(16)), set), Duration::ZERO);
+    }
+
+    #[test]
+    fn override_accepts_auto_and_0_to_10_ms() {
+        assert_eq!(parse_override("auto"), Ok(RaycastBudgetOverride(None)));
         assert_eq!(
-            v.iter().map(|c| c.entity_id).collect::<Vec<_>>(),
-            vec![4, 3, 1, 2, 5, 6]
+            parse_override("0"),
+            Ok(RaycastBudgetOverride(Some(Duration::ZERO)))
         );
-        assert!(!c(0, false, 7).starved(u32::MAX));
+        assert_eq!(
+            parse_override("10"),
+            Ok(RaycastBudgetOverride(Some(Duration::from_millis(10))))
+        );
+        for bad in ["10.5", "-1", "fast"] {
+            assert!(parse_override(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
-    fn a_hand_edited_budget_is_capped_at_10_ms() {
-        assert_eq!(budget(2), Duration::from_millis(2));
-        assert_eq!(budget(10), Duration::from_millis(10));
-        assert_eq!(budget(500), Duration::from_millis(10));
-    }
-
-    #[test]
-    fn budget_loop_runs_at_least_one_then_defers_the_rest() {
+    fn a_zero_budget_defers_everything() {
         let mut ran = vec![];
         let stats = run_within_budget(vec![1, 2, 3], Duration::ZERO, &mut clock(1), &mut |i| {
             ran.push(i);
             true
         });
-        assert_eq!(ran, vec![1]);
-        assert_eq!((stats.ran, stats.deferred), (1, 2));
+        assert!(ran.is_empty());
+        assert_eq!(
+            stats,
+            TierStats {
+                ran: 0,
+                deferred: 3,
+                spent: Duration::ZERO
+            }
+        );
     }
 
     #[test]
@@ -234,6 +285,12 @@ mod tests {
     }
 
     #[test]
+    fn an_unlimited_budget_runs_everything() {
+        let stats = run_within_budget(vec![1, 2, 3], Duration::MAX, &mut clock(5), &mut |_| true);
+        assert_eq!((stats.ran, stats.deferred), (3, 0));
+    }
+
+    #[test]
     fn budget_loop_skips_items_the_runner_declines() {
         let stats = run_within_budget(
             vec![1, 2],
@@ -252,9 +309,6 @@ mod tests {
             &mut clock(1),
             &mut |_| true,
         );
-        assert_eq!(
-            (stats.ran, stats.deferred, stats.spent),
-            (0, 0, Duration::ZERO)
-        );
+        assert_eq!(stats, TierStats::default());
     }
 }
