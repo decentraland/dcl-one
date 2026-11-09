@@ -8,7 +8,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { formatMana, parseManaWei, type ManaWei } from "../../model/money";
+import { formatMana, parseManaWei, type ManaWei } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { EnsureQueryClient, formatDate, LoadFailure, Loading, ManaAmount, shortAddr } from "../../market/components/kit";

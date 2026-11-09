@@ -5,7 +5,7 @@
 
 import Button from "../../../atoms/Button";
 import { coarseDuration, needsNotice, type Freshness } from "../freshness";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import Icon from "./Icon";
 import "./indexnotice.css";
 

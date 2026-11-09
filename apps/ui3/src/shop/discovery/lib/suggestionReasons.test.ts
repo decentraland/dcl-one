@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/lib/suggestionReasons.spec.ts
 import { describe, expect, it } from "vitest"
 
-import { EN_MESSAGES, hasMessage } from "../intl"
+import { EN_MESSAGES, hasMessage } from "@shop/discovery/intl"
 
 const message = (key: string) => EN_MESSAGES[key]
 import { reasonInterpolatesItemName, reasonKey, reasonLinksToItem, triggerItemPath } from "./suggestionReasons"

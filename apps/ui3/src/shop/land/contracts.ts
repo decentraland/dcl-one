@@ -5,9 +5,9 @@
 // MANA-only surface except the NAME registrar controller, which is the direct-MANA registration route
 // the payment rule offers a web3 wallet second, after credits.
 
-import { evmAddress, type EvmAddress } from "../model/address";
+import { evmAddress, type EvmAddress } from "@shop/model/address";
 import { ethereumChainId } from "../checkout/chain/config";
-import { CHAIN, type ChainId } from "../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 export type LandNetwork = {
   chainId: ChainId;

@@ -11,7 +11,7 @@ import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "../../model/money";
+import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { LoadFailure, Loading, ManaAmount, useShopProvider, useWalletBlock, writeFailureText } from "../../market/components/kit";

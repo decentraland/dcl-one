@@ -24,13 +24,13 @@ import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine } from "../../checkout/purchase/cart";
 import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, type PurchaseTarget } from "../../checkout/purchase/mana";
 import type { RailContext } from "../../checkout/purchase/rail";
-import { createSpendGuard } from "../../checkout/purchase/spend-guard";
+import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
 import { cartLineId, type CartAddInput } from "../../cart/store";
-import { formatMana } from "../../model/money";
-import type { CartLine, PurchaseOffer } from "../../model/purchase";
-import type { MixedPayment } from "../../payment/present";
+import { formatMana } from "@shop/model/money";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import type { MixedPayment } from "@shop/payment/present";
 import { useShopWallet } from "../../wallet/context";
 import "./legacyorderbuy.css";
 
