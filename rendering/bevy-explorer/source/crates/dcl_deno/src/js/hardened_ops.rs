@@ -16,7 +16,7 @@ use v8::{ValueDeserializerHelper, ValueSerializerHelper};
 // swaps only the function pointers) and returns an error for input the original panics or
 // exits on: a panic across the V8 boundary aborts the sidecar and every scene in it.
 pub fn override_ops() -> Vec<OpDecl> {
-    vec![
+    let mut ops = vec![
         op_panic(),
         op_current_user_call_site(),
         op_leak_tracing_submit(),
@@ -69,11 +69,16 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_net_connect_tls(),
         op_net_accept_tls(),
         op_tls_handshake(),
+    ];
+    // elsewhere deno_net's own unix stubs are sync and already refuse
+    #[cfg(unix)]
+    ops.extend([
         op_net_accept_unix(),
         op_net_connect_unix(),
         op_net_recv_unixpacket(),
         op_net_send_unixpacket(),
-    ]
+    ]);
+    ops
 }
 
 #[op2(fast)]
@@ -537,7 +542,11 @@ refused_async_op!(op_tls_cert_resolver_poll(lookup));
 refused_async_op!(op_net_connect_tls(addr, args, key_pair));
 refused_async_op!(op_net_accept_tls(rid));
 refused_async_op!(op_tls_handshake(rid));
+#[cfg(unix)]
 refused_async_op!(op_net_accept_unix(rid));
+#[cfg(unix)]
 refused_async_op!(op_net_connect_unix(path));
+#[cfg(unix)]
 refused_async_op!(op_net_recv_unixpacket(rid, buf));
+#[cfg(unix)]
 refused_async_op!(op_net_send_unixpacket(rid, path, buf));
