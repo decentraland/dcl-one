@@ -74,7 +74,7 @@
         "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails.",
         "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key. Key-holding jobs may not rewrite a checkout with git, may pass only allowlisted action inputs (same repository, no parent paths, artifacts only under runner.temp or a workspace dot directory), may not map the key into an action step, interpolate expressions in the key step, write GITHUB_ENV or GITHUB_PATH, or use parent path segments or loader assignments in the key step.",
-        "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header."
+        "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header. The public foundations icons and foundations/source.json are regenerated through the supported installer with the ported generator, and the public foundations table records their new digests."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -4061,21 +4061,21 @@
         }
       },
       "icons/chat.tsx": {
-        "sha256": "9e64c064fc46139edf80ae60b6d31244afe6dad13ade3212012d7f0938fb41dc",
+        "sha256": "c849e519b1f16d12fb837933217ad1a59c94f04a60142f8b3f8fdf284c67f4dd",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/component.tsx": {
-        "sha256": "dc6553cffafe3674f476c891babdf36574fa188732b99637274ce757ffcc5895",
+        "sha256": "c132de490077bfc2258db37de37a13932d0b33ef21a1c05a8513f2f3f639b109",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/editor.tsx": {
-        "sha256": "c05a208aa6f09ed9c8d4e4ebe6832a480b1fe36ac5e070a62e610ee9abba8080",
+        "sha256": "d839402b39a04f1136bd3f497b5bb0fc46fba004e3f95a4c7e366d738b0b7167",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4089,28 +4089,28 @@
         }
       },
       "icons/general.tsx": {
-        "sha256": "bc79a996d64f0234ea15f168981174e267774689415fa11d996e154df71d313a",
+        "sha256": "fbe5bfcee0e8169e52be176f29a8693c037e727947d51fe06477a011dfdfc645",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/iconMeta.ts": {
-        "sha256": "517f617f8a828ed345adac1544e02f8779aa88a44031b5415fb87b89435a80b2",
+        "sha256": "03d71c6e092ce4e19772a598fd5dfb48694b16c755e3f74aebbd51055a9f1e34",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/index.ts": {
-        "sha256": "b4e9fb09808a91c5618278b9ecc1f41fc4517deac6c664f01e5ca1af8e14b1c0",
+        "sha256": "3920a0d4ec501dbb983934a2cd46e2a6371973d353bcd279f1769927592aa5ef",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/map.tsx": {
-        "sha256": "1c2b13688a011258b7055bb0593c40c482348327f7e5d99ce106fa5f969264fe",
+        "sha256": "11824dbac05e1256492b0c15ad8198127bc668bbcd428006ca0e4eabc92e1a73",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4124,21 +4124,21 @@
         }
       },
       "icons/navbar.tsx": {
-        "sha256": "be16dd128ab9ce6748cbedffec321c51d173c55f36009403a3ca5da2661bd3da",
+        "sha256": "e99c4d0b4305cb773fbd3ec47524f0726c2eb0adfa67b5607f67256136d3051a",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/notifications.tsx": {
-        "sha256": "6622512804a8fd27c96b342ed86bfa0c3d12e39a32487736827924a7f48706db",
+        "sha256": "016d7f54d848f760768dc84aeba85427227621bac27d822438ac97ca93107e45",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/profile.tsx": {
-        "sha256": "c442b2d70c5ab3f0d35033b98f0aba3ff30cc65f24e9b62088c9096750cbdf08",
+        "sha256": "fa722613657aab1c35151cfa2b6b108d754212ee96c7f2a6bc465a5175d89d29",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4187,7 +4187,7 @@
         }
       },
       "source.json": {
-        "sha256": "f7e54da54118dbe5295fc67e80140452836a47eabfa36e35ca047966785100ff",
+        "sha256": "52139f3222137e7fa7edb3c429d31e7534e73da65406be2a6b9982574005368f",
         "origin": {
           "kind": "source",
           "repository": "https://github.com/decentraland/dcl-one"
