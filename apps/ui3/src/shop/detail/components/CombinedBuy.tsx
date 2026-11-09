@@ -60,7 +60,10 @@ const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credi
 const SENT_KEY = "dcl-shop-buynow-split:v1:";
 export const SENT_HOLD_MS = 15 * 60 * 1000;
 
-/** `creditId`: the credit the split reserved, released at once when Check again finds the purchase reverted. */
+/**
+ * `creditId`: the credit the split reserved. When Check again finds the purchase reverted it retires that reservation, as
+ * the live path does; the Credits then come back with the expiry sweep.
+ */
 export type SentSplit = { at: number; txHash: string | null; chainId: number | null; creditId: string | null };
 
 const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
@@ -126,10 +129,18 @@ type CombinedBuyRun = {
   reset(): void;
   /** A split for this account and line was sent and is not known to be confirmed yet (this run's, or an earlier one). */
   remembered: boolean;
-  /** It has a transaction to read: a split stopped before its purchase went out (a MANA approval still confirming) has none. */
+  /**
+   * Check again has something to do: a transaction to read, or a hold that has run out (it then lets the item go). A split
+   * recorded with no hash (a MANA approval still confirming, or a record in the first, timestamp-only format) never has
+   * one to read, so it becomes checkable only once its hold runs out. The purchase itself always records its hash: it is
+   * broadcast before anything can leave it pending.
+   */
   checkable: boolean;
   checking: boolean;
-  /** Reads the sent split's receipt: confirmed completes it, reverted fails it, and either releases the hold. */
+  /**
+   * Reads the sent split's receipt: confirmed completes it, reverted fails it (retiring its credit), and either releases
+   * the hold. With no receipt, or nothing to read, a hold that has run out is let go; a failed read keeps it held.
+   */
   checkAgain(): Promise<void>;
 };
 

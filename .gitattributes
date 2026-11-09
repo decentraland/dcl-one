@@ -55,6 +55,11 @@ apps/sites/content/docs/**/*.apk filter=lfs diff=lfs merge=lfs -text
 apps/sites/content/docs/**/*.dmg filter=lfs diff=lfs merge=lfs -text
 apps/sites/content/docs/**/*.exe filter=lfs diff=lfs merge=lfs -text
 
+# The landing hero's background video (apps/ui3/public/assets, played by
+# apps/ui3/src/components/HeroVideo.tsx) lives in Git LFS.
+apps/ui3/public/assets/*.mp4 filter=lfs diff=lfs merge=lfs -text
+apps/ui3/public/assets/*.webm filter=lfs diff=lfs merge=lfs -text
+
 # The UUAV native runtime set (library/uuav/dist/<target>): the prebuilt uuav-helper and the
 # FFmpeg/libva libraries it links, locked by tooling/uuav/uuav-binaries.lock.json.
 library/uuav/dist/**/*.dylib filter=lfs diff=lfs merge=lfs -text
