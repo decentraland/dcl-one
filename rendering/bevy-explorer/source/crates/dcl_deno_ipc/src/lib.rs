@@ -44,7 +44,9 @@ const KILLED_SCENE_RETENTION: Duration = KILL_GRACE_PERIOD.saturating_add(Durati
 
 static REJECTED_HOST_MESSAGES: AtomicU64 = AtomicU64::new(0);
 
-/// Messages dropped because the scene host that sent them does not run the scene they are for.
+/// Messages dropped because the scene host that sent them does not run the scene they are for:
+/// a scene response for a scene it was not given, or a `SystemApi` message from a host that
+/// runs no system scene.
 pub fn rejected_host_messages() -> u64 {
     REJECTED_HOST_MESSAGES.load(Ordering::Relaxed)
 }
@@ -86,6 +88,8 @@ struct HostScenes(std::collections::HashMap<u64, HostScene>);
 
 struct HostScene {
     responses: TaggedSceneResponseSender,
+    // set for the scene the engine marked `is_super`
+    system_api: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     killed_at: Option<Instant>,
 }
 
@@ -97,11 +101,17 @@ impl HostScene {
 }
 
 impl HostScenes {
-    fn start(&mut self, id: u64, responses: TaggedSceneResponseSender) {
+    fn start(
+        &mut self,
+        id: u64,
+        responses: TaggedSceneResponseSender,
+        system_api: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
+    ) {
         self.0.insert(
             id,
             HostScene {
                 responses,
+                system_api,
                 killed_at: None,
             },
         );
@@ -120,6 +130,13 @@ impl HostScenes {
             .filter(|scene| scene.is_tracked(now))
             .map(|scene| &scene.responses)
     }
+
+    fn system_api(&self, now: Instant) -> Option<&tokio::sync::mpsc::UnboundedSender<SystemApi>> {
+        self.0
+            .values()
+            .filter(|scene| scene.is_tracked(now))
+            .find_map(|scene| scene.system_api.as_ref())
+    }
 }
 
 // Counts a message dropped because its scene host has no standing to send it. Warns once per
@@ -133,7 +150,6 @@ fn reject_host_message(warned: &mut bool, message: std::fmt::Arguments) {
 
 thread_local! {
     static HOST_SCENES: RefCell<HostScenes> = RefCell::new(HostScenes::default());
-    static SYSTEM_API_SENDER: RefCell<Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>> = const { RefCell::new(None) };
 }
 
 pub struct NewSceneCommand {
@@ -352,11 +368,7 @@ pub async fn renderer_ipc_out(
                     return Ok(());
                 };
 
-                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone()));
-
-                if let Some(system_api_sender) = system_api_sender {
-                    SYSTEM_API_SENDER.set(Some(system_api_sender));
-                }
+                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone(), system_api_sender));
 
                 let presence_context = info.presence_context;
                 if let Some(mut old_rx) = global_receivers.remove(&presence_context) {
@@ -518,12 +530,19 @@ pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Resu
                 })
             }
             SceneToEngine::SystemApi(system_command) => {
-                SYSTEM_API_SENDER.with(|sender| {
-                    let mut sender = sender.borrow_mut();
-                    let sender = sender.as_mut().unwrap();
-
+                let forwarded = HOST_SCENES.with_borrow(|scenes| {
+                    let sender = scenes.system_api(Instant::now())?;
                     let _ = sender.send(system_command);
+                    Some(())
                 });
+                if forwarded.is_none() {
+                    reject_host_message(
+                        &mut warned,
+                        format_args!(
+                            "a system api message from a scene host that runs no system scene"
+                        ),
+                    );
+                }
             }
         }
     }

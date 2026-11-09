@@ -284,7 +284,7 @@ async fn response_after_kill_is_delivered_within_the_grace_period() {
 fn a_killed_scene_is_forgotten_after_the_grace_period() {
     let mut scenes = HostScenes::default();
     let killed_at = Instant::now();
-    scenes.start(1, scene_response_channel().0);
+    scenes.start(1, scene_response_channel().0, None);
     scenes.kill(1, killed_at);
 
     let before = killed_at + KILLED_SCENE_RETENTION - Duration::from_millis(1);
@@ -352,4 +352,44 @@ async fn reply_channels_over_the_limit_end_the_host_connection() {
     host.send(&one_more).await;
 
     assert!(host.connection_ends().await);
+}
+
+#[tokio::test]
+async fn system_api_from_a_host_with_a_system_scene_is_forwarded() {
+    let mut host = Host::connect();
+    host.start_scene(false).await;
+    let (_, system_api) = host.start_scene(true).await;
+    let mut system_api = system_api.unwrap();
+
+    host.send(&SceneToEngine::SystemApi(SystemApi::LoginCancel))
+        .await;
+
+    let forwarded = tokio::time::timeout(TIMEOUT, system_api.recv()).await;
+    assert!(matches!(forwarded, Ok(Some(SystemApi::LoginCancel))));
+}
+
+#[tokio::test]
+async fn system_api_from_a_host_without_a_system_scene_is_dropped() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let rejected = rejected_host_messages();
+
+    host.send(&SceneToEngine::SystemApi(SystemApi::LoginCancel))
+        .await;
+    host.respond(scene, 1).await;
+
+    assert_eq!(host.delivered().await, (scene, 1));
+    assert!(rejected_host_messages() > rejected);
+}
+
+#[tokio::test]
+async fn system_api_before_any_scene_does_not_end_the_engine_loop() {
+    let mut host = Host::connect();
+
+    host.send(&SceneToEngine::SystemApi(SystemApi::LoginCancel))
+        .await;
+    let (scene, _) = host.start_scene(false).await;
+    host.respond(scene, 1).await;
+
+    assert_eq!(host.delivered().await, (scene, 1));
 }
