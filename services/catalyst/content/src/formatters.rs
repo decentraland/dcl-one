@@ -38,6 +38,16 @@ pub enum ParsedRange {
     Unsatisfiable,
 }
 
+/// A `Range` position as upstream's `^bytes=(\d*)-(\d*)$` and `parseInt` read
+/// it: ASCII digits only (no sign), and a number past `u64` saturates, as a
+/// JavaScript number past 2^53 stays larger than any file.
+fn range_number(digits: &str) -> Option<u64> {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse().unwrap_or(u64::MAX))
+}
+
 pub fn parse_range_header(
     range_header: Option<&str>,
     total_size: Option<u64>,
@@ -47,7 +57,7 @@ pub fn parse_range_header(
 
     if let Some(rest) = header.strip_prefix("bytes=") {
         if let Some(suffix) = rest.strip_prefix('-') {
-            let suffix_len: u64 = suffix.parse().ok()?;
+            let suffix_len = range_number(suffix)?;
             if suffix_len == 0 || total == 0 {
                 return Some(ParsedRange::Unsatisfiable);
             }
@@ -60,11 +70,11 @@ pub fn parse_range_header(
 
         let parts: Vec<&str> = rest.splitn(2, '-').collect();
         if parts.len() == 2 {
-            let start: u64 = parts[0].parse().ok()?;
+            let start = range_number(parts[0])?;
             let end: Option<u64> = if parts[1].is_empty() {
                 None
             } else {
-                Some(parts[1].parse().ok()?)
+                Some(range_number(parts[1])?)
             };
 
             // `start >= total` also covers an empty file.
@@ -199,6 +209,32 @@ mod tests {
                 "{header}"
             );
         }
+    }
+
+    /// `^bytes=(\d*)-(\d*)$` then `parseInt` (worlds-content-server
+    /// `content-file-handler.ts` `parseRangeHeader`): a sign is not a digit, and an
+    /// overflowing start is past the end while an overflowing end is clamped.
+    #[test]
+    fn parse_range_reads_digits_only_and_saturates() {
+        for header in ["bytes=+5-", "bytes=5-+9", "bytes=-+5", "bytes= 5-9"] {
+            assert!(
+                parse_range_header(Some(header), Some(100)).is_none(),
+                "{header}"
+            );
+        }
+        let huge = "99999999999999999999999";
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes={huge}-")), Some(100)),
+            Some(ParsedRange::Unsatisfiable)
+        ));
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes=10-{huge}")), Some(100)),
+            Some(ParsedRange::Range { start: 10, end: 99 })
+        ));
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes=-{huge}")), Some(100)),
+            Some(ParsedRange::Range { start: 0, end: 99 })
+        ));
     }
 
     #[test]

@@ -130,6 +130,7 @@ struct StubPeer {
     addr: SocketAddr,
     hits: Arc<AtomicUsize>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl StubPeer {
@@ -146,7 +147,7 @@ impl StubPeer {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app)
                 .with_graceful_shutdown(async {
                     let _ = rx.await;
@@ -157,6 +158,7 @@ impl StubPeer {
             addr,
             hits,
             shutdown: Some(tx),
+            task,
         }
     }
 
@@ -168,10 +170,14 @@ impl StubPeer {
         self.hits.load(Ordering::SeqCst)
     }
 
-    fn stop(&mut self) {
+    async fn stop(&mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
         }
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 
@@ -737,7 +743,6 @@ async fn a_probe_that_could_not_run_reports_unknown_rather_than_no_collisions() 
         .execute(&scratch.pool)
         .await
         .expect("drop the local worlds table");
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
     let report = m
         .poll_peer(&peer)
@@ -828,7 +833,7 @@ async fn two_peers_claiming_one_name_are_two_rows_and_a_poll_touches_only_its_ow
         vec!["b-only.dcl.eth".to_string(), "shared.dcl.eth".to_string()],
         "polling A must not disturb B"
     );
-    stub_a2.stop();
+    stub_a2.stop().await;
     scratch.teardown().await;
 }
 
@@ -984,13 +989,12 @@ async fn every_peer_failure_retains_the_previous_rows_and_is_recorded_as_stale()
             last_error.is_some(),
             "{label} must be recorded so the staleness has a reason"
         );
-        stub.stop();
+        stub.stop().await;
     }
 
     let mut dead = StubPeer::start(PeerBehaviour::Body(listing(&["gone.dcl.eth"]))).await;
     let dead_url = dead.url();
-    dead.stop();
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    dead.stop().await;
     let peer = admit(PEER_A, &dead_url);
     let peers = registry(vec![peer.clone()]);
     let err = mirror(&scratch.pool, fed_config(4 * 1024 * 1024), &peers)
@@ -1012,8 +1016,7 @@ async fn a_peer_that_never_answered_is_distinguishable_from_a_peer_with_no_world
     let scratch = db_or_skip!("never-contacted and genuinely-empty peers are distinguishable");
     let mut dead = StubPeer::start(PeerBehaviour::Body(String::new())).await;
     let dead_url = dead.url();
-    dead.stop();
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    dead.stop().await;
     let peer_a = admit(PEER_A, &dead_url);
     let empty = StubPeer::start(PeerBehaviour::Body(
         json!({ "worlds": [], "total": 0 }).to_string(),
@@ -1404,7 +1407,6 @@ async fn a_refresh_reports_an_unavailable_collision_probe_as_null_not_as_an_empt
         .execute(&scratch.pool)
         .await
         .expect("drop the local worlds table");
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
     let (status, body) = call(&app, refresh_req(Some(&bearer()))).await;
     assert_eq!(status, StatusCode::OK);

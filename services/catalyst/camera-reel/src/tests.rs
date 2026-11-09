@@ -679,17 +679,20 @@ async fn ranking_repair_continues_after_first_middle_and_last_row_faults() {
     s.done().await;
 }
 
+async fn repair_is_blocked(pool: &sqlx::PgPool, blocker: i32) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'UPDATE camera_reel.images SET ranking_published=true%')",
+    )
+    .bind(blocker)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 async fn wait_for_repair_block(pool: &sqlx::PgPool, blocker: i32) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let blocked: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'UPDATE camera_reel.images SET ranking_published=true%')",
-            )
-            .bind(blocker)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-            if blocked {
+            if repair_is_blocked(pool, blocker).await {
                 return;
             }
             tokio::task::yield_now().await;
@@ -833,23 +836,47 @@ async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail(
     for sweep in &mut schedule.sweeps {
         sweep.after = Uuid::from_u128(start);
     }
-    let pass_started = std::time::Instant::now();
+    tokio::time::pause();
+    let clock = crate::shared::test_wait::hold_paused_clock();
+    let pass_budget = Duration::from_millis(500);
+    let timer_tick = Duration::from_millis(1);
+    let pass_started = Instant::now();
+    let pass_deadline = pass_started + pass_budget;
     let progress = {
-        let repair = s
-            .state
-            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_millis(500));
+        // Isolate the virtual global deadline from PostgreSQL's wall-clock timer.
+        // The slow-row test separately verifies the real server statement timeout.
+        let repair = super::db::DISABLE_RANKING_STATEMENT_TIMEOUT.scope(
+            (),
+            s.state.repair_ranking_pass(&mut schedule, pass_deadline),
+        );
         tokio::pin!(repair);
+        let deadline = tokio::time::sleep_until(pass_deadline);
+        tokio::pin!(deadline);
         tokio::select! {
             result = &mut repair => panic!("repair finished before the row-lock barrier: {result:?}"),
             _ = wait_for_repair_block(s.db().pool(), blocker) => {},
         }
-        repair.await.unwrap()
+        tokio::time::advance(pass_budget - timer_tick).await;
+        tokio::select! {
+            biased;
+            result = &mut repair => panic!("repair finished before the global deadline: {result:?}"),
+            _ = &mut deadline => panic!("global deadline elapsed before 500ms"),
+            _ = std::future::ready(()) => {},
+        }
+        tokio::time::advance(timer_tick * 2).await;
+        deadline.await;
+        std::future::poll_fn(|cx| match std::future::Future::poll(repair.as_mut(), cx) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(result.unwrap()),
+            std::task::Poll::Pending => panic!("repair did not stop at the global deadline"),
+        })
+        .await
     };
-    assert!(progress.timed_out);
     assert!(
-        pass_started.elapsed() < Duration::from_secs(2),
-        "all pages share a global deadline shorter than the one-second row budget"
+        repair_is_blocked(s.db().pool(), blocker).await,
+        "the global deadline must finish while the server query remains blocked"
     );
+    assert!(progress.timed_out);
+    assert_eq!(pass_started.elapsed(), pass_budget + timer_tick);
     assert_eq!(
         (progress.pages, progress.published, progress.inspected),
         (3, 1, 101)
@@ -870,9 +897,11 @@ async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail(
         .unwrap();
     // Dropping the same in-flight future models the leased job's cancellation select.
     {
-        let repair = s
-            .state
-            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(30));
+        let repair = super::db::DISABLE_RANKING_STATEMENT_TIMEOUT.scope(
+            (),
+            s.state
+                .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(30)),
+        );
         tokio::pin!(repair);
         tokio::select! {
             result = &mut repair => panic!("repair finished before cancellation: {result:?}"),
@@ -881,6 +910,8 @@ async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail(
     }
     assert_eq!(schedule.sweeps[0].after, Uuid::from_u128(start + 101));
     lock.rollback().await.unwrap();
+    tokio::time::resume();
+    drop(clock);
     let markers: Vec<bool> = sqlx::query_scalar(
         "SELECT ranking_published FROM camera_reel.images WHERE user_address=$1 ORDER BY id",
     )
@@ -997,6 +1028,11 @@ async fn ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blob
     for sweep in &mut schedule.sweeps {
         sweep.after = Uuid::from_u128(start);
     }
+    schedule.sweeps[0].cutoff = Some(
+        chrono::Utc::now().naive_utc()
+            - chrono::TimeDelta::minutes(10)
+            - chrono::TimeDelta::seconds(1),
+    );
     assert_eq!(schedule.due(Instant::now()), Some(0));
     let recent = s
         .state
@@ -1020,7 +1056,6 @@ async fn ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blob
         .execute(s.db().pool())
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
     assert!(boundary_row_time < chrono::Utc::now().naive_utc() - chrono::TimeDelta::minutes(10));
     let recent = s
         .state

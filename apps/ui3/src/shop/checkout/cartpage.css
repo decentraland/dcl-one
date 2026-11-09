@@ -12,7 +12,9 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  min-height: calc(100vh - 158px);
+  /* As upstream's .page: the page fills the first viewport below the nav, so the footer of a short (empty)
+     cart sits below the fold. */
+  min-height: calc(100vh - var(--shop-nav-h, 92px));
   /* Upstream's page main ends 80px below the cross-sell (shop@3a322cf9 `main.page`). */
   padding-bottom: 80px;
   color: #fcfcfc;
@@ -124,7 +126,8 @@
   margin-bottom: 16px;
   padding: 0 12px;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.4);
+  /* As upstream's EmptyState CTA on its dark panel: the glass fill, stronger on hover. */
+  background: rgba(255, 255, 255, 0.2);
   color: #fcfcfc;
   font-size: 15px;
   font-weight: 600;
@@ -135,12 +138,9 @@
   transition: background 0.15s ease;
 }
 
-.shop-cart__empty-cta:hover {
-  background: rgba(0, 0, 0, 0.55);
-}
-
+.shop-cart__empty-cta:hover,
 .shop-cart__empty-cta:active {
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .shop-cart__empty-cta:focus-visible {
@@ -309,34 +309,6 @@
   display: flex;
   flex-direction: column;
   gap: 28px;
-}
-
-.shop-cart__confirm {
-  width: 100%;
-  height: 56px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
-  color: #fcfcfc;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 24px;
-  letter-spacing: 0.46px;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background-image 0.15s ease;
-}
-
-.shop-cart__confirm:hover:not(:disabled),
-.shop-cart__confirm:active:not(:disabled) {
-  background-image: linear-gradient(#ff2d55, #ff2d55);
-}
-
-.shop-cart__confirm:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 
 .shop-cart__msg {

@@ -24,7 +24,7 @@ Stores and serves:
 * Scripts
 * Avatars and wearables
 
-**API Reference**: [Catalyst API](/docs/apis/catalyst/)
+**API Reference**: [Catalyst API](/docs/apis/apis/catalyst/)
 
 ### Lambdas
 
@@ -159,7 +159,7 @@ Communications infrastructure runs alongside Catalyst:
 * Protocol handling
 * Connection authentication
 
-**API Reference**: [Archipelago Workers API](/docs/apis/archipelago-workers/)
+**API Reference**: [Archipelago Workers API](/docs/apis/apis/archipelago-workers/)
 
 #### Archipelago Core
 

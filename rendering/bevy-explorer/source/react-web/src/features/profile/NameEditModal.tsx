@@ -16,7 +16,6 @@ import styles from './NameEditModal.module.css'
 /** Where a NAME is bought. Same destination as the communities modal's "Get a NAME". */
 const NAMES_URL = 'https://decentraland.org/marketplace/names/claim'
 
-
 type Tab = 'unique' | 'custom'
 const NAME_TABS: TabItem<Tab>[] = [
   { id: 'unique', label: 'UNIQUE NAME' },

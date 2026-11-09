@@ -1,13 +1,16 @@
 // The in-world Shop's NAMEs: a typed NAME checked as the web Shop's NAMEs page checks it (its length, the
-// banned list, then the registrar on the Ethereum network the Shop registers on), and the Credits a NAME
-// costs. A free NAME is only available with that price: without a credits quote the web page offers it for
+// banned list, then the registrar on the Ethereum network the Shop registers on), the Credits a NAME
+// costs, and the NAMEs on resale (the web Shop's resale browse, newest listings first). A free NAME is only available with that price: without a credits quote the web page offers it for
 // MANA alone, which it reads as taken. The registrar's answer is advisory: the purchase checks again.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { shopClient } from '../../../shop/api/shop'
-import { creditsCeil } from '../../../shop/model/money'
-import { fetchBannedNames } from '../../../shop/names/api'
+import { pageCount } from './catalogueQuery'
+import type { ChainId } from '../../../shop/model/chain'
+import { creditsCeil, parseManaWei, type ManaWei } from '../../../shop/model/money'
+import { fetchBannedNames, fetchNameResales, nameOf, NAMES_PAGE_SIZE } from '../../../shop/names/api'
+import { landChainId } from '../../../shop/land/contracts'
 import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
 import type { ShopNameStatus } from './ui'
@@ -29,12 +32,51 @@ export const nameQueries = {
       },
       staleTime: 60_000
     }),
-  availability: (name: string) =>
+  availability: (name: string, chainId: ChainId = landChainId()) =>
     queryOptions({
-      queryKey: ['shop', 'names', 'availability', name.toLowerCase()] as const,
-      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal }),
+      queryKey: ['shop', 'names', 'availability', chainId, name.toLowerCase()] as const,
+      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal, chainId }),
       staleTime: 30_000
     })
+}
+
+/** A NAME on resale, as RESALE NAME lists it. */
+export interface NameResale {
+  name: string
+  contract: string
+  tokenId: string
+  /** Its listing's price, in MANA wei. */
+  priceWei: ManaWei | null
+}
+
+/** The key every page of RESALE NAME is cached under. */
+export const NAME_RESALES_KEY = ['shop', 'names', 'resales'] as const
+
+/** A page of RESALE NAME: the NAMEs on sale, most recently listed first. */
+export const nameResalesQuery = (page: number) =>
+  queryOptions({
+    queryKey: [...NAME_RESALES_KEY, page] as const,
+    queryFn: async ({ signal }): Promise<{ items: NameResale[]; total: number }> => {
+      const { results, total } = await fetchNameResales({ search: '', sort: 'recently_listed', onlyOnSale: true, minPrice: '', maxPrice: '', page: page + 1 }, { signal })
+      const items = results.map((result) => ({
+        name: nameOf(result),
+        contract: result.nft.contractAddress.toLowerCase(),
+        tokenId: result.nft.tokenId,
+        priceWei: result.order != null ? parseManaWei(result.order.price) : null
+      }))
+      return { items, total }
+    },
+    staleTime: 30_000,
+    // The page shown stays while the next one loads, unless it's empty: a page that emptied (its NAMEs sold
+    // since the pager was drawn) gives way to the loading cards, not to a dimmed empty grid.
+    placeholderData: (previous) => (previous != null && previous.items.length > 0 ? previous : undefined)
+  })
+
+/** How many pages RESALE NAME has, of `total` NAMEs. */
+export const resalePageCount = (total: number): number => pageCount(total, NAMES_PAGE_SIZE)
+
+export function useNameResales(page: number, enabled: boolean) {
+  return useQuery({ ...nameResalesQuery(page), enabled })
 }
 
 export interface NameCheck {

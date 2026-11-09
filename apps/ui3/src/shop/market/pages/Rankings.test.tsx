@@ -25,7 +25,7 @@ describe("Rankings (upstream marketplace home RankingsTable)", () => {
   it("renders upstream's wearables columns, switches tabs and timeframes (no volume card: dropped upstream in 0fdb65fe)", async () => {
     mountShop({
       path: "/shop/rankings",
-      who: "signedOut",
+      who: "web3",
       routes: [
         { method: "GET", path: /^\/v1\/volume\/week$/, reply: () => ({ body: { data: VOLUME } }) },
         { method: "GET", path: /^\/v1\/rankings\/wearables\/week$/, reply: () => ({ body: { data: ITEM_RANKS } }) },
@@ -62,7 +62,7 @@ describe("Rankings (upstream marketplace home RankingsTable)", () => {
   it("shows upstream's empty state when a timeframe has no sales", async () => {
     mountShop({
       path: "/shop/rankings",
-      who: "signedOut",
+      who: "web3",
       routes: [
         { method: "GET", path: /^\/v1\/volume\//, reply: () => ({ body: { data: VOLUME } }) },
         { method: "GET", path: /^\/v1\/rankings\//, reply: () => ({ body: { data: [] } }) },

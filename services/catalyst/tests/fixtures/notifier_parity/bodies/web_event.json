@@ -1,0 +1,52 @@
+{
+  "integrations": {},
+  "messageId": "ajs-next-1755696899523-c66eb397-4cab-487a-aa2a-416a21943689",
+  "receivedAt": "2025-08-20T13:34:59.836Z",
+  "anonymousId": "be6cd5e7-ba35-4a05-bcd0-eb2cb050f1d1",
+  "sentAt": "2025-08-20T13:34:59.539Z",
+  "traits": {
+    "ethAddress": "0x78a707A166Da251c098e6e695EFA5b130344a39b",
+    "chainId": 1
+  },
+  "originalTimestamp": "2025-08-20T13:34:59.523Z",
+  "context": {
+    "page": {
+      "path": "/auth/requests/497c3b52-a630-4022-987f-5e377747a92f",
+      "referrer": "",
+      "search": "",
+      "title": "Decentraland | Authorization",
+      "url": "https://decentraland.org/auth/requests/497c3b52-a630-4022-987f-5e377747a92f"
+    },
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+    "userAgentData": {
+      "brands": [
+        {
+          "brand": "Not;A=Brand",
+          "version": "99"
+        },
+        {
+          "brand": "Google Chrome",
+          "version": "139"
+        },
+        {
+          "brand": "Chromium",
+          "version": "139"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS"
+    },
+    "locale": "en-GB",
+    "library": {
+      "name": "analytics.js",
+      "version": "next-1.81.0"
+    },
+    "timezone": "America/Montevideo",
+    "ip": "1***.5***.1***.2***"
+  },
+  "timestamp": "2025-08-20T13:34:59.820Z",
+  "type": "identify",
+  "event": "auth_identify",
+  "projectId": "ncCetmghaPEGFVVa1n8hKY",
+  "userId": null
+}

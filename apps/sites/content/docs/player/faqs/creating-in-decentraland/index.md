@@ -48,7 +48,7 @@ Learn more about creating in Decentraland with the Creator Docs.
 
 Yes, of course! Decentraland creators are able to monetize their skills in many ways:
 
-* Wearable and Emote creators earn 97.5% of the profits on all primary sales and 2.5% royalties on any secondary sales after publishing their creations in the Marketplace paying a $100 USD publication fee
+* Wearable and Emote creators earn 97.5% of the profits on all primary sales and 2.5% royalties on any secondary sales after publishing their creations in the Marketplace. The publication fee is 25 USD per item. For a limited time, the Decentraland Foundation covers 20 USD, so creators pay only 5 USD per item.
 * Scene creators are free to monetize their in-world experiences and retain 100% of the revenue they generate
 * Creators can offer their services for hire on [**Decentraland Studios**](https://studios.decentraland.org/).
 

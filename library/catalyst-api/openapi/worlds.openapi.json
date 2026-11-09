@@ -4776,14 +4776,14 @@
         "type": "object",
         "required": [
           "id",
-          "pointers"
+          "title",
+          "description",
+          "pointers",
+          "timestamp"
         ],
         "properties": {
           "description": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "id": {
             "type": "string"
@@ -4796,23 +4796,14 @@
           },
           "runtimeVersion": {},
           "thumbnail": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "timestamp": {
-            "type": [
-              "integer",
-              "null"
-            ],
+            "type": "integer",
             "format": "int64"
           },
           "title": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         }
       },
@@ -5148,11 +5139,9 @@
         ],
         "properties": {
           "fixedHour": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
+            "type": "number",
+            "format": "double",
+            "description": "Absent when no time is fixed; the number as stored or deployed (an integer stays an integer)."
           },
           "textures": {
             "type": "array",

@@ -84,10 +84,7 @@ function nodeProxy(): Record<string, ProxyOptions> {
     // (`/media/convert`) the cards request.
     "/dcl-lists": to(),
     "/media/": to(),
-    // The operator plane (src/main.rs): the telemetry sink and flag reads the
-    // production bundle addresses as /telemetry, credits, the relay and the
-    // imposter store.
-    "/telemetry": to(),
+    // The operator plane (src/main.rs): credits, the relay and the imposter store.
     "/credits": to(),
     "/rpc": to({ ws: true }),
     "/bvimposters": to(),

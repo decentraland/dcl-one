@@ -196,6 +196,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("explore.user_likes.entity_id", "a place id"),
     ("explore.place_interaction_counts.entity_id", "a place id"),
     (
+        "explore.place_content_ratings.entity_id",
+        "a place id or a world name",
+    ),
+    (
         "explore.signed_actions.signature_hash",
         "an envelope digest",
     ),
@@ -212,7 +216,9 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.chain_cursor.last_block_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
+    ("shop.sale_event.tx_hash", "a transaction hash"),
     ("shop.mana_transfer.transaction_hash", "a transaction hash"),
+    ("shop.tip_claim.transaction_hash", "a transaction hash"),
     ("shop.coupons.hashed_signature", "an order digest"),
     ("shop.fed_actions.signature_hash", "an envelope digest"),
     ("shop.fed_actions.target_hash", "an envelope digest"),

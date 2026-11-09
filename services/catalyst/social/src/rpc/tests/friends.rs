@@ -634,7 +634,7 @@ async fn unblocking_an_unblocked_friend_changes_nothing() {
         status_of(&rig.status(&a, Some(&b)).await),
         FriendshipStatus::Accepted
     );
-    assert_eq!(rig.friends_of(&a).await, [b.clone()]);
+    assert_eq!(rig.friends_of(&a).await, std::slice::from_ref(&b));
     cleanup_pair(&rig.db, &a, &b).await;
 }
 

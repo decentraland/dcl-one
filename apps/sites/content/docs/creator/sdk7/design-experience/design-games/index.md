@@ -18,7 +18,7 @@ Players that step outside your scene keep rendering it as long as it’s at a vi
 
 You could also build a game that spreads out throughout several disconnected plots of land that are unknown to players, and where the exploration of the rest of the world becomes part of the gameplay. A game like that would be made up of multiple separate _scenes_, that could share data with each other via a server.
 
-If your game is published to a [Decentraland World](/docs/creator/worlds/about/), you have more control over what players see beyond your scene's boundaries. Worlds are normally surrounded by an auto-generated landscape of grassland, trees, and sea, but you can [disable this landscape](/docs/creator/sdk7/projects/scene-metadata/#landscape-terrain) if it clashes with your game's setting, for example a game that takes place in open water or in space.
+If your game is published to a [Decentraland World](/docs/creator/sdk7/publishing/publishing-options/#decentraland-worlds), you have more control over what players see beyond your scene's boundaries. Worlds are normally surrounded by an auto-generated landscape of grassland, trees, and sea, but you can [disable this landscape](/docs/creator/sdk7/projects/scene-metadata/#landscape-terrain) if it clashes with your game's setting, for example a game that takes place in open water or in space.
 
 ### User inventory
 
@@ -80,6 +80,34 @@ You need to keep in mind that there may be several players walking around your s
 **The game loop of your scene can’t affect players directly**, the scene has a reactive approach to the player’s actions. If a player is standing on an entity and the entity moves or rotates, the player will move with this entity. This is especially useful for elevators, floating platforms, and the like.
 
 As the owner of a scene, you can’t forcefully push or teleport an offending player out of your scene. However, you will be able to blacklist players in the signaling server. You can also implement a blacklist in your scene’s code and deny certain services to blacklisted players.
+
+## Build interiors larger than real life
+
+Most players explore Decentraland in the default third-person camera, which sits behind and above the avatar. That camera needs room. An interior built at real-world dimensions reads as a cramped corridor on screen: the camera presses against the ceiling, the avatar fills the frame, and the player can't see where they're going.
+
+Build the shell of a room at roughly **1.5 to 2 times** real headroom:
+
+| Element | Real-world | Build it at |
+| --- | --- | --- |
+| Ceiling height | 2.5 to 3 m | **5 to 6 m** |
+| Doorway or opening on a main route | about 2.1 m x 0.9 m | **about 4 m tall, 3 m or wider** |
+| Corridor width | 1.2 to 1.8 m | **4 m or wider** |
+| Any gap the avatar has to walk through | | **1.2 m of clear space or more** |
+| Stairs | about 0.18 m rise, 0.28 m tread | **0.25 m rise or less, 0.3 m tread or more** |
+| Ramps | | **30 degrees or less** |
+
+The third-person camera orbits about 4.5 m away from the avatar, with a 60 degree field of view. When a wall or ceiling gets between the camera and the avatar, the camera moves forward to keep the avatar in view, and that sudden jump is what makes a room feel cramped. So rooms where players turn around read best at about **9 m across or more**, twice the camera's distance. For the engine limits on steps, slopes and head clearance, see [Player spatial constraints](/docs/creator/3d-modeling/colliders/#player-spatial-constraints).
+
+A few things to keep in mind:
+
+* **Grow the room, not its contents.** Chairs, desks, counters, railings and signage stay close to life-size. If you scale the furniture up along with the walls, you rebuild the same cramped feeling one size larger, and the avatar stops reading as a person in the room.
+* **Apply this when you plan your floor area**, not after you've placed everything. Bigger rooms need more parcels, so these numbers change your [parcel budget](/docs/creator/sdk7/projects/scene-metadata/).
+* **Judge the result from the normal third-person camera.** A free camera or the Creator Hub viewport flatters interiors, because they can sit outside the geometry and look in. Walk the route as a player would. If the camera clips the ceiling, or the avatar's head crowds the top of the frame, the room is too short.
+
+
+> [!NOTE]
+> **💡 Tip**: This is design guidance drawn from practice, not an engine limit. Treat the numbers as a starting point and adjust by eye.
+
 
 ## Scene content limitations
 

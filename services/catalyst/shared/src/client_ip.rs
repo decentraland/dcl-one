@@ -48,6 +48,58 @@ pub fn client_ip(headers: &HeaderMap) -> String {
     String::new()
 }
 
+/// The TCP peer, or the single `X-Real-IP` it supplies when it is a trusted proxy
+/// (`HTTP_TRUSTED_PROXY_CIDRS`); `None` without a peer or with a bad header.
+pub fn peer_client_ip(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<String> {
+    let peer = peer?.ip().to_canonical();
+    let ip = if is_trusted_proxy(peer, trusted_proxies) {
+        single_real_ip(headers)?
+    } else {
+        peer
+    };
+    Some(ip.to_string())
+}
+
+/// [`peer_client_ip`] only when it names one client: a trusted proxy's
+/// `X-Real-IP`, or a peer that is not internal (an unlisted gateway's own
+/// address would put every client in one bucket).
+pub fn distinct_client_ip(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<String> {
+    let ip = peer?.ip().to_canonical();
+    if is_trusted_proxy(ip, trusted_proxies) {
+        return peer_client_ip(headers, peer, trusted_proxies);
+    }
+    (!is_internal(ip)).then(|| ip.to_string())
+}
+
+/// Loopback, unspecified, private (RFC 1918, CGNAT, IPv6 ULA) or link-local.
+pub fn is_internal(ip: std::net::IpAddr) -> bool {
+    match ip.to_canonical() {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || (a == 100 && b & 0xc0 == 64)
+        }
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80
+        }
+    }
+}
+
 pub fn normalize_ip(ip: &str) -> String {
     ip.strip_prefix("::ffff:").unwrap_or(ip).trim().to_string()
 }
@@ -84,6 +136,43 @@ mod tests {
             );
         }
         map
+    }
+
+    #[test]
+    fn distinct_client_ip_skips_internal_peers_unless_trusted() {
+        let peer = |ip: &str| Some(std::net::SocketAddr::new(ip.parse().unwrap(), 1));
+        let real = headers(&[("x-real-ip", "203.0.113.9")]);
+        for internal in [
+            "10.0.0.5",
+            "172.18.0.2",
+            "192.168.1.1",
+            "127.0.0.1",
+            "100.64.0.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.5",
+        ] {
+            assert_eq!(
+                distinct_client_ip(&real, peer(internal), &[]),
+                None,
+                "{internal}"
+            );
+        }
+        assert_eq!(
+            distinct_client_ip(&real, peer("198.51.100.4"), &[]).as_deref(),
+            Some("198.51.100.4")
+        );
+        assert_eq!(distinct_client_ip(&real, None, &[]), None);
+        let trusted = ["10.0.0.0/8".parse().unwrap()];
+        assert_eq!(
+            distinct_client_ip(&real, peer("10.0.0.5"), &trusted).as_deref(),
+            Some("203.0.113.9")
+        );
+        assert_eq!(
+            distinct_client_ip(&HeaderMap::new(), peer("10.0.0.5"), &trusted),
+            None
+        );
     }
 
     #[test]

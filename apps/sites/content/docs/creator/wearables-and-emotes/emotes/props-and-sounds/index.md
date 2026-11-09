@@ -78,7 +78,7 @@ _**Chlid of** constraint menu. Keyframe the influence to turn it on and off._
 
 > [!NOTE]
 > **💡Animation Tip**
-> 
+>
 > Don’t leave the prop visible from the start! To avoid spoiling what’s about to happen and an abrupt transition, start the animation with the prop scaled down to 0.001 and only turn it to 1 when you want it to appear. Remember to scale back down to 0 by the end of the action. This will make the transitions much more fluid and cool!
 
 
@@ -118,15 +118,15 @@ The NLA tracks should look like this: one animation for each armature.
 
 > [!NOTE]
 > **🔥 Optimization Tip**
-> 
+>
 > **Before this step make sure to do a backup of your project.**
-> 
+>
 > If you have different objects for your props you can merge them together in one single mesh. You can do this by simply selecting the objects and pressing the shortcut ctrl + J.
-> 
+>
 > This would help to reduce the draw calls in game making the emote more performant.
-> 
+>
 > Keep in mind that this won’t work for particles, though.
-> 
+>
 > _Select objects and press `Ctrl+J` to merge them together._
 
 
@@ -197,7 +197,7 @@ When rendering an emote, it is important to only include the frame range of your
 
 > [!NOTE]
 > **Hint!**
-> 
+>
 > _Before rendering make sure you do a low sampling rendering to save time in your render!_
 
 

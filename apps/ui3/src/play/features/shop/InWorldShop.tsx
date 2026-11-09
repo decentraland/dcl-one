@@ -7,20 +7,25 @@
 // web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
 // header's cart button buys them all at once through the same dialog. Names is where a NAME is picked: the
 // typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
-// on the web Shop.
+// on the web Shop; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace. Where the shell
+// rehearses NAME purchases (its capabilities' `namesMode: 'simulation'`, a testnet build that turned it on),
+// CLAIM NAME opens that rehearsal instead, and its PREVIEW ON AVATAR shows the NAME over the avatar here,
+// saving nothing to the profile.
 
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import { hostOr } from '../../../shop/discovery/flags'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
-import { userNameColor } from '../../engine/nameColor'
+import { resolveNameColor, userNameColor } from '../../engine/nameColor'
 import { addressSuffix } from '../../engine/profileEdit'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
+import { splitName } from '../../lib/identity'
 import { subscribeHudScale } from '../../lib/hudScale'
 import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
@@ -37,12 +42,13 @@ import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWor
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
-import { tryOnUrn, webNameOfferUrl, webNameResaleUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
-import { useNameCheck } from './namesQuery'
-import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
+import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
+import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
+import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
-import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNames, type PressedWith, type ShopHomeOutfitOffer } from './ui'
+import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
+import { inShell } from '../../lib/shell'
 
 type Section = 'all' | 'wearables' | 'emotes' | 'names'
 const SECTIONS: TabItem<Section>[] = [
@@ -132,7 +138,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The emote playing on the avatar (an item id), which STOP EMOTE stops.
   const [playing, setPlaying] = useState<string | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
-  // Names: the NAME typed (letters and digits) and whether its field has the focus.
+  // Names: its tab, the NAME typed (letters and digits), whether its field has the focus, and RESALE NAME's page.
+  const [nameTab, setNameTab] = useState<ShopNamesTab>('unique')
+  const [resalePage, setResalePage] = useState(0)
+  const resaleScroller = useRef<HTMLDivElement>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [nameFocused, setNameFocused] = useState(false)
   // A zoomed preview hides the nametag: it would sit over the avatar's head.
@@ -169,23 +178,74 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
-  const flagsKnown = creatorSalesFlag !== undefined
+  // Resales, NAME resales and offers are the Marketplace's (shop/market/access.tsx): offered only while its rollout is
+  // on (a host's declaration first, as on the web) and to a web3 wallet. In the web shell that is the shell's own
+  // answer for the login (its capabilities' `marketplace`: a web3 sign-in it recorded, with a wallet here to sign), and
+  // the listings wait for it. Elsewhere (the desktop and native HUDs) nothing here can buy: a signed-in player who is
+  // not a guest may browse them, and the web Shop a resale opens decides again (AGENTS.md). Off, the rows and the
+  // catalogue list creators' primary sales only.
+  const capabilitiesQuery = useQuery(purchaseQueries.capabilities())
+  // The answer is the login's: another login (a logout, then another account) asks again, so neither its buyer nor
+  // its Marketplace answer outlives the account it was for.
+  const loginAddress = profile.data?.address?.toLowerCase() ?? null
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ['shop', 'purchase'] })
+  }, [loginAddress, queryClient])
+  const capabilities = capabilitiesQuery.data
+  const web3Player = inShell ? capabilities?.marketplace === true : profile.data != null && !profile.data.isGuest
+  // Settled once the shell answers, or fails to (then without the Marketplace), so the listings never wait forever.
+  const accessKnown = !inShell || capabilities !== undefined || capabilitiesQuery.isError
+  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && web3Player
+  const flagsKnown = creatorSalesFlag !== undefined && accessKnown
   const creatorSales = creatorSalesFlag ?? false
-  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })
-  const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names')
+  const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })
+  // RESALE NAME is the Marketplace's: without it the section stays on UNIQUE NAME and the resale feed is never read.
+  const namesTab: ShopNamesTab = marketplaceFlag ? nameTab : 'unique'
+  const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names' && namesTab === 'unique')
+  const resales = useNameResales(resalePage, shop.open && section === 'names' && namesTab === 'resale')
+  useEffect(() => {
+    if (resaleScroller.current) resaleScroller.current.scrollTop = 0
+  }, [resalePage])
+  // A page past the end (its last NAMEs sold since the pager was drawn) goes back to the last one there is,
+  // once an answer says how many are left: before it paints, so an emptied page never shows. The other
+  // pages' cached answers still count the sold NAMEs, so they're read again. Kept, the page it goes back to
+  // would offer the emptied page again, and send the player back from it, until that cache went stale. The
+  // emptied page's own answer is dropped: kept, it would be shown at once if NAMEs listed later bring the
+  // page back, and its old total would send the player back again before it was read anew.
+  const resaleTotal = resales.data?.total
+  useLayoutEffect(() => {
+    if (resaleTotal == null) return
+    const last = resalePageCount(resaleTotal) - 1
+    if (resalePage <= last) return
+    queryClient.removeQueries({ queryKey: [...NAME_RESALES_KEY, resalePage], exact: true })
+    void queryClient.invalidateQueries({ queryKey: NAME_RESALES_KEY, refetchType: 'none' })
+    setResalePage(last)
+  }, [resaleTotal, resalePage, queryClient])
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
   // Each outfit's items, for its tile's price (wearing it reads the same query).
   const outfitReads = useQueries({ queries: (onHome ? (outfits.data ?? []) : []).map((o) => homeQueries.outfitItems(o)) })
-  const trending = useTrending(creatorSales, onHome && flagsKnown)
-  const newest = useNewest(creatorSales, onHome && flagsKnown)
+  const trending = useTrending({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
+  const newest = useNewest({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
-  const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
-  const purchase = useShopPurchase(() => onNavigate('backpack'))
+  // A simulated NAME's PREVIEW ON AVATAR: the NAME in the nametag over the avatar, on UNIQUE NAME, as it
+  // would read once claimed. Nothing is saved: the profile's name stays as it is. Only the player who
+  // rehearsed it sees it: another account signed in meanwhile gets nothing.
+  const playerRef = useRef<string | null>(null)
+  playerRef.current = profile.data?.address?.toLowerCase() ?? null
+  const previewName = useCallback((name: string, buyer: string | null) => {
+    if (buyer == null || buyer !== playerRef.current) return
+    setSection('names')
+    setNameTab('unique')
+    setNameDraft(name)
+    setNameFocused(false)
+    showToast('Preview only: your profile’s name hasn’t changed.')
+  }, [])
+  const purchase = useShopPurchase(() => onNavigate('backpack'), { onPreviewName: previewName })
   // A guest login's cart is the signed-out one, which the account takes over once one signs in.
   const cart = useInWorldCart(capabilities?.reason === 'guest' ? null : (capabilities?.buyer ?? null))
   // Escape or the cart's X closes it, the focus back on the cart button; a press anywhere else closes it
@@ -246,6 +306,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setMenu(null)
     setCartOpen(false)
     setToast(0)
+    setNameTab('unique')
+    setResalePage(0)
     setNameDraft('')
     setNameFocused(false)
     setZoomed(false)
@@ -420,16 +482,32 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setDraft('')
     patch({ ...defaultFilters(kind) })
   }
-  // The NAME field keeps letters and digits only, one past the limit at most: cleaned first, so a pasted NAME
-  // loses its punctuation, not its letters.
+  // The NAME field keeps letters and digits only (its edits cleaned and capped where they are made), one past
+  // the limit at most.
+  const cleanName = (raw: string): string => sanitizeNameInput(raw, Number.POSITIVE_INFINITY)
   const typeName = (value: string): void => setNameDraft(sanitizeNameInput(value, NAME_TYPED_MAX))
   // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
-  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
-  const claimName = (): void => void openWebShop(webNameUrl(nameDraft))
+  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there. Only the
+  // shell's simulation runs here: this page has no way yet to wear a NAME registered for real once it is
+  // indexed, so a shell that says `live` still sends the buyer to the web Shop, as one that can't, or that
+  // refuses, does. A shell busy with another purchase (a second press, its dialog already up) sends nowhere.
+  const claimName = (input: PressedWith): void => {
+    const name = nameDraft
+    const rehearse = capabilities?.namesMode === 'simulation' ? purchase.buyName(name, 'simulation', input) : Promise.resolve('unavailable' as const)
+    void rehearse.then((opening) => {
+      if (opening === 'unavailable') void openWebShop(webNameUrl(name))
+    })
+  }
   const makeNameOffer = (): void => void openWebShop(webNameOfferUrl(nameDraft), 'Marketplace')
-  const browseNameResales = (): void => void openWebShop(webNameResaleUrl(), 'Marketplace')
+  // A NAME on resale is bought on its page on the web Marketplace.
+  const openNameResale = (resale: NameResale): void => void openWebShop(webNameTokenUrl(resale.contract, resale.tokenId), 'Marketplace')
 
   const p = profile.data
+  // Over the avatar on RESALE NAME: the player's own name as it reads now (a claimed NAME's colour, or the
+  // reference hue and the #last-four of an unclaimed one).
+  const own = splitName(p?.name ?? '')
+  const ownAddress = (p?.address ?? '').toLowerCase()
+  const ownClaimed = p?.hasClaimedName === true
   const sortLabel = CATALOGUE_SORTS.find((s) => s.id === filters.sort)?.label ?? CATALOGUE_SORTS[0].label
   // A new page or filter set shows the last rows, dimmed, until it answers.
   const stale = grid.isPlaceholderData
@@ -548,15 +626,24 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               />
             )}
           </div>
-          {section === 'names' && !zoomed && (
-            // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
-            <AvatarNametag
-              className={styles.nametag}
-              name={nameDraft}
-              typing={nameFocused}
-              color={userNameColor(nameDraft, (p?.address ?? '').toLowerCase(), true)}
-            />
-          )}
+          {section === 'names' &&
+            !zoomed &&
+            (namesTab === 'unique' ? (
+              // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
+              <AvatarNametag className={styles.nametag} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
+            ) : (
+              // The player's own name, as it reads today. None until the profile has one: the empty nametag's
+              // placeholder and badge would show a claimed NAME the player may not have.
+              own.base !== '' && (
+                <AvatarNametag
+                  className={styles.nametag}
+                  name={own.base}
+                  claimed={ownClaimed}
+                  suffix={own.tag || addressSuffix(ownAddress)}
+                  color={resolveNameColor(own.base, ownAddress, ownClaimed, p?.nameColor)}
+                />
+              )
+            ))}
           {playing != null && (
             // The design's EMOTE controls, over the avatar while an emote plays.
             <EmoteControls className={styles.emoteControls} onStop={stopEmote} />
@@ -569,9 +656,54 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>
             {section === 'names' ? (
               <ShopNames
-                onResale={browseNameResales}
+                tab={namesTab}
+                onTab={setNameTab}
+                resale={
+                  marketplaceFlag ? (
+                  <div className={styles.body}>
+                    <div className={styles.scrollWrap}>
+                      <div ref={resaleScroller} className={styles.scroller}>
+                        {resales.isPending ? (
+                          <div className={styles.nameGrid} role="status" aria-label="Loading the NAMEs on resale">
+                            {Array.from({ length: 12 }, (_, i) => (
+                              <ShopItemSkeleton key={i} />
+                            ))}
+                          </div>
+                        ) : resales.isError && resales.data == null ? (
+                          <EmptyState
+                            variant="inline"
+                            tone="error"
+                            title="Couldn't load the NAMEs on resale"
+                            subtitle="Please try again in a moment."
+                            actions={[{ label: 'Retry', onClick: () => void resales.refetch() }]}
+                          />
+                        ) : resales.data.total === 0 ? (
+                          <EmptyState variant="inline" title="No NAMEs on resale right now" subtitle="Check back soon." />
+                        ) : (
+                          <>
+                            <div className={`${styles.nameGrid} ${resales.isPlaceholderData ? styles.stale : ''}`.trim()} aria-busy={resales.isPlaceholderData}>
+                              {resales.data.items.map((r) => (
+                                <ShopNameCard
+                                  key={`${r.contract}:${r.tokenId}`}
+                                  name={r.name}
+                                  price={r.priceWei != null ? <PriceTag price={{ kind: 'mana', mana: r.priceWei, reasons: [] }} /> : undefined}
+                                  onSelect={() => openNameResale(r)}
+                                />
+                              ))}
+                            </div>
+                            <Pager variant="shop" className={styles.pager} page={resalePage} count={resalePageCount(resales.data.total)} onChange={setResalePage} />
+                          </>
+                        )}
+                      </div>
+                      <ScrollThumb target={resaleScroller} length={THUMB_LENGTH} className={styles.thumb} />
+                    </div>
+                  </div>
+                  ) : undefined
+                }
                 value={nameDraft}
                 onChange={typeName}
+                clean={cleanName}
+                maxLength={NAME_TYPED_MAX}
                 onFocusChange={setNameFocused}
                 minLength={NAME_MIN_LENGTH}
                 limit={NAME_MAX_LENGTH}
@@ -579,7 +711,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 status={nameCheck.status}
                 price={nameCheck.price}
                 onClaim={claimName}
-                onMakeOffer={makeNameOffer}
+                onMakeOffer={marketplaceFlag ? makeNameOffer : undefined}
                 onRetry={nameCheck.retry}
               />
             ) : section === 'all' ? (

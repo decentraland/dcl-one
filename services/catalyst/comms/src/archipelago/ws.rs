@@ -17,7 +17,8 @@ use axum::routing::get;
 use io::WebSocket;
 use prost::Message as _;
 use rand::RngExt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 mod control_position;
 mod io;

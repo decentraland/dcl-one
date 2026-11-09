@@ -11,6 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Every active category in table order with its count (zero when no place carries it), counted over every place row, disabled included; `target=places|worlds` narrows the count (places `Category/routes.ts`, `Category/model.ts:34-51`). */
         get: operations["get_categories"];
         put?: never;
         post?: never;
@@ -27,8 +28,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description The destinations feed (`Destination/routes/getDestinationsList.ts`): the union of enabled genesis places and listed catalogue worlds, or one of them with `only_places` (which wins over `only_worlds`, Destination/model.ts:234). World rows carry `base_position` `0,0`, empty `positions` and the latest enabled scene's contact, creator and sdk (:39-49). `names` is a case-insensitive substring match with `%` and `_` taken literally; `world_names` exact. dcl-one adds `positions` (alias of `pointer`), `ids`, `kinds`, `only_sdk7` and `with=`; `next_event` appears only when `with=next_event` asks for it. */
         get: operations["get_destinations_list"];
         put?: never;
+        /** @description The feed over an array of destination ids (`getDestinationsListById.ts`), under the same query parameters as GET; more than 100 ids answer 400 and so does any body that is not an array (an object of selectors is `POST /v1/destinations`'); an empty array selects nothing and lists the generic feed. The `with=next_event` decoration and the `kind`/`live_event`/`next_event` keys are `/v1/destinations`' only. */
         post: operations["post_destinations_list_by_id"];
         delete?: never;
         options?: never;
@@ -75,6 +78,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Places keyed by `base_position` in the query's order (`Map/routes/getMapPlaces.ts`): enabled, categorized, `world is false` unless `only_highlighted`. `only_favorites` without a signed viewer answers `data: []`. */
         get: operations["get_map_places"];
         put?: never;
         post?: never;
@@ -91,6 +95,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Full place rows for the map (`Map/routes/getAllPlacesList.ts`): `positions` and/or `names` (exact, case-sensitive `world_name IN`), either when both are given, `world is false` when neither (Place/model.ts:1331-1354). */
         get: operations["get_all_places_list"];
         put?: never;
         post?: never;
@@ -107,9 +112,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Place listing (places `Place/routes/getPlaceList.ts`). `world is false` unless `only_highlighted` or `names` (`world_id IN`) are set, which also admit world scenes (Place/model.ts:150-156). `owner` matches the row's owner or a parcel the wallet holds or operates on chain (:186-197). `search` matches and ranks the weighted `textsearch` vector with a prefix tsquery (:171,323-328) and adds `rank` to every item. `most_active` orders by the live headcounts this node observes (the old places service sorted the first hundred by hot-scene counts). `realms_detail` lists this node's realm only. */
         get: operations["get_place_list"];
         put?: never;
+        /** @description The listing over an array of place ids (`getPlaceListById.ts`): `offset`, `limit`, `order_by`, `order` and `search` apply, disabled rows are left out, `total` counts every id the table knows (Place/model.ts:579-592). */
         post: operations["post_place_list_by_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Status rows (`id`, `disabled`, `disabled_reason`, `world`, `world_name`, `base_position`) for up to 100 ids, disabled rows included (`getPlaceStatusListById.ts`); more than 100 ids answer 404. */
+        post: operations["post_place_status_list_by_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -129,6 +153,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Sets or clears the signer's favorite of a place (UUID) or, for older clients, a world (its name). The body is validated before the signed fetch (400 `Error validating input`); an unsigned request answers 400 `Invalid Auth Chain`. Answers the favorites read before the write plus or minus one. */
         patch: operations["patch_place_favorites"];
         trace?: never;
     };
@@ -145,6 +170,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Sets, flips or withdraws (`like: null`) the signer's vote on a place (UUID) or, for older clients, a world (its name); `{}` stores a like. Only voters with a Snapshot voting power of 100 or more weigh in `like_rate`/`like_score`. */
         patch: operations["patch_place_likes"];
         trace?: never;
     };
@@ -188,6 +214,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** @description Disables or re-enables a place: disabled, disabled_at, disabled_reason ('moderation') and updated_at are stored, so the answer equals the next read; a disable queues a moderation notice when PLACES_MODERATION_WEBHOOK is set. */
         put: operations["put_place_disable"];
         post?: never;
         delete?: never;
@@ -268,24 +295,9 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** @description Sets the content rating. Every decision appends an audit row; a stricter rating than the stored one queues a moderation notice when PLACES_MODERATION_WEBHOOK is set. A disabled place takes no write and the answer still echoes the value, as the old places service's updatePlace does. */
         put: operations["put_place_rating"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/places/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["post_place_status_list_by_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -411,6 +423,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description The names of the listed, enabled catalogue worlds, ascending (World/model.ts:434-443). */
         get: operations["get_world_names_list"];
         put?: never;
         post?: never;
@@ -427,6 +440,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description World listing (`World/routes/getWorldList.ts`): `names` are world ids, lowercased and matched exactly (World/model.ts:115-120). `most_active` orders by the live headcounts this node observes (the old places service fell back to `like_score`). */
         get: operations["get_world_list"];
         put?: never;
         post?: never;
@@ -443,6 +457,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description One catalogue world by its id verbatim (World/model.ts:333): an upper-case name is a 404. */
         get: operations["get_world"];
         put?: never;
         post?: never;
@@ -465,6 +480,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Sets or clears the signer's favorite of a world by its lowercased name; a place UUID answers 400 after the signed fetch. */
         patch: operations["patch_world_favorites"];
         trace?: never;
     };
@@ -513,6 +529,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Sets, flips or withdraws (`like: null`) the signer's vote on a world by its lowercased name; `like` is required here. Only voters with a Snapshot voting power of 100 or more weigh in `like_rate`/`like_score`. */
         patch: operations["patch_world_likes"];
         trace?: never;
     };
@@ -556,6 +573,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** @description Sets the content rating. Every decision appends an audit row; a stricter rating than the stored one queues a moderation notice when PLACES_MODERATION_WEBHOOK is set. Worlds have no disabled predicate. */
         put: operations["put_world_rating"];
         post?: never;
         delete?: never;
@@ -603,6 +621,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description The link-preview card of a place: the old places service's HTML (title, description, og:* and twitter:* tags). The canonical URL is PLACES_BASE_URL (default https://decentraland.org/places) with pathname /places/place/ and ?position=x.y (dot-separated); id is looked up only as a UUID, position through toCanonicalPosition (separators , . ; |, world limits). An unknown or malformed lookup answers the generic card whose URL is the site root plus the request path and query, without a Link header. */
         get: operations["inject_place_metadata"];
         put?: never;
         post?: never;
@@ -619,6 +638,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description The link-preview card of a world: the old places service's HTML (title, description, og:* and twitter:* tags). The canonical URL is PLACES_BASE_URL (default https://decentraland.org/places) with pathname /places/world/ and ?name=<world name>. An unknown or malformed lookup answers the generic card whose URL is the site root plus the request path and query, without a Link header. */
         get: operations["inject_world_metadata"];
         put?: never;
         post?: never;
@@ -653,7 +673,8 @@ export interface paths {
         };
         get: operations["get_v1_destinations_list"];
         put?: never;
-        post?: never;
+        /** @description The `/api/destinations` batch read with dcl-one's object body (`{ids, positions, world_names}`) and the v1 keys (`kind`, `live_event`; `next_event` when `with=next_event`). Answers 200, not the 201 of the `/api` routes. */
+        post: operations["post_v1_destinations_list"];
         delete?: never;
         options?: never;
         head?: never;
@@ -728,293 +749,29 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        ApiData_Destination: {
+        ApiDataTotalMap_MapEntry: {
             data: {
-                base_position: string;
-                categories: string[];
-                /**
-                 * @description Wallet addresses connected here, present only when with_connected_users=true:
-                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
-                 *     be reached and the connected users are unknown.
-                 */
-                connected_addresses?: string[] | null;
-                contact_email?: string | null;
-                contact_name?: string | null;
-                content_rating?: string | null;
-                /** Format: date-time */
-                created_at?: string | null;
-                creator_address?: string | null;
-                /** Format: date-time */
-                deployed_at?: string | null;
-                description?: string | null;
-                disabled: boolean;
-                /** Format: date-time */
-                disabled_at?: string | null;
-                /** Format: int32 */
-                dislikes: number;
-                /** Format: int32 */
-                favorites: number;
-                highlighted: boolean;
-                highlighted_image?: string | null;
-                id: string;
-                image?: string | null;
-                is_private: boolean;
-                kind: components["schemas"]["EntityType"];
-                /** Format: double */
-                like_rate?: number | null;
-                /** Format: double */
-                like_score?: number | null;
-                /** Format: int32 */
-                likes: number;
-                live?: boolean | null;
-                live_event?: boolean | null;
-                live_event_name?: string | null;
-                next_event?: null | components["schemas"]["DestinationNextEvent"];
-                owner?: string | null;
-                positions: string[];
-                /** Format: double */
-                ranking?: number | null;
-                realms_detail?: unknown[] | null;
-                sdk?: string | null;
-                title?: string | null;
-                /** Format: date-time */
-                updated_at?: string | null;
-                /** Format: int32 */
-                user_count?: number | null;
-                user_dislike: boolean;
-                user_favorite: boolean;
-                user_like: boolean;
-                /** Format: int32 */
-                user_visits: number;
-                world: boolean;
-                world_name?: string | null;
+                [key: string]: {
+                    base_position: string;
+                    categories: string[];
+                    contact_name?: string | null;
+                    description?: string | null;
+                    id: string;
+                    image?: string | null;
+                    realms_detail?: unknown[] | null;
+                    title?: string | null;
+                    /** Format: int32 */
+                    user_count: number;
+                    user_dislike: boolean;
+                    user_favorite: boolean;
+                    user_like: boolean;
+                    /** Format: int32 */
+                    user_visits: number;
+                };
             };
             ok: boolean;
-        };
-        ApiData_FavoritesResult: {
-            data: {
-                /** Format: int32 */
-                favorites: number;
-                user_favorite: boolean;
-            };
-            ok: boolean;
-        };
-        ApiData_InteractionSummary: {
-            data: {
-                /** Format: int32 */
-                dislikes: number;
-                /** Format: int32 */
-                favorites: number;
-                /** Format: int32 */
-                likes: number;
-                user_dislike: boolean;
-                user_favorite: boolean;
-                user_like: boolean;
-            };
-            ok: boolean;
-        };
-        ApiData_LikesResult: {
-            data: {
-                /** Format: int32 */
-                dislikes: number;
-                /** Format: int32 */
-                likes: number;
-                user_dislike: boolean;
-                user_like: boolean;
-            };
-            ok: boolean;
-        };
-        ApiData_PlaceCategoriesOut: {
-            data: {
-                categories: string[];
-            };
-            ok: boolean;
-        };
-        ApiData_PlaceRow: {
-            data: {
-                base_position: string;
-                categories: string[];
-                /**
-                 * @description Wallet addresses connected here, present only when with_connected_users=true:
-                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
-                 *     be reached and the connected users are unknown.
-                 */
-                connected_addresses?: string[] | null;
-                contact_email?: string | null;
-                contact_name?: string | null;
-                content_rating?: string | null;
-                /** Format: date-time */
-                created_at?: string | null;
-                creator_address?: string | null;
-                /** Format: date-time */
-                deployed_at?: string | null;
-                /**
-                 * @description Immutable content-entity identifier for this indexed deployment.
-                 *     Null for legacy rows awaiting reconciliation (upstream places #856).
-                 */
-                deployment_id?: string | null;
-                description?: string | null;
-                disabled: boolean;
-                /** Format: date-time */
-                disabled_at?: string | null;
-                disabled_reason?: string | null;
-                /** Format: int32 */
-                dislikes: number;
-                exclude_from_ranking: boolean;
-                /** Format: int32 */
-                favorites: number;
-                highlighted: boolean;
-                highlighted_image?: string | null;
-                id: string;
-                image?: string | null;
-                /** Format: double */
-                like_rate?: number | null;
-                /** Format: double */
-                like_score?: number | null;
-                /** Format: int32 */
-                likes: number;
-                live?: boolean | null;
-                live_event_name?: string | null;
-                owner?: string | null;
-                positions: string[];
-                /** Format: double */
-                ranking?: number | null;
-                realms_detail?: unknown[] | null;
-                sdk?: string | null;
-                title?: string | null;
-                /** Format: date-time */
-                updated_at?: string | null;
-                /** Format: int32 */
-                user_count?: number | null;
-                user_dislike: boolean;
-                user_favorite: boolean;
-                user_like: boolean;
-                /** Format: int32 */
-                user_visits: number;
-                world: boolean;
-                world_id?: string | null;
-                world_name?: string | null;
-            };
-            ok: boolean;
-        };
-        ApiData_PoiRow: {
-            data: {
-                /** Format: date-time */
-                created_at: string;
-                created_by?: string | null;
-                description?: string | null;
-                enabled: boolean;
-                entity_id?: string | null;
-                position: string;
-                title?: string | null;
-                /** Format: date-time */
-                updated_at: string;
-            };
-            ok: boolean;
-        };
-        ApiData_ReplaceRankingResult: {
-            data: {
-                places: components["schemas"]["ReplaceRankingPlaces"];
-                worlds: components["schemas"]["ReplaceRankingWorlds"];
-            };
-            ok: boolean;
-        };
-        ApiData_ReportRow: {
-            data: {
-                /** Format: date-time */
-                created_at: string;
-                entity_id?: string | null;
-                filename: string;
-                /** Format: int64 */
-                id: number;
-                moderator_notes?: string | null;
-                payload: unknown;
-                reporter: string;
-                resolution?: string | null;
-                /** Format: date-time */
-                resolved_at?: string | null;
-                resolved_by?: string | null;
-                signed_url: string;
-                status: string;
-            };
-            ok: boolean;
-        };
-        ApiData_Vec_CategoryOut: {
-            data: {
-                active: boolean;
-                /** Format: int64 */
-                count: number;
-                i18n: components["schemas"]["I18n"];
-                name: string;
-            }[];
-            ok: boolean;
-        };
-        ApiData_Vec_PoiRow: {
-            data: {
-                /** Format: date-time */
-                created_at: string;
-                created_by?: string | null;
-                description?: string | null;
-                enabled: boolean;
-                entity_id?: string | null;
-                position: string;
-                title?: string | null;
-                /** Format: date-time */
-                updated_at: string;
-            }[];
-            ok: boolean;
-        };
-        ApiData_WorldRow: {
-            data: {
-                base_position: string;
-                categories: string[];
-                contact_name?: string | null;
-                content_rating?: string | null;
-                /** Format: date-time */
-                created_at?: string | null;
-                /** Format: date-time */
-                deployed_at?: string | null;
-                description?: string | null;
-                disabled: boolean;
-                /** Format: date-time */
-                disabled_at?: string | null;
-                /** Format: int32 */
-                dislikes: number;
-                exclude_from_ranking: boolean;
-                /** Format: int32 */
-                favorites: number;
-                highlighted: boolean;
-                highlighted_image?: string | null;
-                id: string;
-                image?: string | null;
-                is_private: boolean;
-                /** Format: double */
-                like_rate?: number | null;
-                /** Format: double */
-                like_score?: number | null;
-                /** Format: int32 */
-                likes: number;
-                owner?: string | null;
-                /** Format: double */
-                ranking?: number | null;
-                show_in_places: boolean;
-                single_player: boolean;
-                /** Format: double */
-                skybox_time?: number | null;
-                title?: string | null;
-                /** Format: date-time */
-                updated_at?: string | null;
-                /** Format: int32 */
-                user_count?: number | null;
-                user_dislike: boolean;
-                user_favorite: boolean;
-                user_like: boolean;
-                /** Format: int32 */
-                user_visits: number;
-                world: boolean;
-                world_name?: string | null;
-            };
-            ok: boolean;
+            /** Format: int64 */
+            total: number;
         };
         ApiDataTotal_Destination: {
             data: {
@@ -1047,16 +804,24 @@ export interface components {
                 id: string;
                 image?: string | null;
                 is_private: boolean;
-                kind: components["schemas"]["EntityType"];
+                /** @description dcl-one only: `place` or `world`. Emitted on `/v1/destinations`; `/api/destinations` omits it; the old places service's row had no such key (Destination/model.ts:23-49). */
+                kind?: components["schemas"]["EntityType"];
                 /** Format: double */
                 like_rate?: number | null;
                 /** Format: double */
                 like_score?: number | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+                 */
+                rank?: number;
                 /** Format: int32 */
                 likes: number;
                 live?: boolean | null;
+                /** @description dcl-one only, a duplicate of `live`; `/v1/destinations` only. */
                 live_event?: boolean | null;
                 live_event_name?: string | null;
+                /** @description dcl-one only; present only when `with=next_event` (a dcl-one parameter) was requested. */
                 next_event?: null | components["schemas"]["DestinationNextEvent"];
                 owner?: string | null;
                 positions: string[];
@@ -1101,7 +866,7 @@ export interface components {
                 deployed_at?: string | null;
                 /**
                  * @description Immutable content-entity identifier for this indexed deployment.
-                 *     Null for legacy rows awaiting reconciliation (upstream places #856).
+                 *     Null for legacy rows awaiting reconciliation (decentraland/places#856).
                  */
                 deployment_id?: string | null;
                 description?: string | null;
@@ -1122,6 +887,13 @@ export interface components {
                 like_rate?: number | null;
                 /** Format: double */
                 like_score?: number | null;
+                /** @description The serialized `textsearch` tsvector of the old places service's table (Place/types.ts:64): the mirrored value, else the same vector computed from title, world name, description and owner. */
+                textsearch: string | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+                 */
+                rank?: number;
                 /** Format: int32 */
                 likes: number;
                 live?: boolean | null;
@@ -1154,6 +926,8 @@ export interface components {
             data: {
                 base_position: string;
                 disabled: boolean;
+                /** @description The stored disabled reason (`moderation`, `opt_out`, `undeployment`, `overwritten`), null while enabled (places Place/model.ts:556-577). */
+                disabled_reason: string | null;
                 id: string;
                 world: boolean;
                 world_name?: string | null;
@@ -1239,47 +1013,348 @@ export interface components {
                 user_visits: number;
                 world: boolean;
                 world_name?: string | null;
+                /**
+                 * Format: int32
+                 * @description The world settings counter mirrored from the worlds server; null until a settings write lands.
+                 */
+                settings_version: number | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places World/model.ts:376).
+                 */
+                rank?: number;
             }[];
             ok: boolean;
             /** Format: int64 */
             total: number;
         };
-        ApiDataTotalMap_MapEntry: {
+        ApiData_Destination: {
             data: {
-                [key: string]: {
-                    base_position: string;
-                    categories: string[];
-                    contact_name?: string | null;
-                    description?: string | null;
-                    id: string;
-                    image?: string | null;
-                    realms_detail?: unknown[] | null;
-                    title?: string | null;
-                    /** Format: int32 */
-                    user_count: number;
-                    user_dislike: boolean;
-                    user_favorite: boolean;
-                    user_like: boolean;
-                    /** Format: int32 */
-                    user_visits: number;
-                };
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                /** @description dcl-one only: `place` or `world`. Emitted on `/v1/destinations`; `/api/destinations` omits it; the old places service's row had no such key (Destination/model.ts:23-49). */
+                kind?: components["schemas"]["EntityType"];
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+                 */
+                rank?: number;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                /** @description dcl-one only, a duplicate of `live`; `/v1/destinations` only. */
+                live_event?: boolean | null;
+                live_event_name?: string | null;
+                /** @description dcl-one only; present only when `with=next_event` (a dcl-one parameter) was requested. */
+                next_event?: null | components["schemas"]["DestinationNextEvent"];
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
             };
             ok: boolean;
-            /** Format: int64 */
-            total: number;
         };
-        ApiErrorBody: {
-            error: string;
-            federation_adr?: string | null;
-            message: string;
+        ApiData_FavoritesResult: {
+            data: {
+                /** Format: int32 */
+                favorites: number;
+                user_favorite: boolean;
+            };
             ok: boolean;
+        };
+        ApiData_InteractionSummary: {
+            data: {
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                favorites: number;
+                /** Format: int32 */
+                likes: number;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+            };
+            ok: boolean;
+        };
+        ApiData_LikesResult: {
+            data: {
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                likes: number;
+                user_dislike: boolean;
+                user_like: boolean;
+            };
+            ok: boolean;
+        };
+        ApiData_PlaceCategoriesOut: {
+            data: {
+                categories: string[];
+            };
+            ok: boolean;
+        };
+        ApiData_PlaceRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                /**
+                 * @description Immutable content-entity identifier for this indexed deployment.
+                 *     Null for legacy rows awaiting reconciliation (decentraland/places#856).
+                 */
+                deployment_id?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                disabled_reason?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** @description The serialized `textsearch` tsvector of the old places service's table (Place/types.ts:64): the mirrored value, else the same vector computed from title, world name, description and owner. */
+                textsearch: string | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+                 */
+                rank?: number;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                live_event_name?: string | null;
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_id?: string | null;
+                world_name?: string | null;
+            };
+            ok: boolean;
+        };
+        ApiData_PoiRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                created_by?: string | null;
+                description?: string | null;
+                enabled: boolean;
+                entity_id?: string | null;
+                position: string;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            };
+            ok: boolean;
+        };
+        ApiData_ReplaceRankingResult: {
+            data: {
+                places: components["schemas"]["ReplaceRankingPlaces"];
+                worlds: components["schemas"]["ReplaceRankingWorlds"];
+            };
+            ok: boolean;
+        };
+        ApiData_ReportRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                entity_id?: string | null;
+                filename: string;
+                /** Format: int64 */
+                id: number;
+                moderator_notes?: string | null;
+                payload: unknown;
+                reporter: string;
+                resolution?: string | null;
+                /** Format: date-time */
+                resolved_at?: string | null;
+                resolved_by?: string | null;
+                signed_url: string;
+                status: string;
+            };
+            ok: boolean;
+        };
+        ApiData_Vec_CategoryOut: {
+            data: {
+                /** Format: int64 */
+                count: number;
+                i18n: components["schemas"]["I18n"];
+                name: string;
+            }[];
+            ok: boolean;
+        };
+        ApiData_Vec_PoiRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                created_by?: string | null;
+                description?: string | null;
+                enabled: boolean;
+                entity_id?: string | null;
+                position: string;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            ok: boolean;
+        };
+        ApiData_WorldRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                owner?: string | null;
+                /** Format: double */
+                ranking?: number | null;
+                show_in_places: boolean;
+                single_player: boolean;
+                /** Format: double */
+                skybox_time?: number | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
+                /**
+                 * Format: int32
+                 * @description The world settings counter mirrored from the worlds server; null until a settings write lands.
+                 */
+                settings_version: number | null;
+                /**
+                 * Format: float
+                 * @description ts_rank_cd of the row against `search`; present only when `search` is set (places World/model.ts:376).
+                 */
+                rank?: number;
+            };
+            ok: boolean;
+        };
+        /** @description The old services' error envelope (decentraland-gatsby RequestError.toJSON): `error` is the message, `code` the snake-cased status (bad_request, unauthorized, forbidden, not_found, payload_too_large, service_unavailable, internal_server_error) and `data` carries detail when the refusal has it, such as a validation failure's ajv `errors`, their `messages` and the validated `body`. Never a `stack`. */
+        ApiErrorBody: {
+            code: string;
+            data?: {
+                [key: string]: unknown;
+            };
+            error: string;
+            /** @enum {boolean} */
+            ok: false;
         };
         ApiJsonList: {
             data: Record<string, never>[];
             ok: boolean;
         };
         CategoryOut: {
-            active: boolean;
             /** Format: int64 */
             count: number;
             i18n: components["schemas"]["I18n"];
@@ -1315,16 +1390,24 @@ export interface components {
             id: string;
             image?: string | null;
             is_private: boolean;
-            kind: components["schemas"]["EntityType"];
+            /** @description dcl-one only: `place` or `world`. Emitted on `/v1/destinations`; `/api/destinations` omits it; the old places service's row had no such key (Destination/model.ts:23-49). */
+            kind?: components["schemas"]["EntityType"];
             /** Format: double */
             like_rate?: number | null;
             /** Format: double */
             like_score?: number | null;
+            /**
+             * Format: float
+             * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+             */
+            rank?: number;
             /** Format: int32 */
             likes: number;
             live?: boolean | null;
+            /** @description dcl-one only, a duplicate of `live`; `/v1/destinations` only. */
             live_event?: boolean | null;
             live_event_name?: string | null;
+            /** @description dcl-one only; present only when `with=next_event` (a dcl-one parameter) was requested. */
             next_event?: null | components["schemas"]["DestinationNextEvent"];
             owner?: string | null;
             positions: string[];
@@ -1418,7 +1501,7 @@ export interface components {
             deployed_at?: string | null;
             /**
              * @description Immutable content-entity identifier for this indexed deployment.
-             *     Null for legacy rows awaiting reconciliation (upstream places #856).
+             *     Null for legacy rows awaiting reconciliation (decentraland/places#856).
              */
             deployment_id?: string | null;
             description?: string | null;
@@ -1439,6 +1522,13 @@ export interface components {
             like_rate?: number | null;
             /** Format: double */
             like_score?: number | null;
+            /** @description The serialized `textsearch` tsvector of the old places service's table (Place/types.ts:64): the mirrored value, else the same vector computed from title, world name, description and owner. */
+            textsearch: string | null;
+            /**
+             * Format: float
+             * @description ts_rank_cd of the row against `search`; present only when `search` is set (places Place/model.ts:305,323-328).
+             */
+            rank?: number;
             /** Format: int32 */
             likes: number;
             live?: boolean | null;
@@ -1466,6 +1556,8 @@ export interface components {
         PlaceStatusRow: {
             base_position: string;
             disabled: boolean;
+            /** @description The stored disabled reason (`moderation`, `opt_out`, `undeployment`, `overwritten`), null while enabled (places Place/model.ts:556-577). */
+            disabled_reason: string | null;
             id: string;
             world: boolean;
             world_name?: string | null;
@@ -1570,6 +1662,124 @@ export interface components {
             user_visits: number;
             world: boolean;
             world_name?: string | null;
+            /**
+             * Format: int32
+             * @description The world settings counter mirrored from the worlds server; null until a settings write lands.
+             */
+            settings_version: number | null;
+            /**
+             * Format: float
+             * @description ts_rank_cd of the row against `search`; present only when `search` is set (places World/model.ts:376).
+             */
+            rank?: number;
+        };
+        /** @description The row an admin write answers: the old places service's findByIdWithAggregates (Place/model.ts:513-553), every places column plus the signer's user_favorite/user_like/user_dislike, with the changed field overwritten. No user_count, user_visits or live-event fields. */
+        ModeratedPlaceRow: {
+            base_position: string;
+            categories: string[];
+            contact_email?: string | null;
+            contact_name?: string | null;
+            content_rating?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            creator_address?: string | null;
+            /** Format: date-time */
+            deployed_at?: string | null;
+            /**
+             * @description Immutable content-entity identifier for this indexed deployment.
+             *     Null for legacy rows awaiting reconciliation (decentraland/places#856).
+             */
+            deployment_id?: string | null;
+            description?: string | null;
+            disabled: boolean;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            disabled_reason?: string | null;
+            /** Format: int32 */
+            dislikes: number;
+            exclude_from_ranking: boolean;
+            /** Format: int32 */
+            favorites: number;
+            highlighted: boolean;
+            highlighted_image?: string | null;
+            id: string;
+            image?: string | null;
+            /** Format: double */
+            like_rate?: number | null;
+            /** Format: double */
+            like_score?: number | null;
+            /** Format: int32 */
+            likes: number;
+            owner?: string | null;
+            positions: string[];
+            /** Format: double */
+            ranking?: number | null;
+            sdk?: string | null;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            world: boolean;
+            world_id?: string | null;
+            world_name?: string | null;
+        };
+        ApiData_ModeratedPlaceRow: {
+            data: components["schemas"]["ModeratedPlaceRow"];
+            ok: boolean;
+        };
+        /** @description The row an admin write answers: the old places service's World findByIdWithAggregates (World/model.ts:284-335), the world columns plus disabled false, base_position '0,0', world true, user_visits 0 and the signer's user_* flags, with the changed field overwritten. No user_count. */
+        ModeratedWorldRow: {
+            base_position: string;
+            categories: string[];
+            contact_name?: string | null;
+            content_rating?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: date-time */
+            deployed_at?: string | null;
+            description?: string | null;
+            disabled: boolean;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: int32 */
+            dislikes: number;
+            exclude_from_ranking: boolean;
+            /** Format: int32 */
+            favorites: number;
+            highlighted: boolean;
+            highlighted_image?: string | null;
+            id: string;
+            image?: string | null;
+            is_private: boolean;
+            /** Format: double */
+            like_rate?: number | null;
+            /** Format: double */
+            like_score?: number | null;
+            /** Format: int32 */
+            likes: number;
+            owner?: string | null;
+            /** Format: double */
+            ranking?: number | null;
+            show_in_places: boolean;
+            single_player: boolean;
+            /** Format: double */
+            skybox_time?: number | null;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            /** Format: int32 */
+            user_visits: number;
+            world: boolean;
+            world_name?: string | null;
+        };
+        ApiData_ModeratedWorldRow: {
+            data: components["schemas"]["ModeratedWorldRow"];
+            ok: boolean;
         };
     };
     responses: never;
@@ -1582,7 +1792,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     get_categories: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Count places (`places`), worlds (`worlds`) or both (any other value or absent). */
+                target?: "places" | "worlds";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1610,32 +1823,33 @@ export interface operations {
     get_destinations_list: {
         parameters: {
             query?: {
-                categories?: string[];
-                creator_address?: string;
-                ids?: string[];
-                kinds?: string[];
                 limit?: number;
-                names?: string[];
                 offset?: number;
-                only_favorites?: string;
-                only_highlighted?: string;
-                only_places?: string;
-                only_sdk7?: string;
-                only_worlds?: string;
-                order?: string;
-                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
-                order_by?: string;
-                owner?: string;
-                pointer?: string[];
+                ids?: string[];
                 positions?: string[];
-                sdk?: string;
+                pointer?: string[];
+                world_names?: string[];
+                names?: string[];
+                kinds?: string[];
+                only_places?: string;
+                only_worlds?: string;
+                categories?: string[];
+                only_highlighted?: string;
+                only_favorites?: string;
                 search?: string;
+                owner?: string;
+                creator_address?: string;
+                sdk?: string;
+                only_sdk7?: string;
+                /** @description like_score (default) | most_active | updated_at | created_at; any other value (user_visits included) orders by like_score (the `oneOf` fallback, Destination/model.ts:189-195). most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                order_by?: string;
+                order?: string;
+                /** @description Comma-separated decorations: live_events, connected_users, realms_detail. `next_event` is read on `/v1/destinations` only. */
                 with?: string[];
+                with_live_events?: string;
                 /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
                 with_connected_users?: string;
-                with_live_events?: string;
                 with_realms_detail?: string;
-                world_names?: string[];
             };
             header?: never;
             path?: never;
@@ -1651,6 +1865,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiDataTotal_Destination"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1678,11 +1893,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": string[];
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1690,6 +1906,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiDataTotal_Destination"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1730,6 +1947,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiData_ReplaceRankingResult"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body`; otherwise a route 400 without `data`: a duplicate destination, an entry outside `replaces`, or a type whose every named destination is unknown */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1738,7 +1956,17 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1781,6 +2009,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiDataTotalMap_MapEntry"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -1808,6 +2045,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -1821,21 +2067,19 @@ export interface operations {
     get_place_list: {
         parameters: {
             query?: {
-                categories?: string[];
-                creator_address?: string;
                 limit?: number;
-                names?: string[];
                 offset?: number;
-                /** @description True to show only entries the automated ranking is not allowed to touch */
-                only_excluded_from_ranking?: string;
-                only_favorites?: string;
-                only_highlighted?: string;
-                order?: string;
-                order_by?: string;
-                owner?: string;
                 positions?: string[];
-                sdk?: string;
+                names?: string[];
+                categories?: string[];
+                only_highlighted?: string;
+                only_favorites?: string;
                 search?: string;
+                creator_address?: string;
+                sdk?: string;
+                order_by?: string;
+                order?: string;
+                owner?: string;
                 with_realms_detail?: string;
             };
             header?: never;
@@ -1850,6 +2094,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
+                };
+            };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
             500: {
@@ -1875,7 +2128,8 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1883,7 +2137,57 @@ export interface operations {
                     "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_place_status_list_by_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string[];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_PlaceStatusRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description More than 100 ids ("Cannot request more than 100 places at once") */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1912,7 +2216,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /** @description True if the place is selected as favorite */
+                    favorites: boolean;
+                };
             };
         };
         responses: {
@@ -1948,14 +2255,6 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1977,7 +2276,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /** @description True likes, false dislikes, null withdraws the vote; absent stores a like */
+                    like?: boolean | null;
+                };
             };
         };
         responses: {
@@ -2013,14 +2315,6 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2048,6 +2342,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
             404: {
@@ -2087,6 +2390,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiData_PlaceCategoriesOut"];
                 };
             };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2116,18 +2428,22 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    disabled: boolean;
+                };
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain") or a malformed one; otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the credential, before the body and before isAdmin) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2136,6 +2452,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2144,7 +2461,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The signer is not an admin wallet ("Only admin allowed to update …") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2152,7 +2470,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found place "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2193,6 +2512,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description An Authorization header that is not a Bearer, or an invalid body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2201,7 +2521,17 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description Missing Authorization */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Invalid Bearer Token */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2242,14 +2572,16 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the bearer) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2258,6 +2590,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2266,7 +2599,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2274,7 +2608,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found place "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2308,9 +2643,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the bearer) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2319,6 +2655,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2327,7 +2664,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2335,7 +2673,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found place "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2368,14 +2707,16 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain") or a malformed one; otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the credential, before the body and before isAdmin) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2384,6 +2725,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2392,7 +2734,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The signer is not an admin wallet ("Only admin allowed to update …") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2400,7 +2743,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found place "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2438,9 +2782,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the bearer) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2449,6 +2794,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2457,6 +2803,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2465,15 +2812,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description Not found place "<id>" */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2502,14 +2842,25 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the bearer) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2518,6 +2869,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found place "<id>" */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2552,9 +2913,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"); otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the bearer) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2563,6 +2934,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found place "<id>" */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2592,18 +2973,28 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /**
+                     * @description The old route's codes (PR is rating pending) plus the stored pending code RP; PR is stored and answered as RP.
+                     * @enum {string}
+                     */
+                    content_rating: "PR" | "E" | "T" | "A" | "R" | "RP";
+                    /** @description Kept in the append-only rating audit log. */
+                    comment?: string;
+                };
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedPlaceRow"];
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain") or a malformed one; otherwise validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (the place id must be a uuid; checked after the credential, before the body and before isAdmin) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2612,6 +3003,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2620,6 +3012,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The signer is not an admin wallet ("Only admin allowed to update …") */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found place "<id>" */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2628,54 +3030,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
             503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-        };
-    };
-    post_place_status_list_by_id: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": string[];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiDataTotal_PlaceStatusRow"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2874,7 +3229,8 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2882,6 +3238,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain"), a malformed link ("Invalid chain format: …") or a bad chain timestamp */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2890,6 +3247,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2931,6 +3289,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Without a valid capability token: No signed-fetch auth chain ("Invalid Auth Chain"), a malformed link ("Invalid chain format: …") or a bad chain timestamp */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2939,6 +3298,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description Without a valid capability token: An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -2947,6 +3307,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No open report of this reporter under that filename */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3110,18 +3471,18 @@ export interface operations {
     get_world_list: {
         parameters: {
             query?: {
-                categories?: string[];
                 limit?: number;
-                names?: string[];
                 offset?: number;
-                /** @description True to show only entries the automated ranking is not allowed to touch */
-                only_excluded_from_ranking?: string;
+                names?: string[];
+                categories?: string[];
                 only_favorites?: string;
                 only_highlighted?: string;
-                order?: string;
-                order_by?: string;
-                owner?: string;
+                /** @description True to show only entries the automated ranking is not allowed to touch */
+                only_excluded_from_ranking?: string;
                 search?: string;
+                order_by?: string;
+                order?: string;
+                owner?: string;
             };
             header?: never;
             path?: never;
@@ -3135,6 +3496,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiDataTotal_WorldRow"];
+                };
+            };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
             500: {
@@ -3195,7 +3565,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /** @description True if the place is selected as favorite */
+                    favorites: boolean;
+                };
             };
         };
         responses: {
@@ -3231,14 +3604,6 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -3264,14 +3629,16 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"), or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the bearer; a world id is a plain string) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3280,6 +3647,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3288,7 +3656,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3296,7 +3665,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found world "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3330,9 +3700,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"), or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the bearer; a world id is a plain string) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3341,6 +3712,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3349,7 +3721,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3357,7 +3730,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found world "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3390,14 +3764,16 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain") or a malformed one, or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the credential and before isAdmin; a world id is a plain string) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3406,6 +3782,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3414,7 +3791,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The signer is not an admin wallet ("Only admin allowed to update …") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3422,7 +3800,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found world "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3451,7 +3830,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /** @description True likes, false dislikes, null withdraws the vote */
+                    like: boolean | null;
+                };
             };
         };
         responses: {
@@ -3480,14 +3862,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3525,9 +3899,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"), or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the bearer; a world id is a plain string) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3536,6 +3911,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3544,6 +3920,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3552,15 +3929,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description Not found world "<id>" */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3589,14 +3959,25 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"), or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the bearer; a world id is a plain string) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3605,6 +3986,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found world "<id>" */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3639,9 +4030,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description `Authorization` without the `Bearer` scheme ("Invalid Authorization"), or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the bearer; a world id is a plain string) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description No `Authorization` header ("Missing Authorization"), or no token configured ("Invalid Bearer Token") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3650,6 +4051,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The bearer is not an accepted token ("Invalid Bearer Token") */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found world "<id>" */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3679,18 +4090,28 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": unknown;
+                "application/json": {
+                    /**
+                     * @description The old route's codes (PR is rating pending) plus the stored pending code RP; PR is stored and answered as RP.
+                     * @enum {string}
+                     */
+                    content_rating: "PR" | "E" | "T" | "A" | "R" | "RP";
+                    /** @description Kept in the append-only rating audit log. */
+                    comment?: string;
+                };
             };
         };
         responses: {
-            200: {
+            /** @description HTTP response for Created */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                    "application/json": components["schemas"]["ApiData_ModeratedWorldRow"];
                 };
             };
+            /** @description No signed-fetch auth chain ("Invalid Auth Chain") or a malformed one, or validation failed: 400 (`Invalid data was sent to the server`) with `data.errors`, `data.messages` and the validated `data.body` (checked after the credential and before isAdmin; a world id is a plain string) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3699,6 +4120,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description An expired or invalid signature ("Expired signature: …", "Invalid signature: …") */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3707,7 +4129,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            404: {
+            /** @description The signer is not an admin wallet ("Only admin allowed to update …") */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3715,7 +4138,8 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            501: {
+            /** @description Not found world "<id>" */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3736,8 +4160,8 @@ export interface operations {
     changes: {
         parameters: {
             query?: {
-                limit?: number;
                 since?: number;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -3804,6 +4228,8 @@ export interface operations {
         responses: {
             200: {
                 headers: {
+                    /** @description <canonical URL>; rel=canonical, on a found row only */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3826,6 +4252,8 @@ export interface operations {
         responses: {
             200: {
                 headers: {
+                    /** @description <canonical URL>; rel=canonical, on a found row only */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3874,32 +4302,33 @@ export interface operations {
     get_v1_destinations_list: {
         parameters: {
             query?: {
-                categories?: string[];
-                creator_address?: string;
-                ids?: string[];
-                kinds?: string[];
                 limit?: number;
-                names?: string[];
                 offset?: number;
-                only_favorites?: string;
-                only_highlighted?: string;
+                ids?: string[];
+                positions?: string[];
+                pointer?: string[];
+                world_names?: string[];
+                names?: string[];
+                kinds?: string[];
                 only_places?: string;
-                only_sdk7?: string;
                 only_worlds?: string;
-                order?: string;
+                categories?: string[];
+                only_highlighted?: string;
+                only_favorites?: string;
+                search?: string;
+                owner?: string;
+                creator_address?: string;
+                sdk?: string;
+                only_sdk7?: string;
                 /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
                 order_by?: string;
-                owner?: string;
-                pointer?: string[];
-                positions?: string[];
-                sdk?: string;
-                search?: string;
+                order?: string;
+                /** @description Comma-separated decorations: live_events, connected_users, realms_detail, next_event. */
                 with?: string[];
+                with_live_events?: string;
                 /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
                 with_connected_users?: string;
-                with_live_events?: string;
                 with_realms_detail?: string;
-                world_names?: string[];
             };
             header?: never;
             path?: never;
@@ -3933,13 +4362,85 @@ export interface operations {
             };
         };
     };
+    post_v1_destinations_list: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                ids?: string[];
+                positions?: string[];
+                pointer?: string[];
+                world_names?: string[];
+                names?: string[];
+                kinds?: string[];
+                only_places?: string;
+                only_worlds?: string;
+                categories?: string[];
+                only_highlighted?: string;
+                only_favorites?: string;
+                search?: string;
+                owner?: string;
+                creator_address?: string;
+                sdk?: string;
+                only_sdk7?: string;
+                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                order_by?: string;
+                order?: string;
+                /** @description Comma-separated decorations: live_events, connected_users, realms_detail, next_event. */
+                with?: string[];
+                with_live_events?: string;
+                /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
+                with_connected_users?: string;
+                with_realms_detail?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string[] | {
+                    ids?: string[];
+                    positions?: string[];
+                    world_names?: string[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_Destination"];
+                };
+            };
+            /** @description Validation failed, a body that is neither an id array nor a selectors object, or an oversize list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     get_v1_destination: {
         parameters: {
             query?: {
                 with?: string[];
+                with_live_events?: string;
                 /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
                 with_connected_users?: string;
-                with_live_events?: string;
                 with_realms_detail?: string;
             };
             header?: never;

@@ -30,7 +30,7 @@ fn publish_numbered(
     else {
         return false;
     };
-    let Ok(previous) = sequence.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+    let Ok(previous) = sequence.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         value.checked_add(1)
     }) else {
         return false;

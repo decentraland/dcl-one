@@ -3,6 +3,7 @@
    it puts them (their blur's reach included in each image). */
 .names {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 20px;
   min-height: 0;

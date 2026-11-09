@@ -56,13 +56,26 @@ the data and its operations.
    records it in `meta.schema_steps`; `services/catalyst/tests/`). A step
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
-   A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
+   A changed body of a hash-named function (`content.deploy_entity_<hash>`,
    `content.unpublish_scene_<hash>`, `social.world_authorization_started_<hash>`,
-   `social.world_secret_refund_<hash>`) is a new function; `migrate` creates it and
+   `social.world_secret_refund_<hash>`, the `explore.*_<hash>` functions the
+   generated columns call) is a new function; `migrate` creates it and
    leaves the old one for binaries still calling it. `catalyst schema status`
    lists the old ones as superseded after migrate (run before `migrate`, that
-   includes the one the running binary still calls); drop them by hand once no
-   process runs an older binary.
+   includes the one the running binary still calls), never one a column
+   default, a generated column or an index still calls (`pg_depend`; dropping
+   it would take the column or the index with it); drop the listed ones by
+   hand once no process runs an older binary.
+   A step that adds a column calling such a function creates it first with
+   `CREATE FUNCTION`, skipped when the database has it. A body that computes
+   the same values at a lower cost is the one in-place change: the binary
+   hashes it under a new name for fresh databases, and a step replaces the
+   shipped name's body with it (`CREATE OR REPLACE FUNCTION`), so the
+   generated columns of a migrated database take the new cost without a
+   rewrite; a test pins the replacement to the binary's definition and a
+   test shows both bodies agree on every input a generated column can pass
+   them (`0033_explore_recurrence_one_pass`; `raw` is NOT NULL, and a SQL
+   NULL `raw` is the one input where the `live_until` bodies differ).
    The `deleter_deployment` repair runs once per database and repair version
    (`content.system_properties` key `deleter_repair_version`, only ever
    raised), at a sync leader's bootstrap or a non-syncing process's startup.
@@ -487,6 +500,10 @@ database holding local authority changes only through a data-safe release
 (record the data-safe release procedure and evidence in the task report): additive steps under
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
+After the steps, the object pass creates every object of `schemas/` the
+database lacks and re-creates each view it has in place, so a column a step
+adds reaches the view; a view change that drops, renames or retypes a column
+is a release, because the replacement refuses it.
 
 The binary requires schema version 3. Stop all writers, pollers and administrative
 write paths, and verify a backup restore before a release. A version-1 database
@@ -508,6 +525,23 @@ catalyst schema status
 Keep every writer stopped through that sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
+The explore parity layout (step `0029_explore_parity`) moves event moderation notices
+into the shared outbox `explore.moderation_hooks`; the earlier tables
+`explore.event_moderation_hooks`, `explore.event_moderation_hook_activation` and
+`explore.event_upcoming_hooks` are retired by their own release. Run it once, with the
+administrative role, after every replica runs a binary with the outbox and `catalyst
+schema migrate` has recorded step `0029_explore_parity`; it refuses to run earlier:
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/explore-retired-hook-tables.sql
+```
+
+Until it runs, every pass of the `moderation-hook` job first moves the pending rows of
+the old events table into the outbox, so the release finds few or none; it moves the
+rest in the same transaction, keeps the earlier of the two activation instants and
+drops delivered and dead-letter rows with the tables. The drop is not reversible: a
+rollback restores the matching backup. Do not reset a database.
+
 The canonical future definitions live once under `schemas/releases/v3/`; the
 compatible version-3 build explicitly enrolls them in the single fresh bootstrap.
 A version-2 build does not discover that nested directory. Merging dormant
@@ -530,7 +564,15 @@ Its other columns take constant defaults or are nullable, and step
 `0024_social_referral_reward_receipt` adds nullable claim, response and retry
 columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
-only paid or pending rewards.
+only paid or pending rewards. `0030_explore_read_columns` adds the stored read
+columns of `explore.place`, `explore.place_world_local` and `explore.event` in
+one `ALTER TABLE` per table, so each table is rewritten once: 0.96 s, 0.91 s and
+0.14 s on 10,008, 10,008 and 3,011 rows, where one statement per column took
+2.38 s, 2.07 s and 0.39 s. `0033_explore_recurrence_one_pass` replaces the
+bodies of the two recurrence functions of `explore.event` in place with
+one-pass bodies computing the same values: 19 ms on 7,686 rows, no row
+rewritten; a write parses each `recurrent_dates` entry once per column
+(5.7 µs per entry where the shipped bodies took 21 µs).
 
 The object pass also builds `deployments_active_entity_timestamp_idx` on
 `content.deployments` (the snapshot generator's inactive-entities count) in the
@@ -595,6 +637,40 @@ media calls or notification facts to force old constraints back. Owned upgrade
 tests exercise the composed release and real migrator against captured, genuinely
 prepared and shipped-main version-2 state; deployment backup, restore, historical
 raw-alias loss and cutover validation remain separate operating gates.
+
+### Retired telemetry sink
+
+The node is not a Sentry or Segment sink: the `telemetry` schema (the sink
+tables, their console state and the Shop analytics rows) left `schemas/`, no
+binary reads or writes it, and client telemetry goes to Segment from the sites
+and the explorer. A database stamped before the removal keeps the schema until
+the release script drops it; the bootstrap and the object pass neither create
+nor drop it, so the old tables are inert, not an error. Rollout, in order: set
+`SEGMENT_WRITE_KEY` for the sites (`track()` sends nothing without it) and
+deploy the sites build without the sink's reader (`TELEMETRY_DATABASE_URL`
+leaves with it); run `catalyst schema migrate` with the binary without the
+sink (steps `0032_shop_sales_index` to `0035_explore_mirror_adopted_at`; its
+`serve` refuses to start before them); run that binary on every replica and
+confirm no `serve` of the old build is left (its ingest writer and
+`telemetry-purge` job write the schema, and the database cannot tell a quiet
+one apart: ingest was off by default and both builds connect alike); then
+once, with the administrative role:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/telemetry-retired.sql
+```
+
+The release refuses a database without step `0035_explore_mirror_adopted_at`
+or whose `telemetry.events` took a row in the last ten minutes (an old `serve`
+still ingesting; the fleet check above is the gate for a quiet one), waits at
+most 10 s for its locks, then drops the schema with its
+twelve tables and nine indexes in one transaction and keeps `ops.admin_audit`:
+its rows with domain `telemetry` and the CHECK value that admits them stay. The
+deployment then drops the read-only role it created for the console's SQL
+reader and the `TELEMETRY_*` settings. An old `serve` started after the drop
+fails its bootstrap on the missing relations and stays down.
+The drop is not reversible without the matching backup. Do not reset a
+database.
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
@@ -1063,3 +1139,95 @@ latency; this is not a guaranteed deadline. The application decodes only finite
 claimed schedules and never decodes infinity as a Rust timestamp. This change adds
 no migration column and does not relax the stable-ban migration's coordinated
 rollout requirements.
+
+## Segment webhook events workload
+
+`POST /events-notifier/forward`, `/forward-web` and
+`/forward-onboarding-checkpoint` are the Segment destination webhooks the
+events-notifier served. The first two store the event they accept as one row of
+`social.client_events`, inside the request, after the signature, the context
+checks and (client events) the auth chain verified. Writers are those two
+handlers at the destination's delivery rate: the explorer reports a
+`move_to_parcel` per parcel crossing and the distance and height events on
+thresholds, so the expected order is one row per active player per minute; no
+production rate is measured. Readers are consumers scanning forward in
+insertion order from a cursor of their own (none in this change) and the purge;
+the trigger `client_events_notify_trigger` announces each stored row's identity
+columns (never the metadata) on the `social.client_events` channel for
+listeners outside the request path.
+That channel is a data-exposure surface: Postgres grants `LISTEN` to every
+role that can connect, so each such role receives the wallet, the IP, the
+anonymous and session ids, the realm and the event names of every stored
+event; the database's roles are the node's own and the flagging service's, and
+a role granted to anyone else reads this feed. The identity columns are
+bounded at 512 bytes each and free of control characters by the parsers (a
+longer or control-bearing optional value is dropped, such a `messageId`
+refuses the event), so the escaped payload stays under `pg_notify`'s 8000
+bytes and the key under the index's limit.
+A row is about 0.3-0.6 KB: `metadata` holds the sub-type part only (parcel,
+emote, passport, distance and step count, height, runtime; the web identify's
+agent, page and locale). The auth chain is verified at the ingress and not
+stored: no consumer reads it.
+
+Invariants: `key` is Segment's `messageId`, so an at-least-once redelivery
+inserts nothing (`INSERT ... ON CONFLICT (key) DO NOTHING`); `address` is the
+owner of the auth chain the event carried (client: the chain proves that the
+wallet once delegated to a key, not that it sent this event, so a consumer
+reads the row as a claim about the wallet, not by it, and never flags a
+wallet on `source = 'client'` rows alone) or `traits.ethAddress`
+(web), lower-cased and checked by the table; rows are immutable; `reported_at` and
+`received_at` are the client's and Segment's clocks and `created_at` the
+node's. Nothing references an event and an event references nothing: no FK.
+Deletion is the `client-events-purge` job only: hourly, leased, it deletes rows
+whose `created_at` is older than `CLIENT_EVENTS_RETENTION_DAYS` (default 30)
+in batches of 5,000 keys through `client_events_created_idx (created_at,
+key)`, at most 200 batches a pass (a million rows an hour, some 280 inserts a
+second sustained). A consumer that adds a cursor records that
+its cursor stays above the purge horizon; without a consumer the horizon is
+free.
+
+The bootstrap (`schemas/40_social.sql`) defines the table, the index and the
+trigger; an existing database gains them from the object pass, so no step
+exists.
+
+## Credits wallet flags workload
+
+`credits.wallet_flags` (`schemas/60_ops.sql`) is the multi-accounting flag
+notified on the `credits.wallet_flags` channel, `{action: "flag", addresses,
+source, ip}` (`shop/src/credits/wallet_flags.rs`), or posted through the
+admin, `POST /credits/admin/flags {addresses, source, ip}` (the shape the
+events-notifier posted to the credits server's `/flag`): one row per flagged
+wallet, keyed by address, with the source that raised it, the IP it reported
+and the wallets it was linked with (`linked_addresses`, the body's list). The
+node runs no detector: it keeps the flags it is told of.
+
+Writers are the leased `credits-wallet-flags` listener (where
+`OPS_WRITES_ENABLED` is on) and the admin's `POST /credits/admin/flags`, the
+same upsert per address with one `ops.admin_audit` row per wallet in the same
+transaction (the listener's actor is `pg:credits.wallet_flags`), the notified
+or admin unflag (`DELETE /credits/admin/flags/{address}`) and the credits
+operator's unblock
+(`admin_store.rs` `admin_set_blocked`), which deletes the wallet's flag in the
+transaction that clears its block. Readers are the credits claim (`EXISTS` by
+address, folded into the captcha claim and the balance reports as
+`is_blocked_for_claiming`; the spend and the reservation read the operator's
+block alone, so a flag never holds credits a wallet has) and the admin list
+(`GET /credits/admin/flags`, by address or paged by `flagged_at`). Rows are
+small and few: a flag per wallet reported.
+
+The channel's writers are whoever can connect: Postgres grants no privilege on
+`NOTIFY`, so every role of the database can raise or release a flag, and the
+listener applies it as an audited admin action. The roles are the node's own
+and the flagging service's; a role granted to anyone else can flag wallets, and
+a flag raised while no listener is connected is lost. A queue table under `GRANT
+INSERT` to one role, or a `SECURITY DEFINER` function, would name the writer
+and keep the flags raised while no listener is up: the next step if the
+database gains other roles.
+
+Invariants: a flag is a signal, not a verdict: it holds the credits claim
+alone, and the admin's unflag or the operator's unblock deletes it; nothing
+else does, and a flag never expires. A wallet has at most one flag (the
+primary key); flagging it again keeps `flagged_at` and takes the new source,
+IP and links. Addresses are lower-cased and checked by the table; the handler
+normalises the body's. The bootstrap defines the table; an existing database
+gains it from the object pass, so no step exists.

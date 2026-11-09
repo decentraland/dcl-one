@@ -17,9 +17,7 @@ import type { AuthIdentity } from "@ui/data/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { getIdentity } from "@/data/lib/auth/session";
-import { browserProvider, inAppSessionFor, managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
-import { getThirdwebSession } from "@/data/lib/auth/thirdweb/session";
-import { hasWallet } from "@/data/lib/auth/wallet";
+import { browserProvider, currentWalletKind, inAppSessionFor, managedShopProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
 let installed = false;
@@ -45,8 +43,7 @@ export function useSitesShopHost(): ShopWalletHost {
   returnTo.current = `${location.pathname}${location.search}${location.hash}`;
   const { disconnect } = auth;
   return useMemo<ShopWalletHost>(() => {
-    const walletKind =
-      typeof window === "undefined" ? null : sitesWalletKind(identity, { inApp: getThirdwebSession(), injected: hasWallet() });
+    const walletKind = typeof window === "undefined" ? null : currentWalletKind(identity);
     const signIn = () => openSignIn({ redirectTo: returnTo.current });
     return {
       identity,
@@ -64,6 +61,7 @@ export function useSitesShopHost(): ShopWalletHost {
         void disconnect().then(signIn);
       },
       resolving: !hydrated,
+      web3Usable: typeof window === "undefined" || !identity ? true : web3Usable(identity),
     };
   }, [identity, disconnect, hydrated]);
 }

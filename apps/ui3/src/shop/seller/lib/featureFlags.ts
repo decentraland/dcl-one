@@ -1,4 +1,4 @@
-// from: shop@94584a5c:app/src/lib/featureFlags.ts (getIsSecondarySalesEnabled, getIsCreatorSalesEnabled, getIsMyStoreEnabled),
+// from: shop@94584a5c:app/src/lib/featureFlags.ts (getIsCreatorSalesEnabled, getIsMyStoreEnabled),
 //       app/src/hooks/{useSecondarySales,useCreatorSalesEnabled,useMyStoreEnabled}.ts
 // Upstream's feature flags stay capabilities (SHOP.md): the UI hides what a node does not offer, and the
 // server checks the same capability on every entry. The node's capability report is not served yet, so a
@@ -39,10 +39,6 @@ export function setShopCapabilities(next: Partial<ShopCapabilities> | null): voi
   declared = next;
   snapshot = null;
   for (const l of listeners) l();
-}
-
-export async function getIsSecondarySalesEnabled(): Promise<boolean> {
-  return shopCapabilities().secondarySales;
 }
 
 export async function getIsCreatorSalesEnabled(): Promise<boolean> {

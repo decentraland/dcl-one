@@ -10,6 +10,7 @@ vi.mock("./magic-session", () => ({ endMagicSession: magic.end }));
 
 import { useAuth } from "./context";
 import { getIdentity, setIdentity } from "./session";
+import { recordSignIn, signInKindFor } from "./signin-kind";
 
 const SIGNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 
@@ -33,6 +34,7 @@ describe("signing out", () => {
   it("ends this site's session at once and Magic's with it, resolving once Magic has logged out", async () => {
     let finishLogout!: () => void;
     magic.end.mockImplementationOnce(() => new Promise<void>((resolve) => (finishLogout = resolve)));
+    recordSignIn("0x" + "ab".repeat(20), "web3");
     const { result } = renderHook(() => useAuth());
     let done = false;
     let signedOut!: Promise<void>;
@@ -42,6 +44,8 @@ describe("signing out", () => {
       });
     });
     expect(getIdentity()).toBeNull();
+    // How the account signed in is forgotten with it.
+    expect(signInKindFor("0x" + "ab".repeat(20))).toBeNull();
     await vi.waitFor(() => expect(magic.end).toHaveBeenCalledOnce());
     expect(done).toBe(false);
     finishLogout();
