@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  LOGIN_COMMANDS,
   PAGE_COMMANDS,
   TRUSTED_INPUT_TIMEOUT_MS,
   answerHudRequest,
@@ -872,8 +873,20 @@ describe('without a test runner', () => {
     const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInputDone?: unknown }
     expect(typeof w.__dclTrustedInputDone).toBe('function')
     expect(Object.keys(w.__dclPageCommands ?? {})).toEqual(Object.keys(PAGE_COMMANDS))
+    // the sign-in command is a test runner's: a page nobody drives gets none
+    expect(w.__dclPageCommands).not.toHaveProperty('/hud_login')
     delete w.__dclPageCommands
     delete w.__dclTrustedInputDone
+  })
+
+  it('a test runner driving the browser gets the sign-in command as well', () => {
+    const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInput?: unknown }
+    w.__dclTrustedInput = () => undefined
+    installHudAutomation()
+    expect(Object.keys(w.__dclPageCommands ?? {})).toEqual([...Object.keys(PAGE_COMMANDS), ...Object.keys(LOGIN_COMMANDS)])
+    delete w.__dclPageCommands
+    delete w.__dclTrustedInput
+    delete (window as { __dclTrustedInputDone?: unknown }).__dclTrustedInputDone
   })
 
   it('dispatches DOM events and says so', async () => {

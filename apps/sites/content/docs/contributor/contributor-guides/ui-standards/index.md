@@ -117,7 +117,7 @@ Our patterns account for blockchain-specific challenges:
 
 > [!CAUTION]
 > **Never do these:**
-> 
+>
 > * Store `window.ethereum`, providers, signers, or sockets in Redux
 > * Duplicate the same collection in a slice and in RTK Query
 > * Dispatch actions during React render

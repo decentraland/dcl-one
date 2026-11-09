@@ -1,0 +1,3533 @@
+[
+  {
+    "id": "places.$defs.place_write_row", "area": "places", "request": {"method": "GET", "path": "-"},
+    "expected": {
+      "status": 0, "content_type": "application/json",
+      "body": {
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "world_name", "content_rating", "categories",
+          "likes", "dislikes", "favorites", "like_rate", "like_score", "created_at", "updated_at", "disabled",
+          "disabled_at", "disabled_reason", "highlighted_image", "positions", "base_position", "contact_name",
+          "contact_email", "highlighted", "exclude_from_ranking", "world", "world_id", "deployment_id",
+          "deployed_at", "textsearch", "creator_address", "sdk", "ranking", "user_favorite", "user_like",
+          "user_dislike"
+        ]
+      },
+      "body_match": "shape"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/index.ts:51-52", "src/entities/Place/routes/rankingExclusion.ts:14-72"]
+    },
+    "harness": {"skip": "definitions shared by the places entries; not a request"},
+    "notes": "place_row without user_count and user_visits: the answer to an admin write."
+  },
+  {
+    "id": "worlds.$defs.world_write_row", "area": "places", "request": {"method": "GET", "path": "-"},
+    "expected": {
+      "status": 0, "content_type": "application/json",
+      "body": {
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "world_name", "content_rating", "categories",
+          "likes", "dislikes", "favorites", "like_rate", "like_score", "created_at", "updated_at",
+          "show_in_places", "single_player", "skybox_time", "is_private", "highlighted", "highlighted_image",
+          "ranking", "exclude_from_ranking", "settings_version", "disabled", "disabled_at", "contact_name",
+          "base_position", "user_favorite", "user_like", "user_dislike", "world", "user_visits", "deployed_at"
+        ]
+      },
+      "body_match": "shape"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:50-51", "src/entities/World/routes/rankingExclusion.ts:14-63",
+        "src/entities/World/model.ts:726-739"
+      ]
+    },
+    "harness": {"skip": "definitions shared by the places entries; not a request"},
+    "notes": "world_row without user_count: the answer to an admin write."
+  },
+  {
+    "id": "places.patch_favorites.set", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<entity.favorites + 1>", "user_favorite": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": [
+          "data.user_favorite === true",
+          "doc: data.favorites === favorites read before the write + 1 (computed, not re-read)",
+          "doc: status 200: gatsby route() answers 201 only for PUT/POST"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserFavorite/routes.ts:22", "src/entities/UserFavorite/routes.ts:36-93",
+        "src/entities/UserFavorite/schema.ts:3-21", "src/entities/shared/entityInteractions.ts:27-52",
+        "src/entities/UserFavorite/model.ts", "src/entities/shared/entityInteractions.ts:111-127"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_favorites.repeat", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<entity.favorites>", "user_favorite": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": [
+          "doc: no row written: route returns the current counts when body.favorites === entity.user_favorite (routes.ts:57-65)",
+          "doc: fetchScore is still called before the short-circuit (routes.ts:55)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserFavorite/routes.ts:22", "src/entities/UserFavorite/routes.ts:36-93",
+        "src/entities/UserFavorite/schema.ts:3-21", "src/entities/shared/entityInteractions.ts:27-52"
+      ]
+    },
+    "harness": {"viewer_state": ["favorited"]},
+    "notes": "Precondition: the signer already favourited {place_id}."
+  },
+  {
+    "id": "places.patch_favorites.unset", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": false},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<entity.favorites - 1>", "user_favorite": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": [
+          "data.user_favorite === false",
+          "doc: UserFavoriteModel.delete({entity_id,user}) then places.favorites recounted"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserFavorite/routes.ts:22", "src/entities/UserFavorite/routes.ts:36-93",
+        "src/entities/UserFavorite/schema.ts:3-21", "src/entities/shared/entityInteractions.ts:27-52"
+      ]
+    },
+    "harness": {"viewer_state": ["favorited"]},
+    "notes": "Precondition: the signer already favourited {place_id}."
+  },
+  {
+    "id": "places.patch_favorites.unset_when_absent", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": false},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<entity.favorites>", "user_favorite": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": ["doc: silent no-op: nothing deleted, counts unchanged"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserFavorite/routes.ts:22", "src/entities/UserFavorite/routes.ts:36-93",
+        "src/entities/UserFavorite/schema.ts:3-21", "src/entities/shared/entityInteractions.ts:27-52"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_favorites.world_id_retro_compat", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{world_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<world.favorites + 1>", "user_favorite": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": [
+          "doc: non-UUID entity_id is looked up in worlds (entityInteractions.ts:43-52) and WorldModel.updateFavorites recounts worlds.favorites (routes.ts:83-87)",
+          "doc: the user_favorites row stores entity_id = the world id (lowercased name)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserFavorite/routes.ts:22", "src/entities/UserFavorite/routes.ts:36-93",
+        "src/entities/UserFavorite/schema.ts:3-21", "src/entities/shared/entityInteractions.ts:27-52",
+        "src/entities/shared/entityTypes.ts:41-47"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_favorites.not_found", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{entity_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found entity \"{entity_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserFavorite/routes.ts:48-53"]
+    },
+    "notes": "Applies to both an unknown UUID and an unknown world name; upstream does not filter disabled places here (findByIdWithAggregates has no disabled predicate), so a disabled place can still be favourited."
+  },
+  {
+    "id": "places.patch_favorites.missing_field", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must have required property 'favorites' {\"missingProperty\":\"favorites\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must have required property 'favorites' {\"missingProperty\":\"favorites\"}"],
+          "body": {},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "favorites"}, "message": "must have required property 'favorites'"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: validation runs before withAuth (routes.ts:39-41): the same 400 is returned with auth 'none'",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserFavorite/routes.ts:25-30,39-41", "src/entities/UserFavorite/schema.ts:10-21"]
+    }
+  },
+  {
+    "id": "places.patch_favorites.extra_key", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": true, "foo": 1},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must NOT have additional properties {\"additionalProperty\":\"foo\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"foo\"}"],
+          "body": {"favorites": true, "foo": 1},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+              "params": {"additionalProperty": "foo"}, "message": "must NOT have additional properties"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserFavorite/schema.ts:13"]
+    }
+  },
+  {
+    "id": "places.patch_favorites.wrong_type", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "body": {"favorites": "yes"},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Error validating input:\n- favorites must be boolean {\"type\":\"boolean\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["favorites must be boolean {\"type\":\"boolean\"}"], "body": {"favorites": "yes"},
+          "errors": [
+            {
+              "instancePath": "/favorites", "schemaPath": "#/properties/favorites/type", "keyword": "type",
+              "params": {"type": "boolean"}, "message": "must be boolean"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserFavorite/schema.ts:16-19"]
+    }
+  },
+  {
+    "id": "places.patch_favorites.bad_signature", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/favorites", "headers": {"x-identity-metadata": "{}"},
+      "body": {"favorites": true}, "auth": "signed:user"
+    },
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid signature: <verifier message>", "code": "unauthorized"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: error starts with 'Invalid signature'",
+          "doc: an expired chain answers 401 'Expired signature: signature timestamp: <t>, timestamp expiration: <t+exp>, local timestamp: <now>' (verify.js:197)",
+          "doc: a malformed link answers 400 'Invalid chain format: ...' (verify.js:80-83)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "@dcl/crypto-middleware@6.3.0 dist/verify.js:100-103,151,195-204",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withDecentralandAuth.js:40-42"
+      ]
+    },
+    "harness": {"signature": "invalid"}
+  },
+  {
+    "id": "places.patch_likes.like", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": true, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: counts re-read after PlaceModel.updateLikes (routes.ts:92-101): likes/dislikes count every row, like_rate/like_score only rows with user_activity >= 100 (entityInteractions.ts:20,133-160)",
+          "doc: fetchScore(address) is called on every non-null like (routes.ts:79)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/routes.ts:23", "src/entities/UserLikes/routes.ts:38-102",
+        "src/entities/UserLikes/schema.ts:3-22", "src/entities/UserLikes/model.ts:9-51",
+        "src/entities/shared/entityInteractions.ts:133-160"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_likes.dislike", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": false},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": false, "user_dislike": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": ["data.user_dislike === true", "doc: an existing like row is flipped in place (model.ts:30-45)"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/routes.ts:23", "src/entities/UserLikes/routes.ts:38-102",
+        "src/entities/UserLikes/schema.ts:3-22", "src/entities/UserLikes/model.ts:9-51"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_likes.null_withdraws", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": null}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": false, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: like:null deletes the user_likes row (routes.ts:74-75), then counts are recomputed",
+          "doc: no Snapshot call on the null path"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/routes.ts:23", "src/entities/UserLikes/routes.ts:38-102",
+        "src/entities/UserLikes/schema.ts:3-22", "src/entities/UserLikes/model.ts:9-51"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_likes.empty_body_means_like", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": true, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: schema has required: [] so {} validates (schema.ts:14)",
+          "doc: body.like is undefined: the idempotency check 'userLike.like === body.like' never matches, then UserLikesModel.like(..., {like: undefined}) stores like = expected.like ?? true (model.ts:16)",
+          "doc: fetchScore is called (routes.ts:79)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/schema.ts:10-22", "src/entities/UserLikes/routes.ts:65-84",
+        "src/entities/UserLikes/model.ts:16"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_likes.repeat_same_value", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": {"likes": "<entity.likes>", "dislikes": "<entity.dislikes>", "user_like": true, "user_dislike": false}
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: short-circuit when the stored row already has like === body.like (routes.ts:65-72): no write, no fetchScore, counts from the entity read"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/routes.ts:23", "src/entities/UserLikes/routes.ts:38-102",
+        "src/entities/UserLikes/schema.ts:3-22", "src/entities/UserLikes/model.ts:9-51"
+      ]
+    },
+    "harness": {"viewer_state": ["liked"]}, "notes": "Precondition: the signer already liked {place_id}."
+  },
+  {
+    "id": "places.patch_likes.extra_key", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": true, "foo": 1},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must NOT have additional properties {\"additionalProperty\":\"foo\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"foo\"}"],
+          "body": {"like": true, "foo": 1},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+              "params": {"additionalProperty": "foo"}, "message": "must NOT have additional properties"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserLikes/schema.ts:13"]
+    }
+  },
+  {
+    "id": "places.patch_likes.wrong_type", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{place_id}/likes", "body": {"like": "yes"},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Error validating input:\n- like must be boolean <params>",
+        "code": "bad_request",
+        "data": {
+          "messages": ["like must be boolean <params>"], "body": {"like": "yes"},
+          "errors": ["<ajv type error at /like>"]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: ajv 8 'nullable: true' widens the type check to [type,'null']; the exact wording of the type error ('must be number' vs 'must be number,null') is unverified without running ajv, so match data.messages loosely",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserLikes/schema.ts:16-20"]
+    }
+  },
+  {
+    "id": "places.patch_likes.world_id_retro_compat", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/places/{world_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": true, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: non-UUID id resolves to the world and WorldModel.updateLikes recounts worlds.likes/dislikes/like_rate/like_score (routes.ts:86-90)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/UserLikes/routes.ts:23", "src/entities/UserLikes/routes.ts:38-102",
+        "src/entities/UserLikes/schema.ts:3-22", "src/entities/UserLikes/model.ts:9-51",
+        "src/entities/shared/entityInteractions.ts:43-52"
+      ]
+    }
+  },
+  {
+    "id": "places.patch_likes.not_found", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/places/{entity_id}/likes", "body": {"like": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found entity \"{entity_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/UserLikes/routes.ts:49-54"]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.set", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{world_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<world.favorites + 1>", "user_favorite": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": [
+          "doc: world_id is the lowercased world name; WorldModel.findByIdWithAggregates matches w.id = $1 verbatim (no lowercasing of the input)",
+          "doc: same write path as /places/:entity_id/favorites: user_favorites row + WorldModel.updateFavorites"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:42", "src/entities/World/routes/updateWorldFavorites.ts:31-91",
+        "src/entities/World/schemas.ts:247-265"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.repeat", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{world_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<world.favorites>", "user_favorite": true}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": ["doc: no write when body.favorites === world.user_favorite (updateWorldFavorites.ts:59-67)"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:42", "src/entities/World/routes/updateWorldFavorites.ts:31-91",
+        "src/entities/World/schemas.ts:247-265"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.unset", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{world_id}/favorites", "body": {"favorites": false},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"favorites": "<world.favorites - 1>", "user_favorite": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["favorites", "user_favorite"],
+        "invariants": ["doc: UserFavoriteModel.delete then WorldModel.updateFavorites (updateWorldFavorites.ts:81-85)"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:42", "src/entities/World/routes/updateWorldFavorites.ts:31-91",
+        "src/entities/World/schemas.ts:247-265"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.uuid_id", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{place_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Invalid world ID \"{place_id}\". Use /places/:entity_id/favorites for place entities.",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: checked after withAuth (updateWorldFavorites.ts:36-43): an unauthenticated request with a UUID answers 400 'Invalid Auth Chain' instead (capture places.patch_world_favorites.uuid_id)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/updateWorldFavorites.ts:38-43",
+        "src/entities/shared/entityInteractions.ts:27-35"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.not_found", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{world_id}/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldFavorites.ts:50-55"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.patch_favorites.uppercase_name", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/Foo.dcl.eth/favorites", "body": {"favorites": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"Foo.dcl.eth\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: the lookup compares w.id = 'Foo.dcl.eth' verbatim (World/model.ts:333); ids are stored lowercased, so mixed case never matches"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/model.ts:284-335", "src/entities/World/types.ts:6-9"]
+    }
+  },
+  {
+    "id": "worlds.patch_favorites.missing_field", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{world_id}/favorites", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must have required property 'favorites' {\"missingProperty\":\"favorites\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must have required property 'favorites' {\"missingProperty\":\"favorites\"}"],
+          "body": {},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "favorites"}, "message": "must have required property 'favorites'"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: validation precedes withAuth (updateWorldFavorites.ts:34-36)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/schemas.ts:254-265", "src/entities/World/routes/updateWorldFavorites.ts:25-36"]
+    }
+  },
+  {
+    "id": "worlds.patch_likes.like", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{world_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": true, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": [
+          "doc: WorldModel.updateLikes recounts; the answer is re-read via findByIdWithAggregates (updateWorldLikes.ts:87-98)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:43", "src/entities/World/routes/updateWorldLikes.ts:34-99",
+        "src/entities/World/schemas.ts:267-286"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_likes.null_withdraws", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{world_id}/likes", "body": {"like": null}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": {"likes": "<n>", "dislikes": "<n>", "user_like": false, "user_dislike": false}},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["likes", "dislikes", "user_like", "user_dislike"],
+        "invariants": ["doc: UserLikesModel.delete (updateWorldLikes.ts:77-78)"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:43", "src/entities/World/routes/updateWorldLikes.ts:34-99",
+        "src/entities/World/schemas.ts:267-286"
+      ]
+    }
+  },
+  {
+    "id": "worlds.patch_likes.empty_body_means_like", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{world_id}/likes", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must have required property 'like' {\"missingProperty\":\"like\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must have required property 'like' {\"missingProperty\":\"like\"}"], "body": {},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "like"}, "message": "must have required property 'like'"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: unlike places (UserLikes/schema.ts: required []), the worlds body schema has required: ['like'] with nullable: true, so {} is refused before withAuth (updateWorldLikes.ts:37-39)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/schemas.ts:274-285 (updateWorldLikeBodySchema: additionalProperties false, required ['like'], like boolean nullable)",
+        "src/entities/World/routes/updateWorldLikes.ts:26-39 (Router.validator(updateWorldLikeBodySchema) runs before withAuth)",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80 (messages[i] = instancePath + ' ' + message + ' ' + JSON.stringify(params))"
+      ]
+    },
+    "notes": "The entry id keeps its name for the ratchet; the former expectation (200, like stored as true) read the places schema's `required: []` into the worlds route. World/schemas.ts:278 requires `like`, so an empty body is a 400 with the wkc validation envelope, as `worlds.patch_favorites.missing_field` is for `favorites`."
+  },
+  {
+    "id": "worlds.patch_likes.uuid_id", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{place_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Invalid world ID \"{place_id}\". Use /places/:entity_id/likes for place entities.",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldLikes.ts:41-46"]
+    }
+  },
+  {
+    "id": "worlds.patch_likes.not_found", "area": "places",
+    "request": {"method": "PATCH", "path": "/api/worlds/{world_id}/likes", "body": {"like": true}, "auth": "signed:user"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldLikes.ts:52-57"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.patch_likes.extra_key", "area": "places",
+    "request": {
+      "method": "PATCH", "path": "/api/worlds/{world_id}/likes", "body": {"like": true, "foo": 1},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- must NOT have additional properties {\"additionalProperty\":\"foo\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"foo\"}"],
+          "body": {"like": true, "foo": 1},
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+              "params": {"additionalProperty": "foo"}, "message": "must NOT have additional properties"
+            }
+          ]
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {"kind": "source", "repo": "decentraland/places@e660fbc2", "refs": ["src/entities/World/schemas.ts:277"]}
+  },
+  {
+    "id": "places.put_rating.admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating",
+      "body": {"content_rating": "T", "comment": "reviewed"}, "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with content_rating: 'T'>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: SELECT p.* (every places column, textsearch included) plus user_favorite/user_like/user_dislike joined for the signer (Place/model.ts:513-553); the route spreads the row and overwrites the changed field(s) before answering, so the body shows the new value even when the UPDATE matched no row",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "data.content_rating === 'T'",
+          "doc: PlaceModel.updatePlace(newPlace, ['content_rating']) with WHERE disabled is false AND world is false AND id (model.ts:916-954)",
+          "doc: a place_content_rating audit row is inserted: {id: uuid, entity_id, original_rating, update_rating, moderator: signer, comment: body.comment || null, created_at} (updateRating.ts:60-68)",
+          "doc: Slack notifyUpgradingRating when the new rating is stricter than the old one (updateRating.ts:71-79)",
+          "doc: isAdmin() = signer address (lowercased) is in ADMIN_ADDRESSES (gatsby dist/entities/Auth/isAdmin.js)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:43", "src/entities/Place/routes/updateRating.ts:32-82",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/schemas.ts:334-350",
+        "src/entities/Place/model.ts:916-954"
+      ]
+    }
+  },
+  {
+    "id": "places.put_rating.invalid_enum", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "X"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/content_rating", "schemaPath": "#/properties/content_rating/enum",
+              "keyword": "enum", "params": {"allowedValues": ["PR", "E", "T", "A", "R"]},
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": [
+            "content_rating must be equal to one of the allowed values {\"allowedValues\":[\"PR\",\"E\",\"T\",\"A\",\"R\"]}"
+          ],
+          "body": {"content_rating": "X"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: the route schema enum is PR,E,T,A,R: 'X' is refused",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/schemas.ts:340-344", "src/entities/shared/validate.ts:17-36",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80 (messages[i] = instancePath + ' ' + message + ' ' + JSON.stringify(params))"
+      ]
+    },
+    "notes": "dcl-one accepts both `PR` (upstream's route enum) and `RP` (the code enum upstream stores) and answers `RP`, so `RP` is not a refusal case here; the request sends an unknown code (`X`). The expected allowedValues list stays upstream's route schema (without `RP`)."
+  },
+  {
+    "id": "places.put_rating.rp_accepted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "RP"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with content_rating: 'T'>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "data.content_rating === 'RP'",
+          "doc: upstream's PUT schema (schemas.ts:5-11, the enum its invalid_enum entry lists) answers 400 to RP as to any code outside it; dcl-one also accepts RP, the stored code the moderation writes (places::moderation), and answers it verbatim",
+          "doc: SELECT p.* (every places column, textsearch included) plus user_favorite/user_like/user_dislike joined for the signer (Place/model.ts:513-553); the route spreads the row and overwrites the changed field(s) before answering, so the body shows the new value even when the UPDATE matched no row",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: PlaceModel.updatePlace(newPlace, ['content_rating']) with WHERE disabled is false AND world is false AND id (model.ts:916-954)",
+          "doc: a place_content_rating audit row is inserted: {id: uuid, entity_id, original_rating, update_rating, moderator: signer, comment: body.comment || null, created_at} (updateRating.ts:60-68)",
+          "doc: Slack notifyUpgradingRating when the new rating is stricter than the old one (updateRating.ts:71-79)",
+          "doc: isAdmin() = signer address (lowercased) is in ADMIN_ADDRESSES (gatsby dist/entities/Auth/isAdmin.js)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "accepted", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:43", "src/entities/Place/routes/updateRating.ts:32-82",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/schemas.ts:334-350",
+        "src/entities/Place/model.ts:916-954"
+      ]
+    },
+    "notes": "Accepted answer: upstream rejects RP in a PUT body as its invalid_enum entry shows for X; dcl-one accepts RP as the stored code and answers 201 with it (accept PR and RP, emit verbatim). Never a known gap."
+  },
+  {
+    "id": "places.put_rating.missing_field", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/rating", "body": {}, "auth": "signed:admin-wallet"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "content_rating"},
+              "message": "must have required property 'content_rating'"
+            }
+          ],
+          "messages": ["must have required property 'content_rating' {\"missingProperty\":\"content_rating\"}"],
+          "body": {}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {"kind": "source", "repo": "decentraland/places@e660fbc2", "refs": ["src/entities/Place/schemas.ts:338"]}
+  },
+  {
+    "id": "places.put_rating.extra_key", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T", "foo": 1},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+              "params": {"additionalProperty": "foo"}, "message": "must NOT have additional properties"
+            }
+          ],
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"foo\"}"],
+          "body": {"content_rating": "T", "foo": 1}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {"kind": "source", "repo": "decentraland/places@e660fbc2", "refs": ["src/entities/Place/schemas.ts:337"]}
+  },
+  {
+    "id": "places.put_rating.invalid_uuid", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/not-a-uuid/rating", "body": {"content_rating": "T"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ],
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "body": {"place_id": "not-a-uuid"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: data.body is the params object",
+          "doc: params are validated before the body and before isAdmin (updateRating.ts:35-44)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:5-11", "src/entities/Place/routes/updateRating.ts:36"]
+    }
+  },
+  {
+    "id": "places.put_rating.non_admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Only admin allowed to update rating", "code": "forbidden"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateRating.ts:39-44"]
+    }
+  },
+  {
+    "id": "places.put_rating.non_admin_invalid_body", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/rating", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "content_rating"},
+              "message": "must have required property 'content_rating'"
+            }
+          ],
+          "messages": ["must have required property 'content_rating' {\"missingProperty\":\"content_rating\"}"],
+          "body": {}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: validation (params, then body) runs before the isAdmin check: a non-admin with a bad body gets 400, not 403 (updateRating.ts:35-44)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateRating.ts:35-44"]
+    }
+  },
+  {
+    "id": "places.put_rating.admin_bearer_refused", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T"},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid Auth Chain", "code": "bad_request"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: withAuth ignores the Authorization header: without x-identity-auth-chain-* headers the request fails exactly like an anonymous one"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateRating.ts:35",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withDecentralandAuth.js:12-47"
+      ]
+    }
+  },
+  {
+    "id": "places.put_rating.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateRating.ts:50-55"]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_rating.disabled_place_silent", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (disabled: true) with content_rating: 'T'>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: findByIdWithAggregates has no disabled filter, so the row is found",
+          "doc: UPDATE ... WHERE disabled is false AND world is false matches nothing (model.ts:928-931): the stored content_rating is unchanged, the answer still shows 'T'",
+          "doc: the audit row and the Slack upgrade notice are still produced (updateRating.ts:58-79)",
+          "data.content_rating === 'T' && data.disabled === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/model.ts:916-954", "src/entities/Place/routes/updateRating.ts:46-81"]
+    },
+    "harness": {"place_id": "disabled"}
+  },
+  {
+    "id": "places.put_rating.world_backed_place", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (world: true) with content_rating: 'T'>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: for a row with world = true the predicate is world is true AND id AND (disabled IS FALSE OR disabled_reason = 'opt_out') (model.ts:932-935): the write lands unless the place was disabled for another reason",
+          "data.content_rating === 'T' && data.world === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/model.ts:932-935"]
+    },
+    "harness": {"place_id": "world_backed"}
+  },
+  {
+    "id": "places.put_ranking.data_team_uncurated", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 0.85},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with ranking: 0.85>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: SELECT p.* (every places column, textsearch included) plus user_favorite/user_like/user_dislike joined for the signer (Place/model.ts:513-553); the route spreads the row and overwrites the changed field(s) before answering, so the body shows the new value even when the UPDATE matched no row",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "data.ranking === 0.85",
+          "data.user_favorite === false && data.user_like === false && data.user_dislike === false (row read with user: undefined)",
+          "doc: PlaceModel.updateRankingFromScore: UPDATE ranking, updated_at WHERE disabled is false AND world is false AND id AND highlighted IS FALSE AND exclude_from_ranking IS FALSE (model.ts:1084-1096); 1 row"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:44", "src/entities/Place/routes/updateRanking.ts:29-78",
+        "src/entities/Place/schemas.ts:352-365", "src/entities/shared/auth.ts:12-86",
+        "src/entities/Place/model.ts:1084-1096", "src/entities/Place/routes/updateRanking.test.ts:236-260"
+      ]
+    }
+  },
+  {
+    "id": "places.put_ranking.data_team_null", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": null},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with ranking: null>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "data.ranking === null",
+          "doc: negative numbers are accepted on this route (no minimum in updateRankingBodySchema; test 'should update ranking to a negative number')"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:44", "src/entities/Place/routes/updateRanking.ts:29-78",
+        "src/entities/Place/schemas.ts:352-365", "src/entities/shared/auth.ts:12-86",
+        "src/entities/Place/routes/updateRanking.test.ts:281-322"
+      ]
+    }
+  },
+  {
+    "id": "places.put_ranking.data_team_highlighted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "The ranking of a highlighted entity is editorial and can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: requireAdminTokenForCuratedRanking(token, {highlighted: true, ...}) throws before any write (auth.ts:78-85)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/shared/auth.ts:57-86", "src/entities/shared/auth.test.ts:130-137",
+        "src/entities/Place/routes/updateRanking.test.ts:324-371"
+      ]
+    },
+    "harness": {"place_id": "highlighted"}
+  },
+  {
+    "id": "places.put_ranking.data_team_excluded", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "This entity is excluded from the automated ranking and its ranking can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: highlighted wins when both flags are set (auth.ts:81-83)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/shared/auth.ts:78-85", "src/entities/shared/auth.test.ts:146-153"]
+    },
+    "harness": {"place_id": "excluded"}
+  },
+  {
+    "id": "places.put_ranking.data_team_race_or_disabled", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "The ranking of this place is editorial and can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: raised when updateRankingFromScore reports 0 rows (updateRanking.ts:68-75): the place became curated after the read, OR the place is disabled / not writable (model.ts:928-943) — the message is the same misleading text in the disabled case"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateRanking.ts:65-75",
+        "src/entities/Place/routes/updateRanking.test.ts:395-423", "src/entities/Place/model.ts:1073-1096"
+      ]
+    },
+    "harness": {"place_id": "disabled"}
+  },
+  {
+    "id": "places.put_ranking.admin_uncurated_nonzero", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "An editorial ranking only holds on a curated entity. Feature it or set exclude_from_ranking first, otherwise the nightly replace clears this value.",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: nothing written (auth.ts:62-75)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/shared/auth.ts:62-75", "src/entities/shared/auth.test.ts:107-115",
+        "src/entities/Place/routes/updateRanking.test.ts:498-536"
+      ]
+    }
+  },
+  {
+    "id": "places.put_ranking.admin_uncurated_zero", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 0},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with ranking: 0>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: 0 and null pass the curation rule (auth.ts:68) and are written unconditionally via updatePlace (updateRanking.ts:59-63)",
+          "data.ranking === 0"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/shared/auth.ts:68", "src/entities/Place/routes/updateRanking.test.ts:538-549"]
+    }
+  },
+  {
+    "id": "places.put_ranking.admin_uncurated_null", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": null},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with ranking: null>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": ["data.ranking === null"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/shared/auth.ts:68", "src/entities/shared/auth.test.ts:122-126"]
+    }
+  },
+  {
+    "id": "places.put_ranking.admin_highlighted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (highlighted: true) with ranking: 42>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: admin path: PlaceModel.updatePlace(newPlace, ['ranking']) — no highlighted/exclude predicate, no row-count check (updateRanking.ts:59-63, model.ts:946-954)",
+          "data.ranking === 42 && data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateRanking.ts:59-63",
+        "src/entities/Place/routes/updateRanking.test.ts:373-393"
+      ]
+    },
+    "harness": {"place_id": "highlighted"}
+  },
+  {
+    "id": "places.put_ranking.admin_excluded", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (exclude_from_ranking: true) with ranking: 42>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: the flag refuses the automated score, not the admin (auth.ts:49-51)",
+          "data.ranking === 42 && data.exclude_from_ranking === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateRanking.test.ts:476-496"]
+    },
+    "harness": {"place_id": "excluded"}
+  },
+  {
+    "id": "places.put_ranking.admin_disabled_place_silent", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": null},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (disabled: true, uncurated) with ranking: 0>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "data.ranking == null (the requested value is echoed while the stored ranking stays 0: with 0 in the request the two would be indistinguishable)",
+          "data.disabled == true",
+          "doc: requireAdminTokenForCuratedRanking lets an admin token through on an uncurated row only for 0 or null (shared/auth.ts:62-73); 42 would be a 400 'An editorial ranking only holds on a curated entity...'",
+          "doc: updatePlace WHERE disabled is false ... matches nothing; the stored ranking is unchanged and the 201 body still shows the requested value (model.ts:928-931, updateRanking.ts:59-63)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/shared/auth.ts:57-86 (requireAdminTokenForCuratedRanking)",
+        "src/entities/Place/model.ts:916-954 (buildUpdatePlaceQuery: disabled is false AND world is false)",
+        "src/entities/Place/routes/updateRanking.ts:48-63"
+      ]
+    },
+    "harness": {"place_id": "disabled"},
+    "notes": "The seeded `disabled` place (…0002) is uncurated, so the former body `ranking: 42` tested upstream's curated-ranking refusal (400), not the silent no-op the id names; a zero ranking is the value upstream lets an admin write on such a row, and the disabled predicate then drops the write while the 201 echoes it."
+  },
+  {
+    "id": "places.put_ranking.missing_field", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {}, "auth": "bearer:data-team"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "ranking"}, "message": "must have required property 'ranking'"
+            }
+          ],
+          "messages": ["must have required property 'ranking' {\"missingProperty\":\"ranking\"}"], "body": {}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: bearer is checked first (updateRanking.ts:32-35)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:356", "src/entities/Place/routes/updateRanking.test.ts:182-195"]
+    }
+  },
+  {
+    "id": "places.put_ranking.string_value", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": "high"},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": ["<ajv type error at /ranking>"], "messages": ["ranking must be number <params>"],
+          "body": {"ranking": "high"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: ajv 8 'nullable: true' widens the type check to [type,'null']; the exact wording of the type error ('must be number' vs 'must be number,null') is unverified without running ajv, so match data.messages loosely",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:358-364", "src/entities/Place/routes/updateRanking.test.ts:197-210"]
+    }
+  },
+  {
+    "id": "places.put_ranking.invalid_uuid", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/not-a-uuid/ranking", "body": {"ranking": 1},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ],
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "body": {"place_id": "not-a-uuid"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:5-11", "src/entities/Place/routes/updateRanking.test.ts:167-180"]
+    }
+  },
+  {
+    "id": "places.put_ranking.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 1},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateRanking.ts:41-46",
+        "src/entities/Place/routes/updateRanking.test.ts:213-234"
+      ]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_ranking.bad_scheme", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "headers": {"authorization": "Basic abc"},
+      "body": {"ranking": 1}
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid Authorization", "code": "bad_request"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: Authorization present but not 'Bearer '-prefixed (withBearerToken.js:23-29)",
+          "doc: a blank bearer ('Authorization: Bearer ') is the same case: Headers normalisation strips the trailing space, 'Bearer' fails the prefix check -> 400 'Invalid Authorization' (auth.test.ts:86-90)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withBearerToken.js:23-29"]
+    },
+    "notes": "Covers both 'Basic abc' and a blank 'Bearer' (auth.test.ts:86-90)."
+  },
+  {
+    "id": "places.put_ranking.admin_wallet_refused", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/ranking", "body": {"ranking": 1},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Missing Authorization", "code": "unauthorized"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: the ranking routes only read the Authorization header; a signed fetch without a bearer is 'Missing Authorization'"
+        ]
+      }
+    },
+    "source": {"kind": "source", "repo": "decentraland/places@e660fbc2", "refs": ["src/entities/shared/auth.ts:12-21"]}
+  },
+  {
+    "id": "places.put_highlight.admin_wallet_true", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with highlighted: true>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: SELECT p.* (every places column, textsearch included) plus user_favorite/user_like/user_dislike joined for the signer (Place/model.ts:513-553); the route spreads the row and overwrites the changed field(s) before answering, so the body shows the new value even when the UPDATE matched no row",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: PlaceModel.updatePlace(newPlace, ['highlighted']) (same disabled/world predicate)",
+          "data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:45", "src/entities/Place/routes/updateHighlight.ts:26-58",
+        "src/entities/Place/schemas.ts:367-378", "src/entities/Place/routes/updateHighlight.test.ts:96-134"
+      ]
+    }
+  },
+  {
+    "id": "places.put_highlight.admin_wallet_false", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {"highlighted": false},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with highlighted: false>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": ["data.highlighted === false", "data.ranking === 0 (the seeded value: ranking untouched)"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:45", "src/entities/Place/routes/updateHighlight.ts:26-58",
+        "src/entities/Place/schemas.ts:367-378"
+      ]
+    }
+  },
+  {
+    "id": "places.put_highlight.non_admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Only admin allowed to update highlight", "code": "forbidden"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateHighlight.ts:33-38",
+        "src/entities/Place/routes/updateHighlight.test.ts:55-75"
+      ]
+    }
+  },
+  {
+    "id": "places.put_highlight.missing_field", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {}, "auth": "signed:admin-wallet"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "highlighted"},
+              "message": "must have required property 'highlighted'"
+            }
+          ],
+          "messages": ["must have required property 'highlighted' {\"missingProperty\":\"highlighted\"}"],
+          "body": {}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:371", "src/entities/Place/routes/updateHighlight.test.ts:151-163"]
+    }
+  },
+  {
+    "id": "places.put_highlight.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateHighlight.ts:44-49"]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_highlight.admin_bearer_refused", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/highlight", "body": {"highlighted": true},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid Auth Chain", "code": "bad_request"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateHighlight.ts:29"]
+    }
+  },
+  {
+    "id": "places.put_disable.admin_wallet_true", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/disable", "body": {"disabled": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": "<place row with disabled: true, disabled_at: <now>, disabled_reason: 'moderation', updated_at: <now>>"
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "data.disabled === true && data.disabled_reason === 'moderation' && data.disabled_at !== null",
+          "doc: PlaceModel.updateDisabled(place_id, true, 'moderation', now): UPDATE disabled, disabled_at, disabled_reason, updated_at WHERE id (model.ts:727-742) — no disabled/world predicate, so it also lands on disabled or world-backed rows",
+          "doc: Slack notifyDisablePlaces([newPlace]) when disabling (updateDisabled.ts:69-71)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:46", "src/entities/Place/routes/updateDisabled.ts:28-74",
+        "src/entities/Place/schemas.ts:380-392", "src/entities/Place/model.ts:727-742",
+        "src/entities/Place/routes/updateDisabled.test.ts:101-139"
+      ]
+    }
+  },
+  {
+    "id": "places.put_disable.admin_wallet_false", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/disable", "body": {"disabled": false},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": "<place row with disabled: false, disabled_at: null, disabled_reason: null, updated_at: <now>>"
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "data.disabled === false && data.disabled_at === null && data.disabled_reason === null",
+          "doc: no Slack notice when re-enabling"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:46", "src/entities/Place/routes/updateDisabled.ts:28-74",
+        "src/entities/Place/schemas.ts:380-392", "src/entities/Place/model.ts:727-742",
+        "src/entities/Place/routes/updateDisabled.test.ts:141-175"
+      ]
+    }
+  },
+  {
+    "id": "places.put_disable.idempotent", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/disable", "body": {"disabled": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with disabled unchanged>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: disabling an already disabled place (or enabling an enabled one) rewrites the same values and answers 201 (updateDisabled.test.ts:177-239); disabled_at is refreshed to now",
+          "data.disabled === true && data.disabled_reason === 'moderation'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/updateDisabled.test.ts:177-239"]
+    },
+    "harness": {"place_id": "disabled"}
+  },
+  {
+    "id": "places.put_disable.non_admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/disable", "body": {"disabled": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Only admin allowed to update disabled", "code": "forbidden"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateDisabled.ts:35-40",
+        "src/entities/Place/routes/updateDisabled.test.ts:60-80"
+      ]
+    }
+  },
+  {
+    "id": "places.put_disable.missing_field", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/disable", "body": {}, "auth": "signed:admin-wallet"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "disabled"}, "message": "must have required property 'disabled'"
+            }
+          ],
+          "messages": ["must have required property 'disabled' {\"missingProperty\":\"disabled\"}"],
+          "body": {}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/schemas.ts:384", "src/entities/Place/routes/updateDisabled.test.ts:255-267"]
+    }
+  },
+  {
+    "id": "places.put_disable.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/places/{place_id}/disable", "body": {"disabled": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/updateDisabled.ts:46-51",
+        "src/entities/Place/routes/updateDisabled.test.ts:83-99"
+      ]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_featured.admin_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with highlighted: true>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: SELECT p.* (every places column, textsearch included) plus user_favorite/user_like/user_dislike joined for the signer (Place/model.ts:513-553); the route spreads the row and overwrites the changed field(s) before answering, so the body shows the new value even when the UPDATE matched no row",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "data.user_favorite === false && data.user_like === false && data.user_dislike === false (row read with user: undefined)",
+          "doc: updatePlace(newPlace, ['highlighted']) (featured.ts:46-47)",
+          "doc: only PLACES_ADMIN_AUTH_TOKEN is accepted; the token list is read once at module load (featured.ts:14-19)",
+          "data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:48-49", "src/entities/Place/routes/featured.ts:14-62",
+        "src/entities/Place/routes/featured.test.ts:146-166"
+      ]
+    }
+  },
+  {
+    "id": "places.delete_featured.admin_bearer", "area": "places",
+    "request": {"method": "DELETE", "path": "/api/places/{place_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with highlighted: false>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": ["doc: status 200 (DELETE is not in the Created set)", "data.highlighted === false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:48-49", "src/entities/Place/routes/featured.ts:14-62",
+        "src/entities/Place/routes/featured.test.ts:208-228"
+      ]
+    }
+  },
+  {
+    "id": "places.put_featured.data_team_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/featured", "auth": "bearer:data-team"},
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid Bearer Token", "code": "forbidden"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: DATA_TEAM_AUTH_TOKEN is not in the featured token list"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/featured.ts:14-19",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withBearerToken.js:31-36"
+      ]
+    }
+  },
+  {
+    "id": "places.put_featured.invalid_uuid", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/not-a-uuid/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ],
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "body": {"place_id": "not-a-uuid"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/featured.ts:21-33", "src/entities/Place/routes/featured.test.ts:112-126"]
+    }
+  },
+  {
+    "id": "places.put_featured.not_found", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/featured.ts:39-44", "src/entities/Place/routes/featured.test.ts:128-144"]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_featured.disabled_place_silent", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (disabled: true) with highlighted: true>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: UPDATE matches nothing on a disabled genesis place (model.ts:928-931); 201 anyway",
+          "data.highlighted === true && data.disabled === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/model.ts:916-954"]
+    },
+    "harness": {"place_id": "disabled"}
+  },
+  {
+    "id": "places.put_featured.world_backed_place", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row (world: true) with highlighted: true>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: a world-backed place row is written through the world predicate (featured.test.ts:167-189 'sets highlighted to true on a world place')",
+          "data.highlighted === true && data.world === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/featured.test.ts:167-189", "src/entities/Place/model.ts:932-935"]
+    },
+    "harness": {"place_id": "world_backed"}
+  },
+  {
+    "id": "places.put_ranking_exclusion.admin_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with exclude_from_ranking: true, ranking: 0>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "data.exclude_from_ranking === true && data.ranking === 0",
+          "doc: updatePlace(newPlace, ['exclude_from_ranking', 'ranking']) (rankingExclusion.ts:46-57)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/index.ts:51-52", "src/entities/Place/routes/rankingExclusion.ts:14-72"]
+    }
+  },
+  {
+    "id": "places.delete_ranking_exclusion.admin_bearer", "area": "places",
+    "request": {"method": "DELETE", "path": "/api/places/{place_id}/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": "<place row with exclude_from_ranking: false, ranking unchanged>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "places.$defs.place_write_row",
+        "invariants": [
+          "doc: only exclude_from_ranking is written; ranking keeps its stored value (rankingExclusion.ts:49-57)",
+          "data.exclude_from_ranking === false", "data.ranking === 0 (the seeded value: ranking untouched)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/index.ts:51-52", "src/entities/Place/routes/rankingExclusion.ts:14-72"]
+    }
+  },
+  {
+    "id": "places.put_ranking_exclusion.data_team_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/ranking-exclusion", "auth": "bearer:data-team"},
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid Bearer Token", "code": "forbidden"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: admin token only (rankingExclusion.ts:14-19)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/index.ts:51-52", "src/entities/Place/routes/rankingExclusion.ts:14-72"]
+    }
+  },
+  {
+    "id": "places.put_ranking_exclusion.not_found", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/{place_id}/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/rankingExclusion.ts:37-42"]
+    },
+    "harness": {"place_id": "missing"}
+  },
+  {
+    "id": "places.put_ranking_exclusion.invalid_uuid", "area": "places",
+    "request": {"method": "PUT", "path": "/api/places/not-a-uuid/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ],
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "body": {"place_id": "not-a-uuid"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/rankingExclusion.ts:21-31"]
+    }
+  },
+  {
+    "id": "worlds.put_rating.admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/rating",
+      "body": {"content_rating": "T", "comment": "reviewed"}, "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with content_rating: 'T'>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: SELECT w.* plus disabled:false, disabled_at:null, image=COALESCE(w.image, latest enabled place image), contact_name/deployed_at from the latest enabled place, base_position:'0,0', world:true, user_visits:0 and the signer's user_* flags (World/model.ts:284-335)",
+          "data.world === true && data.disabled === false && data.disabled_at === null && data.base_position === '0,0' && data.user_visits === 0",
+          "doc: world_id is the lowercased world name (World/schemas.ts:240-245 'World ID (lowercased world name)'); the lookup is w.id = $1 verbatim, so 'Foo.dcl.eth' answers 404",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: WorldModel.upsertWorld({world_name, content_rating}) + place_content_rating audit row with entity_id = world id (updateWorldRating.ts:65-80)",
+          "doc: Slack notifyUpgradingRating on a stricter rating", "data.content_rating === 'T'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:46", "src/entities/World/routes/updateWorldRating.ts:40-90",
+        "src/entities/World/schemas.ts:330-353"
+      ]
+    }
+  },
+  {
+    "id": "worlds.put_rating.invalid_enum", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/rating", "body": {"content_rating": "X"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/content_rating", "schemaPath": "#/properties/content_rating/enum",
+              "keyword": "enum", "params": {"allowedValues": ["PR", "E", "T", "A", "R"]},
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": [
+            "content_rating must be equal to one of the allowed values {\"allowedValues\":[\"PR\",\"E\",\"T\",\"A\",\"R\"]}"
+          ],
+          "body": {"content_rating": "X"}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: the route schema enum is PR,E,T,A,R: 'X' is refused",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/schemas.ts:343-347",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80 (messages[i] = instancePath + ' ' + message + ' ' + JSON.stringify(params))"
+      ]
+    },
+    "notes": "dcl-one accepts both `PR` (upstream's route enum) and `RP` (the code enum upstream stores) and answers `RP`, so `RP` is not a refusal case here; the request sends an unknown code (`X`). The expected allowedValues list stays upstream's route schema (without `RP`)."
+  },
+  {
+    "id": "worlds.put_rating.rp_accepted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/rating", "body": {"content_rating": "RP"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with content_rating: 'T'>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "data.content_rating === 'RP'",
+          "doc: upstream's PUT schema (schemas.ts:5-11, the enum its invalid_enum entry lists) answers 400 to RP as to any code outside it; dcl-one also accepts RP, the stored code the moderation writes (places::moderation), and answers it verbatim",
+          "doc: SELECT w.* plus disabled:false, disabled_at:null, image=COALESCE(w.image, latest enabled place image), contact_name/deployed_at from the latest enabled place, base_position:'0,0', world:true, user_visits:0 and the signer's user_* flags (World/model.ts:284-335)",
+          "data.world === true && data.disabled === false && data.disabled_at === null && data.base_position === '0,0' && data.user_visits === 0",
+          "doc: world_id is the lowercased world name (World/schemas.ts:240-245 'World ID (lowercased world name)'); the lookup is w.id = $1 verbatim, so 'Foo.dcl.eth' answers 404",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: WorldModel.upsertWorld({world_name, content_rating}) + place_content_rating audit row with entity_id = world id (updateWorldRating.ts:65-80)",
+          "doc: Slack notifyUpgradingRating on a stricter rating"
+        ]
+      }
+    },
+    "source": {
+      "kind": "accepted", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:46", "src/entities/World/routes/updateWorldRating.ts:40-90",
+        "src/entities/World/schemas.ts:330-353"
+      ]
+    },
+    "notes": "Accepted answer: upstream rejects RP in a PUT body as its invalid_enum entry shows for X; dcl-one accepts RP as the stored code and answers 201 with it (accept PR and RP, emit verbatim). Never a known gap."
+  },
+  {
+    "id": "worlds.put_rating.non_admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Only admin allowed to update rating", "code": "forbidden"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRating.ts:47-52"]
+    }
+  },
+  {
+    "id": "worlds.put_rating.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/rating", "body": {"content_rating": "T"},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: world_id is the lowercased world name (World/schemas.ts:240-245 'World ID (lowercased world name)'); the lookup is w.id = $1 verbatim, so 'Foo.dcl.eth' answers 404"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRating.ts:58-63"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.put_ranking.data_team_uncurated", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 0.85},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with ranking: 0.85>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: SELECT w.* plus disabled:false, disabled_at:null, image=COALESCE(w.image, latest enabled place image), contact_name/deployed_at from the latest enabled place, base_position:'0,0', world:true, user_visits:0 and the signer's user_* flags (World/model.ts:284-335)",
+          "data.world === true && data.disabled === false && data.disabled_at === null && data.base_position === '0,0' && data.user_visits === 0",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: WorldModel.updateRankingFromScore: UPDATE worlds SET ranking, updated_at WHERE id AND highlighted IS FALSE AND exclude_from_ranking IS FALSE (model.ts:839-853)",
+          "data.ranking === 0.85"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:45", "src/entities/World/routes/updateWorldRanking.ts:32-87",
+        "src/entities/World/schemas.ts:308-328", "src/entities/World/model.ts:839-870",
+        "src/entities/World/routes/updateWorldRanking.test.ts:92-106"
+      ]
+    }
+  },
+  {
+    "id": "worlds.put_ranking.data_team_highlighted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "The ranking of a highlighted entity is editorial and can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/updateWorldRanking.ts:51-58",
+        "src/entities/World/routes/updateWorldRanking.test.ts:165-204"
+      ]
+    },
+    "harness": {"world_id": "highlighted"}
+  },
+  {
+    "id": "worlds.put_ranking.data_team_excluded", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "This entity is excluded from the automated ranking and its ranking can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.test.ts:247-289"]
+    },
+    "harness": {"world_id": "excluded"}
+  },
+  {
+    "id": "worlds.put_ranking.data_team_race", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "The ranking of this world is editorial and can only be changed with the admin token",
+        "code": "forbidden"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: 0 rows from the conditional UPDATE (updateWorldRanking.ts:74-84)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/updateWorldRanking.ts:74-84",
+        "src/entities/World/routes/updateWorldRanking.test.ts:220-245"
+      ]
+    },
+    "harness": {"skip": "a lost update race between the read and the conditional UPDATE cannot be staged"}
+  },
+  {
+    "id": "worlds.put_ranking.admin_uncurated_nonzero", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 42},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "An editorial ranking only holds on a curated entity. Feature it or set exclude_from_ranking first, otherwise the nightly replace clears this value.",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.test.ts:305-337"]
+    }
+  },
+  {
+    "id": "worlds.put_ranking.admin_uncurated_null", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": null},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with ranking: null>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: WorldModel.updateRanking(world_id, null) unconditional (model.ts:855-870)",
+          "data.ranking === null"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.test.ts:339-348"]
+    }
+  },
+  {
+    "id": "worlds.put_ranking.admin_highlighted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 1700},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row (highlighted: true) with ranking: 1700>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: admin path writes unconditionally (updateWorldRanking.ts:65-69)",
+          "data.ranking === 1700 && data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.test.ts:206-217"]
+    },
+    "harness": {"world_id": "highlighted"}
+  },
+  {
+    "id": "worlds.put_ranking.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 1},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: world_id is the lowercased world name (World/schemas.ts:240-245 'World ID (lowercased world name)'); the lookup is w.id = $1 verbatim, so 'Foo.dcl.eth' answers 404"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.ts:44-49"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.put_ranking.no_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/{world_id}/ranking", "body": {"ranking": 1}},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Missing Authorization", "code": "unauthorized"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: wrong bearer -> 403 'Invalid Bearer Token' (updateWorldRanking.test.ts:127-137)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldRanking.test.ts:140-149"]
+    }
+  },
+  {
+    "id": "worlds.put_highlight.admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with highlighted: true>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: SELECT w.* plus disabled:false, disabled_at:null, image=COALESCE(w.image, latest enabled place image), contact_name/deployed_at from the latest enabled place, base_position:'0,0', world:true, user_visits:0 and the signer's user_* flags (World/model.ts:284-335)",
+          "data.world === true && data.disabled === false && data.disabled_at === null && data.base_position === '0,0' && data.user_visits === 0",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: WorldModel.updateHighlighted(world_id, body.highlighted) (model.ts:704-716)",
+          "data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:44", "src/entities/World/routes/updateWorldHighlight.ts:29-62",
+        "src/entities/World/schemas.ts:288-306"
+      ]
+    }
+  },
+  {
+    "id": "worlds.put_highlight.non_admin_wallet", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 403, "content_type": "application/json",
+      "body": {"ok": false, "error": "Only admin allowed to update highlight", "code": "forbidden"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldHighlight.ts:36-41"]
+    }
+  },
+  {
+    "id": "worlds.put_highlight.not_found", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/worlds/{world_id}/highlight", "body": {"highlighted": true},
+      "auth": "signed:admin-wallet"
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/updateWorldHighlight.ts:47-52"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.put_featured.admin_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/{world_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with highlighted: true>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: SELECT w.* plus disabled:false, disabled_at:null, image=COALESCE(w.image, latest enabled place image), contact_name/deployed_at from the latest enabled place, base_position:'0,0', world:true, user_visits:0 and the signer's user_* flags (World/model.ts:284-335)",
+          "data.world === true && data.disabled === false && data.disabled_at === null && data.base_position === '0,0' && data.user_visits === 0",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: WorldModel.updateHighlighted(world_id, true); answer is {...world, highlighted: true} (featured.ts:44-46)",
+          "data.highlighted === true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:47-48", "src/entities/World/routes/featured.ts:14-59",
+        "src/entities/World/routes/featured.test.ts:163-183"
+      ]
+    }
+  },
+  {
+    "id": "worlds.delete_featured.admin_bearer", "area": "places",
+    "request": {"method": "DELETE", "path": "/api/worlds/{world_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with highlighted: false>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": ["doc: status 200", "data.highlighted === false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:47-48", "src/entities/World/routes/featured.ts:14-59",
+        "src/entities/World/routes/featured.test.ts:202-222"
+      ]
+    }
+  },
+  {
+    "id": "worlds.put_featured.not_found", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/{world_id}/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/routes/featured.ts:37-42", "src/entities/World/routes/featured.test.ts:145-160"]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "worlds.put_featured.uppercase_name", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/Brai.dcl.eth/featured", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"Brai.dcl.eth\"", "code": "not_found"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: world_id is the lowercased world name (World/schemas.ts:240-245 'World ID (lowercased world name)'); the lookup is w.id = $1 verbatim, so 'Foo.dcl.eth' answers 404"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/World/model.ts:333", "src/entities/World/types.ts:6-9"]
+    }
+  },
+  {
+    "id": "worlds.put_ranking_exclusion.admin_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/{world_id}/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with exclude_from_ranking: true, ranking: 0>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: UPDATE worlds SET exclude_from_ranking = true, ranking = 0 (model.ts:726-739)",
+          "data.exclude_from_ranking === true && data.ranking === 0"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:50-51", "src/entities/World/routes/rankingExclusion.ts:14-63",
+        "src/entities/World/model.ts:726-739"
+      ]
+    }
+  },
+  {
+    "id": "worlds.delete_ranking_exclusion.admin_bearer", "area": "places",
+    "request": {"method": "DELETE", "path": "/api/worlds/{world_id}/ranking-exclusion", "auth": "bearer:places-admin"},
+    "expected": {
+      "status": 200, "content_type": "application/json",
+      "body": {"ok": true, "data": "<world row with exclude_from_ranking: false, ranking unchanged>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "worlds.$defs.world_write_row",
+        "invariants": [
+          "doc: ranking column untouched on DELETE (model.ts:734 conditional)",
+          "data.exclude_from_ranking === false", "data.ranking === 0 (the seeded value: ranking untouched)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:50-51", "src/entities/World/routes/rankingExclusion.ts:14-63",
+        "src/entities/World/model.ts:726-739"
+      ]
+    }
+  },
+  {
+    "id": "worlds.put_ranking_exclusion.no_bearer", "area": "places",
+    "request": {"method": "PUT", "path": "/api/worlds/{world_id}/ranking-exclusion"},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Missing Authorization", "code": "unauthorized"}, "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: wrong bearer -> 403 'Invalid Bearer Token'; data-team bearer -> 403 as well (admin token only)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:50-51", "src/entities/World/routes/rankingExclusion.ts:14-63",
+        "src/entities/World/model.ts:726-739"
+      ]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.data_team_full", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {
+        "replaces": ["place", "world"],
+        "entries": [
+          {"entity_type": "place", "id": "{place_id}", "ranking": 12.5},
+          {"entity_type": "world", "id": "{world_id}", "ranking": 3}
+        ]
+      },
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": {
+          "places": {
+            "replaced": true, "applied": "<n>", "cleared": "<n>", "skipped_curated": [],
+            "skipped_world_backed": [], "skipped_missing": []
+          },
+          "worlds": {"replaced": true, "applied": "<n>", "cleared": "<n>", "skipped_curated": [], "skipped_missing": []}
+        }
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["places", "worlds"],
+        "invariants": [
+          "data.places keys: replaced,applied,cleared,skipped_curated,skipped_world_backed,skipped_missing",
+          "data.worlds keys: replaced,applied,cleared,skipped_curated,skipped_missing",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: one transaction (withDatabaseTransaction): write every named ranking, then set ranking = 0 on every non-curated (places: also non-world) row not named (Place/model.ts:1028-1071, World/model.ts:788-837)",
+          "doc: curated rows (highlighted or exclude_from_ranking) are never written or cleared; world-backed place rows (world = true) are skipped and listed in skipped_world_backed",
+          "doc: ids unknown to the catalogue are listed in skipped_missing; classification selects by id only (no disabled filter), and neither the write (model.ts:1045-1054: id, highlighted false, exclude false, world false) nor the clear (model.ts:1058-1068: ranking != 0, highlighted false, exclude false, id NOT IN named) has a disabled or world predicate on the clear side, so disabled genesis places and world-backed rows that still carry a ranking are cleared too"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:31",
+        "src/entities/Destination/routes/replaceRanking.ts:36-167",
+        "src/entities/Destination/schemas.ts:142-196", "src/entities/Destination/types.ts:131-170",
+        "src/entities/Place/model.ts:964-1071", "src/entities/World/model.ts:747-837"
+      ]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.admin_bearer", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"replaces": ["place"], "entries": [{"entity_type": "place", "id": "{place_id}", "ranking": 1}]},
+      "auth": "bearer:places-admin"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": "<ReplaceRankingResult>"}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["places", "worlds"],
+        "invariants": [
+          "data.places keys: replaced,applied,cleared,skipped_curated,skipped_world_backed,skipped_missing",
+          "data.worlds keys: replaced,applied,cleared,skipped_curated,skipped_missing",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: requireRankingToken accepts either token (auth.ts:12-21); the admin token takes the same automated path here (no editorial override)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:31",
+        "src/entities/Destination/routes/replaceRanking.ts:36-167",
+        "src/entities/Destination/schemas.ts:142-196", "src/entities/Destination/types.ts:131-170"
+      ]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.replaces_omitted", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"entries": [{"entity_type": "place", "id": "{place_id}", "ranking": 1}]},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": {
+          "places": {
+            "replaced": true, "applied": "<n>", "cleared": "<n>", "skipped_curated": [],
+            "skipped_world_backed": [], "skipped_missing": []
+          },
+          "worlds": {"replaced": false, "applied": 0, "cleared": 0, "skipped_curated": [], "skipped_missing": []}
+        }
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["places", "worlds"],
+        "invariants": [
+          "data.places keys: replaced,applied,cleared,skipped_curated,skipped_world_backed,skipped_missing",
+          "data.worlds keys: replaced,applied,cleared,skipped_curated,skipped_missing",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: scope falls back to the entity types present in entries (replaceRanking.ts:57-59): a places-only payload leaves worlds untouched (worlds.replaced === false, applied/cleared 0)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/routes/replaceRanking.ts:54-59,91-100"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.declared_empty_scope", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking", "body": {"replaces": ["world"], "entries": []},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": {
+          "places": {
+            "replaced": false, "applied": 0, "cleared": 0, "skipped_curated": [], "skipped_world_backed": [],
+            "skipped_missing": []
+          },
+          "worlds": {
+            "replaced": true, "applied": 0, "cleared": "<every non-curated world with ranking != 0>",
+            "skipped_curated": [], "skipped_missing": []
+          }
+        }
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["places", "worlds"],
+        "invariants": [
+          "data.places keys: replaced,applied,cleared,skipped_curated,skipped_world_backed,skipped_missing",
+          "data.worlds keys: replaced,applied,cleared,skipped_curated,skipped_missing",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: replaces: ['world'] with no world entries = 'no world qualified today': every non-curated world ranking is cleared; rejectWhenNothingResolved does not fire because sent.length === 0 (replaceRanking.ts:133-144)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/replaceRanking.ts:54-59,133-144",
+        "src/entities/Destination/types.ts:137-151"
+      ]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.curated_and_world_backed_skipped", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {
+        "replaces": ["place"],
+        "entries": [
+          {"entity_type": "place", "id": "{place_id}", "ranking": 1},
+          {"entity_type": "place", "id": "{place_id:world_backed}", "ranking": 2}
+        ]
+      },
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {
+        "ok": true,
+        "data": {
+          "places": {
+            "replaced": true, "applied": 0, "cleared": "<n>", "skipped_curated": ["{place_id}"],
+            "skipped_world_backed": ["{place_id:world_backed}"], "skipped_missing": []
+          },
+          "worlds": {"replaced": false, "applied": 0, "cleared": 0, "skipped_curated": [], "skipped_missing": []}
+        }
+      },
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["places", "worlds"],
+        "invariants": [
+          "data.places keys: replaced,applied,cleared,skipped_curated,skipped_world_backed,skipped_missing",
+          "data.worlds keys: replaced,applied,cleared,skipped_curated,skipped_missing",
+          "doc: status 201: gatsby route() uses Response.Created for every PUT/POST handler that returns an ApiResponse (dist/entities/Route/wkc/routes/utils.js:13-23)",
+          "doc: a highlighted or excluded place is reported in skipped_curated and not written; a row that is both curated and world-backed is reported only as curated (Place/model.ts:989-1010)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/model.ts:964-1010", "src/entities/Destination/routes/replaceRanking.ts:102-116"]
+    },
+    "harness": {"place_id": "highlighted"}
+  },
+  {
+    "id": "destinations.put_ranking.duplicate_id", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {
+        "replaces": ["place"],
+        "entries": [
+          {"entity_type": "place", "id": "{place_id}", "ranking": 1},
+          {"entity_type": "place", "id": "{place_id}", "ranking": 2}
+        ]
+      },
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "The same destination appears more than once: place:{place_id}",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: keys are '<entity_type>:<id>' joined by ', ' (replaceRanking.ts:46-52,151-167); checked before the scope check and before any write"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/routes/replaceRanking.ts:46-52,151-167"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.out_of_scope_type", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"replaces": ["place"], "entries": [{"entity_type": "world", "id": "{world_id}", "ranking": 1}]},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Entries name types this run does not declare in \"replaces\": world",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: distinct out-of-scope types joined by ', ' (replaceRanking.ts:61-71)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/routes/replaceRanking.ts:61-71"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.every_id_missing", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {
+        "replaces": ["place"],
+        "entries": [{"entity_type": "place", "id": "00000000-0000-4000-8000-000000000000", "ranking": 1}]
+      },
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "None of the 1 place destinations in this request exist, so it would clear every place ranking rather than replace it",
+        "code": "bad_request"
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: raised inside the transaction, which rolls back (replaceRanking.ts:85-86,133-144); the same text with 'world' for the worlds half"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/routes/replaceRanking.ts:82-86,133-144"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.missing_entries", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking", "body": {"replaces": ["place"]},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+              "params": {"missingProperty": "entries"}, "message": "must have required property 'entries'"
+            }
+          ],
+          "messages": ["must have required property 'entries' {\"missingProperty\":\"entries\"}"],
+          "body": {"replaces": ["place"]}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:149"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.too_many_entries", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking", "body": "<entries: 5001 items>",
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/entries", "schemaPath": "#/properties/entries/maxItems",
+              "keyword": "maxItems", "params": {"limit": 5000},
+              "message": "must NOT have more than 5000 items"
+            }
+          ],
+          "messages": ["entries must NOT have more than 5000 items {\"limit\":5000}"],
+          "body": "<the 5001-entry body>"
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: MAX_RANKING_ENTRIES = 5000 (schemas.ts:142)",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:142,163-167"]
+    },
+    "harness": {"body": "ranking_entries:5001"}
+  },
+  {
+    "id": "destinations.put_ranking.negative_ranking", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"replaces": ["place"], "entries": [{"entity_type": "place", "id": "{place_id}", "ranking": -1}]},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/entries/0/ranking",
+              "schemaPath": "#/properties/entries/items/properties/ranking/minimum", "keyword": "minimum",
+              "params": {"comparison": ">=", "limit": 0}, "message": "must be >= 0"
+            }
+          ],
+          "messages": ["entries/0/ranking must be >= 0 {\"comparison\":\">=\",\"limit\":0}"],
+          "body": {"replaces": ["place"], "entries": [{"entity_type": "place", "id": "{place_id}", "ranking": -1}]}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:186-191"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.bad_entity_type", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"entries": [{"entity_type": "scene", "id": "{place_id}", "ranking": 1}]},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/entries/0/entity_type",
+              "schemaPath": "#/properties/entries/items/properties/entity_type/enum", "keyword": "enum",
+              "params": {"allowedValues": ["place", "world"]},
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": [
+            "entries/0/entity_type must be equal to one of the allowed values {\"allowedValues\":[\"place\",\"world\"]}"
+          ],
+          "body": {"entries": [{"entity_type": "scene", "id": "{place_id}", "ranking": 1}]}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:173-178"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.entry_missing_id", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"entries": [{"entity_type": "place", "ranking": 1}]}, "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/entries/0", "schemaPath": "#/properties/entries/items/required",
+              "keyword": "required", "params": {"missingProperty": "id"},
+              "message": "must have required property 'id'"
+            }
+          ],
+          "messages": ["entries/0 must have required property 'id' {\"missingProperty\":\"id\"}"],
+          "body": {"entries": [{"entity_type": "place", "ranking": 1}]}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: id: string 1..255 chars; entry additionalProperties: false",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:168-185"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.replaces_invalid", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking",
+      "body": {"replaces": ["place", "world", "place"], "entries": []}, "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/replaces", "schemaPath": "#/properties/replaces/maxItems",
+              "keyword": "maxItems", "params": {"limit": 2}, "message": "must NOT have more than 2 items"
+            }
+          ],
+          "messages": ["replaces must NOT have more than 2 items {\"limit\":2}"],
+          "body": {"replaces": ["place", "world", "place"], "entries": []}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: replaces: array of enum place|world, maxItems 2, uniqueItems true, nullable; ['place','place'] fails uniqueItems ('must NOT have duplicate items (items ## 1 and 0 are identical)')",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:151-162"]
+    }
+  },
+  {
+    "id": "destinations.put_ranking.extra_key", "area": "places",
+    "request": {
+      "method": "PUT", "path": "/api/destinations/ranking", "body": {"entries": [], "dry_run": true},
+      "auth": "bearer:data-team"
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+              "params": {"additionalProperty": "dry_run"}, "message": "must NOT have additional properties"
+            }
+          ],
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"dry_run\"}"],
+          "body": {"entries": [], "dry_run": true}
+        }
+      },
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code", "data"],
+        "invariants": [
+          "doc: ajv 8 (decentraland-gatsby 9.0.1, allErrors off: only the first failing keyword is reported); error objects carry instancePath/schemaPath/keyword/params/message",
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Destination/schemas.ts:148"]
+    }
+  },
+  {
+    "id": "report.post.signed_user", "area": "places",
+    "request": {"method": "POST", "path": "/api/report", "body": {}, "auth": "signed:user"},
+    "expected": {
+      "status": 201, "content_type": "application/json",
+      "body": {"ok": true, "data": {"signed_url": "<S3 presigned PUT URL>"}}, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": ["signed_url"],
+        "invariants": [
+          "doc: status 201 (POST handler returning ApiResponse)",
+          "doc: the request body is ignored; no database write",
+          "doc: signed_url = s3.getSignedUrl('putObject', {Bucket: AWS_BUCKET_NAME, Key: <last 8 hex chars of the signer address, lowercased><unix seconds at request time, lowercase hex>.json, Expires: 60000 (seconds, i.e. 16h40m), ContentType: 'application/json', ACL: 'private', CacheControl: 'public, max-age=31536000, immutable', Metadata: {...authMetadata, address}}) (routes.ts:33-53)",
+          "doc: the hostname is replaced by BUCKET_HOSTNAME when set (routes.ts:60-62); the URL must carry query params (signature) or the call is retried up to 10 times every 100 ms then 500",
+          "doc: the client then PUTs the JSON report to that URL with Content-Type: application/json"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Report/routes.ts:21-23", "src/entities/Report/routes.ts:25-70",
+        "src/entities/Report/util.ts:1-8"
+      ]
+    }
+  },
+  {
+    "id": "report.post.bad_signature", "area": "places",
+    "request": {
+      "method": "POST", "path": "/api/report", "headers": {"x-identity-metadata": "{}"}, "body": {},
+      "auth": "signed:user"
+    },
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid signature: <verifier message>", "code": "unauthorized"},
+      "body_match": "subset",
+      "shape": {
+        "envelope": ["ok", "error", "code"],
+        "invariants": [
+          "doc: production also appends a 'stack' string (ErrorResponse.toResponse adds err.stack when NODE_ENV=production); compare ok/error/code only",
+          "doc: error starts with 'Invalid signature'",
+          "doc: expired chain: 401 'Expired signature: ...' (verify.js:195-199)",
+          "doc: the signed payload is '<method>:<path>:<timestamp>:<metadata>' with the path as seen by express under /api (withDecentralandAuth.js:22-29)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["@dcl/crypto-middleware@6.3.0 dist/verify.js:100-103,151,195-204"]
+    },
+    "harness": {"signature": "invalid"}
+  }
+]

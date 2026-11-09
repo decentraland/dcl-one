@@ -1,66 +1,15 @@
-//! The operator plane's settings: telemetry, the RPC relay and the console.
+//! The operator plane's settings: the write switch, the RPC relay and the console.
 
 use clap::Args;
 
-/// The operator plane's switches and the telemetry console and sinks.
+/// The operator plane's write switch.
 #[derive(Args, Clone, Debug)]
 pub struct OpsConfig {
     // ops: the operator plane (src/ops, src/credits, src/explore/imposters).
-    // The credits ledger, the telemetry console writes and the console's
-    // mutating routes are local authority, so they sit behind the social
-    // switch's twin; the telemetry sinks are not user state and have their
-    // own switch (`ops::TELEMETRY_INGEST_ENABLED`).
+    // The credits ledger and the console's mutating routes are local
+    // authority, so they sit behind the social switch's twin.
     #[arg(long, env = "OPS_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub ops_writes_enabled: bool,
-
-    /// Accept Sentry envelopes and Segment batches into telemetry.events; off, the sinks answer 503.
-    #[arg(long, env = "TELEMETRY_INGEST_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
-    pub telemetry_ingest_enabled: bool,
-
-    // ops/telemetry (the old catalyrst-telemetry): the console bearer, the
-    // event contract, the flags document, the nest prefix and retention.
-    /// The console bearer (or `_FILE`); unset, every admin route answers 403.
-    #[arg(long, env = "CATALYRST_TELEMETRY_ADMIN_TOKEN", hide_env_values = true)]
-    pub catalyrst_telemetry_admin_token: Option<String>,
-
-    /// telemetry-contract.json; unset, missing or unparseable disables validation (accept all).
-    #[arg(long, env = "TELEMETRY_CONTRACT_PATH")]
-    pub telemetry_contract_path: Option<String>,
-
-    /// Comma-separated write keys the contract validates; unset = all.
-    #[arg(long, env = "TELEMETRY_CONTRACT_PROJECTS")]
-    pub telemetry_contract_projects: Option<String>,
-
-    /// A public http(s) flags document for /dash/flags; unset reads the explore_api.feature_flags mirror.
-    #[arg(long, env = "TELEMETRY_FLAGS_URL")]
-    pub telemetry_flags_url: Option<String>,
-
-    /// The prefix the telemetry router is nested under (the pages and the login cookie carry it).
-    #[arg(long, env = "TELEMETRY_BASE_PATH", default_value = "/telemetry")]
-    pub telemetry_base_path: String,
-
-    #[arg(long, env = "TELEMETRY_RETENTION_DAYS", default_value_t = 90)]
-    pub telemetry_retention_days: u32,
-
-    /// 5,000-row purge batches per daily pass.
-    #[arg(long, env = "TELEMETRY_PURGE_MAX_BATCHES", default_value_t = 100)]
-    pub telemetry_purge_max_batches: u32,
-
-    /// Rows per UTC day for a project with no telemetry.project_quotas row (0 refuses unknown projects).
-    #[arg(long, env = "TELEMETRY_DEFAULT_DAILY_LIMIT", default_value_t = 50_000)]
-    pub telemetry_default_daily_limit: i64,
-
-    /// The process-wide ingest ceiling in rows per minute (300 = 432,000 a day, under one purge pass).
-    #[arg(long, env = "TELEMETRY_MAX_ROWS_PER_MINUTE", default_value_t = 300)]
-    pub telemetry_max_rows_per_minute: u32,
-
-    /// The process-wide ingest ceiling in decoded request bytes per minute.
-    #[arg(long, env = "TELEMETRY_MAX_BYTES_PER_MINUTE", default_value_t = 4 * 1024 * 1024)]
-    pub telemetry_max_bytes_per_minute: u64,
-
-    /// The DSN POST /telemetry/dash/sql logs in with (or `_FILE`): a role holding USAGE + SELECT on schema telemetry and nothing else (deploy/nix/postgresql.nix); unset, the route answers 503.
-    #[arg(long, env = "TELEMETRY_SQL_DATABASE_URL", hide_env_values = true)]
-    pub telemetry_sql_database_url: Option<String>,
 }
 
 /// The read-only EVM relay.
@@ -149,37 +98,6 @@ mod tests {
             "operator-plane writes are opt-in; a restore must be demonstrated first"
         );
         assert!(
-            !c.ops.telemetry_ingest_enabled,
-            "the sinks have their own switch, off by default"
-        );
-        assert!(
-            c.ops.catalyrst_telemetry_admin_token.is_none()
-                && c.ops.telemetry_contract_path.is_none()
-                && c.ops.telemetry_contract_projects.is_none()
-                && c.ops.telemetry_flags_url.is_none()
-        );
-        assert_eq!(
-            (
-                c.ops.telemetry_base_path.as_str(),
-                c.ops.telemetry_retention_days,
-                c.ops.telemetry_purge_max_batches
-            ),
-            ("/telemetry", 90, 100)
-        );
-        assert_eq!(
-            (
-                c.ops.telemetry_default_daily_limit,
-                c.ops.telemetry_max_rows_per_minute,
-                c.ops.telemetry_max_bytes_per_minute
-            ),
-            (50_000, 300, 4 * 1024 * 1024),
-            "the ingest bounds apply without an operator row"
-        );
-        assert!(
-            c.ops.telemetry_sql_database_url.is_none(),
-            "the SQL console has no login until one is provisioned; it never falls back to the runtime pool"
-        );
-        assert!(
             c.rpc.catalyrst_rpc_admin_token.is_none()
                 && !c.rpc.catalyrst_rpc_allow_private_upstream
         );
@@ -202,8 +120,6 @@ mod tests {
             "--database-url",
             "postgres:///catalyst",
             "--ops-writes-enabled",
-            "true",
-            "--telemetry-ingest-enabled",
             "true",
             "--credits-mock-card",
             "true",

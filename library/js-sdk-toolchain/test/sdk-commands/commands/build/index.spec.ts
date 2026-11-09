@@ -1,0 +1,398 @@
+import * as projectValidation from '../../../../packages/@dcl/sdk-commands/src/logic/project-validations'
+import * as dclCompiler from '../../../../packages/@dcl/sdk-commands/src/logic/bundle'
+import * as build from '../../../../packages/@dcl/sdk-commands/src/commands/build/index'
+import { initComponents } from '../../../../packages/@dcl/sdk-commands/src/components'
+import {
+  compositeLoader,
+  getScriptImportName,
+  generateInitializeScriptsModule
+} from '../../../../packages/@dcl/sdk-commands/src/logic/bundle'
+import { createFsComponent } from '../../../../packages/@dcl/sdk-commands/src/components/fs'
+import esbuild from '../../../../packages/@dcl/sdk-commands/node_modules/esbuild'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+
+afterEach(() => {
+  jest.clearAllMocks()
+  jest.restoreAllMocks()
+})
+describe('build command', () => {
+  it('should install dependencies if needed', async () => {
+    const components = await initComponents()
+    jest
+      .spyOn(projectValidation, 'assertValidProjectFolder')
+      .mockResolvedValue({ kind: 'scene', scene: {} as any, workingDirectory: process.cwd() })
+
+    const needsDependenciesSpy = jest.spyOn(projectValidation, 'needsDependencies').mockResolvedValue(true)
+    const installDependenciesSpy = jest.spyOn(projectValidation, 'installDependencies').mockRejectedValue(undefined)
+
+    try {
+      await build.main({ args: { _: [] }, components })
+    } catch (_) {}
+
+    expect(needsDependenciesSpy).toHaveBeenCalledWith(components, process.cwd())
+    expect(installDependenciesSpy).toHaveBeenCalledWith(components, process.cwd())
+  })
+
+  it('should avoid installing dependencies if not needed', async () => {
+    const components = await initComponents()
+    jest
+      .spyOn(projectValidation, 'assertValidProjectFolder')
+      .mockResolvedValue({ kind: 'scene', scene: {} as any, workingDirectory: process.cwd() })
+
+    const needsDependenciesSpy = jest.spyOn(projectValidation, 'needsDependencies').mockResolvedValue(false)
+    const installDependenciesSpy = jest.spyOn(projectValidation, 'installDependencies').mockRejectedValue(undefined)
+
+    try {
+      await build.main({ args: { _: [] }, components })
+    } catch (_) {}
+
+    expect(needsDependenciesSpy).toHaveBeenCalledWith(components, process.cwd())
+    expect(installDependenciesSpy).not.toHaveBeenCalled()
+  })
+
+  it('should avoid installing dependencies if "--skip-install" is provided', async () => {
+    const components = await initComponents()
+    jest
+      .spyOn(projectValidation, 'assertValidProjectFolder')
+      .mockResolvedValue({ kind: 'scene', scene: {} as any, workingDirectory: process.cwd() })
+
+    const needsDependenciesSpy = jest.spyOn(projectValidation, 'needsDependencies').mockResolvedValue(true)
+
+    const installDependenciesSpy = jest.spyOn(projectValidation, 'installDependencies').mockRejectedValue(undefined)
+
+    try {
+      await build.main({ args: { _: [], '--skip-install': true }, components })
+    } catch (_) {}
+    expect(needsDependenciesSpy).not.toHaveBeenCalled()
+    expect(installDependenciesSpy).not.toHaveBeenCalled()
+  })
+
+  it('should build typescript if all conditions are met', async () => {
+    const components = await initComponents()
+    jest
+      .spyOn(projectValidation, 'assertValidProjectFolder')
+      .mockResolvedValue({ kind: 'scene', scene: {} as any, workingDirectory: process.cwd() })
+    jest.spyOn(projectValidation, 'needsDependencies').mockResolvedValue(false)
+    const sceneJson = { scene: { base: '0,0' } } as any
+    const tsBuildSpy = jest.spyOn(dclCompiler, 'bundleProject').mockResolvedValue({ sceneJson, inputs: [] })
+
+    await build.main({
+      args: { _: [], '--watch': false, '--production': true },
+      components
+    })
+
+    expect(tsBuildSpy).toHaveBeenCalledWith(
+      components,
+      {
+        workingDirectory: process.cwd(),
+        emitDeclaration: false,
+        watch: false,
+        single: undefined,
+        production: true,
+        customEntryPoint: false,
+        ignoreComposite: false
+      },
+      expect.anything() /* workspace */
+    )
+  })
+})
+
+describe('bundle script utilities', () => {
+  describe('getScriptImportName', () => {
+    it('should sanitize script paths into valid import names', () => {
+      expect(getScriptImportName('src/scripts/my-script.ts')).toBe('script_src_scripts_my_script')
+      expect(getScriptImportName('scripts/movePlayer.tsx')).toBe('script_scripts_movePlayer')
+      expect(getScriptImportName('custom/path/to/script.ts')).toBe('script_custom_path_to_script')
+    })
+
+    it('should handle special characters in paths', () => {
+      expect(getScriptImportName('scripts/my-special@script.ts')).toBe('script_scripts_my_special_script')
+      expect(getScriptImportName('scripts/script#1.ts')).toBe('script_scripts_script_1')
+      expect(getScriptImportName('scripts/script$name.ts')).toBe('script_scripts_script_name')
+    })
+
+    it('should remove .ts and .tsx extensions', () => {
+      expect(getScriptImportName('scripts/test.ts')).toBe('script_scripts_test')
+      expect(getScriptImportName('scripts/test.tsx')).toBe('script_scripts_test')
+    })
+  })
+
+  describe('generateInitializeScriptsModule', () => {
+    let mockComponents: {
+      fs: ReturnType<typeof createFsComponent>
+      logger: { log: jest.Mock; info: jest.Mock; error: jest.Mock; debug: jest.Mock; warn: jest.Mock }
+    }
+
+    beforeEach(() => {
+      mockComponents = {
+        fs: createFsComponent(),
+        logger: { log: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn(), warn: jest.fn() }
+      }
+    })
+
+    it('should generate a stub module without the script runtime when no scripts are found', async () => {
+      const compositeData = null
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).toContain('export function _initializeScripts(')
+      expect(result.contents).toContain('export function getScriptInstance(')
+      expect(result.contents).toContain('export function getScriptInstancesByPath(')
+      expect(result.contents).toContain('export function getAllScriptInstances(')
+      expect(result.contents).toContain('export function callScriptMethod(')
+      expect(result.contents).not.toContain('runScripts(')
+      expect(result.contents).not.toContain('@dcl/asset-packs')
+      expect(result.contents).not.toContain('require(')
+      expect(result.watchFiles).toEqual([])
+    })
+
+    it('should generate a stub module without the script runtime when compositeData has no scripts', async () => {
+      const compositeData = {
+        scripts: new Map(),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).toContain('export function _initializeScripts(')
+      expect(result.contents).toContain('export function getScriptInstance(')
+      expect(result.contents).toContain('export function getScriptInstancesByPath(')
+      expect(result.contents).toContain('export function getAllScriptInstances(')
+      expect(result.contents).toContain('export function callScriptMethod(')
+      expect(result.contents).not.toContain('runScripts(')
+      expect(result.contents).not.toContain('@dcl/asset-packs')
+      expect(result.contents).not.toContain('require(')
+      expect(result.watchFiles).toEqual([])
+    })
+
+    it('should keep the full runtime module for editor scenes without scripts', async () => {
+      const compositeData = {
+        scripts: new Map(),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData, {
+        editorScene: true
+      })
+
+      expect(result.contents).toContain('function runScripts(')
+      expect(result.contents).toContain('export function _initializeScripts(engine)')
+      expect(result.contents).toContain('const scriptsArray = []')
+      expect(result.contents).toContain('return runScripts(engine, scriptsArray)')
+      expect(result.contents).toContain('export function getScriptInstance(')
+      expect(result.contents).toContain('export function getScriptInstancesByPath(')
+      expect(result.contents).toContain('export function getAllScriptInstances(')
+      expect(result.contents).toContain('export function callScriptMethod(')
+      expect(result.watchFiles).toEqual([])
+    })
+
+    it('should generate _initializeScripts with runScripts call when scripts are found', async () => {
+      const compositeData = {
+        scripts: new Map([
+          [
+            'src/scripts/test.ts',
+            [
+              {
+                entity: 512,
+                path: 'src/scripts/test.ts',
+                priority: 0
+              }
+            ]
+          ]
+        ]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).toContain('import * as script_src_scripts_test from "./src/scripts/test.ts"')
+      expect(result.contents).toContain('return runScripts(engine,')
+      expect(result.contents).toContain('"path":"src/scripts/test.ts"')
+      expect(result.contents).toContain('module: script_src_scripts_test')
+      expect(result.watchFiles).toEqual(['/test/project/src/scripts/test.ts'])
+    })
+
+    it('should generate imports for multiple scripts', async () => {
+      const compositeData = {
+        scripts: new Map([
+          ['src/scripts/movePlayer.ts', [{ entity: 512, path: 'src/scripts/movePlayer.ts', priority: 0 }]],
+          ['src/scripts/rotateBox.ts', [{ entity: 513, path: 'src/scripts/rotateBox.ts', priority: 1 }]]
+        ]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).toContain('import * as script_src_scripts_movePlayer from "./src/scripts/movePlayer.ts"')
+      expect(result.contents).toContain('import * as script_src_scripts_rotateBox from "./src/scripts/rotateBox.ts"')
+      expect(result.contents).toContain('module: script_src_scripts_movePlayer')
+      expect(result.contents).toContain('module: script_src_scripts_rotateBox')
+      expect(result.watchFiles).toEqual([
+        '/test/project/src/scripts/movePlayer.ts',
+        '/test/project/src/scripts/rotateBox.ts'
+      ])
+    })
+
+    it('should include runtime script code in the generated module', async () => {
+      const compositeData = {
+        scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).toContain('function runScripts(')
+      expect(result.contents).toContain('export function _initializeScripts(engine)')
+    })
+
+    it('should import script only once when used by multiple entities', async () => {
+      const compositeData = {
+        scripts: new Map([
+          [
+            'src/scripts/movePlayer.ts',
+            [
+              { entity: 512, path: 'src/scripts/movePlayer.ts', priority: 0 },
+              { entity: 513, path: 'src/scripts/movePlayer.ts', priority: 0 },
+              { entity: 514, path: 'src/scripts/movePlayer.ts', priority: 0 }
+            ]
+          ]
+        ]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      const importStatement = 'import * as script_src_scripts_movePlayer from "./src/scripts/movePlayer.ts"'
+      const importCount = (
+        result.contents.match(new RegExp(importStatement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []
+      ).length
+
+      expect(importCount).toBe(1)
+
+      expect(result.contents.match(/"entity":512/g)?.length).toBe(1)
+      expect(result.contents.match(/"entity":513/g)?.length).toBe(1)
+      expect(result.contents.match(/"entity":514/g)?.length).toBe(1)
+
+      const moduleReferenceCount = (result.contents.match(/module: script_src_scripts_movePlayer/g) || []).length
+      expect(moduleReferenceCount).toBe(3)
+
+      expect(result.watchFiles).toEqual(['/test/project/src/scripts/movePlayer.ts'])
+    })
+
+    it('should boot asset-packs in editor scenes', async () => {
+      const compositeData = { scripts: new Map(), compositeLines: [], watchFiles: [], withErrors: false }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData, {
+        editorScene: true
+      })
+
+      expect(result.contents).toContain("import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'")
+      expect(result.contents).toMatch(
+        /export function _initializeAssetPacks\(\) \{\s*initAssetPacks\(engine, \{ syncEntity \}, players\)\s*\}/
+      )
+      expect(result.contents).not.toMatch(/^initAssetPacks\(/m)
+    })
+
+    it('should export a no-op asset-packs boot in scenes that are not editor scenes', async () => {
+      const compositeData = {
+        scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const withScripts = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+      const stub = await generateInitializeScriptsModule(mockComponents, '/test/project', null)
+
+      expect(withScripts.contents).toContain('export function _initializeAssetPacks() {}')
+      expect(stub.contents).toContain('export function _initializeAssetPacks() {}')
+    })
+
+    it('should not boot asset-packs in scenes with scripts that are not editor scenes', async () => {
+      const compositeData = {
+        scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
+        compositeLines: [],
+        watchFiles: [],
+        withErrors: false
+      }
+
+      const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
+
+      expect(result.contents).not.toContain('initAssetPacks(')
+    })
+  })
+
+  describe('compositeLoader', () => {
+    let workingDirectory: string
+
+    const writeMainComposite = (componentNames: string[]) =>
+      fs.writeFileSync(
+        path.join(workingDirectory, 'assets', 'scene', 'main.composite'),
+        JSON.stringify({
+          version: 1,
+          components: componentNames.map((name) => ({
+            name,
+            jsonSchema: { type: 'object', properties: {}, serializationType: 'map' },
+            data: {}
+          }))
+        })
+      )
+
+    beforeEach(() => {
+      workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'composite-loader-'))
+      fs.mkdirSync(path.join(workingDirectory, 'assets', 'scene'), { recursive: true })
+    })
+
+    afterEach(() => {
+      fs.rmSync(workingDirectory, { recursive: true, force: true })
+    })
+
+    it('should boot asset-packs once a running scene becomes an editor scene', async () => {
+      const components = {
+        fs: createFsComponent(),
+        logger: { log: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn(), warn: jest.fn() }
+      }
+      writeMainComposite(['core::Transform'])
+      const context = await esbuild.context({
+        bundle: true,
+        write: false,
+        format: 'esm',
+        absWorkingDir: workingDirectory,
+        external: ['@dcl/*'],
+        logLevel: 'silent',
+        plugins: [compositeLoader(components as any, { workingDirectory, ignoreComposite: false } as any)],
+        stdin: {
+          contents:
+            "import { _initializeScripts, _initializeAssetPacks } from '~sdk/script-utils'\n_initializeAssetPacks()\n_initializeScripts(undefined)",
+          resolveDir: workingDirectory,
+          loader: 'ts'
+        }
+      })
+
+      try {
+        const before = await context.rebuild()
+        writeMainComposite(['core::Transform', 'asset-packs::Actions'])
+        const after = await context.rebuild()
+
+        expect(before.outputFiles![0].text).not.toContain('initAssetPacks(')
+        expect(after.outputFiles![0].text).toContain('initAssetPacks(')
+      } finally {
+        await context.dispose()
+      }
+    })
+  })
+})

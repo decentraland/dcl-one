@@ -32,6 +32,8 @@ pub struct Credits {
     /// The chain of a configured CreditUsed index (`usage.rs`): the expiry
     /// sweep then waits for the index to read past a pledge's expiry.
     pub(crate) usage_chain: Option<i64>,
+    /// The grant notification's link (`SHOP_BASE_URL`).
+    pub(crate) shop_base_url: Arc<str>,
 }
 
 /// A wallet's balances in integer US cents at the peg (`floor(credits * 10)`;
@@ -40,6 +42,13 @@ pub struct Credits {
 pub struct WalletRow {
     pub available_cents: i64,
     pub earned_cents: i64,
+    /// The operator's block (`credits.wallets.is_blocked_for_claiming`) or a
+    /// multi-accounting flag (`credits.wallet_flags`, notified on its channel
+    /// or posted through `POST /admin/flags`). The flag blocks claiming only:
+    /// this row and the captcha claim fold it in, the spend and the
+    /// reservation read the operator's block alone, so paid credits are
+    /// never held by a flag. The admin's unflag and the operator's unblock
+    /// delete the wallet's flag.
     pub is_blocked_for_claiming: bool,
 }
 
@@ -67,7 +76,13 @@ impl Credits {
             packs: Arc::new(TtlMap::new(PACKS_CACHE_TTL)),
             kick: Arc::new(Notify::new()),
             usage_chain: None,
+            shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.into(),
         }
+    }
+
+    pub fn with_shop_base_url(mut self, url: &str) -> Self {
+        self.shop_base_url = url.trim_end_matches('/').into();
+        self
     }
 
     /// Bounds the authorization expiry sweep by the CreditUsed index of `chain_id`.
@@ -122,7 +137,7 @@ impl Credits {
         let row = sqlx::query(
             "SELECT floor(available * $2::numeric)::bigint AS available_cents, \
                     floor(earned_available * $2::numeric)::bigint AS earned_cents, \
-                    is_blocked_for_claiming \
+                    (is_blocked_for_claiming OR EXISTS (SELECT 1 FROM credits.wallet_flags f WHERE f.address = $1)) AS is_blocked_for_claiming \
              FROM credits.wallets WHERE address = $1",
         )
         .bind(address)
@@ -137,7 +152,8 @@ impl Credits {
     }
 
     /// Enrolment flag and balances in one statement; a wallet with no row
-    /// reads as not started with no credits.
+    /// reads as not started with no credits, unless a flag holds it: then
+    /// zero credits, blocked, so the progress page agrees with the claim.
     pub async fn user_progress(
         &self,
         address: &str,
@@ -145,9 +161,11 @@ impl Credits {
         let row = sqlx::query(
             "SELECT COALESCE(w.has_started_program, false) AS started, \
                     w.address IS NOT NULL AS has_credits, \
-                    floor(w.available * $2::numeric)::bigint AS available_cents, \
-                    floor(w.earned_available * $2::numeric)::bigint AS earned_cents, \
-                    w.is_blocked_for_claiming \
+                    COALESCE(floor(w.available * $2::numeric), 0)::bigint AS available_cents, \
+                    COALESCE(floor(w.earned_available * $2::numeric), 0)::bigint AS earned_cents, \
+                    (COALESCE(w.is_blocked_for_claiming, false) \
+                     OR EXISTS (SELECT 1 FROM credits.wallet_flags f WHERE f.address = $1)) \
+                        AS is_blocked_for_claiming \
              FROM (VALUES ($1::text)) AS requested(address) \
              LEFT JOIN credits.wallets w USING (address)",
         )
@@ -155,10 +173,11 @@ impl Credits {
         .bind(crate::types::UsdCents::CENTS_PER_CREDIT)
         .fetch_one(&self.pool)
         .await?;
-        let credits = row.get::<bool, _>("has_credits").then(|| WalletRow {
+        let blocked: bool = row.get("is_blocked_for_claiming");
+        let credits = (row.get::<bool, _>("has_credits") || blocked).then(|| WalletRow {
             available_cents: row.get("available_cents"),
             earned_cents: row.get("earned_cents"),
-            is_blocked_for_claiming: row.get("is_blocked_for_claiming"),
+            is_blocked_for_claiming: blocked,
         });
         Ok((row.get("started"), credits))
     }

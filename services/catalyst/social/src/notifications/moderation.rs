@@ -1,6 +1,6 @@
 //! Social-owned projection and persistence of comms moderation notices.
 
-use super::store::NewNotification;
+use super::store::{NewNotification, insert_notifications};
 use crate::comms::interfaces::{ModerationNotification, ModerationNotificationKind as Kind};
 use serde_json::json;
 use uuid::Uuid;
@@ -59,12 +59,9 @@ pub(crate) async fn insert(
     transaction: &mut sqlx::PgConnection,
     notification: &ModerationNotification,
 ) -> Result<(), sqlx::Error> {
-    let notice = project(notification);
-    // Required in-app moderation notices do not opt the recipient into email.
-    // DO NOTHING deliberately preserves original payload, time and read state.
-    sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, occurred_at, created_at) VALUES ($1,$2,$3,$4,$5,$5) ON CONFLICT (id) DO NOTHING")
-        .bind(notice.id).bind(&notice.address).bind(&notice.kind).bind(&notice.metadata)
-        .bind(notice.occurred_at).execute(transaction).await?;
+    // The shared path writes the email delivery row; its conflict on the v5 id
+    // preserves the original payload, time and read state on retries.
+    insert_notifications(transaction, std::slice::from_ref(&project(notification))).await?;
     Ok(())
 }
 
@@ -216,7 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn directory_retry_preserves_original_payload_time_read_state_and_in_app_scope() {
+    async fn directory_retry_preserves_original_payload_time_read_state_and_one_delivery_row() {
         let Some(pool) = pool().await else { return };
         let directory = crate::comms_directory::Directory::new(pool.clone());
         let mut event = notice(Kind::BanWarning {
@@ -284,8 +281,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            delivery_rows, 0,
-            "moderation must not opt the recipient into email"
+            delivery_rows, 1,
+            "moderation notices enter the email outbox once, like upstream"
         );
         event.source_id = Uuid::new_v4().to_string();
         let rolled_back_id = project(&event).id;
@@ -359,7 +356,6 @@ mod tests {
         );
         assert_eq!(original[0].1, json!({"reason":"original","warnedAt":123}));
         assert_eq!(original[0].2, event.occurred_at);
-        assert_eq!(original[0].3, event.occurred_at);
         assert!(!original[0].4);
         assert_eq!(original[0].5, None);
 

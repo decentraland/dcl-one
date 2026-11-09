@@ -1,6 +1,9 @@
 {
- "https://github.com/decentraland/docs-creator/blob/main/images/media/daylight-settings.png": {
-  "error": "HTTP 404"
+ "https://github.com/decentraland/docs/blob/main/creator/images/daylight-settings.webp": {
+  "file": "_remote/be169c2886b8a8e49dfe5d5d.webp",
+  "sha256": "be169c2886b8a8e49dfe5d5d66d88ee6b0962ff5b217f9429e51a5dcb9cd1322",
+  "bytes": 38328,
+  "from": "mirror:docs/creator/images/daylight-settings.webp"
  },
  "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/DAO%20Committee.png?raw=true": {
   "file": "_remote/063ee68d732926eeb99173e9.webp",
@@ -43,9 +46,6 @@
   "bytes": 122636,
   "from": "mirror:documentation/static/images/DAO Organizational Chart/Wearables Curation Last.png",
   "replaced": true
- },
- "https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true": {
-  "error": "HTTP 404"
  },
  "https://i.vimeocdn.com/video/1803452887-82f74713a8f16df8c3618654f539cfddf78cb1f9dfac951d99d340004ac26ad6-d_590x332": {
   "file": "_remote/26ae9b1db5276e225497fc37.webp",
@@ -206,6 +206,13 @@
   "sha256": "9c173333785f1d51960159dbd51264e6ba84ed5d3dd4d8835e9e7ff95e3992bb",
   "bytes": 6996148,
   "from": "mirror:documentation-creators/images/emotes/toes.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/sdk7-test-scenes/main/scenes/0%2C-1-scene-feedback/assets/images/feedback-panel.png": {
+  "file": "_remote/c600bed5d83d04aa544fb1e0.webp",
+  "sha256": "c600bed5d83d04aa544fb1e0ee3b30d76bd2784a2422c303996d206ee8ceaa34",
+  "bytes": 284479,
+  "from": "mirror:sdk7-test-scenes/scenes/0,-1-scene-feedback/assets/images/feedback-panel.png",
   "replaced": true
  }
 }

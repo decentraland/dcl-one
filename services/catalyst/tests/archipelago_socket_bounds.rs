@@ -52,14 +52,13 @@ fn packet(message: client_packet::Message) -> Message {
 }
 async fn receive(socket: &mut Socket) -> server_packet::Message {
     loop {
-        match tokio::time::timeout(Duration::from_secs(3), socket.next())
+        if let Message::Binary(bytes) = tokio::time::timeout(Duration::from_secs(3), socket.next())
             .await
             .unwrap()
             .unwrap()
             .unwrap()
         {
-            Message::Binary(bytes) => return ServerPacket::decode(bytes).unwrap().message.unwrap(),
-            _ => {}
+            return ServerPacket::decode(bytes).unwrap().message.unwrap();
         }
     }
 }
@@ -253,11 +252,21 @@ async fn heartbeat_burst_eventually_applies_latest_position_when_sender_goes_qui
     let (mut socket, address) = authenticated(port).await;
     socket.send(heartbeat(1.0)).await.unwrap();
     wait(|| state.peers.peer(&address).is_some()).await;
+    let applied = std::time::Instant::now();
     socket.send(heartbeat(2.0)).await.unwrap();
     socket.send(heartbeat(3.0)).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    assert_eq!(state.peers.peer(&address).unwrap().position[0], 1.0);
-    wait(|| state.peers.peer(&address).unwrap().position[0] == 3.0).await;
+    // The burst is held for the position interval (io.rs POSITION_INTERVAL,
+    // 500 ms) and its latest sample wins: the middle one is never applied.
+    wait(|| {
+        let position = state.peers.peer(&address).unwrap().position[0];
+        assert_ne!(position, 2.0, "a held burst applies its latest sample only");
+        position == 3.0
+    })
+    .await;
+    assert!(
+        applied.elapsed() >= Duration::from_millis(250),
+        "a burst is held for the position interval, not applied at once"
+    );
 }
 #[tokio::test]
 async fn sustained_excess_heartbeats_close_the_real_socket_with_1008() {

@@ -279,13 +279,23 @@ impl Credits {
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let mut tx = self.pool.begin().await?;
 
-        let available_cents: Option<i64> =
-            sqlx::query_scalar("SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1 FOR UPDATE")
-                .bind(g.address)
-                .bind(UsdCents::CENTS_PER_CREDIT)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let balance_cents = available_cents.unwrap_or(0);
+        let wallet = sqlx::query(
+            "SELECT floor(available * $2::numeric)::bigint AS available_cents, \
+                    is_blocked_for_claiming AS blocked \
+             FROM credits.wallets WHERE address = $1 FOR UPDATE",
+        )
+        .bind(g.address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if wallet.as_ref().is_some_and(|w| w.get::<bool, _>("blocked")) {
+            return Err(ApiError::forbidden(
+                "wallet is blocked from the credits program",
+            ));
+        }
+        let balance_cents = wallet
+            .map(|w| w.get::<i64, _>("available_cents"))
+            .unwrap_or(0);
 
         let row = sqlx::query(
             "WITH prior AS ( \

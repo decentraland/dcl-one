@@ -45,6 +45,13 @@ if '-X' in args:
 path = next(a for a in args if a.startswith('/'))
 
 comments = load()
+if method == 'GET' and os.environ.get('GH_FAIL_READ_EXIT'):
+    sys.exit(int(os.environ['GH_FAIL_READ_EXIT']))
+if method in ('POST', 'PATCH') and os.environ.get('GH_FAIL_WRITES_LOG'):
+    with open(os.environ['GH_FAIL_WRITES_LOG'], 'a') as f:
+        f.write(method + '\n')
+    sys.stdin.read()
+    sys.exit(42)
 if method == 'GET':
     # Optional eventual-consistency simulation: while the STALE_READS_FILE counter is positive
     # and a pre-PATCH snapshot exists, serve the snapshot instead of the live store and
@@ -270,5 +277,25 @@ grep -q 'CRLF-BUILD' <<< "$BODY" || fail "crlf: new content missing"
 grep -q 'OLD-BUILD' <<< "$BODY" && fail "crlf: stale content still rendered"
 grep -q $'\r' <<< "$BODY" && fail "crlf: body still carries CR"
 pass "CRLF body replaced in place, no duplicate fences"
+
+reset_store
+code=0
+(cd "$WORK" && SECTION=build SECTION_BODY=READ-FAILURE GH_FAIL_READ_EXIT=41 bash "$UPSERT") > "$WORK/read-failure.log" 2>&1 || code=$?
+[ "$code" = 41 ] || fail "GitHub read failure was hidden as $code"
+[ "$(count)" = 0 ] || fail 'read failure unexpectedly wrote a comment'
+pass "unexpected GitHub read failures stop immediately"
+
+cat > "$WORK/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$GH_RETRY_SLEEP_LOG"
+STUB
+chmod +x "$WORK/bin/sleep"
+export GH_RETRY_SLEEP_LOG="$WORK/retry-sleeps"
+reset_store
+GH_FAIL_WRITES_LOG="$WORK/failed-writes" run_upsert build WRITE-FAILURE > "$WORK/write-failure.log"
+[ "$(wc -l < "$WORK/failed-writes" | tr -d ' ')" = 5 ] || fail 'write retry attempt budget changed'
+[ "$(cat "$GH_RETRY_SLEEP_LOG")" = $'1\n2\n4\n8' ] || fail 'write retries changed or slept after the final attempt'
+grep -q 'after 5 attempts' "$WORK/write-failure.log" || fail 'write exhaustion did not retain its warning'
+pass "failed writes retain five attempts and omit the final wait"
 
 [ "$FAILED" = 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

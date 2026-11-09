@@ -10,7 +10,7 @@ When a new snapshot _replaces_ older ones (e.g. a weekly snapshot that combines 
 
 The full set of active entities can be discovered by combining all the available snapshots (more on this below), keeping the most recent entity referenced by each [pointer](/docs/contributor/content/pointers/) discovered along the way.
 
-You can experiment with snapshots using working code in the [practice](/docs/contributor/practice/) section.
+You can experiment with snapshots using working code in the [practice](/docs/contributor/content/practice/) section.
 
 ### Discovering Snapshots <a href="#discover" id="discover"></a>
 
@@ -125,4 +125,4 @@ If any new snapshots must be processed, the same strategy as above can be used t
 
 ### Examples
 
-In the [practice](/docs/contributor/practice/) section, you'll find code examples that work with the snapshot system.
+In the [practice](/docs/contributor/content/practice/) section, you'll find code examples that work with the snapshot system.

@@ -259,56 +259,6 @@ impl<'a> Context<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::gatekeeper::moderation::test_support::{StubBanStatus, state};
-    use crate::interfaces::test_support::{StubPolicy, StubScenes};
-    use crate::rooms::{ActiveDeployment, ResolvedRoom};
-    use crate::world_identity::SceneNamespace;
-    use std::sync::Arc;
-
-    #[tokio::test]
-    async fn title_is_exact_deployment_display_data_with_resolved_base_fallback() {
-        for (title, expected) in [
-            (Some("Exact Scene B"), "Exact Scene B"),
-            (None, "Place at 1,1"),
-            (Some(""), "Place at 1,1"),
-        ] {
-            let world = WorldName::parse("title.dcl.eth").unwrap();
-            let realm = RealmId::World(world.clone());
-            let scene = SceneId::parse("SceneB").unwrap();
-            let base = Parcel::parse("1,1").unwrap();
-            let resolved = ResolvedRoom {
-                room: crate::rooms::worlds_service_scene_room(&world, &scene),
-                realm: realm.clone(),
-                scene_id: Some(scene.clone()),
-                deployment: Some(ActiveDeployment {
-                    scene_id: scene,
-                    title: title.map(String::from),
-                    parcels: [base].into_iter().collect(),
-                    base,
-                    namespace: SceneNamespace::new(&realm, base, None),
-                    local: true,
-                }),
-            };
-            let mut state = state(StubPolicy::default(), StubBanStatus::default());
-            state.scenes = Arc::new(StubScenes {
-                room: Ok(resolved),
-                scene: Ok(None),
-            });
-            let context = Context::resolve(
-                &state,
-                &serde_json::json!({"realmName":"title.dcl.eth","sceneId":"SceneB","parcel":"1,1"}),
-            )
-            .await
-            .unwrap();
-            assert_eq!(context.place.place_id(), "SceneB");
-            assert_eq!(context.place_title, expected);
-        }
-    }
-}
-
 pub(super) struct Input {
     body: Map<String, Value>,
     query: BTreeMap<String, String>,
@@ -367,5 +317,55 @@ impl Input {
 
     pub fn name<'a>(&'a self, key: &str) -> Option<&'a str> {
         self.body.get(key).and_then(Value::as_str)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gatekeeper::moderation::test_support::{StubBanStatus, state};
+    use crate::interfaces::test_support::{StubPolicy, StubScenes};
+    use crate::rooms::{ActiveDeployment, ResolvedRoom};
+    use crate::world_identity::SceneNamespace;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn title_is_exact_deployment_display_data_with_resolved_base_fallback() {
+        for (title, expected) in [
+            (Some("Exact Scene B"), "Exact Scene B"),
+            (None, "Place at 1,1"),
+            (Some(""), "Place at 1,1"),
+        ] {
+            let world = WorldName::parse("title.dcl.eth").unwrap();
+            let realm = RealmId::World(world.clone());
+            let scene = SceneId::parse("SceneB").unwrap();
+            let base = Parcel::parse("1,1").unwrap();
+            let resolved = ResolvedRoom {
+                room: crate::rooms::worlds_service_scene_room(&world, &scene),
+                realm: realm.clone(),
+                scene_id: Some(scene.clone()),
+                deployment: Some(ActiveDeployment {
+                    scene_id: scene,
+                    title: title.map(String::from),
+                    parcels: [base].into_iter().collect(),
+                    base,
+                    namespace: SceneNamespace::new(&realm, base, None),
+                    local: true,
+                }),
+            };
+            let mut state = state(StubPolicy::default(), StubBanStatus::default());
+            state.scenes = Arc::new(StubScenes {
+                room: Ok(resolved),
+                scene: Ok(None),
+            });
+            let context = Context::resolve(
+                &state,
+                &serde_json::json!({"realmName":"title.dcl.eth","sceneId":"SceneB","parcel":"1,1"}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(context.place.place_id(), "SceneB");
+            assert_eq!(context.place_title, expected);
+        }
     }
 }

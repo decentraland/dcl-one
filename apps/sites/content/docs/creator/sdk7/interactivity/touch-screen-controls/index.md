@@ -8,8 +8,41 @@ On the mobile client, players interact with your scene through a set of native o
 
 
 > [!NOTE]
-> The component is applied automatically while the player is inside your scene and reverts to the defaults (nothing hidden, jump as the central button) the moment they leave — so scenes that don't use it are unaffected. It only affects platforms with native on-screen controls: it's a no-op on desktop and has no effect in VR.
+> The component is applied automatically while the player is inside your scene and reverts to the defaults the moment they leave, so scenes that don't use it are unaffected. It only affects platforms with native on-screen controls: it's a no-op on desktop and has no effect in VR.
 
+
+## What shows by default
+
+From SDK `7.32.0`, every scene starts with three gamepad buttons visible:
+
+* `IA_JUMP`, the large central button
+* `IA_POINTER`, the interaction button
+* `IA_PRIMARY`, the E button
+
+`IA_SECONDARY` and `IA_ACTION_3` to `IA_ACTION_6` start hidden. You only need `TouchScreenControls` when you want something other than this.
+
+
+> [!WARNING]
+> **📔 Note**: The three-button default and the `showDefault()` helper need SDK `7.32.0` or later. On earlier versions all eight buttons show unless your scene hides some, and `showDefault()` doesn't exist, so `showAll()` is the only way to bring buttons back.
+
+
+The SDK writes that default set once at scene start, just before the first frame, and skips it when your scene already chose its own buttons. Your scene counts as having chosen if either:
+
+* One of the button visibility helpers already ran: `hideAll()`, `showAll()`, `showDefault()` or `hide()`.
+* The component on the root entity already lists at least one button, for example because your scene wrote it with `createOrReplace` at the top level of `index.ts`, outside `main()`.
+
+`hideJoystick()`, `showJoystick()`, `hideCrosshair()`, `showCrosshair()` and `setMainAction()` don't count: the default button set still applies alongside them.
+
+Your `main()` function runs after that write, so anything you do there lands on top of the default set. A helper like `hide()` merges with it, while `createOrReplace` replaces the whole list with yours.
+
+To bring the hidden buttons back, call `showAll()` for all eight. `showDefault()` restores the default set and leaves your icons, joystick, crosshair and main action untouched.
+
+```ts
+import { TouchScreenControls } from '@dcl/sdk/ecs'
+
+// Show every on-screen button, including the 1 / 2 / 3 / 4 buttons
+TouchScreenControls.showAll()
+```
 
 ## How the button layout works
 
@@ -29,7 +62,7 @@ The on-screen positions are fixed too. The **visible** buttons fill those positi
 | When you… | The controls… |
 | --- | --- |
 | **Hide a button** (any button, including jump) | Every lower-priority button moves up to fill the gap. Hide jump and `IA_POINTER` takes the central spot. |
-| **Leave the stack alone** | The first button (`IA_JUMP`) is the large central button; the next buttons fill the surrounding slots. |
+| **Change nothing** | The default set applies: `IA_JUMP` is the large central button, with `IA_POINTER` and `IA_PRIMARY` in the slots around it. |
 | **Set a main button** with `mainAction` | That action jumps to the front and becomes the central button; every other button keeps its normal order. |
 | **Set a main button that is also hidden** | Hiding wins — the button stays hidden. |
 | **Leave 5 or fewer buttons visible** | All of them show directly (the central button plus up to four around it); there is no "+" menu. |
@@ -39,7 +72,7 @@ The on-screen positions are fixed too. The **visible** buttons fill those positi
 
 
 > [!NOTE]
-> This is also how you surface the `1`/`2`/`3`/`4` buttons, which are otherwise tucked behind the "+": hide enough higher-priority buttons to bring the visible count to five or fewer, and they show directly.
+> The `1`/`2`/`3`/`4` buttons start hidden. `showAll()` brings them back, but that leaves eight visible buttons, so the lowest-priority ones end up behind the "+". To put a numbered button directly on screen, keep the visible count at five or fewer: show only the buttons your scene actually uses.
 
 
 ## Common tasks
@@ -73,14 +106,15 @@ TouchScreenControls.showCrosshair()
 TouchScreenControls.hide([InputAction.IA_SECONDARY, InputAction.IA_JUMP])
 ```
 
-**Hide or show every button** — clear the HUD, or reset it:
+**Hide every button, show every button, or go back to the default set:**
 
 ```ts
-TouchScreenControls.hideAll()
-TouchScreenControls.showAll()
+TouchScreenControls.hideAll()     // no gamepad buttons at all
+TouchScreenControls.showAll()     // all eight buttons
+TouchScreenControls.showDefault() // jump, pointer and primary only
 ```
 
-`showAll()` only affects the gamepad buttons — it doesn't restore a hidden joystick or crosshair. Use `showJoystick()` / `showCrosshair()` for those.
+These three only affect the gamepad buttons. They don't restore a hidden joystick or crosshair, and they don't change your custom icons or your main action. Use `showJoystick()` / `showCrosshair()` for those.
 
 **Replace a button's icon** — for full control (custom icons, several changes at once), write the raw component on `engine.RootEntity`:
 
@@ -112,7 +146,8 @@ The helpers at a glance:
 | `showCrosshair()` | Shows the on-screen crosshair / reticle again. |
 | `hide(actions)` | Hides the given gamepad buttons (merged into the current config). |
 | `hideAll()` | Hides every gamepad button. |
-| `showAll()` | Shows every gamepad button (clears the button hide list). Does **not** affect the joystick/crosshair. |
+| `showAll()` | Shows all eight gamepad buttons (clears the button hide list). Does **not** affect the joystick/crosshair. |
+| `showDefault()` | Restores the default set: jump, pointer and primary visible, secondary and actions 3 to 6 hidden. Keeps icons, joystick, crosshair and main action as they are. |
 
 ## Properties
 
@@ -123,7 +158,7 @@ Write these directly when you use `createOrReplace`:
 | `hideJoystick` | _boolean_ | Hides the native virtual movement joystick. |
 | `hideCrosshair` | _boolean_ | Hides the on-screen crosshair / reticle. |
 | `mainAction` | [_InputAction_](/docs/creator/sdk7/interactivity/button-events/click-events/#pointer-buttons) | Moves this action to the front of the stack, making it the large central button; the other buttons keep their order. Only gamepad actions are valid (see below). When unset, the first visible button (`IA_JUMP` by default) leads. See [How the button layout works](#how-the-button-layout-works). |
-| `touchInputs` | _array_ | Per-button overrides. A button that isn't listed keeps its default (shown, with its default glyph). |
+| `touchInputs` | _array_ | Per-button overrides. Writing this field replaces the whole list, so any button you leave out is shown with its default glyph, including the ones that start hidden. |
 
 Each `touchInputs` entry has:
 
@@ -152,7 +187,7 @@ The [`InputAction`](/docs/creator/sdk7/interactivity/button-events/click-events/
 
 ## Example
 
-To hide the joystick, tuck away the numbered buttons, and give the central jump button a custom icon shipped in your scene:
+To hide the joystick, keep the F and numbered buttons hidden, and give the central jump button a custom icon shipped in your scene:
 
 ```ts
 import { engine, TouchScreenControls, InputAction } from '@dcl/sdk/ecs'
@@ -161,6 +196,9 @@ export function main() {
 	TouchScreenControls.createOrReplace(engine.RootEntity, {
 		hideJoystick: true,
 		touchInputs: [
+			// This list replaces the default one, so the buttons that normally start
+			// hidden have to be listed here too
+			{ inputAction: InputAction.IA_SECONDARY, hide: true },
 			{ inputAction: InputAction.IA_ACTION_3, hide: true },
 			{ inputAction: InputAction.IA_ACTION_4, hide: true },
 			{ inputAction: InputAction.IA_ACTION_5, hide: true },

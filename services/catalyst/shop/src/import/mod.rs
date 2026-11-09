@@ -434,8 +434,15 @@ pub fn decide(signer: EvmAddress, trade: SignedTrade, facts: &MirrorFacts) -> Im
     }
 }
 
-/// The newest price snapshot of any source as an exact rate: `(rate, taken_at)`.
+/// The Shop's MANA/USD as an exact rate and when it was read: the
+/// marketplace's feed where it is wired (`mana::feed_rate::current`; no
+/// current answer is no rate), else the newest price snapshot of any source.
 pub async fn current_rate(pool: &PgPool) -> Result<Option<(ManaUsdRate, i64)>, ApiError> {
+    if let Some(feed) = crate::mana::feed_rate::current() {
+        return Ok(feed
+            .ok()
+            .map(|shop| (shop.rate, shop.updated_at.timestamp())));
+    }
     let row: Option<(String, chrono::NaiveDateTime)> =
         sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1").fetch_optional(pool).await?;
     Ok(row.and_then(|(text, taken_at)| {
@@ -464,17 +471,7 @@ pub fn quote_for(listing: Option<&StoredListing>, rate: ManaUsdRate, taken_at: i
 }
 
 fn rate_text(rate: ManaUsdRate) -> String {
-    let scale =
-        alloy_primitives::U256::from(10u64).pow(alloy_primitives::U256::from(rate.decimals()));
-    let whole = rate.rate() / scale;
-    let frac = rate.rate() % scale;
-    let frac = format!("{:0>width$}", frac, width = rate.decimals() as usize);
-    let frac = frac.trim_end_matches('0');
-    if frac.is_empty() {
-        whole.to_string()
-    } else {
-        format!("{whole}.{frac}")
-    }
+    rate.decimal_text()
 }
 
 fn bad(message: impl Into<String>) -> Response {

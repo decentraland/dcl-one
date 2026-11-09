@@ -208,7 +208,9 @@ pub trait SocialDirectory: Send + Sync {
         address: &Address,
         privacy: &str,
     ) -> Result<(), sqlx::Error>;
-    async fn notify_community_voice_ended(
+    /// Records the ended stream for community ranking, idempotent per
+    /// `event_key`; it is not a member notification.
+    async fn record_community_voice_ended(
         &self,
         community: crate::CommunityId,
         event_key: &str,
@@ -299,7 +301,7 @@ pub mod test_support {
                 .insert(address.clone(), privacy.to_string());
             Ok(())
         }
-        async fn notify_community_voice_ended(
+        async fn record_community_voice_ended(
             &self,
             _: crate::CommunityId,
             _: &str,
@@ -565,9 +567,7 @@ pub mod test_support {
     pub(crate) fn copy(error: &AuthorityNotEstablished) -> AuthorityNotEstablished {
         use AuthorityNotEstablished::*;
         match error {
-            AuthenticationMissingOrInvalid { detail } => {
-                AuthenticationMissingOrInvalid { detail: *detail }
-            }
+            AuthenticationMissingOrInvalid { detail } => AuthenticationMissingOrInvalid { detail },
             PresentedSharedSecretDidNotMatch => PresentedSharedSecretDidNotMatch,
             RefusedLacksAuthority { detail } => RefusedLacksAuthority {
                 detail: detail.clone(),
@@ -576,13 +576,13 @@ pub mod test_support {
                 store,
                 reason_for_operators,
             } => UndeterminedStoreUnavailable {
-                store: *store,
+                store,
                 reason_for_operators: reason_for_operators.clone(),
             },
             CredentialNotConfigured {
                 environment_variable,
             } => CredentialNotConfigured {
-                environment_variable: *environment_variable,
+                environment_variable,
             },
         }
     }

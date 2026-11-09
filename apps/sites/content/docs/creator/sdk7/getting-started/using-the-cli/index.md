@@ -5,11 +5,11 @@
 
 > [!NOTE]
 > **💡 Tip**: If you're working with an AI coding assistant (like Claude Code, Cursor, or Copilot), install the official Decentraland SDK Skills before it writes any code, so it knows verified SDK7 patterns:
-> 
+>
 > ```bash
 > npx skills add decentraland/sdk-skills
 > ```
-> 
+>
 > See [Vibe Coding with AI](/docs/creator/sdk7/getting-started/vibe-coding/) for the full AI-assisted workflow.
 
 
@@ -74,17 +74,17 @@ To preview your scene on the [Decentraland mobile app](/docs/creator/build-for-m
 npm run start -- --mobile
 ```
 
-To make the preview run smoother and render 3D models just as they'll look once published, add the `--local-ab` flag. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
+To make the preview run smoother and render 3D models just as they'll look once published, add the `--asset-bundles` flag. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
 
 ```bash
-npm run start -- --local-ab
+npm run start -- --asset-bundles
 ```
 
 See [preview scenes](/docs/creator/sdk7/getting-started/preview-scene/) for details and special options when running a preview.
 
 ## Build
 
-Run `npm run build` to build your project. Decentraland scenes are written in TypeScript, but they are built to minified JavaScript when published. See [coding scenes](https://github.com/decentraland/docs-creator/blob/main/sdk7/getting-started/coding-scenes.md) for more details.
+Run `npm run build` to build your project. Decentraland scenes are written in TypeScript, but they are built to minified JavaScript when published. See [coding scenes](https://github.com/decentraland/docs/blob/main/creator/sdk7/getting-started/coding-scenes.md) for more details.
 
 The build command is optional, as it also runs in the background before deploying (although you can add a flag to skip it).
 

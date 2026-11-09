@@ -193,6 +193,8 @@ export type PageToScene =
   | PreviewFocusRequest
   | PreviewStageRequest
   | PreviewEmoteRequest
+  | PreviewRotateRequest
+  | PreviewZoomRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -235,6 +237,8 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | SetPhotoModeRequest
+  | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
 
@@ -398,6 +402,8 @@ export interface FriendsMessage {
   /** Blocked addresses (names/avatars not resolved here). */
   blocked: string[]
   blockedUsers?: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user (absent from older bridges). */
+  blockedBy?: string[]
   /** Signed in but the social service hasn't initialised yet (vs a guest, who never gets it). */
   loading?: boolean
 }
@@ -1491,6 +1497,25 @@ export interface PreviewEmoteRequest {
   urn: string | null
 }
 
+/** Turn the preview avatar about its vertical axis by `degrees` (the page's drag over it: the engine's
+ *  drag-lock doesn't reach the preview in every host, so the page drives the turn itself). */
+export interface PreviewRotateRequest {
+  kind: 'previewRotate'
+  degrees: number
+}
+
+/** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
+ *  PREVIEW_MAX_ZOOM), keeping what is at `anchor` where it is: a height in the camera's view, 0 its top and 1
+ *  its bottom (the pointer's, as the page's wheel over the avatar asks). The view stays inside the framing. */
+export interface PreviewZoomRequest {
+  kind: 'previewZoom'
+  zoom: number
+  anchor: number
+}
+
+/** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */
+export const PREVIEW_MAX_ZOOM = 2.5
+
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */
 export interface RGBColor {
   r: number
@@ -1722,6 +1747,44 @@ export interface ProximityMessage {
   tips: ProximityTip[]
 }
 
+// ---- photo mode (camera reel capture) --------------------------------------
+
+/** Photo mode as the engine reports it (the `PhotoModeState` stream): whether the in-world camera
+ *  is open, what the last photo is doing, the player's storage, and a one-shot `event` stamped
+ *  with `eventSeq` (a capture carries its preview JPEG, a failed upload its message). */
+export interface PhotoModeSnapshot {
+  active: boolean
+  hudHidden: boolean
+  cursorLocked: boolean
+  phase: 'idle' | 'capturing' | 'encoding' | 'uploading' | string
+  storageCurrent: number
+  storageMax: number
+  storageLoaded: boolean
+  event: 'none' | 'captured' | 'uploaded' | 'uploadFailed' | string
+  eventSeq: number
+  previewJpegBase64: string
+  message: string
+}
+
+export interface PhotoModeMessage {
+  kind: 'photoMode'
+  state: PhotoModeSnapshot
+}
+
+/** Open or close photo mode (the engine's `/photo_mode`); `source` names what asked, for analytics. */
+export interface SetPhotoModeRequest {
+  kind: 'setPhotoMode'
+  enable: boolean
+  source: PhotoModeSource
+}
+
+export type PhotoModeSource = 'button' | 'shortcut'
+
+/** Take a photo in photo mode (the engine's `/take_photo`). */
+export interface TakePhotoRequest {
+  kind: 'takePhoto'
+}
+
 /** A nearby avatar was clicked in the world → open their profile card. Only the address travels;
  *  React resolves the display name (nearby roster) and anchors the card at the live DOM cursor. */
 export interface AvatarClickMessage {
@@ -1737,6 +1800,7 @@ export type SceneToPage =
   | CursorLockMessage
   | SystemActionMessage
   | ProximityMessage
+  | PhotoModeMessage
   | AvatarClickMessage
   | PlayerReadyEvent
   | AnalyticsEventMessage

@@ -138,6 +138,15 @@
       ]
     },
     {
+      "id": "sdk",
+      "description": "The creator SDK packages (@dcl/sdk, ecs, react-ecs, js-runtime, sdk-commands, playground-assets)",
+      "owners": [],
+      "paths": [
+        "/library/js-sdk-toolchain/",
+        "/.github/workflows/sdk.yml"
+      ]
+    },
+    {
       "id": "database",
       "description": "One schema bootstrap, migrations and database invariants",
       "owners": [
@@ -194,6 +203,17 @@
         "/apps/sites/",
         "/apps/ui3/",
         "/library/ui/"
+      ]
+    },
+    {
+      "id": "async",
+      "description": "Shared asynchronous waiting and backoff utilities",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/async/"
       ]
     },
     {

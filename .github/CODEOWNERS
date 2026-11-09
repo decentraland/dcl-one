@@ -54,6 +54,10 @@
 # protocol
 /library/protocol/ @decentraland/client @decentraland/apis
 
+# sdk
+# UNASSIGNED /library/js-sdk-toolchain/
+# UNASSIGNED /.github/workflows/sdk.yml
+
 # database
 /schemas/ @decentraland/apis
 /services/catalyst/db/ @decentraland/apis
@@ -77,6 +81,9 @@
 /apps/sites/ @decentraland/web-applications
 /apps/ui3/ @decentraland/web-applications
 /library/ui/ @decentraland/web-applications
+
+# async
+/library/async/ @decentraland/web-applications @decentraland/apis
 
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications

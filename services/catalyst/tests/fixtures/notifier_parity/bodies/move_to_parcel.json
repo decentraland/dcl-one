@@ -1,0 +1,39 @@
+{
+  "anonymousId": "698919c1-55bc-4b7e-9322-b9e13e9add2f",
+  "context": {
+    "auth_chain": "[{\"payload\":\"0x76596b6380fd40294caefc21c94df7f56bc747e1\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"Decentraland Login\\nEphemeral address: 0xe81e8D2847288119f9cd500F61147c20a156b124\\nExpiration: 2025-05-26T10:13:31.105Z\",\"signature\":\"0x1dda6e1183a2d55adcfa7b9915d25f06c4daa20862017771024c08a3ee3841a90f32788008cb5b12513c6fd882924c93764a4e26bb2f1d40e817d090fe27061e1b\",\"type\":\"ECDSA_EPHEMERAL\"}]",
+    "dcl_eth_address": "0x76596b6380fd40294caefc21c94df7f56bc747e1",
+    "dcl_renderer_type": "Desktop",
+    "direct": true,
+    "install_source": "launcher",
+    "ip": "9***.7***.4***.5***",
+    "is_local_scene": false,
+    "launcher_anonymous_id": "698919c1-55bc-4b7e-9322-b9e13e9add2f",
+    "library": {
+      "name": "unknown",
+      "version": "unknown"
+    },
+    "operating_system": "Mac OS X 15.3.2",
+    "parcel": "(1, 1)",
+    "position": "(16.2663, 104.2493, 16.3198)",
+    "realm": "main",
+    "realm_url": "https://realm-provider-ea.decentraland.org/main",
+    "renderer_version": "v0.68.0-alpha-main",
+    "runtime": "release",
+    "session_id": "c***-a***-4***-a***-8***"
+  },
+  "event": "move_to_parcel",
+  "integrations": {},
+  "messageId": "api-2xJLb8IIVHM1x5F7GpEhqFa0G8v",
+  "originalTimestamp": "2025-05-19T10:41:07.368933Z",
+  "properties": {
+    "is_empty_scene": false,
+    "new_parcel": "(1, 1)",
+    "old_parcel": "(1, 0)",
+    "scene_hash": "bafkreih6en5u2yyn6pzdqp7z6op7elpq4zelvsplyyzisdhpg7xti2765y"
+  },
+  "receivedAt": "2025-05-19T10:41:36.881Z",
+  "timestamp": "2025-05-19T10:41:07.368Z",
+  "type": "track",
+  "userId": "0x76596b6380fd40294caefc21c94df7f56bc747e1"
+}

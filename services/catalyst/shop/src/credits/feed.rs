@@ -63,6 +63,8 @@ pub struct FeedReading {
     pub updated_at_s: i64,
     pub block: u64,
     pub block_hash: B256,
+    /// The read block's timestamp: the chain's clock at the read.
+    pub block_time_s: i64,
 }
 
 #[async_trait]
@@ -86,6 +88,10 @@ pub struct ChainFeed {
     chain: Arc<ChainComponent>,
     max_age_secs: u64,
     deadline: Duration,
+    /// Refuse a round the marketplace's check would revert at the read block
+    /// (a credits authorization). The Shop's rate reads it anyway: showing a
+    /// price does not need it, and its slot cuts a purchase quote itself.
+    refuse_past_tolerance: bool,
 }
 
 impl ChainFeed {
@@ -94,7 +100,15 @@ impl ChainFeed {
             chain,
             max_age_secs,
             deadline: READ_DEADLINE,
+            refuse_past_tolerance: true,
         }
+    }
+
+    /// Answers a round past the marketplace's tolerance instead of refusing
+    /// it; every other check stands (`shop::mana::feed_rate`).
+    pub fn reading_past_tolerance(mut self) -> Self {
+        self.refuse_past_tolerance = false;
+        self
     }
 
     #[cfg(test)]
@@ -213,7 +227,7 @@ impl ChainFeed {
         // The marketplace's check at the read block: 0 tolerance demands a
         // round from that block.
         let oldest_for_contract = block_time - tolerance_secs as i64;
-        if updated_at_s < oldest_for_contract {
+        if self.refuse_past_tolerance && updated_at_s < oldest_for_contract {
             return Err(format!(
                 "the MANA/USD round ({updated_at_s}) is older than block {block}'s timestamp ({block_time}) minus the marketplace's tolerance ({tolerance_secs}s); the marketplace would revert"
             ));
@@ -232,6 +246,7 @@ impl ChainFeed {
             updated_at_s,
             block,
             block_hash,
+            block_time_s: block_time,
         })
     }
 }
@@ -553,6 +568,21 @@ mod tests {
             let (f, _) = feed(c, max_age).await;
             assert_eq!(f.read(137, MARKETPLACE).await.is_ok(), ok, "{what}");
         }
+        // The Shop's reader answers a round past the tolerance, and the local limit still holds.
+        let (f, _) = feed(at(30, now - 31), 3_600).await;
+        let past = f
+            .reading_past_tolerance()
+            .read(137, MARKETPLACE)
+            .await
+            .unwrap();
+        assert_eq!((past.updated_at_s, past.tolerance_secs), (now - 31, 30));
+        let (f, _) = feed(at(30, now - 31), 20).await;
+        assert!(
+            f.reading_past_tolerance()
+                .read(137, MARKETPLACE)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

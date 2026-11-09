@@ -74,8 +74,40 @@ const pageRememberWallet = async (address) => {
   });
 })();
 
+const pageWaitFor = async (check, timeoutMs = 60000) => {
+  const deadline = performance.now() + timeoutMs;
+  let delay = 100;
+  for (;;) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error('The preview did not finish updating. Refresh to try again.');
+    const ready = await check(remaining);
+    if (ready) return ready;
+    const pause = Math.min(delay, Math.max(0, deadline - performance.now()));
+    await new Promise((resolve) => setTimeout(resolve, pause));
+    delay = Math.min(delay * 2, 3000);
+  }
+};
+const pageWaitForDocument = (ready, timeoutMs) => pageWaitFor(async (remaining) => {
+  try {
+    const response = await fetch(location.href, {
+      headers: { accept: 'text/html', ...pageAuthHeaders() },
+      cache: 'no-store', signal: AbortSignal.timeout(Math.max(1, Math.min(4000, Math.floor(remaining)))),
+    });
+    if (!response.ok) return;
+    const doc = parsePage(await response.text());
+    return ready(doc) ? doc : undefined;
+  } catch {}
+}, timeoutMs);
+const pageRefreshWhen = async (ready, timeoutMs) => {
+  try {
+    await pageWaitForDocument(ready, timeoutMs);
+    location.reload();
+  } catch (error) {
+    pageToast(error.message, true);
+  }
+};
 (() => {
-  if (document.getElementById('page-warming')) setTimeout(() => location.reload(), 1200);
+  if (document.getElementById('page-warming')) pageRefreshWhen((doc) => !doc.getElementById('page-warming'));
 })();
 
 // Check the preview itself, independently of wallet and publish requests.

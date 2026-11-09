@@ -829,6 +829,7 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
 fn sync_settings(peer: &str) -> SyncSettings {
     SyncSettings {
         peers: vec![peer.to_string()],
+        dao: None,
         entity_types: None,
         from_timestamp_ms: 0,
         phased_sync: true,
@@ -1039,7 +1040,18 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         )
         .await
         .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let prior = jobs_a
+        .report()
+        .iter()
+        .find(|job| job.name == snapshot_gen::JOB_NAME)
+        .map_or(0, |job| job.passes);
+    assert!(
+        catalyst::shared::test_wait::until(async || jobs_a
+            .report()
+            .iter()
+            .any(|job| job.name == snapshot_gen::JOB_NAME && job.passes > prior))
+        .await
+    );
     assert!(
         snapshot_gen::all_snapshots(&db_a.pool)
             .await
@@ -1854,7 +1866,19 @@ async fn a_window_stamped_before_it_began_is_not_rewritten_at_every_tick() {
             .unwrap(),
         "an unchanged window is current"
     );
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    let prior = jobs
+        .report()
+        .iter()
+        .find(|job| job.name == snapshot_gen::JOB_NAME)
+        .unwrap()
+        .passes;
+    assert!(
+        catalyst::shared::test_wait::until(async || jobs
+            .report()
+            .iter()
+            .any(|job| job.name == snapshot_gen::JOB_NAME && job.passes >= prior + 2))
+        .await
+    );
     assert_eq!(
         generator.report().last_finished_ms,
         first,

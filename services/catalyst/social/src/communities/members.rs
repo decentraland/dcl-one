@@ -733,7 +733,7 @@ pub async fn remove_member(
             );
         }
     }
-    let removed = try_resp!(map_db(
+    let removed = !try_resp!(map_db(
         sqlx::query(
             "WITH removed AS (DELETE FROM social.community_members \
                               WHERE community_id = $1 AND member_address = $2 AND role <> 'owner' RETURNING community_id), \
@@ -748,7 +748,7 @@ pub async fn remove_member(
         .fetch_all(&state.pool)
         .await
     ))
-    .len() > 0;
+    .is_empty();
     if removed {
         if target == signer {
             state.fire_analytics(

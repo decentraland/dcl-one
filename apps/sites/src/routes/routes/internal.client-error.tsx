@@ -1,5 +1,5 @@
 import { ensureSid } from "@/core/lib/telemetry/session";
-import { track } from "@/core/lib/telemetry/track";
+import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/internal.client-error";
 
@@ -40,7 +40,7 @@ export function normalizeReport(raw: unknown): ClientErrorReport | null {
     name: name || "Error",
     source: clip(r.source, 120),
     stack,
-    url: clip(r.url, MAX_LINE),
+    url: withoutSensitiveParams(clip(r.url, MAX_LINE)),
     ua: clip(r.ua, MAX_LINE),
     ts: clip(r.ts, 40) || new Date().toISOString(),
   };

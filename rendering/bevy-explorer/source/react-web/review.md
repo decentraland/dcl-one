@@ -295,3 +295,28 @@ back as `analyticsSession`). Expectations:
   `src/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
   `src/test/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
   id at launch), `entryParams.test.ts` (campaign params).
+
+## Photo mode
+
+The camera reel's in-world camera (`features/photoMode`, bridge `domains/photoMode.ts`). The engine
+owns the camera, the capture and the upload and reports them on the `photoMode` stream; the HUD
+owns the mode as a surface. Expectations:
+
+- **Opening and closing** go through the session: the `PhotoMode` key (a `systemAction`, so the
+  dispatcher's popup, editor and lobby gates apply), the rail's Camera button and the overlay's
+  Close and Gallery send `setPhotoMode` with its source (`shortcut` or `button`, the engine's
+  analytics). The gallery key and button close photo mode on the way to the gallery; Escape is the
+  overlay's cancel layer. Opening closes every page and panel.
+- **Focus**: photo mode is part of `uiFocus`, so scenes get no input while it is on and the engine
+  reads only the camera's own keys above that. A popup opening on top of it closes it; a scene
+  permission prompt waits until it ends (`App.tsx`).
+- **The overlay** replaces the chrome (no rail, minimap or chat): the frame at 0.87 of the tighter
+  screen dimension in 16:9, the thirds grid, Gallery / Shoot / camera controls under it, the camera
+  controls panel whose keys follow the bindings (scene movement actions included), and the
+  storage-full notice in Shoot's place. Shoot is disabled while a photo is in flight, the storage
+  is unknown or the capture effect plays; a capture plays the flash once per event seq and the
+  photo flies into the Gallery button.
+- Tests: `src/test/photoMode.test.tsx` (the session contract above), `src/test/photoModeOverlay.test.tsx`
+  (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
+  (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
+

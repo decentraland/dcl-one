@@ -16,9 +16,11 @@ import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { fetchLists, type FavoriteList } from "../lib/favorites";
 import { shopFavorites, useFavorites } from "../store/favorites";
+import { useMarketplace } from "../access";
 import ItemCard from "../components/ItemCard";
 import { ListEditor } from "../components/ListEditor";
 import SaveToLists from "../components/SaveToLists";
+import { EmptyPanel } from "../../components/EmptyPanel";
 import { EnsureQueryClient, LoadFailure } from "../components/kit";
 import emptyIllustration from "./favorites-empty.svg?url";
 import "../../discovery/components/browselayout.css";
@@ -31,31 +33,6 @@ const SUGGESTED_EXCLUDE_CAP = 20;
 const TITLE = "My Favorites";
 const SUGGESTED_TITLE = "More like what you saved";
 
-type EmptyCta = { label: string; to: string } | { label: string; onClick: () => void };
-
-export function FavoritesEmpty({ icon, title, body, cta, testId }: { icon: string; title: string; body?: string; cta?: EmptyCta; testId?: string }) {
-  return (
-    <div className="shop-fav-empty" data-testid={testId}>
-      <img className="shop-fav-empty__img" src={icon} alt="" aria-hidden />
-      <div className="shop-fav-empty__text">
-        <p className="shop-fav-empty__title">{title}</p>
-        {body ? <p className="shop-fav-empty__body">{body}</p> : null}
-      </div>
-      {cta ? (
-        "to" in cta ? (
-          <Link className="shop-fav-empty__cta" to={cta.to}>
-            {cta.label}
-          </Link>
-        ) : (
-          <button type="button" className="shop-fav-empty__cta" onClick={cta.onClick}>
-            {cta.label}
-          </button>
-        )
-      ) : null}
-    </div>
-  );
-}
-
 function CountHead({ count }: { count: number | null }) {
   return (
     <div className="shop-fav__head">
@@ -67,6 +44,8 @@ function CountHead({ count }: { count: number | null }) {
 
 export function SavedItems({ head }: { head?: ReactNode }) {
   const { items, status, error, account } = useFavorites();
+  // Lists are the old Marketplace's (market/access.tsx); the old shop's favorites are one saved grid.
+  const lists = useMarketplace() && !!account;
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [picking, setPicking] = useState<{ key: string; name: string } | null>(null);
   const list = useMemo(() => Object.values(items), [items]);
@@ -79,7 +58,7 @@ export function SavedItems({ head }: { head?: ReactNode }) {
       <>
         {head}
         <div className="shop-fav__emptywrap">
-          <FavoritesEmpty
+          <EmptyPanel
             testId="shop-empty"
             icon={emptyIllustration}
             title="Nothing here... yet!"
@@ -112,7 +91,7 @@ export function SavedItems({ head }: { head?: ReactNode }) {
               saved
               onToggleSave={() => shopFavorites.toggle(item)}
               actions={
-                account ? (
+                lists ? (
                   <button type="button" onClick={() => setPicking({ key: item.key, name: item.name })}>
                     Add to a list
                   </button>
@@ -152,7 +131,7 @@ export function ListsOverview({ account }: { account: string }) {
       ) : lists.isError ? (
         <LoadFailure error={lists.error} what="Your lists" onRetry={() => void lists.refetch()} />
       ) : own.length === 0 ? (
-        <FavoritesEmpty testId="shop-empty" icon={emptyIllustration} title="No lists yet" body="Group items into lists; keep them private or share them with a link." />
+        <EmptyPanel testId="shop-empty" icon={emptyIllustration} title="No lists yet" body="Group items into lists; keep them private or share them with a link." />
       ) : (
         own.map((list: FavoriteList) => (
           <div key={list.id} className="shop-fav__listrow" data-testid="shop-list-row">
@@ -174,12 +153,13 @@ export function ListsOverview({ account }: { account: string }) {
 export default function MyFavorites() {
   const { account } = useShopWallet();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "lists" && account ? "lists" : "saved";
+  const marketplace = useMarketplace();
+  const tab = params.get("tab") === "lists" && account && marketplace ? "lists" : "saved";
   useSeo({ title: TITLE, noindex: true });
   useEffect(() => {
     shopFavorites.reloadFor(account);
   }, [account]);
-  const head = account ? (
+  const head = account && marketplace ? (
     <div className="shop-fav__head">
       <h1 className="shop-fav__title">{TITLE}</h1>
       <div className="shop-fav__tabs" role="tablist" aria-label="Favorites">
@@ -195,7 +175,7 @@ export default function MyFavorites() {
   return (
     <EnsureQueryClient>
       <section className="shop-page shop-fav" data-testid="favorites-page">
-        {tab === "lists" && account ? (
+        {tab === "lists" && account && marketplace ? (
           <>
             {head}
             <ListsOverview account={account} />

@@ -146,6 +146,24 @@ describe('system-action menu shortcuts', () => {
     unregister()
   })
 
+  it("a leaf layer opened inside a popup (the passport's options menu) closes before the popup", async () => {
+    const h = await world()
+    render(<PopupHost />)
+    act(() => {
+      openPopup(() => <div>a popup</div>)
+    })
+    const closed = vi.fn()
+    const unregister = registerCancelLayer(() => {
+      closed()
+      unregister()
+    })
+    act(() => h.driver.emit(action('Cancel')))
+    expect(closed).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('a popup')).toBeTruthy() // one layer per press — the popup survives
+    act(() => h.driver.emit(action('Cancel')))
+    expect(screen.queryByText('a popup')).toBeNull()
+  })
+
   it("a 'Cancel' action is ignored while the input lock is held (crash modal)", async () => {
     const h = await world()
     render(<PopupHost />)

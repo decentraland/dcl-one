@@ -219,9 +219,7 @@ pub fn verify_webhook_token(
     };
     let now = now.as_secs();
     const LEEWAY: u64 = 60;
-    let Some(exp) = payload.get("exp").and_then(json_u64) else {
-        return None;
-    };
+    let exp = payload.get("exp").and_then(json_u64)?;
     if now > exp.saturating_add(LEEWAY) {
         return None;
     }
@@ -233,12 +231,8 @@ pub fn verify_webhook_token(
     if payload.get("iss").and_then(|v| v.as_str()) != Some(api_key) {
         return None;
     }
-    let Some(claim) = payload.get("sha256").and_then(|v| v.as_str()) else {
-        return None;
-    };
-    let Some(expected) = decode_body_digest(claim) else {
-        return None;
-    };
+    let claim = payload.get("sha256").and_then(|v| v.as_str())?;
+    let expected = decode_body_digest(claim)?;
     crate::auth::admin_bearer::timing_safe_eq(&expected, &Sha256::digest(body))
         .then_some(exp.saturating_add(LEEWAY))
 }
@@ -445,6 +439,18 @@ pub struct OccupancyRoom {
 pub struct OccupancyParticipant {
     pub identity: String,
     pub sid: String,
+    /// When the participant joined, in milliseconds (`joinedAtMs`, else
+    /// `joinedAt` seconds); 0 when LiveKit sent neither.
+    pub joined_at_ms: i64,
+}
+
+/// A protojson int64, which LiveKit's Twirp JSON writes as a string.
+fn json_i64(value: Option<&serde_json::Value>) -> Option<i64> {
+    match value? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
 }
 
 fn recovery_field(value: &serde_json::Value, field: &str) -> Result<String, RoomServiceError> {
@@ -493,7 +499,15 @@ fn recovery_participants(
             if !identities.insert(identity.clone()) || !sids.insert(sid.clone()) {
                 return Err(RoomServiceError::InvalidResponse);
             }
-            Ok(OccupancyParticipant { identity, sid })
+            let joined_at_ms = json_i64(value.get("joinedAtMs"))
+                .filter(|ms| *ms > 0)
+                .or_else(|| json_i64(value.get("joinedAt")).map(|s| s.saturating_mul(1000)))
+                .unwrap_or(0);
+            Ok(OccupancyParticipant {
+                identity,
+                sid,
+                joined_at_ms,
+            })
         })
         .collect()
 }
@@ -545,6 +559,16 @@ mod recovery_contract_tests {
         .unwrap();
         assert_eq!(raw[0].identity, "a");
         assert_eq!(raw[1].identity, "A");
+        let joined = recovery_participants(&json!({"participants":[
+            {"identity":"a","sid":"1","joinedAt":"1700000000","joinedAtMs":"1700000000123"},
+            {"identity":"b","sid":"2","joinedAt":1700000001},
+            {"identity":"c","sid":"3"},
+        ]}))
+        .unwrap();
+        assert_eq!(
+            joined.iter().map(|p| p.joined_at_ms).collect::<Vec<_>>(),
+            [1_700_000_000_123, 1_700_000_001_000, 0]
+        );
     }
 
     #[test]
