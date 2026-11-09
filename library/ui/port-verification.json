@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "14ec147136700e15853f5fd16bda5997b3a52bd704d1eaaac67d637b5783696d",
+  "lockHash": "ae135626eb93c8bccb5b4999408e7cab3c934b7cba21eb5859c983dec8867337",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "95c2786f520c150f5801ad6440e88e66296f83ff",
+  "figmaTree": "0ecf55523e2b342407168c145ccae573316bab49",
   "checks": {
     "fetch-source": {
       "result": "pass",
@@ -11,11 +11,11 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "436 ported files and 39 public foundation files match pinned bytes and origins"
+      "detail": "run on this tree: 437 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",
-      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
@@ -31,7 +31,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "clean verified-cache install reproduces all 39 tracked files including provenance, second install changes nothing"
+      "detail": "run on this tree: clean private-stage install matches all 39 tracked files, a second install changes nothing"
     }
   }
 }
