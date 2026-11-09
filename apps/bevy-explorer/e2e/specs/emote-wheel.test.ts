@@ -10,12 +10,11 @@
 //
 // The third test asserts more than Unity's, which could not observe the animation.
 import assert from 'node:assert/strict'
-import { settled, spec, until, type Control, type Explorer } from '../driver/index.ts'
+import { spec, until, type Explorer } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 
 const CONTROL_TIMEOUT_MS = 20_000
-const TEXT_TIMEOUT_MS = 10_000
 
 const RAIL_EMOTES = { name: 'Emotes', role: 'button' } as const
 const WHEEL = { name: 'Close emotes', role: 'button' } as const
@@ -47,10 +46,6 @@ function sameEmote(a: string, b: string): boolean {
   if (first === second) return true
   const [name, urn] = first.includes(':') ? [second, first] : [first, second]
   return !name.includes(':') && urn.endsWith(`:${name}`)
-}
-
-function sameBox(a: Control, b: Control): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 scenario("the rail's Emotes button opens the wheel and Escape closes it", async ({ explorer }) => {
@@ -85,8 +80,7 @@ scenario('clicking an emote slot plays the emote and closes the wheel', async ({
   const expected = (await explorer.myAvatar()).selected.emotes[occupied.slot]
   assert.ok(expected, `the player's emote ${occupied.slot} should name the emote the wheel shows, ${occupied.emote}`)
 
-  // The wheel animates in: click once the slot stops moving, where Unity waits 0.5 s.
-  await settled(() => explorer.hud.get(slot), { timeoutMs: TEXT_TIMEOUT_MS, intervalMs: 250, what: `${occupied.emote}'s slot to stop moving`, same: sameBox })
+  // The wheel animates in: the click waits for the slot to stop moving, where Unity waits 0.5 s.
   await explorer.hud.click(slot)
   await explorer.hud.waitHidden(WHEEL, CONTROL_TIMEOUT_MS)
 
