@@ -183,7 +183,7 @@ impl EventSink {
     }
 
     /// Stores the counted events of `batch`, trying once more after a pause.
-    async fn store(
+    async fn insert_events(
         &self,
         pool: &PgPool,
         mut batch: Vec<PresenceEvent>,
@@ -201,7 +201,7 @@ impl EventSink {
                 batch.push(event);
             }
         }
-        self.store(pool, batch).await
+        self.insert_events(pool, batch).await
     }
 
     /// The `badges-presence-events` writer, on every process that receives
@@ -225,7 +225,7 @@ impl EventSink {
                 };
                 let rows = batch.len();
                 if rows > 0
-                    && let Err(error) = sink.store(&pool, std::mem::take(&mut batch)).await
+                    && let Err(error) = sink.insert_events(&pool, std::mem::take(&mut batch)).await
                 {
                     metrics::counter!("badges_presence_events_dropped_total", "reason" => "insert_failed")
                         .increment(rows as u64);
