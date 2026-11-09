@@ -13,6 +13,7 @@ import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
 import { CHAIN } from "../../model/chain";
 import { BOOK, storeMint } from "../../payment/fixtures";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
+import { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
@@ -212,7 +213,7 @@ describe("Buy now's dialog", () => {
     // Disabled, but reachable: its reason is what a keyboard or screen reader user lands on.
     expect(mana).toHaveAttribute("aria-disabled", "true");
     expect(mana).not.toBeDisabled();
-    expect(mana).toHaveAccessibleDescription("Not enough MANA");
+    expect(mana).toHaveAccessibleName(/Not enough MANA/);
     fireEvent.click(mana);
     expect(mana).toHaveAttribute("aria-checked", "false");
     expect(within(step).getByRole("checkbox", { name: /^Credits/ })).toHaveAttribute("aria-checked", "true");
@@ -315,7 +316,7 @@ describe("Buy now's dialog", () => {
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
-  it("a split still being confirmed says so, without a Check again its run cannot answer", async () => {
+  it("a split still being confirmed says so, with a Check again that reads its receipt, and can be closed", async () => {
     const { closed } = renderBuy(
       { session: "web3", balanceCents: 30, confirm: "none", handlers: { authorizeCredit: singleCredit } },
       { tweak: holdMana(2n * 10n ** 18n) },
@@ -327,7 +328,7 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
     const pending = await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
     expect(pending).toHaveTextContent("Your purchase is still being confirmed.");
-    expect(within(pending).queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(within(pending).getByRole("button", { name: "Check again" })).toBeEnabled();
     fireEvent.click(within(pending).getByRole("button", { name: "Close" }));
     expect(closed()).toBe(1);
   });
@@ -351,7 +352,7 @@ describe("Buy now's dialog", () => {
     await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByRole("button", { name: "Buy" })).toBeEnabled());
   });
 
-  it("a split still confirming is remembered: the dialog opened again shows it confirming and offers no second one", async () => {
+  async function sendSplitThatStaysPending() {
     const first = renderBuy(
       { session: "web3", balanceCents: 30, confirm: "none", handlers: { authorizeCredit: singleCredit } },
       { tweak: holdMana(2n * 10n ** 18n) },
@@ -362,14 +363,43 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
     await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
+    const sent = readSentSplit(BOOK.buyer, first.lineId);
+    expect(sent?.txHash).toBeTruthy();
     first.unmount();
     resetBuyNowCarts();
+    return sent!;
+  }
+
+  it("a split still confirming is remembered: opened again, the dialog shows it confirming and offers no second one", async () => {
+    await sendSplitThatStaysPending();
     renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const again = await screen.findByTestId("buy-modal");
     const pending = await within(again).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     expect(pending).toHaveTextContent("Your purchase is still being confirmed.");
     expect(within(again).queryByTestId("payment-method-step")).toBeNull();
-    expect(within(again).queryByRole("button", { name: "Check again" })).toBeNull();
+    // Not confirmed yet: Check again leaves it confirming.
+    await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
+    expect(within(again).getByTestId("buy-modal-pending")).toBeTruthy();
+  });
+
+  it("Check again on a remembered split reads its receipt: confirmed completes it and releases the item", async () => {
+    const sent = await sendSplitThatStaysPending();
+    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
+    await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+  });
+
+  it("Check again on a remembered split that reverted says so and releases the item", async () => {
+    const sent = await sendSplitThatStaysPending();
+    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
+    await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
+    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("The purchase failed on-chain, so nothing was bought.");
+    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
   });
 
   it("MANA picked, failed, and Try again: the step comes back with MANA still ticked", async () => {
@@ -607,5 +637,16 @@ describe("why the split cannot be bought", () => {
   it("then the checkout's word on the line itself, never on the Credits the split tops up with MANA", () => {
     expect(splitReason(null, false, [short, gone])).toEqual(gone);
     expect(splitReason(null, false, [short])).toBeNull();
+  });
+});
+
+describe("the record of a split still confirming", () => {
+  const key = (lineId: string) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`;
+  it("holds for fifteen minutes from when it was sent, and never for a time that has not come yet", () => {
+    sessionStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
+    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
+    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS)).toBeNull();
+    // A clock set back after the split was sent does not stretch the hold.
+    expect(readSentSplit(BOOK.buyer, "line-7", 999)).toBeNull();
   });
 });

@@ -162,32 +162,6 @@ export function resetBuyNowCarts(): void {
   stores.clear();
 }
 
-// A Credits + MANA purchase sent and not confirmed yet, per account and item, in this tab: CombinedBuy watches nothing
-// once it says "pending", so the dialog opened again shows it as still confirming instead of offering a second one.
-const SPLIT_KEY = "dcl-shop-buynow-split:v1:";
-const SPLIT_HOLD_MS = 15 * 60 * 1000;
-
-function splitKey(account: string | null, lineId: string): string {
-  return `${SPLIT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
-}
-
-function splitPending(account: string | null, lineId: string, now: number = Date.now()): boolean {
-  try {
-    const at = Number(sessionStorage.getItem(splitKey(account, lineId)));
-    return Number.isFinite(at) && at > 0 && now - at < SPLIT_HOLD_MS;
-  } catch {
-    return false;
-  }
-}
-
-function recordSplit(account: string | null, lineId: string, now: number = Date.now()): void {
-  try {
-    sessionStorage.setItem(splitKey(account, lineId), String(now));
-  } catch {
-    // Without storage the dialog still shows it while open.
-  }
-}
-
 export type BuyModalProps = {
   /** The item as the page adds it to a cart: its listing, what it shows, the offer the buyer saw. */
   line: CartAddInput;
@@ -253,13 +227,8 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   // checkout has just priced.
   const combined = useCombinedBuy({ line, offer: cartLine ? (co.offers[cartLine.id] ?? null) : null, mixed, onDone: () => invalidateShopQueries() });
   const run = combined.phase;
-  const lineId = cartLineId(line.asset, line.listing);
-  const [splitSent, setSplitSent] = useState(() => splitPending(co.account, lineId));
-  useEffect(() => {
-    if (run.kind !== "pending") return;
-    recordSplit(co.account, lineId);
-    setSplitSent(true);
-  }, [run.kind, co.account, lineId]);
+  // A split sent earlier and not known to be confirmed (CombinedBuy's record): shown as still confirming, never a second.
+  const splitSent = run.kind === "pending" || combined.remembered;
 
   // A price the review found changed since the page, or one above what the buyer confirmed before a top-up: shown, and
   // agreed to by pressing Buy.
@@ -286,7 +255,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
       ? "complete"
       : run.kind === "working" || run.kind === "approve"
         ? "processing"
-        : run.kind === "pending" || splitSent
+        : run.kind === "pending"
           ? "pending"
           : run.kind === "error"
             ? "error"
@@ -294,7 +263,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
               ? "complete"
               : co.running
                 ? "processing"
-                : settling || result?.status === "pending"
+                : settling || result?.status === "pending" || combined.remembered
                   ? "pending"
                   : result?.status === "failed" && !result.topUp
                     ? "error"
@@ -517,8 +486,12 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
               <DialogButton variant="outline" onClick={close}>
                 {TEXT.close}
               </DialogButton>
-              {/* The split is watched by its own run, which has nothing to check again. */}
-              {run.kind === "pending" || splitSent ? null : (
+              {/* A split is checked by its own receipt; the checkout's purchase by the checkout. */}
+              {splitSent ? (
+                <DialogButton variant="ruby" onClick={() => void combined.checkAgain()} disabled={combined.checking}>
+                  {TEXT.checkAgain}
+                </DialogButton>
+              ) : (
                 <DialogButton variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
                   {TEXT.checkAgain}
                 </DialogButton>

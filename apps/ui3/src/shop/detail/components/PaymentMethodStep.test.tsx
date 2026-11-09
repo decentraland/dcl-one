@@ -28,7 +28,7 @@ function step(rails: StepRails, extra: { initial?: StepRail | null; balanceCredi
     initial: extra.initial,
   };
   const view = render(<PaymentMethodStep {...props} rails={rails} />);
-  return { picks, rerender: (next: StepRails) => view.rerender(<PaymentMethodStep {...props} rails={next} />) };
+  return { picks, rerender: (next: StepRails, more: Partial<typeof props> = {}) => view.rerender(<PaymentMethodStep {...props} {...more} rails={next} />) };
 }
 
 const credits = () => screen.getByRole("checkbox", { name: /^Credits/ });
@@ -67,19 +67,42 @@ describe("the payment method step", () => {
     expect(buy()).toBeEnabled();
   });
 
-  it("a Credits row that cannot pay is reachable and reads out why", () => {
+  it("a Credits row that cannot pay is reachable and reads out why, once", () => {
     step({ ...NONE, mana: MANA }, { balanceCredits: 0 });
     expect(credits()).toHaveAttribute("aria-disabled", "true");
     expect(credits()).not.toBeDisabled();
     expect(credits()).toHaveAccessibleDescription("Not enough Credits");
+    // Its description, not also part of its name.
+    expect(credits()).not.toHaveAccessibleName(/Not enough Credits/);
     fireEvent.click(credits());
     expect(credits()).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("says nothing of 'not enough' when the balance could not be read", () => {
+    step({ ...NONE, mana: MANA }, { balanceCredits: null });
+    expect(credits()).toHaveAttribute("aria-disabled", "true");
+    expect(credits()).not.toHaveAccessibleDescription(/Not enough Credits/);
+  });
+
+  it("a MANA row that cannot pay carries its reason in its name, read once", () => {
+    step({ ...NONE, credits: CREDITS });
+    expect(mana()).toHaveAttribute("aria-disabled", "true");
+    expect(mana()).toHaveAccessibleName(/Not enough MANA/);
+    expect(mana()).not.toHaveAccessibleDescription(/Not enough MANA/);
   });
 
   it("drawn again after a failure, the buyer's earlier pick is ticked while it still pays", () => {
     step({ ...NONE, credits: CREDITS, mana: MANA }, { initial: "mana" });
     expect(mana()).toHaveAttribute("aria-checked", "true");
     expect(credits()).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("the earlier pick also holds when the step mounts before its rails are priced again", () => {
+    const { picks, rerender } = step(NONE, { initial: "mana" });
+    rerender({ ...NONE, credits: CREDITS, mana: MANA });
+    expect(mana()).toHaveAttribute("aria-checked", "true");
+    expect(credits()).toHaveAttribute("aria-checked", "false");
+    expect(picks.at(-1)).toBe("mana");
   });
 
   it("a Credits balance that could not be read shows a dash, not 0", () => {
