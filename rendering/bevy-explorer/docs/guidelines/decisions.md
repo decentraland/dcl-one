@@ -17,6 +17,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Render scale compositor.** The world always renders to an image that a 2D camera composites
+  onto the window: a plain copy at scale 1, FSR EASU below it; bevy's CAS at 0.92 stands in for
+  RCAS; the UI rides the compositor at full resolution; `/screenshot` captures the window.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's

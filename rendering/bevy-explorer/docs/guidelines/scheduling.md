@@ -129,8 +129,9 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
 uniforms, and one extra render-graph node: the stars pass, between `DepthOfField` and
-`Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's
-conventions, not ours.
+`Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). The world camera renders to an image
+that a `Core2d` compositor camera (`crates/visuals/src/upscale.rs`, order 1) draws onto the
+window; that camera carries the UI. Render-world ordering follows bevy's conventions, not ours.
 
 ## Headless
 

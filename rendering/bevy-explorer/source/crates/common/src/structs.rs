@@ -886,7 +886,8 @@ pub struct GraphicsSettings {
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
     pub gpu_bytes_per_frame: usize,
-    /// share of the screen's device pixels the web canvas renders at
+    /// share of the window's device pixels the world renders at, upscaled to the window with FSR
+    /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
 
