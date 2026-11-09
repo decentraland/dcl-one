@@ -84,6 +84,10 @@ def published_comment(url, extra=''):
     }
 
 
+def workflow_jobs(workflow):
+    return dict(re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1]))
+
+
 class PreviewGitHub:
     """External GitHub boundary with real resolve/report code above it."""
 
@@ -1155,20 +1159,109 @@ class WebPreviewTests(unittest.TestCase):
                     )
 
     def test_publication_and_completion_use_the_workflow_commit_instead_of_a_moving_ref(self):
-        workflow = (
-            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
-        ).read_text()
-        jobs = dict(
-            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
-        )
+        root = Path(__file__).parents[2] / '.github/workflows'
         github = SimpleNamespace(
             workflow_sha='b' * 40,
             event=SimpleNamespace(repository=SimpleNamespace(default_branch='main')),
         )
-        for name in ('reviewer', 'cdn'):
+        for filename, name in (
+            ('web-previews-publish.yml', 'reviewer'),
+            ('web-previews-complete.yml', 'cdn'),
+        ):
             with self.subTest(job=name):
-                ref = re.search(r'^          ref: \$\{\{ (.+) \}\}$', jobs[name], re.M).group(1)
+                path = root / filename
+                self.assertTrue(path.is_file())
+                job = workflow_jobs(path.read_text())[name]
+                ref = re.search(r'^          ref: \$\{\{ (.+) \}\}$', job, re.M).group(1)
                 self.assertEqual(eval(ref, {'__builtins__': {}}, {'github': github}), 'b' * 40)
+                self.assertIn('persist-credentials: false', job)
+
+    def test_completion_event_is_isolated_from_key_readers_and_shares_the_comment_queue(self):
+        root = Path(__file__).parents[2] / '.github/workflows'
+        publisher = (root / 'web-previews-publish.yml').read_text()
+        self.assertEqual(
+            re.findall(r'^  (\w+):', publisher.split('permissions:', 1)[0], re.M), ['workflow_run']
+        )
+        path = root / 'web-previews-complete.yml'
+        self.assertTrue(path.is_file())
+        completion = path.read_text()
+        self.assertEqual(
+            re.findall(r'^  (\w+):', completion.split('permissions:', 1)[0], re.M),
+            ['deployment_status'],
+        )
+        publishers = workflow_jobs(publisher)
+        self.assertNotIn('cdn', publishers)
+        jobs = workflow_jobs(completion)
+        self.assertEqual(set(jobs), {'cdn'})
+        self.assertIn('permissions: {}\n', completion)
+        self.assertNotRegex(completion, r'(?m)^    environment:|id-token:|secrets\.')
+        self.assertNotIn('FIGMA', completion)
+        self.assertNotIn('oddish', completion)
+        self.assertEqual(
+            re.findall(r'^        run: (.+)$', jobs['cdn'], re.M),
+            ['python3 tooling/web-preview.py complete-cdn'],
+        )
+        for writer in (publishers['pending'], publishers['report'], jobs['cdn']):
+            group = re.search(r'^      group: (.+)$', writer, re.M).group(1)
+            self.assertEqual(group, 'web-previews-comments')
+            self.assertNotIn('${{', group)
+            self.assertIn('      cancel-in-progress: false\n      queue: max\n', writer)
+        permissions = re.search(r'(?m)^    permissions:\n((?:      [^\n]+\n)+)', jobs['cdn']).group(
+            1
+        )
+        self.assertEqual(
+            permissions,
+            '      contents: read\n      actions: read\n      pull-requests: write\n',
+        )
+        validator = root / 'web-preview-publisher-check.yml'
+        if validator.exists():
+            self.assertIn(
+                "      - '.github/workflows/web-previews-complete.yml'", validator.read_text()
+            )
+
+    def test_completion_workflow_accepts_only_enabled_matching_successful_cdn_events(self):
+        path = Path(__file__).parents[2] / '.github/workflows/web-previews-complete.yml'
+        self.assertTrue(path.is_file())
+        guard = re.search(r'^    if: (.+)$', workflow_jobs(path.read_text())['cdn'], re.M).group(1)
+        for field, value in (
+            ('valid', ''),
+            ('enabled', 'false'),
+            ('event_name', 'workflow_run'),
+            ('environment', 'zone'),
+            ('task', 'deploy'),
+            ('packageName', '@other/package'),
+            ('state', 'failure'),
+            ('state', 'pending'),
+            ('state', ''),
+        ):
+            values = {
+                'enabled': 'true',
+                'event_name': 'deployment_status',
+                'environment': 'cdn',
+                'task': 'upload-to-cdn',
+                'packageName': preview.PACKAGE,
+                'state': 'success',
+            }
+            values[field] = value
+            with self.subTest(field=field, value=value):
+                context = {
+                    'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED=values['enabled']),
+                    'github': SimpleNamespace(
+                        event_name=values['event_name'],
+                        event=SimpleNamespace(
+                            deployment=SimpleNamespace(
+                                environment=values['environment'],
+                                task=values['task'],
+                                payload=SimpleNamespace(packageName=values['packageName']),
+                            ),
+                            deployment_status=SimpleNamespace(state=values['state']),
+                        ),
+                    ),
+                }
+                self.assertEqual(
+                    bool(eval(guard.replace('&&', 'and'), {'__builtins__': {}}, context)),
+                    field == 'valid',
+                )
 
     def test_completion_retries_the_initial_receipt_and_posts_the_real_attempt(self):
         github = PreviewGitHub()
@@ -1492,6 +1585,7 @@ class WebPreviewTests(unittest.TestCase):
             'tooling/tests/test_web_preview.py',
             '.github/workflows/web-previews.yml',
             '.github/workflows/web-previews-publish.yml',
+            '.github/workflows/web-previews-complete.yml',
         ]:
             with self.subTest(path=path):
                 self.assertEqual(preview.products([path]), ['sites', 'reviewer'])

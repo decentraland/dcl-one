@@ -3,7 +3,6 @@ on:
   workflow_run:
     workflows: ['Web previews / Build']
     types: [completed]
-  deployment_status:
 permissions: {}
 env:
   SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
@@ -175,27 +174,3 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.pending.result == 'failure' && 'pending status update failed' || needs.pending.result == 'cancelled' && 'pending status update cancelled' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report
-  cdn:
-    name: Verify uploaded reviewer and report its URL
-    if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && github.event_name == 'deployment_status' && github.event.deployment.environment == 'cdn' && github.event.deployment.task == 'upload-to-cdn' && github.event.deployment.payload.packageName == '@dcl-regenesislabs/dcl-one-ui-review' && github.event.deployment_status.state == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    concurrency:
-      group: web-previews-comments
-      cancel-in-progress: false
-      queue: max
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-          sparse-checkout: tooling/web-preview.py
-          sparse-checkout-cone-mode: false
-      - name: Verify the completed CDN upload and update the source PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 tooling/web-preview.py complete-cdn
