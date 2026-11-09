@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { until } from './wait.ts'
@@ -165,8 +165,17 @@ export interface Position {
   z: number
 }
 
+/** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
+ *  account, and the HUD's phase: `lobby`, `entering` (on its way to the destination), `picking`
+ *  or `world`. */
+export interface HudLoginReply {
+  address: string
+  guest: boolean
+  phase: 'lobby' | 'picking' | 'entering' | 'world'
+}
+
 export interface CommandRecord {
-  /** The line as sent, with `/login_identity`'s payload redacted. */
+  /** The line as sent, with the payload of `/login_identity` or `/hud_login` redacted. */
   line: string
   startedAt: number
   ms: number
@@ -201,6 +210,8 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
@@ -218,10 +229,14 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
+    const secret = secretOf(line)
+    if (secret !== undefined) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
-      record.reply = reply.length > 4000 ? `${reply.slice(0, 4000)}... (${reply.length} chars)` : reply
+      // redacted before it is cut, so a cut cannot leave a part of the credential
+      const safe = redact(line, reply)
+      record.reply = safe.length > 4000 ? `${safe.slice(0, 4000)}... (${safe.length} chars)` : safe
       return reply
     } catch (error) {
       record.ms = Date.now() - startedAt
@@ -233,6 +248,14 @@ export class Explorer {
     }
   }
 
+  /** `text` with every credential a line of this client carried replaced: the page's console,
+   *  which the HUD may have written an error into. */
+  redactSecrets(text: string): string {
+    let out = text
+    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
+    return out
+  }
+
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,
    *  never silently a string. */
   async json<T>(line: string): Promise<T> {
@@ -240,7 +263,7 @@ export class Explorer {
     try {
       return JSON.parse(reply) as T
     } catch {
-      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${reply.slice(0, 200)}`)
+      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${redact(line, reply).slice(0, 200)}`)
     }
   }
 
@@ -337,6 +360,33 @@ export class Explorer {
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
     if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
+  }
+
+  /** Sign in through the HUD's own flow (`/hud_login`, the web only): the identity becomes the
+   *  page's stored sign-in and goes in as its Jump In does, so the HUD leaves its start page and
+   *  accepts the terms its welcome page asks for; `name` and `look` pick a first login's profile
+   *  (an existing one keeps its own); `realm` and `position` are picked from the lobby as a link's
+   *  destination would be, which releases the held world. Resolves once the sign-in has landed
+   *  and the page is done, not once the world is reached. */
+  async hudLogin(
+    identity: AuthIdentity | string,
+    options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; realm?: string; position?: string } = {}
+  ): Promise<HudLoginReply> {
+    const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
+    const flags: string[] = []
+    // the line splits on whitespace: a value with any would read as stray words
+    const flag = (name: string, value: string | number | undefined): void => {
+      if (value === undefined) return
+      if (!/^\S+$/.test(String(value))) throw new Error(`a /hud_login ${name} takes no whitespace: ${JSON.stringify(String(value))}`)
+      flags.push(`${name} ${value}`)
+    }
+    flag('--name', options.name)
+    flag('--look', options.look)
+    if (options.guest) flags.push('--guest')
+    if (options.defaultOnError) flags.push('--default-on-error')
+    flag('--realm', options.realm)
+    flag('--position', options.position)
+    return this.json<HudLoginReply>(['/hud_login', payload, ...flags].join(' '))
   }
 
   /** A session-only guest made in the engine (no network). Takes effect the next frame; it is
