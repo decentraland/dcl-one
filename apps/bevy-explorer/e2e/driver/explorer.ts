@@ -156,6 +156,16 @@ export interface BanBlockState {
     blocked: string[]
     blockedBy: string[]
   }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
   lookup: {
     address: string
     isBlockedEitherWay: boolean

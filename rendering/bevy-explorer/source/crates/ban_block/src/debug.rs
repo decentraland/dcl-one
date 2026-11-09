@@ -8,7 +8,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::{json, Map, Value};
 use wallet::Wallet;
 
-use crate::{BanBlock, BlockDirection, Blocks};
+use crate::{BanBlock, BlockDirection, Blocks, PlatformBanState};
 
 pub(crate) fn register(app: &mut App) {
     app.add_console_command::<BanBlockStateCommand, _>(ban_block_state)
@@ -19,10 +19,14 @@ pub(crate) fn register(app: &mut App) {
                 ("Blocks", "blocks.state"),
                 ("Blocked", "blocks.blocked"),
                 ("Blocked by", "blocks.blockedBy"),
+                ("Platform ban", "platformBan.isBanned"),
+                ("Ban reason", "platformBan.reason"),
+                ("Ban source", "platformBan.source"),
+                ("Checked (s ago)", "platformBan.checkedAgoSecs"),
                 ("Lookup: blocked either way", "lookup.isBlockedEitherWay"),
                 ("Lookup: direction", "lookup.direction"),
             ],
-            actions: &[],
+            actions: &[("Re-check platform ban", "/ban_block_refresh")],
             inputs: &[DebugInput {
                 label: "Look up address",
                 field: "lookup.address",
@@ -43,6 +47,7 @@ fn ban_block_state(
     mut input: ConsoleCommand<BanBlockStateCommand>,
     ban_block: BanBlock,
     wallet: Res<Wallet>,
+    time: Res<Time>,
 ) {
     let Some(Ok(command)) = input.take() else {
         return;
@@ -57,7 +62,7 @@ fn ban_block_state(
             }
         },
     };
-    input.reply_ok(snapshot(&ban_block, wallet.address(), lookup).to_string());
+    input.reply_ok(snapshot(&ban_block, wallet.address(), lookup, time.elapsed_secs_f64()).to_string());
 }
 
 fn hex(address: Address) -> String {
@@ -71,8 +76,14 @@ fn addresses(set: &bevy::platform::collections::HashSet<Address>) -> Value {
 }
 
 /// Every `null` reading has its reason in `unavailable`, keyed by the field path.
-pub(crate) fn snapshot(ban_block: &BanBlock, own: Option<Address>, lookup: Option<Address>) -> Value {
+pub(crate) fn snapshot(
+    ban_block: &BanBlock,
+    own: Option<Address>,
+    lookup: Option<Address>,
+    now: f64,
+) -> Value {
     let mut unavailable = Map::new();
+    let platform_ban = platform_ban_json(ban_block, now, &mut unavailable);
     let blocks = ban_block.blocks();
     let blocks_json = match blocks {
         Blocks::Live {
@@ -117,7 +128,52 @@ pub(crate) fn snapshot(ban_block: &BanBlock, own: Option<Address>, lookup: Optio
     json!({
         "address": own.map(hex),
         "blocks": blocks_json,
+        "platformBan": platform_ban,
         "lookup": lookup_json,
         "unavailable": unavailable,
     })
+}
+
+fn platform_ban_json(ban_block: &BanBlock, now: f64, unavailable: &mut Map<String, Value>) -> Value {
+    let ago = |checked_at: f64| (now - checked_at).max(0.0).round();
+    match ban_block.platform_ban() {
+        PlatformBanState::Unknown => {
+            unavailable.insert("platformBan.isBanned".into(), json!("not checked yet"));
+            unavailable.insert("platformBan.reason".into(), json!("not checked yet"));
+            unavailable.insert("platformBan.source".into(), json!("not checked yet"));
+            unavailable.insert("platformBan.checkedAgoSecs".into(), json!("not checked yet"));
+            json!({
+                "state": "unknown",
+                "isBanned": null, "source": null, "reason": null, "customMessage": null,
+                "expiresAt": null, "checkedAgoSecs": null, "error": null,
+            })
+        }
+        PlatformBanState::Failed { error, checked_at } => {
+            let why = format!("check failed: {error}");
+            unavailable.insert("platformBan.isBanned".into(), json!(why));
+            unavailable.insert("platformBan.reason".into(), json!(why));
+            unavailable.insert("platformBan.source".into(), json!(why));
+            json!({
+                "state": "failed",
+                "isBanned": null, "source": null, "reason": null, "customMessage": null,
+                "expiresAt": null, "checkedAgoSecs": ago(*checked_at), "error": error,
+            })
+        }
+        PlatformBanState::Checked { ban, checked_at } => {
+            if ban.is_none() {
+                unavailable.insert("platformBan.reason".into(), json!("not banned"));
+                unavailable.insert("platformBan.source".into(), json!("not banned"));
+            }
+            json!({
+                "state": "checked",
+                "isBanned": ban.is_some(),
+                "source": ban_block.platform_ban_source(),
+                "reason": ban.as_ref().map(|b| b.reason.clone()),
+                "customMessage": ban.as_ref().and_then(|b| b.custom_message.clone()),
+                "expiresAt": ban.as_ref().and_then(|b| b.expires_at.clone()),
+                "checkedAgoSecs": ago(*checked_at),
+                "error": null,
+            })
+        }
+    }
 }

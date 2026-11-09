@@ -7,6 +7,7 @@
 
 mod debug;
 mod events;
+mod platform_ban;
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::system::SystemParam, platform::collections::HashSet, prelude::*};
@@ -14,6 +15,7 @@ use serde::Serialize;
 use social::SocialClient;
 
 pub use events::BanBlockEvent;
+pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
 pub struct BanBlockPlugin;
 
@@ -30,6 +32,7 @@ impl Plugin for BanBlockPlugin {
         } else {
             app.add_systems(PostUpdate, events::emit_ban_block_events);
         }
+        platform_ban::register(app);
         debug::register(app);
     }
 }
@@ -38,6 +41,7 @@ impl Plugin for BanBlockPlugin {
 #[derive(SystemParam)]
 pub struct BanBlock<'w> {
     social: Option<Res<'w, SocialClient>>,
+    platform_ban: Res<'w, PlatformBanStatus>,
 }
 
 /// The local user's social blocks, borrowed from the social client. The sets exist only once a
@@ -142,6 +146,20 @@ impl BanBlock<'_> {
 
     pub fn block_direction(&self, addr: Address) -> BlockDirection {
         self.blocks().block_direction(addr)
+    }
+
+    pub fn platform_ban(&self) -> &PlatformBanState {
+        self.platform_ban.state()
+    }
+
+    /// `Some` only while a ban is known.
+    pub fn platform_ban_source(&self) -> Option<PlatformBanSource> {
+        self.platform_ban.source()
+    }
+
+    /// `Some` only for a checked ban. Unknown and failed answer `None`: the check fails open.
+    pub fn platform_ban_of_local_user(&self) -> Option<&PlatformBanInfo> {
+        self.platform_ban.ban()
     }
 }
 

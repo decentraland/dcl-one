@@ -16,6 +16,8 @@ pub enum BanBlockEvent {
     LocalUserUnblockedBy { blocker: Address },
     /// The blocks switched between unavailable and live.
     BlocksAvailabilityChanged,
+    /// The platform ban changed; read it.
+    PlatformBanChanged,
 }
 
 /// What the previous frame answered, so a change can be named.

@@ -26,6 +26,9 @@ export interface OpenOptions {
   signIn?: SignIn
   /** The first login's profile name (1 to 15 alphanumerics) and curated look. */
   firstLogin?: { name?: string; look?: number }
+  /** More arguments for a standalone this session starts (a service override, say); a separate
+   *  client. The web client takes none: its service params stop at the launch gate. */
+  nativeArgs?: string[]
 }
 
 export interface Session {
@@ -49,7 +52,7 @@ function message(error: unknown): string {
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
-  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account'].join('|')
+  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account', ...(options.nativeArgs ?? [])].join('|')
 }
 
 /** The client for these options, booted on first use. The harness closes every session once the
@@ -131,8 +134,9 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   let console_: Console
   let url: string | undefined
   if (target.transport === 'native') {
-    console_ = await nativeConsole(target, realm, position)
+    console_ = await nativeConsole(target, realm, position, options.nativeArgs)
   } else {
+    if (options.nativeArgs?.length) throw new Error('nativeArgs need DCL_E2E_TRANSPORT=native: the web client takes no service override')
     const base = target.webUrl ?? (await serveApp(target)).url
     const page = new URL(base)
     // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
@@ -183,11 +187,14 @@ function serveApp(target: Target): Promise<StaticServer> {
   return webServer
 }
 
-async function nativeConsole(target: Target, realm: string, position: string): Promise<Console> {
+async function nativeConsole(target: Target, realm: string, position: string, extra: string[] = []): Promise<Console> {
   const { bin, port, token, args } = target.native
-  if (token && !bin) return new NativeConsole({ port, token })
+  if (token && !bin) {
+    if (extra.length > 0) throw new Error('a running standalone cannot take arguments: set DCL_E2E_NATIVE_BIN to start one')
+    return new NativeConsole({ port, token })
+  }
   if (!bin) throw new Error('set DCL_E2E_NATIVE_BIN (an automation build to start) or DCL_E2E_NATIVE_PORT and DCL_E2E_NATIVE_TOKEN (a running one)')
-  return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
+  return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
 }
 
 /** Sign in and wait for the world. On the web the sign-in goes through the HUD (`/hud_login`):

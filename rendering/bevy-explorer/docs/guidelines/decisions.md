@@ -65,7 +65,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `IUserBlockingCache`, `ApplicationBlocklistGuard` and `RoomMetadataCurrentScene` apart. A
   blocked pair is blocked in either direction, as there. The last block sets stand across a
   social reconnect until the next snapshot (unity-explorer also resets only on the next
-  `GetBlockingStatus`).
+  `GetBlockingStatus`). The platform ban is read from the gatekeeper's public, unsigned
+  `GET /users/{address}/bans` (unity-explorer signs the same request, which the endpoint does
+  not need), on sign-in, on a realm change, on `/ban_block_refresh` and every 300 s; a failed
+  check fails open, as there, and the state says so instead of guessing.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
