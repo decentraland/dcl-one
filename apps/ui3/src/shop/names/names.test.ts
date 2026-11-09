@@ -33,6 +33,7 @@ import {
 } from "./names";
 import { interimNameOffer, NameAlreadyRegisteredError, serverNameOffer } from "./offer";
 import { fetchBannedNames } from "./api";
+import { listsTransport } from "./reads";
 import { encodePurchaseOffer } from "@shop/model/wire";
 import { nameRegistration } from "@shop/payment/fixtures";
 
@@ -321,14 +322,14 @@ describe("an error answer from a read", () => {
 
   it("releases the banned-names list's body before failing", async () => {
     const { released, answer } = errorAnswer(503);
-    await expect(fetchBannedNames({ base: "https://peer.example", fetchImpl: answer })).rejects.toThrow("503");
+    await expect(fetchBannedNames({ base: "https://peer.example", transport: listsTransport(answer) })).rejects.toThrow("503");
     expect(released.value).toBe(true);
   });
 
   it("keeps the status as the error when the body's stream already failed", async () => {
     // An errored stream refuses its release: that refusal mustn't replace the answer's status.
     const broken = async () => new Response(new ReadableStream({ start: (c) => c.error(new Error("stream broke")) }), { status: 503 });
-    await expect(fetchBannedNames({ base: "https://peer.example", fetchImpl: broken })).rejects.toThrow("503");
+    await expect(fetchBannedNames({ base: "https://peer.example", transport: listsTransport(broken) })).rejects.toThrow("503");
     const reader = rpcReader(CHAIN.SEPOLIA, { base: "https://peer.example", fetchImpl: broken });
     await expect(reader.call("0x0000000000000000000000000000000000000001", "0x")).rejects.toThrow("503");
   });

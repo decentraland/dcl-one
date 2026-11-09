@@ -1,8 +1,10 @@
-// The Shop's read modules take their host as arguments: the client, its base, transport and signer, the peers, and
-// the creator-sales switch. This holds them to that: none reaches the browser host's wiring (api/host.ts, or the api
-// barrel that re-exports it), the page's switches (discovery/flags, lib/remoteFlags, discovery/reads), ui3's catalyst
-// or auth modules, or the page itself; nor a component or the purchase's encoding. It checks each module's own
-// imports, not its whole closure.
+// The Shop's read modules take their host as arguments: the client, its base, transport and signer, the peers, the
+// creator-sales switch, and the Ethereum network with its reader. This holds them to that: none reaches the browser
+// host's wiring (api/host.ts, or the api barrel that re-exports it), the page's switches (discovery/flags,
+// lib/remoteFlags, discovery/reads), the host's network and readers (land/chain, land/evm, checkout/chain, wallet),
+// the NAME registration or its host reads (names/names, names/offer, names/reads), ui3's catalyst or auth modules, or
+// the page itself; nor a component, the purchase's encoding or the wallet's MANA. It checks each module's own imports,
+// not its whole closure.
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,7 +12,14 @@ import { describe, expect, it } from "vitest";
 const SRC = join(__dirname, "..", "..");
 // The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file)
 // are held by library/shop/boundary.test.ts, which compiles them without a host at all.
-const SEAM = ["shop/checkout/lib/api.ts", "shop/checkout/lib/trade.ts"];
+const SEAM = [
+  "shop/checkout/lib/api.ts",
+  "shop/checkout/lib/trade.ts",
+  "shop/land/contracts.ts",
+  "shop/land/read.ts",
+  "shop/names/api.ts",
+  "shop/names/name.ts",
+];
 
 /**
  * Every module a file names, read from its raw source as library/shop/boundary.test.ts reads it, so that a mistake
@@ -113,7 +122,7 @@ function target(file: string, specifier: string): string | null {
 }
 
 const FORBIDDEN =
-  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/purchase\/.*|data\/(auth|catalyst)(\/.*)?)$/;
+  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/(purchase|chain)\/.*|shop\/land\/(chain|evm)|shop\/names\/(names|offer|reads)|shop\/market\/lib\/mana|shop\/wallet\/.*|data\/(auth|catalyst)(\/.*)?)$/;
 
 function hostImports(file: string, source: string): string[] {
   const { named, opaque } = specifiers(source);
@@ -146,6 +155,15 @@ describe("the host seam of the Shop's read modules", () => {
     expect(hostImports("shop/discovery/api.ts", 'import { shopFlags } from "./flags";')).toHaveLength(1);
     expect(hostImports("shop/discovery/lib/categories.ts", 'import type { IconName } from "../components/Icon";')).toHaveLength(1);
     expect(hostImports("shop/checkout/lib/api.ts", 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
+    expect(hostImports("shop/land/contracts.ts", 'import { ethereumChainId } from "../checkout/chain/config";')).toHaveLength(1);
+    expect(hostImports("shop/names/name.ts", 'import { landChainId } from "../land/chain";')).toHaveLength(1);
+    expect(hostImports("shop/names/name.ts", 'import { rpcReader } from "../land/evm";')).toHaveLength(1);
+    expect(hostImports("shop/names/api.ts", 'import { parseManaInput } from "../market/lib/mana";')).toHaveLength(1);
+    expect(hostImports("shop/names/api.ts", 'import { shopClient } from "../api/host";')).toHaveLength(1);
+    expect(hostImports("shop/names/api.ts", 'import { readBannedNames } from "./reads";')).toHaveLength(1);
+    expect(hostImports("shop/names/name.ts", 'import { requireChain } from "../wallet/chain";')).toHaveLength(1);
+    expect(hostImports("shop/names/api.ts", 'import { NAME_PRICE_IN_WEI } from "./name";')).toEqual([]);
+    expect(hostImports("shop/names/name.ts", 'import { readContract } from "../land/read";')).toEqual([]);
     expect(hostImports(file, 'import { SHOP_API_PREFIX } from "./endpoints";')).toEqual([]);
     expect(hostImports(file, 'const host = require("./host");')).toHaveLength(1);
     expect(hostImports(file, 'import { hostApiOptions } from "./host.js";')).toHaveLength(1);
