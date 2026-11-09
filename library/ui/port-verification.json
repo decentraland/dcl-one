@@ -1,37 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "23e42089034bf7f6f7b1eca717215d0ca8c1d347af3c8a2047f9476efbe79cc6",
+  "lockHash": "0fc98aa92abb46ebe84ff765409daf9c0cead0c3f14b4a0991b7b3940d0079d8",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "416b84cd0b5d7a7af0736e150db8e2c9a3da88f2",
+  "figmaTree": "aec1348627cbe8fda0b188855415f3530b70f93f",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
+      "detail": "inherited main085 and public92eb: same verified 544-file cache and snapshot revision"
     },
     "deviations": {
       "result": "pass",
-      "detail": "438 ported files and 39 public foundation files match pinned bytes and origins"
+      "detail": "439 tooling pins and current main public foundation identities verified after merging both deviation tables"
     },
     "diff": {
       "result": "pass",
-      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "inherited main085: 0 added, changed or removed, no ledger issues, generation inputs preserved"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "ok true, 1 public mapping checked with zero diagnostics"
+      "detail": "inherited public92eb: 1 mapping with zero diagnostics, mapping and component generator unchanged"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "46 components and 561 variants, catalog unchanged"
+      "detail": "inherited main085: catalog unchanged, no catalog or component generator changes in this merge"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "19 of 19 targeted navbar bounds checks pass"
+      "detail": "inherited parent checks: 19 bounds pass, NavBar output unchanged, runtime gains upstream icon type guard"
     },
     "install": {
       "result": "pass",
-      "detail": "39 foundation files reproduced, repeat unchanged, 10 component plan files match public bytes"
+      "detail": "inherited main085: 39 foundations reproduced and repeat unchanged, foundation files and install core preserved"
     }
   }
 }
