@@ -15,7 +15,7 @@ otherwise.
 | upstream | revision |
 | --- | --- |
 | `github.com/decentraland/worlds-content-server` | `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21) |
-| this tree | `2da8b8aea` (origin/main, 2026-11-07) |
+| this tree | the revision that contains this file |
 
 Upstream packages that decide rows were read from their published tarballs at the versions upstream's
 `yarn.lock` pins (never run): `@dcl/http-commons` 2.0.0, `@dcl/http-server` 2.3.0,
@@ -49,7 +49,7 @@ Every upstream route has a route at the same method and path in this tree except
 (WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
 `POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
 `/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
-have no root route (`worlds/src/core/mod.rs:588-603`, `worlds/src/lib.rs:403-447`). The gateway maps the
+have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
 worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1

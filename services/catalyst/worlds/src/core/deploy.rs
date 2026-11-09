@@ -86,9 +86,12 @@ fn declared_length_exceeds_limit(declared_len: u64) -> bool {
 }
 
 /// The old service's `{error, message}` answer of a refused deploy; a 500 is
-/// `@dcl/http-commons`' bare `{"error":"Internal Server Error"}`.
+/// `@dcl/http-commons`' bare `{"error":"Internal Server Error"}`, so its message goes to the
+/// log instead of the client.
 pub(super) fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
     if status == StatusCode::INTERNAL_SERVER_ERROR {
+        let message: String = message.into();
+        tracing::error!(%message, "POST /entities: internal error");
         return (status, Json(json!({ "error": "Internal Server Error" }))).into_response();
     }
     let error = match status {
@@ -142,6 +145,30 @@ pub(super) fn internal(message: impl Into<String>) -> Refusal {
 
 pub(super) fn unavailable(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into())
+}
+
+/// Upstream's newer-scene refusal, checked before anything is stored or staged: an overlapping
+/// scene with a greater entity timestamp (ties by entity id) answers 400. Shared by the
+/// single-request publish and the first partial batch.
+pub(super) async fn refuse_if_newer_scene(
+    state: &super::CoreState,
+    world: &WorldName,
+    parcels: &[String],
+    entity_id: &str,
+    entity: &Value,
+) -> Result<(), Response> {
+    let timestamp = store::entity_timestamp(entity).map_err(IntoResponse::into_response)?;
+    let newer = match state.pool.acquire().await {
+        Ok(mut conn) => {
+            store::newer_scene_deployed(&mut conn, world, parcels, entity_id, timestamp).await
+        }
+        Err(e) => Err(e),
+    };
+    match newer {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(failed(partial::NEWER_SCENE_MESSAGE).into_response()),
+        Err(e) => Err(internal(format!("newer-scene check: {e}")).into_response()),
+    }
 }
 
 pub async fn deploy_entity(State(state): State<SharedState>, request: Request) -> Response {
@@ -297,31 +324,26 @@ fn present_truthy(v: &Value, key: &str) -> bool {
     }
 }
 
-/// JavaScript's `Number` text of `ms / 1000`.
-fn secs(ms: i64) -> String {
-    (ms as f64 / 1000.0).to_string()
-}
-
 /// The deployment window, both directions. A timestamp dated forward is refused for the
 /// same reason a stale one is: the signature covers the entity id, so a deployment the
 /// clock has not reached yet would stay replayable until it does.
 fn entity_timestamp_error(entity: &Value, now_ms: i64) -> Option<String> {
-    let Some(ts) = entity.get("timestamp").and_then(|v| v.as_i64()) else {
+    let Ok(ts) = store::entity_timestamp(entity) else {
         return Some("The entity is missing a valid timestamp".to_string());
     };
     let ttl = now_ms.saturating_sub(ts);
     if ttl < -MAX_DEPLOYMENT_FUTURE_SKEW_MS {
         return Some(format!(
             "Deployment was created {} secs in the future. Max allowed: {} secs.",
-            secs(ttl.saturating_abs()),
-            secs(MAX_DEPLOYMENT_FUTURE_SKEW_MS)
+            upload_limits::js_seconds(ttl.unsigned_abs()),
+            upload_limits::js_seconds(MAX_DEPLOYMENT_FUTURE_SKEW_MS.unsigned_abs())
         ));
     }
     if ttl > ENTITY_TTL_MS {
         return Some(format!(
             "Deployment was created {} secs ago. Max allowed: {} secs.",
-            secs(ttl),
-            secs(ENTITY_TTL_MS)
+            upload_limits::js_seconds(ttl.unsigned_abs()),
+            upload_limits::js_seconds(ENTITY_TTL_MS.unsigned_abs())
         ));
     }
     None
@@ -452,16 +474,12 @@ pub(super) struct Uploads {
 
 impl Uploads {
     pub(super) fn new(files: &[SpooledFile]) -> Self {
-        let mut order = Vec::new();
-        let mut by_name = HashMap::new();
-        for blob in files {
-            if let std::collections::hash_map::Entry::Vacant(slot) =
-                by_name.entry(blob.name.clone())
-            {
-                order.push(slot.key().clone());
-                slot.insert(blob.clone());
-            }
-        }
+        // Names are unique: `read_deploy_form` refuses a repeated part name.
+        let order = files.iter().map(|blob| blob.name.clone()).collect();
+        let by_name = files
+            .iter()
+            .map(|blob| (blob.name.clone(), blob.clone()))
+            .collect();
         Self { order, by_name }
     }
 
@@ -1069,29 +1087,16 @@ async fn deploy_entity_inner(
 
     // A newer scene on the parcels refuses the publish before any blob is stored; the publish
     // transaction checks it again.
-    let newer = match store::entity_timestamp(&entity) {
-        Ok(timestamp) => match state.pool.acquire().await {
-            Ok(mut conn) => {
-                store::newer_scene_deployed(
-                    &mut conn,
-                    &validated.world,
-                    &validated.parcels.canonical(),
-                    &entity_id,
-                    timestamp,
-                )
-                .await
-            }
-            Err(e) => Err(e),
-        },
-        Err(e) => return e.into_response(),
-    };
-    match newer {
-        Ok(false) => {}
-        Ok(true) => return failed(partial::NEWER_SCENE_MESSAGE).into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "deploy failed: newer-scene check");
-            return internal("Failed to persist deployment").into_response();
-        }
+    if let Err(refused) = refuse_if_newer_scene(
+        state,
+        &validated.world,
+        &validated.parcels.canonical(),
+        &entity_id,
+        &entity,
+    )
+    .await
+    {
+        return refused;
     }
 
     // Every upload is referenced and named by its own hash, as validation checked.
@@ -1215,6 +1220,20 @@ mod tests {
         assert_eq!(
             error,
             "Deployment was created 301 secs ago. Max allowed: 300 secs."
+        );
+    }
+
+    #[test]
+    fn a_float_timestamp_is_held_to_the_window() {
+        let ts = NOW_MS as f64;
+        assert_eq!(
+            entity_timestamp_error(&json!({ "timestamp": ts }), NOW_MS),
+            None
+        );
+        let stale = (NOW_MS - 301_000) as f64;
+        assert_eq!(
+            entity_timestamp_error(&json!({ "timestamp": stale }), NOW_MS).as_deref(),
+            Some("Deployment was created 301 secs ago. Max allowed: 300 secs.")
         );
     }
 
@@ -1366,19 +1385,5 @@ mod tests {
                 .starts_with("`minimapVisible`")
         );
         assert_eq!(deprecated_config_error(&json!({ "metadata": {} })), None);
-    }
-
-    #[test]
-    fn uploads_keep_the_first_copy_in_upload_order() {
-        let spooled = |hash: &str| SpooledFile {
-            name: hash.to_string(),
-            hash: hash.to_string(),
-            len: 1,
-            path: std::path::PathBuf::from(hash),
-        };
-        let (a, b) = (spooled("a"), spooled("b"));
-        let uploads = Uploads::new(&[b.clone(), a.clone(), b.clone()]);
-        assert_eq!(uploads.order, vec!["b".to_string(), "a".to_string()]);
-        assert_eq!(uploads.by_name.len(), 2);
     }
 }

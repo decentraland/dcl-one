@@ -43,7 +43,8 @@ use super::deploy::{
     parse_entity, raw_strings, read_entity_file,
 };
 use super::metrics as worlds_metrics;
-use super::store::{self, PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
+use super::store::{PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
+use super::upload_limits;
 use super::upload_spool::SpooledFile;
 use super::{CoreState, SharedState};
 
@@ -250,11 +251,6 @@ fn naive(ms: i64) -> NaiveDateTime {
 
 fn millis(t: NaiveDateTime) -> i64 {
     t.and_utc().timestamp_millis()
-}
-
-/// Upstream's `formatBytes` of a byte count.
-fn format_bytes(bytes: i64) -> String {
-    super::upload_limits::format_bytes(bytes.max(0) as u64)
 }
 
 fn expired() -> Response {
@@ -517,14 +513,7 @@ async fn stage_batch(
                 return Err(err_one(PERSONAL_FIRST_MESSAGE));
             }
         }
-        let timestamp = store::entity_timestamp(&entity).map_err(IntoResponse::into_response)?;
-        let mut conn = state.pool.acquire().await.map_err(db_error)?;
-        if store::newer_scene_deployed(&mut conn, &staged.world, &parcels, entity_id, timestamp)
-            .await
-            .map_err(db_error)?
-        {
-            return Err(failed(NEWER_SCENE_MESSAGE).into_response());
-        }
+        deploy::refuse_if_newer_scene(state, &staged.world, &parcels, entity_id, &entity).await?;
     }
 
     let mut content: Vec<String> = Vec::new();
@@ -980,8 +969,8 @@ async fn reserve(
     if incoming > per_minute {
         return Err(err_one(format!(
             "This batch is {}, above the partial upload limit of {} per minute. Send smaller batches.",
-            format_bytes(incoming),
-            format_bytes(per_minute)
+            upload_limits::format_bytes(incoming.max(0) as u64),
+            upload_limits::format_bytes(per_minute.max(0) as u64)
         )));
     }
     if rate_bytes > per_minute {
@@ -989,8 +978,8 @@ async fn reserve(
             "bytes_per_minute",
             format!(
                 "This account sent {} of partial uploads this minute, above the limit of {} per minute. Retry in {rate_retry} s.",
-                format_bytes(rate_bytes),
-                format_bytes(per_minute)
+                upload_limits::format_bytes(rate_bytes.max(0) as u64),
+                upload_limits::format_bytes(per_minute.max(0) as u64)
             ),
             i64::from(rate_retry),
         ));
@@ -1095,15 +1084,15 @@ async fn reserve(
     if t.own > account_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-account partial upload limit of {}. Reduce its size.",
-            format_bytes(t.own),
-            format_bytes(account_bytes)
+            upload_limits::format_bytes(t.own.max(0) as u64),
+            upload_limits::format_bytes(account_bytes.max(0) as u64)
         )));
     }
     if t.own_content > world_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-world partial upload limit of {}. Reduce its size.",
-            format_bytes(t.own_content),
-            format_bytes(world_bytes)
+            upload_limits::format_bytes(t.own_content.max(0) as u64),
+            upload_limits::format_bytes(world_bytes.max(0) as u64)
         )));
     }
     if t.account > account_bytes {
@@ -1111,8 +1100,8 @@ async fn reserve(
             "bytes_per_account",
             format!(
                 "This batch would stage {} for this account, above its limit of {}. Complete an upload or wait for expired uploads to be cleaned up.",
-                format_bytes(t.account),
-                format_bytes(account_bytes)
+                upload_limits::format_bytes(t.account.max(0) as u64),
+                upload_limits::format_bytes(account_bytes.max(0) as u64)
             ),
             retry_after(limits, t.account_oldest),
         ));
@@ -1122,8 +1111,8 @@ async fn reserve(
             "bytes_per_world",
             format!(
                 "This batch would stage {} for this world, above its limit of {}. Complete an upload or wait for one to expire.",
-                format_bytes(t.world),
-                format_bytes(world_bytes)
+                upload_limits::format_bytes(t.world.max(0) as u64),
+                upload_limits::format_bytes(world_bytes.max(0) as u64)
             ),
             retry_after(limits, t.world_oldest),
         ));
@@ -1133,8 +1122,8 @@ async fn reserve(
             "bytes_per_source",
             format!(
                 "This batch would stage {} for uploads from this source, above its limit of {}. Complete an upload or wait for one to expire.",
-                format_bytes(t.source),
-                format_bytes(source_bytes)
+                upload_limits::format_bytes(t.source.max(0) as u64),
+                upload_limits::format_bytes(source_bytes.max(0) as u64)
             ),
             retry_after(limits, t.source_oldest),
         ));
@@ -1144,8 +1133,8 @@ async fn reserve(
             "bytes_per_server",
             format!(
                 "This batch would stage {} on the server, above its limit of {}. Retry later.",
-                format_bytes(t.total),
-                format_bytes(node_bytes)
+                upload_limits::format_bytes(t.total.max(0) as u64),
+                upload_limits::format_bytes(node_bytes.max(0) as u64)
             ),
             retry_after(limits, t.oldest),
         ));
@@ -1477,14 +1466,6 @@ async fn prune_and_report(pool: &PgPool, limits: &PartialUploadLimits) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bytes_are_formatted_as_upstream() {
-        assert_eq!(format_bytes(512), "512 bytes");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(536_870_912), "512.0 MiB");
-        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
-    }
 
     #[test]
     fn the_query_flag_is_read_from_the_query_string() {

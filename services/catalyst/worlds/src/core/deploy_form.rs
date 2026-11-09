@@ -22,10 +22,13 @@ use super::upload_spool::{SpooledFile, UploadSpool};
 pub const SPOOL_FAILED_MESSAGE: &str =
     "The server could not store the multipart upload, please retry shortly.";
 
-/// Longest auth chain a deployment carries, as on Catalyst.
-const MAX_DEPLOYMENT_AUTH_CHAIN_LINKS: usize = 10;
-/// Non-file fields: `entityId`, `partial` and `authChain[i][type|payload|signature]`.
-pub(super) const MAX_DEPLOYMENT_FIELDS: usize = 2 + 3 * MAX_DEPLOYMENT_AUTH_CHAIN_LINKS;
+/// Non-file fields: `entityId`, `partial` and `authChain[i][type|payload|signature]` for the
+/// longest chain the verifier accepts.
+pub(super) const MAX_DEPLOYMENT_FIELDS: usize = 2 + 3 * crate::auth::MAX_AUTH_CHAIN_LINKS;
+/// Longest part name accepted, busboy's `fieldNameSize` in upstream's `DEFAULT_LIMITS`. A part
+/// name is a content hash or a field name, far shorter; a longer one is refused before it is
+/// stored, so names stay outside the byte budget only up to this bound.
+pub(super) const MAX_DEPLOYMENT_PART_NAME_BYTES: usize = 200;
 pub(super) const MAX_DEPLOYMENT_FIELD_SIZE_BYTES: usize = 32 * 1024;
 /// busboy's `parts`: answered when the count reaches it, so one part fewer is the most a form has.
 const MAX_DEPLOYMENT_PARTS: usize = MAX_DEPLOY_FILES + MAX_DEPLOYMENT_FIELDS;
@@ -160,7 +163,14 @@ pub(super) async fn read_deploy_form(
             Ok(None) => break,
             Err(e) => return Err(read_failed(e)),
         };
-        let name = field.name().unwrap_or("").to_string();
+        let raw_name = field.name().unwrap_or("");
+        if raw_name.len() > MAX_DEPLOYMENT_PART_NAME_BYTES {
+            upload_rejected(ENTITIES_ROUTE, "invalid_multipart");
+            return Err(Box::new(err_one(format!(
+                "Form field name longer than {MAX_DEPLOYMENT_PART_NAME_BYTES} bytes"
+            ))));
+        }
+        let name = raw_name.to_string();
         part_count += 1;
         // busboy takes a part with a file name or an octet-stream type as a file.
         let is_file = field.file_name().is_some()
@@ -355,6 +365,113 @@ mod tests {
             .await
             .unwrap();
         (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    async fn read(multipart: Multipart) -> Result<DeployForm, (StatusCode, Value)> {
+        let mut bytes_lease = upload_limits::reserve_in_flight();
+        let mut files_lease = upload_limits::reserve_in_flight_files();
+        match read_deploy_form(
+            multipart,
+            &mut bytes_lease,
+            &mut files_lease,
+            u64::MAX,
+            u64::MAX,
+            &test_root(),
+        )
+        .await
+        {
+            Ok(form) => Ok(form),
+            Err(resp) => Err(response_json(*resp).await),
+        }
+    }
+
+    fn multipart_of(body: Vec<u8>, boundary: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_part_name_longer_than_busboys_field_name_size_is_refused() {
+        let at_cap = "n".repeat(MAX_DEPLOYMENT_PART_NAME_BYTES);
+        let form = read(multipart_from(&[(at_cap.as_str(), None, "v")]).await)
+            .await
+            .expect("a name at the cap is read");
+        assert!(form.fields.contains_key(&at_cap));
+        let over = "n".repeat(MAX_DEPLOYMENT_PART_NAME_BYTES + 1);
+        let Err((status, body)) =
+            read(multipart_from(&[(over.as_str(), Some("f"), "v")]).await).await
+        else {
+            panic!("a longer name must be refused");
+        };
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["message"], "Form field name longer than 200 bytes");
+    }
+
+    #[tokio::test]
+    async fn a_part_with_only_an_octet_stream_type_is_a_file() {
+        use axum::extract::FromRequest;
+        let body = b"--b\r\nContent-Disposition: form-data; name=\"bafyfile\"\r\n\
+Content-Type: application/octet-stream\r\n\r\nbytes\r\n--b--\r\n"
+            .to_vec();
+        let multipart = Multipart::from_request(multipart_of(body, "b"), &())
+            .await
+            .unwrap();
+        let form = read(multipart).await.expect("form parses");
+        assert!(form.fields.is_empty());
+        assert_eq!(form.files.len(), 1);
+        assert_eq!(form.files[0].name, "bafyfile");
+    }
+
+    #[tokio::test]
+    async fn the_part_count_answers_busboys_parts_limit() {
+        use axum::extract::FromRequest;
+        let mut parts: Vec<(String, Option<&str>, &[u8])> = (0..MAX_DEPLOYMENT_FIELDS)
+            .map(|i| (format!("field{i}"), None, &b"v"[..]))
+            .collect();
+        parts.extend((0..MAX_DEPLOY_FILES).map(|i| (format!("file{i}"), Some("f"), &b""[..])));
+        let borrowed: Vec<(&str, Option<&str>, &[u8])> =
+            parts.iter().map(|(n, f, v)| (n.as_str(), *f, *v)).collect();
+        let (body, _) = super::test_support::multipart_body(&borrowed);
+        let multipart = Multipart::from_request(multipart_of(body, "xyzgate"), &())
+            .await
+            .unwrap();
+        let Err((status, body)) = read(multipart).await else {
+            panic!("one part past busboy's `parts` must be refused");
+        };
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body["message"], upload_limits::TOO_MANY_PARTS_MESSAGE);
+    }
+
+    #[tokio::test]
+    async fn a_chunked_body_over_the_route_limit_is_a_413() {
+        use axum::extract::FromRequest;
+        // No Content-Length: the limit trips while the stream is read, not up front.
+        let mut body =
+            b"--b\r\nContent-Disposition: form-data; name=\"bafybig\"; filename=\"f\"\r\n\
+Content-Type: application/octet-stream\r\n\r\n"
+                .to_vec();
+        body.resize(body.len() + (3 << 20), b'x');
+        body.extend_from_slice(b"\r\n--b--\r\n");
+        let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = body
+            .chunks(64 * 1024)
+            .map(|c| Ok(bytes::Bytes::copy_from_slice(c)))
+            .collect();
+        let req = axum::http::Request::builder()
+            .header("content-type", "multipart/form-data; boundary=b")
+            .body(axum::body::Body::from_stream(futures::stream::iter(chunks)))
+            .unwrap();
+        // The extractor's default body limit (2 MiB) stands in for the route's.
+        let multipart = Multipart::from_request(req, &()).await.unwrap();
+        let Err((status, body)) = read(multipart).await else {
+            panic!("a body over the limit must be refused");
+        };
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body["message"], upload_limits::PAYLOAD_TOO_LARGE_MESSAGE);
     }
 
     #[tokio::test]

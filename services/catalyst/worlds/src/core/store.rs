@@ -769,28 +769,33 @@ pub async fn deploy_scene_with(
         }
     }
 
+    // The scene's own row is never part of the overlap: a redeploy of the same
+    // entity keeps its row (and its `created_at`) through the upsert below.
     match replacement {
         Deploy::Owner => {
             sqlx::query(retiring!(
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[]"
+                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3"
             ))
             .bind(world.key())
             .bind(&parcels)
+            .bind(entity_id)
             .execute(&mut *tx)
             .await?;
         }
         Deploy::Scoped(ids) => {
             let ids: Vec<&str> = ids.iter().map(SceneId::as_str).collect();
-            sqlx::query(retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[])"))
+            sqlx::query(retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[]) AND entity_id <> $4"))
                 .bind(world.key())
                 .bind(&parcels)
                 .bind(&ids)
+                .bind(entity_id)
                 .execute(&mut *tx)
                 .await?;
             let leftover: Option<String> =
-                sqlx::query_scalar("SELECT entity_id FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] LIMIT 1")
+                sqlx::query_scalar("SELECT entity_id FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3 LIMIT 1")
                     .bind(world.key())
                     .bind(&parcels)
+                    .bind(entity_id)
                     .fetch_optional(&mut *tx)
                     .await?;
             if leftover.is_some() {
@@ -971,10 +976,18 @@ pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool,
 }
 
 /// The entity's integer `timestamp`; the deploy route already required it.
+/// The entity's `timestamp` in ms. Any finite JSON number counts, as upstream compares the
+/// number itself; a fractional one is taken down to its whole millisecond.
 pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
-    entity
-        .get("timestamp")
+    let value = entity.get("timestamp");
+    value
         .and_then(Value::as_i64)
+        .or_else(|| {
+            value
+                .and_then(Value::as_f64)
+                .filter(|ts| ts.is_finite() && ts.abs() < i64::MAX as f64)
+                .map(|ts| ts.floor() as i64)
+        })
         .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
 }
 

@@ -67,7 +67,7 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 }
 
 /// JavaScript's `Number` text of `ms / 1000`.
-fn js_seconds(ms: u64) -> String {
+pub(super) fn js_seconds(ms: u64) -> String {
     (ms as f64 / 1000.0).to_string()
 }
 
