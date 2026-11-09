@@ -168,6 +168,7 @@ Treat small GPU differences with caution: in this scene the GPU average is a few
 | Write the CSV | `--csv <path>` | `?perfCsv` (page param): the stream carries the CSV |
 | Write the log | `--log-file <path>`, or `-logFile <path>` | `?perfStream=<same-origin path>` (page param): the log streams there |
 | World | `--realm supportteam.dcl.eth` | `?realm=supportteam.dcl.eth` |
+| Walk in while measuring (by hand only) | `--autopilot-walk-to <x,y>` | — |
 
 The page hands `perfStream` and `perfCsv` to `engine_set_perf_stream(path, csv)` before
 `engine_run` (`src/web.rs`). A launch with no CSV destination is the warm-up.
@@ -187,6 +188,24 @@ launch without `--csv`, then the measured launches interleaved with the other bu
 supportteam.dcl.eth`, where `<build>` is `change_build` or `base_build`. Then write a label into
 `<dir>/runs_on.txt` and run `benchmark report <dir>` ([The runner](#the-runner)). A run that
 leaves no CSV counts as crashed.
+
+A walk-in measures content that loads during play instead of behind the loading backdrop:
+- **How it moves:** with `--autopilot-walk-to <x,y>` (native only), once measuring starts the
+  player moves in a straight line from where it arrived to the centre of that parcel at 6 m/s,
+  facing it, then stands there for the rest of the 90 s.
+- **Where to start:** arrive with `--position` more than the load distance from the target scene,
+  so it loads on the way. Walking never raises the backdrop; only a teleport or a realm change
+  does.
+- **Start on an empty parcel or an SDK7 scene.** The explorer never starts an SDK6 scene (no
+  `runtimeVersion` 7 in its metadata), so a run that arrives inside one never leaves the backdrop
+  and fails at the 300 s arrive timeout.
+- **How the walk is done:** it sets the position on the ground plane each frame
+  (`src/autopilot/walk.rs`), so no wall stops it and every run takes the same path; the physics
+  keeps the height.
+- **Example, into Genesis Plaza** (parcels −3…3, −4…9): `--realm
+  https://realm-provider-ea.decentraland.org/main --position -12,2 --distance 100
+  --autopilot-walk-to 0,2` arrives on an empty parcel 136 m west of it and walks 192 m in,
+  through the SDK7 "Genesis Plaza - Roads".
 
 ## The run
 

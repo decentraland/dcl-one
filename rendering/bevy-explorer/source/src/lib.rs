@@ -286,6 +286,16 @@ pub struct DecentralandArguments {
     /// the performance harness parses
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub csv: Option<std::path::PathBuf>,
+    /// Benchmark walk-in (`--autopilot` with `--csv`): once measuring starts, walk from where the
+    /// run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
+    /// load during play, with no loading screen. Without it the run stands at spawn
+    #[arg(
+        long,
+        value_name = "x,y",
+        value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
+        help_heading = DEBUG
+    )]
+    pub autopilot_walk_to: Option<IVec2>,
     /// Write the whole session log here, in the performance harness's line format; the
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
@@ -613,6 +623,9 @@ impl DecentralandApp {
             })
             .init_resource::<common::autopilot::AutopilotPhase>()
             .add_plugins(autopilot::AutopilotPlugin);
+            if let Some(to) = arguments.autopilot_walk_to {
+                app.insert_resource(autopilot::walk::AutopilotWalk { to });
+            }
             // the autopilot's CSV (perf_output follows its phase): `--csv`, or on the web the
             // page's `csv` stream, which `perfCsv` asks for
             #[cfg(not(target_arch = "wasm32"))]
