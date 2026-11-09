@@ -7,7 +7,7 @@ let
     printf 'root:x:0:\nfoundation:x:1000:\n' > "$out/etc/group"
     printf 'hosts: files dns\npasswd: files\ngroup: files\n' > "$out/etc/nsswitch.conf"
   '';
-  image = name: package: config: pkgs.dockerTools.buildLayeredImage {
+  settings = { name, package, config }: {
     inherit name;
     tag = "nix";
     contents = [ package pkgs.cacert accounts ];
@@ -28,34 +28,54 @@ let
       };
     } // config;
   };
+  # The published archive, and the same layers written to stdout for `docker load`: a pull
+  # request's smoke test has no archive to compress, copy back or upload.
+  image = spec: pkgs.dockerTools.buildLayeredImage (settings spec);
+  stream = spec: pkgs.dockerTools.streamLayeredImage (settings spec);
+  apis = {
+    name = "foundation-apis";
+    package = catalyst;
+    config = {
+      Entrypoint = [ "${lib.getExe catalyst}" ];
+      Cmd = [ "serve" ];
+      Env = [
+        "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+        "HTTP_SERVER_HOST=0.0.0.0" "HTTP_SERVER_PORT=5210"
+        "STORAGE_ROOT_FOLDER=/data/content" "AB_CDN_CACHE_DIR=/data/ab-cdn"
+        "PROFILE_IMAGES_CACHE_DIR=/data/profile-images" "BVIMPOSTERS_STORE_ROOT=/data/imposters"
+      ];
+      ExposedPorts."5210/tcp" = { };
+    };
+  };
+  web = {
+    name = "foundation-sites";
+    package = sites;
+    config = {
+      Entrypoint = [ "${lib.getExe sites}" ];
+      Env = [
+        "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+        "PATH=${lib.makeBinPath [ pkgs.nodejs-slim_26 ]}:/bin"
+        "HOST=0.0.0.0" "PORT=5212" "NODE_ENV=production" "SITES_STATE_DIR=/data"
+      ];
+      ExposedPorts."5212/tcp" = { };
+    };
+  };
 in {
-  image-gateway = image "foundation-gateway" gateway {
-    Entrypoint = [ "${lib.getExe gateway}" ];
-    Env = [
-      "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "PATH=${lib.makeBinPath [ pkgs.python3 pkgs.nginx ]}"
-    ];
-    ExposedPorts."8080/tcp" = { };
-    StopSignal = "SIGQUIT";
+  image-gateway = image {
+    name = "foundation-gateway";
+    package = gateway;
+    config = {
+      Entrypoint = [ "${lib.getExe gateway}" ];
+      Env = [
+        "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+        "PATH=${lib.makeBinPath [ pkgs.python3 pkgs.nginx ]}"
+      ];
+      ExposedPorts."8080/tcp" = { };
+      StopSignal = "SIGQUIT";
+    };
   };
-  image-apis = image "foundation-apis" catalyst {
-    Entrypoint = [ "${lib.getExe catalyst}" ];
-    Cmd = [ "serve" ];
-    Env = [
-      "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "HTTP_SERVER_HOST=0.0.0.0" "HTTP_SERVER_PORT=5210"
-      "STORAGE_ROOT_FOLDER=/data/content" "AB_CDN_CACHE_DIR=/data/ab-cdn"
-      "PROFILE_IMAGES_CACHE_DIR=/data/profile-images" "BVIMPOSTERS_STORE_ROOT=/data/imposters"
-    ];
-    ExposedPorts."5210/tcp" = { };
-  };
-  image-sites = image "foundation-sites" sites {
-    Entrypoint = [ "${lib.getExe sites}" ];
-    Env = [
-      "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "PATH=${lib.makeBinPath [ pkgs.nodejs-slim_26 ]}:/bin"
-      "HOST=0.0.0.0" "PORT=5212" "NODE_ENV=production" "SITES_STATE_DIR=/data"
-    ];
-    ExposedPorts."5212/tcp" = { };
-  };
+  image-apis = image apis;
+  image-sites = image web;
+  image-apis-stream = stream apis;
+  image-sites-stream = stream web;
 }

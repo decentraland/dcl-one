@@ -179,7 +179,7 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 | Package | Published by | Contents |
 | --- | --- | --- |
-| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, web job | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
+| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job, from the web job's tested artifact | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
 | `@dcl-regenesislabs/bevy-headless-server` + `-darwin-arm64`, `-darwin-x64`, `-linux-x64`, `-win32-x64` | `bevy-explorer-headless.yml`, `publish` job | Launcher, engine and `dcl_deno_ipc` sidecar |
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a

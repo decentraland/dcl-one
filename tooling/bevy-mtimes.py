@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep unchanged engine, Bevy and protocol inputs fresh across CI checkouts.
+"""Keep unchanged engine, vendored and protocol inputs fresh across CI checkouts.
 
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
@@ -14,7 +14,7 @@ of every run, changed or not. Crates from git or crates.io are judged by version
 
 To Cargo this is a checkout that never moved. Floored times stay valid when a cache archive
 keeps whole seconds only; in CI the tree is only ever written at checkout, before any build.
-Without a manifest (a cold cache, or one rust-cache pruned) restore changes nothing.
+Without a manifest (a cold cache) restore changes nothing.
 """
 import argparse
 import json
@@ -25,9 +25,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
-TREES = (TREE, 'rendering/bevy-explorer/source', 'library/protocol/proto')
-# rust-cache keeps a .fingerprint entry whose name, up to the last '-', is a dependency's
-# package name (cleanup.ts rmExcept); `bevy` is one, so the manifest survives its pruning.
+TREES = (TREE, 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
+# tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>;
+# `bevy` is no workspace crate, so the manifest survives its pruning.
 MANIFEST = 'bevy-mtimes.json'
 SECOND = 10**9
 
