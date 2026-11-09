@@ -7,7 +7,8 @@
 // As upstream, the file lives in a module snapshot for 60s rather than in the query cache, so a page
 // invalidating its queries (after a purchase) does not switch a flag off while it refetches. A read gets
 // 3s and one retry; a failed refresh keeps the last answer, and a mount or focus 10s later tries again.
-// Flags a host (or a test) primes are kept: no read replaces them.
+// Flags a host (or a test) primes are kept: no read replaces them. As upstream, a variant keeps only its string
+// payload (an address list, for one).
 
 import { useEffect, useSyncExternalStore } from "react";
 
@@ -29,12 +30,20 @@ export const REMOTE_FLAG = {
    * off, so the flag is turned on only where the node does.
    */
   marketplaceFeatures: "shop-marketplace-features",
+  /**
+   * The creator's store dashboard, My Store (shop@3a322cf9 useMyStoreAccess). Its variant may name accounts, and
+   * then only they get in (seller/lib/featureFlags.ts).
+   */
+  myStore: "shop-my-store",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
 
+/** The flags file as kept: each flag on only where it says `true`, and each enabled variant's string payload. */
+export type RemoteFlagsAnswer = { flags: Record<string, boolean>; variants: Record<string, string> };
+
 type FlagsWindow = Window & typeof globalThis & { __SHOP_FEATURE_FLAGS__?: string };
-type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>> };
+type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>>; variants: Readonly<Record<string, string>> };
 
 let snapshot: Snapshot | null = null;
 let inflight: Promise<void> | null = null;
@@ -68,13 +77,33 @@ function publish(next: Snapshot | null): void {
   notify();
 }
 
-export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
+/**
+ * The service's answer as upstream keeps it (shop@3a322cf9 fetchSnapshot): a flag on only where it says `true`, and a
+ * variant's payload only when the variant is enabled and its value a string; the rest of the envelope is dropped.
+ */
+export function parseRemoteFlags(body: unknown): RemoteFlagsAnswer {
+  const file = (body && typeof body === "object" ? body : {}) as {
+    flags?: Record<string, unknown> | null;
+    variants?: Record<string, { enabled?: unknown; payload?: { value?: unknown } | null } | null> | null;
+  };
+  const flags: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(file.flags ?? {})) flags[key] = value === true;
+  const variants: Record<string, string> = {};
+  for (const [key, variant] of Object.entries(file.variants ?? {})) {
+    const value = variant?.payload?.value;
+    if (variant?.enabled === true && typeof value === "string") variants[key] = value;
+  }
+  return { flags, variants };
+}
+
+export async function readRemoteFlags(signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
   const res = await fetch(`${service()}/${APP}.json`, { signal });
   if (!res.ok) throw new Error(`feature flags: HTTP ${res.status}`);
-  const body = (await res.json()) as { flags?: Record<string, unknown> } | null;
-  const flags: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(body?.flags ?? {})) flags[key] = value === true;
-  return flags;
+  return parseRemoteFlags(await res.json());
+}
+
+export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
+  return (await readRemoteFlags(signal)).flags;
 }
 
 /**
@@ -92,10 +121,10 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   const read: Promise<void> = (async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const flags = await fetchRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
+        const { flags, variants } = await readRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
         if (generation !== started) return;
         failedAt = null;
-        publish({ at: stamp(), primed: false, flags });
+        publish({ at: stamp(), primed: false, flags, variants });
         return;
       } catch {
         // Retried once; after that the last answer (or "off") stands until the backoff passes.
@@ -121,14 +150,19 @@ export function remoteFlagsPrimed(): boolean {
 /**
  * Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. A
  * primed answer is kept for the document's life (every server-rendered Shop page primes one): a flag switched off
- * upstream reaches an open tab on its next full load, not within the session.
+ * upstream reaches an open tab on its next full load, not within the session. Variants not given are none.
  */
-export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
+export function primeRemoteFlags(flags: Record<string, boolean> | null, variants: Record<string, string> = {}): void {
   generation++;
   failedAt = null;
   // A read already running belongs to the old generation; the next refresh starts its own.
   inflight = null;
-  publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
+  publish(flags ? { at: Date.now(), primed: true, flags: { ...flags }, variants: { ...variants } } : null);
+}
+
+/** A rollout flag's variant payload as last answered (upstream's getAddressListVariant reads it), or null without one. */
+export function remoteFlagVariant(flag: RemoteFlag): string | null {
+  return snapshot?.variants[`${APP}-${flag}`] ?? null;
 }
 
 /**

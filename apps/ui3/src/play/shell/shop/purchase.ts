@@ -34,7 +34,7 @@ import { fetchBannedNames } from '../../../shop/names/api'
 import { checkNameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { fetchRemoteFlags, primeRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
+import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '../../../shop/model/address'
 import { itemAsset } from '../../../shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '../../../shop/model/money'
@@ -254,7 +254,11 @@ const LIVE: ShellShopServices = {
   balance: (account, client) => getUsdBalance(account, client),
   resolvers: (client) => liveResolvers(client),
   reader: () => shopChainReader(),
-  primeFlags: async () => primeRemoteFlags(await fetchRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS))),
+  primeFlags: async () => {
+    // With the variants: priming without them would drop an address list for the rest of the document.
+    const { flags, variants } = await readRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS))
+    primeRemoteFlags(flags, variants)
+  },
   run: runGroup,
   watch: watchGroup,
   creditRecord: async (buyer, creditIds, client) => {
