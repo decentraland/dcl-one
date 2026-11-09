@@ -43,6 +43,18 @@ function identity(expiresAt: number): AuthIdentity {
   };
 }
 
+describe("the browser host's transport", () => {
+  it("sends through the fetch it is given, and a transport given wins over it", async () => {
+    const asked: string[] = [];
+    const fetchImpl = (async (url: string) => (asked.push(url), new Response("{}", { status: 200 }))) as unknown as typeof fetch;
+    const viaFetch = hostApiOptions({ base: "https://node.test", mode: "canonical", fetchImpl });
+    await createShopApi(viaFetch).request(ENDPOINTS.catalogShop);
+    expect(asked).toEqual(["https://node.test/shop-api/v3/catalog/shop"]);
+    const transport = async () => ({ status: 200, body: "{}" });
+    expect(hostApiOptions({ base: "https://node.test", mode: "canonical", fetchImpl, transport }).transport).toBe(transport);
+  });
+});
+
 describe("the browser host's identity signer", () => {
   it("gives no signer for an identity that has already expired", () => {
     expect(identitySigner(identity(Date.now() - 1))).toBeNull();

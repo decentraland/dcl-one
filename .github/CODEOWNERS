@@ -139,6 +139,14 @@
 /library/ui/port-verification.json @decentraland/web-applications
 /library/ui/figma/lock-digests.mjs @decentraland/web-applications
 /library/ui/figma/port-verification.mjs @decentraland/web-applications
+/library/ui/figma/public-foundations.mjs @decentraland/web-applications
+/library/ui/figma/src/public-foundations.test.ts @decentraland/web-applications
+/library/ui/test/foundations-source.test.ts @decentraland/web-applications
+/library/ui/test/foundations.test.tsx @decentraland/web-applications
+/library/ui/foundations/source.json @decentraland/web-applications
+/library/ui/foundations/typography/font-source.json @decentraland/web-applications
+/library/ui/figma/src/install.ts @decentraland/web-applications
+/library/ui/figma/src/install.test.ts @decentraland/web-applications
 
 # ui-library-workflow
 /.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra

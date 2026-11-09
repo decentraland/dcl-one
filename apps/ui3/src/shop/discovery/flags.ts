@@ -5,15 +5,14 @@
 // there too, but only market/access.tsx reads it: a declared value stands at once (else it waits for the file), and
 // the Marketplace still needs a web3 wallet session. So may My Store's (`dapps-shop-my-store`, upstream's), read only by
 // seller/lib/featureFlags.ts: a declared value stands at once, and the file's address list then does not apply.
+//
+// The browser host's switches: what the page declares (`window.__SHOP_FLAGS__`) over the file as this page holds it
+// (lib/remoteFlags.ts). How the two combine is lib/rolloutFlags.ts.
 
-import { REMOTE_FLAG, remoteFlag } from "./lib/remoteFlags";
+import { remoteFlag } from "./lib/remoteFlags";
+import { declaredOr, resolveShopFlags, type HostShopFlags, type ShopFlags } from "./lib/rolloutFlags";
 
-export type ShopFlags = {
-  creatorSales: boolean;
-};
-
-/** What a host may declare in `window.__SHOP_FLAGS__`. */
-export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean };
+export type { HostShopFlags, ShopFlags };
 
 declare global {
   interface Window {
@@ -28,12 +27,11 @@ export function hostShopFlags(): HostShopFlags {
 
 /** A switch as a host's declaration says, else as the file answered (`null` while it has not). */
 export function hostOr(key: keyof HostShopFlags, remote: boolean | null): boolean | null {
-  const declared = hostShopFlags()[key];
-  return typeof declared === "boolean" ? declared : remote;
+  return declaredOr(hostShopFlags(), key, remote);
 }
 
 export function shopFlags(): ShopFlags {
-  return { creatorSales: hostOr("creatorSales", remoteFlag(REMOTE_FLAG.creatorSales)) === true };
+  return resolveShopFlags(hostShopFlags(), remoteFlag);
 }
 
 export function isIapMode(): boolean {

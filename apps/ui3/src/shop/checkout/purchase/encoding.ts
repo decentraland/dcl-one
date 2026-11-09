@@ -7,56 +7,11 @@
 
 import { encodeAbiParameters, encodeFunctionData, getAbiItem, pad, stringToHex, toFunctionSelector, toHex, type Hex } from "viem";
 
-import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
+import { ASSET_TYPE, type ListingCoupon, type SignedTrade, type TradeAssetWire, type TradeChecksWire } from "../lib/trade";
 import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from "@shop/checkout/chain/abi";
 
 export { amoyGasOverrides } from "../chain/wallet";
-
-/** The off-chain marketplace asset types (`src/shop/evm/trade.rs`, `ASSET_TYPE_*`). */
-export const ASSET_TYPE = { ERC20: 1, USD_PEGGED_MANA: 2, ERC721: 3, COLLECTION_ITEM: 4 } as const;
-
-export type TradeAssetWire = {
-  assetType: number;
-  contractAddress: string;
-  extra?: string;
-  amount?: string;
-  tokenId?: string;
-  itemId?: string;
-  /** On-chain-shaped assets carry a generic value. */
-  value?: string;
-  beneficiary?: string;
-};
-
-export type TradeChecksWire = {
-  uses: number;
-  /** Stored in milliseconds, signed and checked on chain in seconds. */
-  expiration: number;
-  effective: number;
-  salt: string;
-  contractSignatureIndex: number;
-  signerSignatureIndex: number;
-  allowedRoot?: string;
-  externalChecks?: { contractAddress: string; selector: string; value: string; required: boolean }[];
-};
-
-/** `GET /v1/trades/{id}`: a signed listing, exactly what the marketplace verifies. */
-export type SignedTrade = {
-  id: string;
-  chainId: number;
-  /** The marketplace version the trade was signed for. */
-  contract: string;
-  signer: string;
-  signature: string;
-  network?: string;
-  type?: string;
-  createdAt?: number;
-  checks: TradeChecksWire;
-  sent: TradeAssetWire[];
-  received: TradeAssetWire[];
-};
-
-/** A creator's rate coupon with the Merkle proof for this listing's collection (the catalogue row). */
-export type ListingCoupon = ShopCoupon;
+export { ASSET_TYPE, type ListingCoupon, type SignedTrade, type TradeAssetWire, type TradeChecksWire };
 
 /** The credit fields the CreditsManager spends: a v2 authorization's `credit`. */
 export type SpendableCredit = {
