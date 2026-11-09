@@ -658,6 +658,30 @@ pub struct SocialConfig {
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
 
+    /// Run the badge processor (leased: the primary only, and only while
+    /// social writes are enabled): it reads social.client_events,
+    /// content.deployments, the Polygon shop logs and mirrors and the accepted
+    /// referrals, and grants upstream's evaluated badges with their
+    /// badge_granted notifications.
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub badges_processor_enabled: bool,
+
+    /// Rows (or recounted wallets) the badge processor writes per transaction.
+    #[arg(long, env = "BADGES_PROCESSOR_BATCH_SIZE", default_value_t = 200)]
+    pub badges_processor_batch_size: u32,
+
+    /// Upstream's EVENT_PROCESSING_MAX_AGE_IN_SECONDS: the badge processor
+    /// passes, without effect, an event (client event, deployment, sale)
+    /// older than this many seconds by its own time; 0 keeps every event.
+    #[arg(long, env = "BADGES_EVENT_MAX_AGE_SECS", default_value_t = 0)]
+    pub badges_event_max_age_secs: u64,
+
+    /// A deployment the node stored more than this many seconds after its
+    /// entity timestamp is history a syncing node caught up on: the badge
+    /// processor passes it without effect; 0 keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 86_400)]
+    pub badges_deployment_max_lag_secs: u64,
+
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
     /// is set, llm when TRANSLATE_LLM_BASE_URL is, else disabled (503).
