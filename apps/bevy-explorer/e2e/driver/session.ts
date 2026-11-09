@@ -7,7 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
-import { type Console, ConsoleError } from './console.ts'
+import { type Console, ConsoleError, scrubCredentials } from './console.ts'
 import { Explorer, type HudLoginReply, type WorldState } from './explorer.ts'
 import { buildAuthIdentity, newPrivateKey } from './identity.ts'
 import { NativeConsole, spawnNative } from './native.ts'
@@ -17,7 +17,12 @@ import { until } from './wait.ts'
 import { BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
-export type SignIn = 'account' | 'guest' | 'none'
+/** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
+ *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
+ *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
+ *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -86,6 +91,20 @@ export async function openExplorer(options: OpenOptions = {}): Promise<Explorer>
   return (await openSession(options)).explorer
 }
 
+/** Close the session for these options, if one is open: the next scenario that asks for it boots
+ *  it anew. Every client renders while it is open, and they share the GPU. */
+export async function closeSession(options: OpenOptions = {}, target: Target = readTarget()): Promise<void> {
+  const id = key(target, options)
+  const session = sessions.get(id)
+  if (!session) return
+  sessions.delete(id)
+  try {
+    await (await session).close()
+  } catch {
+    // a client that is already gone, or never booted
+  }
+}
+
 export async function closeSessions(): Promise<void> {
   const open = [...sessions.values()]
   sessions.clear()
@@ -111,22 +130,30 @@ export async function closeSessions(): Promise<void> {
 /** A failed boot's evidence in the report: what the page said (`boot-<n>.console.txt`) and how it
  *  looked (`boot-<n>.jpg`), under `report/boot-failures/`; the console's last lines go to the log
  *  as well, where a step timeout can still cut the run off before the report is uploaded. */
-export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
-  const dir = path.join(REPORT_DIR, 'boot-failures')
+export async function keepBootFailure(boot: number, error: BootError, dir = path.join(REPORT_DIR, 'boot-failures')): Promise<void> {
   await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${error.console.join('\n')}\n`)
+  // the report and the log are public: a line can carry a credential (a room's access token)
+  const lines = error.console.map(scrubCredentials)
+  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${lines.join('\n')}\n`)
   if (error.screenshot) await writeFile(path.join(dir, `boot-${boot}.jpg`), error.screenshot)
-  const tail = error.console.slice(-20)
-  console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
+  const tail = lines.slice(-20)
+  console.error(`[e2e] the page's console, the last ${tail.length} of ${lines.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
 }
 
 /** How long the world is waited for once signed in. */
 export const WORLD_TIMEOUT_MS = 300_000
 
+/** The HUD's world, by the rail's top button: the HUD puts it up once its own phase reaches the
+ *  world, which can come after the engine's. */
+export const WORLD_HUD = { name: 'Sidebar settings', role: 'button' } as const
+
+/** How long the HUD's world is waited for once the engine is in the world. */
+export const HUD_TIMEOUT_MS = 60_000
+
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
- *  sign-in command (120 s) and the world (`WORLD_TIMEOUT_MS`). A scenario's own budget starts
- *  after it. */
-export const BOOT_ALLOWANCE_MS = 720_000
+ *  sign-in command (120 s), the world (`WORLD_TIMEOUT_MS`) and the HUD's (`HUD_TIMEOUT_MS`). A
+ *  scenario's own budget starts after it. */
+export const BOOT_ALLOWANCE_MS = 780_000
 
 async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const realm = options.realm ?? target.realm
@@ -159,8 +186,13 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const explorer = new Explorer(console_)
   try {
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
-    // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
-    if (target.transport === 'web') await arrive(explorer, realm, position)
+    if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
+      // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
+      await arrive(explorer, realm, position)
+      // the engine is in the world before the HUD has put up its own (the rail, and the chat,
+      // which opens with its input focused): a key sent sooner can land in that input
+      await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
+    }
   } catch (error) {
     // a page that opened but never arrived: what it said and how it looks, with the error; the
     // console with the credentials the sign-in sent replaced, should the page have quoted one
@@ -226,6 +258,12 @@ export async function signIn(
   destination: { realm: string; position: string } = { realm: target.realm, position: target.position }
 ): Promise<WorldState> {
   const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
+  if (target.transport === 'web' && mode === 'unsigned-guest') {
+    // the engine's own guest: the HUD keeps its start page and the world stays held, which is all
+    // a reading of the engine's sign-in needs
+    await explorer.loginGuest()
+    return explorer.worldState()
+  }
   if (target.transport === 'web' && mode !== 'none') {
     const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())
     let reply: HudLoginReply
@@ -247,11 +285,13 @@ export async function signIn(
     if (reply.phase !== 'entering' && reply.phase !== 'world') {
       throw new Error(`the HUD did not take the destination ${destination.realm} at ${destination.position}: it answered the sign-in in phase ${reply.phase}`)
     }
+    // a first login deploys its new profile: the catalyst's window starts here
+    explorer.profileDeployed()
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
   if (mode === 'account') {
     await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
-  } else if (mode === 'guest') {
+  } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
   return enterWorld(explorer, WORLD_TIMEOUT_MS)
