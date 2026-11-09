@@ -95,7 +95,7 @@ Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav native
 test what they compiled: those run on `ubuntu-24.04`, the image the uuav binaries lock
 records and the glibc 2.39 floor of the shipped Linux desktop, headless and uuav
 binaries; the 16-core Linux runner exists only as `ubuntu-24.04-16core`. macOS jobs run
-on `macos-15` (the Development workflow on `macos-26`), Windows jobs on `windows-2025`; `xlarge` and `16core` where the
+on `macos-15`, Windows jobs on `windows-2025`; `xlarge` and `16core` where the
 explorer's test suite and headless packages need them.
 
 ## CI runners
@@ -120,9 +120,8 @@ benchmark legs keep their laptop labels from `tooling/benchmark-inputs.py`.
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 3 | apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 4 | bevy-explorer-desktop, bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
-| `RUNNER_MACOS` | `macos-15` | 2 | uuav-native, uuav-verify |
+| `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
 | `RUNNER_MACOS_XLARGE` | `macos-15-xlarge` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
-| `RUNNER_MACOS_26` | `macos-26` | 2 | development (2) |
 
 ```bash
 for v in RUNNER_LINUX_X86_UBUNTU_24_04 RUNNER_LINUX_X86; do

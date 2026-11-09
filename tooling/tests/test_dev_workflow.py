@@ -25,7 +25,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         rust, smoke = jobs()['rust'], jobs()['smoke']
         for job in (rust, smoke):
             # Both platforms on main; PRs add macOS with the ci:macos label.
-            self.assertRegex(job, r'os: (\[ubuntu-26\.04, macos-26\]|.*"ubuntu-26\.04", "macos-26")')
+            self.assertRegex(job, r'os: (\[ubuntu-26\.04, macos-15\]|.*"ubuntu-26\.04", "macos-15")')
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
