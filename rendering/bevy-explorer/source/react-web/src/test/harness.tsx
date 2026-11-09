@@ -235,7 +235,9 @@ export function fakeSession(): EngineSession {
       // the engine's first snapshot: idle (null would mean a build without voice chat)
       state: { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null },
       active: [],
+      activeLoaded: false,
       scene: null,
+      guest: false,
       act: vi.fn()
     },
     nav: vi.fn(),

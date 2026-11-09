@@ -31,7 +31,8 @@ use web_time::Duration;
 use crate::rpc_websocket::PlatformRpcWebSocket;
 use crate::runtime::SocialRuntime;
 use crate::voice::{
-    self, IncomingPrivateCall, PrivateVoiceStatus, PrivateVoiceUpdate, VoiceEvent, VoiceQuery,
+    self, rpc::StreamMessage, IncomingPrivateCall, PrivateVoiceStatus, PrivateVoiceUpdate,
+    VoiceEvent, VoiceQuery,
 };
 use crate::{DirectChatMessage, DmPrivacy, DmPrivacyOf};
 
@@ -906,18 +907,33 @@ async fn run_one_connection(
     };
     // Subscribe to the voice chat updates (private calls, community rooms), then ask for a call
     // that rang while we were away, as unity-explorer's voice services do on every (re)connect.
+    // Like community connectivity, a refusal is not fatal: it costs calls, not friends, DMs or
+    // blocks.
     debug!("[social] Subscribing to voice chat updates...");
-    let mut private_voice_updates = service_module
+    let private_voice_updates = match service_module
         .subscribe_to_private_voice_chat_updates()
         .await
-        .map_err(dbgerr)?;
-    let mut community_voice_updates = service_module
+    {
+        Ok(updates) => Some(updates),
+        Err(e) => {
+            warn!("[social] no private voice chat updates until the next connection: {e:?}");
+            None
+        }
+    };
+    let community_voice_updates = match service_module
         .subscribe_to_community_voice_chat_updates()
         .await
-        .map_err(dbgerr)?;
-    debug!("[social] Subscribed to voice chat updates");
-    response_sx.send(FriendData::Voice(VoiceEvent::Connected))?;
     {
+        Ok(updates) => Some(updates),
+        Err(e) => {
+            warn!("[social] no community voice chat updates until the next connection: {e:?}");
+            None
+        }
+    };
+    debug!("[social] Subscribed to voice chat updates");
+    // calls work only with their update stream: without it a call would never ring or connect
+    if private_voice_updates.is_some() {
+        response_sx.send(FriendData::Voice(VoiceEvent::Connected))?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         voice::rpc::dispatch(
             service_module.as_ref(),
@@ -1368,13 +1384,19 @@ async fn run_one_connection(
     // Inbound: private voice chat updates (a call ringing, accepted, rejected, ended, expired)
     let sx_private_voice = response_sx.clone();
     let f_private_voice_read = async move {
+        let Some(mut private_voice_updates) = private_voice_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
         while let Some(update) = private_voice_updates.next().await {
             debug!("[social] Received private voice update: {update:?}");
             match voice::rpc::private_update(update) {
-                Some(update) => sx_private_voice
+                StreamMessage::Update(update) => sx_private_voice
                     .send(FriendData::Voice(VoiceEvent::Private(update)))
                     .map_err(dbgerr)?,
-                None => break,
+                StreamMessage::Unknown(status) => {
+                    warn!("[social] private voice update with an unknown status {status}");
+                }
+                StreamMessage::Closed => break,
             }
         }
         Err(anyhow!("[social] private voice update stream ended"))
@@ -1384,13 +1406,19 @@ async fn run_one_connection(
     // Inbound: community voice chat updates (a community room started or ended)
     let sx_community_voice = response_sx.clone();
     let f_community_voice_read = async move {
+        let Some(mut community_voice_updates) = community_voice_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
         while let Some(update) = community_voice_updates.next().await {
             debug!("[social] Received community voice update: {update:?}");
             match voice::rpc::community_update(update) {
-                Some(update) => sx_community_voice
+                StreamMessage::Update(update) => sx_community_voice
                     .send(FriendData::Voice(VoiceEvent::Community(update)))
                     .map_err(dbgerr)?,
-                None => break,
+                StreamMessage::Unknown(status) => {
+                    warn!("[social] community voice update with an unknown status {status}");
+                }
+                StreamMessage::Closed => break,
             }
         }
         Err(anyhow!("[social] community voice update stream ended"))

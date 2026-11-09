@@ -1,6 +1,6 @@
-import { MaskIcon, showToast } from '../../design'
+import { MaskIcon } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
-import { inCommunityStream, streamGate } from '../voiceChat/callGate'
+import { inCommunityStream, streamAct } from '../voiceChat/callGate'
 import playersIcon from '../../assets/chat/players.png'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-large.png'
@@ -13,11 +13,7 @@ export function CommunityStreamBanner({ communityId }: { communityId: string }):
   const { voiceChat } = session
   const live = voiceChat.active.find((c) => c.communityId === communityId)
   if (live == null || inCommunityStream(voiceChat.state, communityId)) return null
-  const join = (): void => {
-    const gate = streamGate(voiceChat.state, session.profile.data?.isGuest === true)
-    if (!gate.allowed) showToast(gate.reason, { tone: 'error' })
-    else voiceChat.act({ op: 'joinCommunityCall', communityId })
-  }
+  const join = (): void => streamAct(voiceChat, { op: 'joinCommunityCall', communityId })
   return (
     <button type="button" className={styles.streamBanner} aria-label={`Join the live voice stream, ${live.participantCount} listening`} onClick={join}>
       <span className={styles.streamLive}>

@@ -4,8 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { SessionProvider } from '../features/session/SessionContext'
 import { VoiceChatPanel } from '../features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from '../features/voiceChat/SceneVoiceChatBanner'
-import { callGate } from '../features/voiceChat/callGate'
-import type { ActiveCommunityVoiceChat, VoiceChatParticipant, VoiceChatState } from '../engine/protocol'
+import { callGate, streamLive } from '../features/voiceChat/callGate'
+import { streamTarget } from '../features/notifications/summary'
+import type { ActiveCommunityVoiceChat, AppNotification, VoiceChatParticipant, VoiceChatState } from '../engine/protocol'
 import { resetProfileStore, seedProfiles } from '../features/session/profileStore'
 import { fakeSession } from './harness'
 
@@ -31,10 +32,10 @@ function participant(address: string, name: string, over: Partial<VoiceChatParti
   return { address, name, hasClaimedName: true, profilePictureUrl: '', role: 'user', isSpeaker: false, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...over }
 }
 
-function renderPanel(state: Partial<VoiceChatState>, over: { active?: ActiveCommunityVoiceChat[]; scene?: ActiveCommunityVoiceChat | null } = {}) {
+function renderPanel(state: Partial<VoiceChatState>, over: { active?: ActiveCommunityVoiceChat[]; scene?: ActiveCommunityVoiceChat | null; guest?: boolean } = {}) {
   const s = fakeSession()
-  s.profile = { ...s.profile, data: { address: ME, name: 'Me', hasClaimedName: true, isGuest: false } }
-  s.voiceChat = { state: { ...idle, ...state }, active: over.active ?? [], scene: over.scene ?? null, act: vi.fn() }
+  s.profile = { ...s.profile, data: { address: ME, name: 'Me', hasClaimedName: true, isGuest: over.guest === true } }
+  s.voiceChat = { state: { ...idle, ...state }, active: over.active ?? [], activeLoaded: over.active != null, scene: over.scene ?? null, guest: over.guest === true, act: vi.fn() }
   render(
     <SessionProvider value={s}>
       <VoiceChatPanel />
@@ -113,6 +114,13 @@ describe('community stream panel', () => {
     ...over
   })
 
+  it('lists the speakers as items whose buttons say their state', () => {
+    renderPanel(inStream({ localRole: 'user', localSpeaker: false, participants: [participant(PEER, 'Mojito', { isSpeaker: true, isMuted: true })] }))
+    const list = screen.getByRole('list', { name: 'Speakers' })
+    expect(list.querySelectorAll(':scope > [role="listitem"] > button')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Mojito, muted' })).toBeInTheDocument()
+  })
+
   it('a listener raises a hand and leaves', async () => {
     const s = renderPanel(inStream({ localRole: 'user', localSpeaker: false }))
     expect(screen.getByRole('dialog', { name: 'Community stream' })).toBeInTheDocument()
@@ -172,6 +180,32 @@ describe('the stream in this scene', () => {
   it('is hidden while in that stream', () => {
     renderPanel({ status: 'inCall', kind: 'community', communityId: 'c1', connection: 'connected' }, { scene: here })
     expect(screen.queryByRole('status', { name: 'Stream in this scene' })).toBeNull()
+  })
+  it('tells a guest why not instead of joining', async () => {
+    const s = renderPanel({}, { scene: here, guest: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Join stream' }))
+    expect(vi.mocked(s.voiceChat.act)).not.toHaveBeenCalled()
+  })
+})
+
+describe('live streams', () => {
+  const live: ActiveCommunityVoiceChat = { communityId: 'c1', communityName: 'C', isMember: true, positions: [], worlds: [], participantCount: 1, moderatorCount: 0 }
+
+  it('the live list wins over a community snapshot once read', () => {
+    expect(streamLive({ active: [], activeLoaded: false }, 'c1', true)).toBe(true)
+    expect(streamLive({ active: [], activeLoaded: true }, 'c1', true)).toBe(false)
+    expect(streamLive({ active: [live], activeLoaded: true }, 'c1', false)).toBe(true)
+  })
+
+  it('an old stream notification does not join a stream that has ended', () => {
+    const n: AppNotification = { id: 'n', type: 'community_voice_chat_started', timestamp: '0', read: false, metadata: { communityId: 'c1' } }
+    const s = fakeSession()
+    s.voiceChat = { ...s.voiceChat, active: [], activeLoaded: true, act: vi.fn() }
+    streamTarget(n, s.voiceChat)?.()
+    expect(vi.mocked(s.voiceChat.act)).not.toHaveBeenCalled()
+    s.voiceChat = { ...s.voiceChat, active: [live] }
+    streamTarget(n, s.voiceChat)?.()
+    expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'joinCommunityCall', communityId: 'c1' })
   })
 })
 

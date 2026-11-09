@@ -61,7 +61,8 @@ impl Plugin for VoiceChatPlugin {
         }
         app.init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
-            .init_resource::<VoiceInputs>();
+            .init_resource::<VoiceInputs>()
+            .init_resource::<VoiceCommands>();
         app.add_systems(
             Update,
             (
@@ -104,11 +105,17 @@ pub const VOICE_CHAT_CHANNEL: &str = "voice-chat";
 pub struct CallMic {
     pub enabled: bool,
     pub in_call: bool,
+    /// From the call reaching `InCall` until it is over, the nearby mic does not publish.
+    pub suppress_nearby: bool,
 }
 
-/// Inputs queued by observers, console commands and the mic key for the next drive.
+/// Inputs queued by observers and the mic key for the next drive.
 #[derive(Resource, Default)]
 pub struct VoiceInputs(pub VecDeque<Input>);
+
+/// Console commands, refused like the HUD's actions.
+#[derive(Resource, Default)]
+struct VoiceCommands(VecDeque<Input>);
 
 /// The voice room entity: the LiveKit room of the call, with its outgoing channels (unused, the
 /// room carries no data of ours, but the control channel must stay open) and its re-dial budget.
@@ -138,8 +145,8 @@ enum Pending {
     AcceptPrivate(oneshot::Receiver<Result<String, VoiceRefusal>>),
     RejectPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
     EndPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
-    StartCommunity(oneshot::Receiver<Result<String, VoiceRefusal>>),
-    JoinCommunity(oneshot::Receiver<Result<String, VoiceRefusal>>),
+    StartCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
+    JoinCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
     EndCommunity(oneshot::Receiver<Result<(), VoiceRefusal>>),
     Moderation(oneshot::Receiver<Result<(), VoiceRefusal>>),
     Mute(oneshot::Receiver<Result<bool, VoiceRefusal>>),
@@ -164,8 +171,12 @@ impl Pending {
             Pending::AcceptPrivate(rx) => Reply::AcceptPrivate(take(rx)?),
             Pending::RejectPrivate(rx) => Reply::RejectPrivate(take(rx)?),
             Pending::EndPrivate(rx) => Reply::EndPrivate(take(rx)?),
-            Pending::StartCommunity(rx) => Reply::StartCommunity(take(rx)?),
-            Pending::JoinCommunity(rx) => Reply::JoinCommunity(take(rx)?),
+            Pending::StartCommunity(id, attempt, rx) => {
+                Reply::StartCommunity(id.clone(), *attempt, take(rx)?)
+            }
+            Pending::JoinCommunity(id, attempt, rx) => {
+                Reply::JoinCommunity(id.clone(), *attempt, take(rx)?)
+            }
             Pending::EndCommunity(rx) => Reply::EndCommunity(take(rx)?),
             Pending::Moderation(rx) => Reply::Moderation(take(rx)?),
             Pending::Mute(rx) => Reply::Moderation(take(rx)?.map(|_| ())),
@@ -286,12 +297,27 @@ type VoiceRoomQuery<'w, 's> = Query<
     ),
 >;
 
+fn user_refusal(
+    disable_realm_comms: Option<&DisableRealmComms>,
+    disable_gatekeeper: &DisableSceneRoomGatekeeper,
+    wallet: &Wallet,
+) -> Option<&'static str> {
+    if disable_realm_comms.is_some_and(|d| d.0) || disable_gatekeeper.0 {
+        Some("voice chat is disabled")
+    } else if wallet.address().is_none() || wallet.is_guest() {
+        Some(state::GUEST_REFUSAL)
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
     mut inputs: ResMut<VoiceInputs>,
+    mut console: ResMut<VoiceCommands>,
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
     social: Res<SocialClient>,
@@ -303,10 +329,23 @@ fn drive_voice_chat(
 ) {
     let now = time.elapsed_secs_f64();
     let me = wallet.address();
-    if voice.state.participants.is_empty() || voice.state.status.is_not_connected() {
-        voice.state.set_me(me);
-    }
     let mut force_snapshot = false;
+    if voice.state.me() != me {
+        if voice.state.is_active() {
+            info!(target: "comms::voice_chat", "the account changed: ending the call");
+        }
+        inputs.0.push_front(Input::SignedOut);
+    }
+    let refusal = user_refusal(disable_realm_comms.as_deref(), &disable_gatekeeper, &wallet);
+    for input in console.0.drain(..) {
+        match refusal {
+            Some(reason) => {
+                voice.state.error = Some(reason.to_owned());
+                force_snapshot = true;
+            }
+            None => inputs.0.push_back(input),
+        }
+    }
 
     // the HUD
     for event in system_api.read() {
@@ -320,12 +359,8 @@ fn drive_voice_chat(
             }
             SystemApi::VoiceChatAction(action) => {
                 debug!(target: "comms::voice_chat", "action {action:?}");
-                if disable_realm_comms.as_ref().is_some_and(|d| d.0) || disable_gatekeeper.0 {
-                    voice.state.error = Some("voice chat is disabled".to_owned());
-                    force_snapshot = true;
-                } else if me.is_none() || wallet.is_guest() {
-                    // Unity: guests are shown an upgrade prompt
-                    voice.state.error = Some(state::GUEST_REFUSAL.to_owned());
+                if let Some(reason) = refusal {
+                    voice.state.error = Some(reason.to_owned());
                     force_snapshot = true;
                 } else {
                     match action_input(action) {
@@ -400,9 +435,10 @@ fn drive_voice_chat(
             room.reconnects = 0;
             inputs.0.push_back(Input::RoomConnected);
         }
+        // a refused dial keeps its `Connecting` marker beside `ConnectFailed`
         let dropped = match disconnected {
             Some(d) => Some((d.terminal, d.reason.clone())),
-            None if failed && room.redial_at.is_none() && !connecting => {
+            None if failed && room.redial_at.is_none() => {
                 Some((false, "the connection was refused".to_owned()))
             }
             None => None,
@@ -437,6 +473,10 @@ fn drive_voice_chat(
             }
         } else if room.redial_at.is_some_and(|due| now >= due) {
             room.redial_at = None;
+            // only an added marker dials: a refused room still carries the last one
+            if connecting {
+                commands.entity(entity).remove::<Connecting>();
+            }
             commands.entity(entity).try_insert(Connecting);
         }
     }
@@ -504,9 +544,16 @@ fn drive_voice_chat(
                             })
                         })
                     }
-                    Rpc::StartCommunity { community_id } => {
+                    Rpc::StartCommunity {
+                        community_id,
+                        attempt,
+                    } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::StartCommunity(rx));
+                        voice.pending.push(Pending::StartCommunity(
+                            community_id.clone(),
+                            attempt,
+                            rx,
+                        ));
                         client.map(|c| {
                             c.voice(VoiceQuery::StartCommunity {
                                 community_id,
@@ -514,9 +561,16 @@ fn drive_voice_chat(
                             })
                         })
                     }
-                    Rpc::JoinCommunity { community_id } => {
+                    Rpc::JoinCommunity {
+                        community_id,
+                        attempt,
+                    } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::JoinCommunity(rx));
+                        voice.pending.push(Pending::JoinCommunity(
+                            community_id.clone(),
+                            attempt,
+                            rx,
+                        ));
                         client.map(|c| {
                             c.voice(VoiceQuery::JoinCommunity {
                                 community_id,
@@ -679,7 +733,13 @@ fn drive_voice_chat(
             }
         }
     }
+    voice.state.set_me(me);
     call_mic.in_call = voice.state.is_in_call() && voice.state.room_connected;
+    if voice.state.is_in_call() {
+        call_mic.suppress_nearby = true;
+    } else if voice.state.status.is_not_connected() {
+        call_mic.suppress_nearby = false;
+    }
     if !call_mic.in_call && call_mic.enabled {
         call_mic.enabled = false;
         voice.state.mic_enabled = false;
@@ -859,7 +919,7 @@ struct VoiceCallCommand {
     address: String,
 }
 
-fn voice_call(mut input: ConsoleCommand<VoiceCallCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_call(mut input: ConsoleCommand<VoiceCallCommand>, mut inputs: ResMut<VoiceCommands>) {
     let Some(Ok(command)) = input.take() else {
         return;
     };
@@ -876,7 +936,7 @@ fn voice_call(mut input: ConsoleCommand<VoiceCallCommand>, mut inputs: ResMut<Vo
 #[command(name = "/voice_accept")]
 struct VoiceAcceptCommand;
 
-fn voice_accept(mut input: ConsoleCommand<VoiceAcceptCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_accept(mut input: ConsoleCommand<VoiceAcceptCommand>, mut inputs: ResMut<VoiceCommands>) {
     if input.take().is_some() {
         inputs.0.push_back(Input::Accept);
         input.reply_ok("accepting");
@@ -888,7 +948,7 @@ fn voice_accept(mut input: ConsoleCommand<VoiceAcceptCommand>, mut inputs: ResMu
 #[command(name = "/voice_reject")]
 struct VoiceRejectCommand;
 
-fn voice_reject(mut input: ConsoleCommand<VoiceRejectCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_reject(mut input: ConsoleCommand<VoiceRejectCommand>, mut inputs: ResMut<VoiceCommands>) {
     if input.take().is_some() {
         inputs.0.push_back(Input::Reject);
         input.reply_ok("rejecting");
@@ -900,7 +960,7 @@ fn voice_reject(mut input: ConsoleCommand<VoiceRejectCommand>, mut inputs: ResMu
 #[command(name = "/voice_end")]
 struct VoiceEndCommand;
 
-fn voice_end(mut input: ConsoleCommand<VoiceEndCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_end(mut input: ConsoleCommand<VoiceEndCommand>, mut inputs: ResMut<VoiceCommands>) {
     if input.take().is_some() {
         inputs.0.push_back(Input::EndCall);
         input.reply_ok("ending");
@@ -919,7 +979,7 @@ struct VoiceCommunityCommand {
 
 fn voice_community(
     mut input: ConsoleCommand<VoiceCommunityCommand>,
-    mut inputs: ResMut<VoiceInputs>,
+    mut inputs: ResMut<VoiceCommands>,
 ) {
     let Some(Ok(command)) = input.take() else {
         return;
@@ -953,7 +1013,7 @@ struct VoiceHandCommand {
     position: String,
 }
 
-fn voice_hand(mut input: ConsoleCommand<VoiceHandCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_hand(mut input: ConsoleCommand<VoiceHandCommand>, mut inputs: ResMut<VoiceCommands>) {
     let Some(Ok(command)) = input.take() else {
         return;
     };
@@ -977,7 +1037,7 @@ struct VoiceMicCommand {
     state: String,
 }
 
-fn voice_mic(mut input: ConsoleCommand<VoiceMicCommand>, mut inputs: ResMut<VoiceInputs>) {
+fn voice_mic(mut input: ConsoleCommand<VoiceMicCommand>, mut inputs: ResMut<VoiceCommands>) {
     let Some(Ok(command)) = input.take() else {
         return;
     };
@@ -1004,7 +1064,7 @@ struct VoiceModerateCommand {
 
 fn voice_moderate(
     mut input: ConsoleCommand<VoiceModerateCommand>,
-    mut inputs: ResMut<VoiceInputs>,
+    mut inputs: ResMut<VoiceCommands>,
 ) {
     let Some(Ok(command)) = input.take() else {
         return;
@@ -1027,4 +1087,106 @@ fn voice_moderate(
     };
     inputs.0.push_back(action);
     input.reply_ok(format!("{} {address:#x}", command.action));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn in_call() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_event::<SystemApi>()
+            .add_event::<VoiceEventReceived>()
+            .add_event::<SystemAudio>()
+            .init_resource::<VoiceChat>()
+            .init_resource::<CallMic>()
+            .init_resource::<VoiceInputs>()
+            .init_resource::<VoiceCommands>()
+            .init_resource::<SocialClient>()
+            .init_resource::<Wallet>()
+            .init_resource::<DisableSceneRoomGatekeeper>()
+            .insert_resource(Time::<()>::default())
+            .init_resource::<Dials>()
+            .add_observer(|_: Trigger<OnAdd, Connecting>, mut dials: ResMut<Dials>| {
+                dials.0 += 1;
+            })
+            .add_systems(Update, drive_voice_chat);
+        {
+            let mut voice = app.world_mut().resource_mut::<VoiceChat>();
+            voice
+                .state
+                .apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+            let attempt = 1;
+            voice.state.apply(
+                Input::Reply(Reply::JoinCommunity(
+                    "c1".to_owned(),
+                    attempt,
+                    Ok("livekit:ws://x".to_owned()),
+                )),
+                0.0,
+            );
+            assert!(voice.state.is_in_call());
+        }
+        let (components, sender, control) = standalone_room_components("ws://x".to_owned());
+        let room = app
+            .world_mut()
+            .spawn((
+                components,
+                VoiceRoom {
+                    kind: Kind::Community,
+                    reconnects: 0,
+                    redial_at: None,
+                    _sender: sender,
+                    _control: control,
+                },
+                Connecting,
+            ))
+            .id();
+        app.update();
+        (app, room)
+    }
+
+    #[derive(Resource, Default)]
+    struct Dials(u32);
+
+    fn refuse(app: &mut App, room: Entity) {
+        app.world_mut().entity_mut(room).insert(ConnectFailed);
+        app.update();
+    }
+
+    fn wait(app: &mut App, secs: f64) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f64(secs));
+        app.update();
+    }
+
+    #[test]
+    fn a_refused_dial_is_redialled_until_the_budget_ends_the_call() {
+        let (mut app, room) = in_call();
+        assert_eq!(app.world().resource::<Dials>().0, 1);
+        for attempt in 1..=MAX_RECONNECTION_ATTEMPTS {
+            refuse(&mut app, room);
+            let entity = app.world().entity(room);
+            assert!(!entity.contains::<ConnectFailed>());
+            assert_eq!(entity.get::<VoiceRoom>().unwrap().reconnects, attempt);
+            wait(&mut app, RECONNECTION_DELAY_SECS / 2.0);
+            assert_eq!(app.world().resource::<Dials>().0, attempt);
+            wait(&mut app, RECONNECTION_DELAY_SECS);
+            assert_eq!(app.world().resource::<Dials>().0, attempt + 1);
+            assert!(app.world().resource::<VoiceChat>().state.is_in_call());
+        }
+        refuse(&mut app, room);
+        app.update();
+        let voice = app.world().resource::<VoiceChat>();
+        assert_eq!(voice.state.status, state::Status::Disconnected);
+        assert!(voice
+            .state
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("refused")));
+        assert!(app.world().get_entity(room).is_err());
+    }
 }

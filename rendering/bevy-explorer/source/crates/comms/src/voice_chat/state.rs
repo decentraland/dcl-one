@@ -173,11 +173,14 @@ pub enum Rpc {
     EndPrivate {
         call_id: String,
     },
+    /// `attempt` numbers the start / join so its reply can be matched to it.
     StartCommunity {
         community_id: String,
+        attempt: u64,
     },
     JoinCommunity {
         community_id: String,
+        attempt: u64,
     },
     EndCommunity {
         community_id: String,
@@ -241,8 +244,10 @@ pub enum Reply {
     AcceptPrivate(Result<String, VoiceRefusal>),
     RejectPrivate(Result<(), VoiceRefusal>),
     EndPrivate(Result<(), VoiceRefusal>),
-    StartCommunity(Result<String, VoiceRefusal>),
-    JoinCommunity(Result<String, VoiceRefusal>),
+    /// With the community and the attempt of the request it answers: a reply to an abandoned
+    /// start / join must not move the state into that room.
+    StartCommunity(String, u64, Result<String, VoiceRefusal>),
+    JoinCommunity(String, u64, Result<String, VoiceRefusal>),
     EndCommunity(Result<(), VoiceRefusal>),
     /// Raise hand, promote, demote, kick, reject, mute: fire and forget, the result only logged
     /// (Unity) or shown as the last error.
@@ -275,6 +280,8 @@ pub enum Input {
     CommunityUpdate(CommunityVoiceUpdate),
     SocialConnected,
     SocialDisconnected,
+    /// Logout, or another wallet.
+    SignedOut,
     // the LiveKit room
     RoomConnected,
     /// The room dropped; `terminal` when it will not come back (kicked, deleted, duplicate
@@ -332,7 +339,17 @@ pub struct CallState {
     /// Why the last action failed or the call could not happen; cleared by the next action.
     pub error: Option<String>,
     pub participants: BTreeMap<Address, Participant>,
+    /// Whether the user wants the call mic up: set on the first connect of a call (a private call
+    /// or a speaker), then only by the user or a demotion, so a re-dial restores it.
+    mic_wanted: bool,
+    /// The room has connected once in this call; later connects are re-dials.
+    connected_once: bool,
     deferred: Option<(Deferred, f64)>,
+    /// Ends a private call the server still has open after the social link dropped while it
+    /// rang; sent when the link is back.
+    pending_end: Option<Rpc>,
+    /// Numbers the community starts / joins (never reset) to match their replies.
+    attempt: u64,
     me: Option<Address>,
 }
 
@@ -348,6 +365,10 @@ impl CallState {
         self.me = me;
     }
 
+    pub fn me(&self) -> Option<Address> {
+        self.me
+    }
+
     pub fn is_in_call(&self) -> bool {
         self.status == Status::InCall
     }
@@ -357,14 +378,23 @@ impl CallState {
         !self.status.is_not_connected()
     }
 
-    /// Back to no call; the last error and a deferred start survive it.
+    /// Back to no call; the last error, a deferred start and a pending end survive it.
     fn reset(&mut self) {
         let me = self.me;
         let error = self.error.take();
         let deferred = self.deferred.take();
+        let pending_end = self.pending_end.take();
+        let attempt = self.attempt;
         *self = Self::new(me);
         self.error = error;
         self.deferred = deferred;
+        self.pending_end = pending_end;
+        self.attempt = attempt;
+    }
+
+    fn set_call_mic(&mut self, enabled: bool, effects: &mut Vec<Effect>) {
+        self.mic_wanted = enabled;
+        effects.push(Effect::SetCallMic(enabled));
     }
 
     fn fail(&mut self, status: Status, message: impl Into<String>) {
@@ -399,6 +429,7 @@ impl CallState {
                     self.error = Some("already in a call".to_owned());
                     return effects;
                 }
+                self.deferred = None;
                 self.reset();
                 self.error = None;
                 self.status = Status::StartingCall;
@@ -463,6 +494,7 @@ impl CallState {
                     self.defer(Deferred::StartCommunity(community_id), now, &mut effects);
                     return effects;
                 }
+                self.deferred = None;
                 self.start_community(community_id, &mut effects);
             }
             Input::JoinCommunity(community_id) => {
@@ -471,6 +503,7 @@ impl CallState {
                     self.defer(Deferred::JoinCommunity(community_id), now, &mut effects);
                     return effects;
                 }
+                self.deferred = None;
                 self.join_community(community_id, &mut effects);
             }
             Input::EndCommunity => {
@@ -530,12 +563,12 @@ impl CallState {
                     return effects;
                 }
                 match self.kind {
-                    Kind::Private => effects.push(Effect::SetCallMic(enabled)),
+                    Kind::Private => self.set_call_mic(enabled, &mut effects),
                     Kind::Community => {
                         if !self.local_speaker {
                             return effects;
                         }
-                        effects.push(Effect::SetCallMic(enabled));
+                        self.set_call_mic(enabled, &mut effects);
                         // Unity `VoiceChatMicrophoneHandler.NotifyMicrophoneStateChange`
                         if let (Some(community_id), Some(me)) = (self.community_id.clone(), self.me)
                         {
@@ -568,6 +601,9 @@ impl CallState {
                 }
             }
             Input::SocialConnected => {
+                if let Some(rpc) = self.pending_end.take() {
+                    effects.push(Effect::Rpc(rpc));
+                }
                 if self.status == Status::GenericError {
                     self.reset();
                 }
@@ -575,10 +611,42 @@ impl CallState {
             Input::SocialDisconnected => {
                 // Unity: the transport closed while not in a call is an error
                 if !self.status.is_not_connected() && self.status != Status::InCall {
+                    // the server keeps a ringing call open until told
+                    self.pending_end = match (self.kind, self.status, self.call_id.clone()) {
+                        (Kind::Private, Status::ReceivedCall, Some(call_id)) => {
+                            Some(Rpc::RejectPrivate { call_id })
+                        }
+                        (
+                            Kind::Private,
+                            Status::StartingCall | Status::StartedCall,
+                            Some(call_id),
+                        ) => Some(Rpc::EndPrivate { call_id }),
+                        _ => None,
+                    };
                     self.drop_call(&mut effects);
                     self.status = Status::GenericError;
                     self.error = Some("the social service disconnected".to_owned());
                 }
+            }
+            Input::SignedOut => {
+                self.deferred = None;
+                self.pending_end = None;
+                // best effort: the old account's social link goes away with it
+                match (self.kind, self.status, self.call_id.clone()) {
+                    (Kind::Private, Status::ReceivedCall, Some(call_id)) => {
+                        effects.push(Effect::Rpc(Rpc::RejectPrivate { call_id }));
+                    }
+                    (
+                        Kind::Private,
+                        Status::StartingCall | Status::StartedCall | Status::InCall,
+                        Some(call_id),
+                    ) => {
+                        effects.push(Effect::Rpc(Rpc::EndPrivate { call_id }));
+                    }
+                    _ => {}
+                }
+                self.drop_call(&mut effects);
+                self.error = None;
             }
             Input::RoomConnected => {
                 if self.status != Status::InCall {
@@ -586,9 +654,14 @@ impl CallState {
                 }
                 self.room_connected = true;
                 effects.push(Effect::Sound(Sound::Join));
-                // Unity `VoiceChatRoomManager.OnConnectionEstablished`: the mic goes up in a
-                // private call and for a speaker
-                if self.kind == Kind::Private || self.local_speaker {
+                // the first connect puts the mic up for whoever may speak; a re-dial keeps what
+                // the user chose since
+                let may_speak = self.kind == Kind::Private || self.local_speaker;
+                if !self.connected_once {
+                    self.connected_once = true;
+                    self.mic_wanted = may_speak;
+                }
+                if may_speak && self.mic_wanted {
                     effects.push(Effect::SetCallMic(true));
                 }
             }
@@ -647,9 +720,15 @@ impl CallState {
     }
 
     fn defer(&mut self, deferred: Deferred, now: f64, effects: &mut Vec<Effect>) {
-        // Unity `VoiceChatOrchestrator`: hang up, wait, then start the new call
+        // hang up, wait, then start the new call; a call ringing for the user cannot be hung
+        // up, so it is refused
         self.deferred = Some((deferred, now + HANG_UP_BEFORE_NEW_CALL_SECS));
-        effects.extend(self.apply(Input::EndCall, now));
+        let hang_up = if self.status == Status::ReceivedCall {
+            Input::Reject
+        } else {
+            Input::EndCall
+        };
+        effects.extend(self.apply(hang_up, now));
     }
 
     fn in_community(&self) -> Option<String> {
@@ -664,8 +743,12 @@ impl CallState {
         self.status = Status::StartingCall;
         self.kind = Kind::Community;
         self.community_id = Some(community_id.clone());
+        self.attempt += 1;
         effects.push(Effect::Sound(Sound::StartStream));
-        effects.push(Effect::Rpc(Rpc::StartCommunity { community_id }));
+        effects.push(Effect::Rpc(Rpc::StartCommunity {
+            community_id,
+            attempt: self.attempt,
+        }));
     }
 
     fn join_community(&mut self, community_id: String, effects: &mut Vec<Effect>) {
@@ -674,7 +757,11 @@ impl CallState {
         self.status = Status::StartingCall;
         self.kind = Kind::Community;
         self.community_id = Some(community_id.clone());
-        effects.push(Effect::Rpc(Rpc::JoinCommunity { community_id }));
+        self.attempt += 1;
+        effects.push(Effect::Rpc(Rpc::JoinCommunity {
+            community_id,
+            attempt: self.attempt,
+        }));
     }
 
     /// The local participant's own metadata names the role and whether the mic may go up.
@@ -688,8 +775,11 @@ impl CallState {
         self.local_speaker = self.kind == Kind::Private || metadata.is_speaker;
         // Unity `VoiceChatRoomManager`: a demoted speaker's mic goes down; a promoted one's
         // comes up muted (here: stays down until toggled)
-        if was_speaker && !self.local_speaker && self.mic_enabled {
-            effects.push(Effect::SetCallMic(false));
+        if was_speaker && !self.local_speaker {
+            if self.mic_enabled {
+                effects.push(Effect::SetCallMic(false));
+            }
+            self.mic_wanted = false;
         }
     }
 
@@ -741,8 +831,16 @@ impl CallState {
                     self.reset();
                 }
             }
-            Reply::StartCommunity(result) => {
-                if self.kind != Kind::Community || self.status != Status::StartingCall {
+            Reply::StartCommunity(community_id, attempt, result) => {
+                if !self.awaits_community(attempt) {
+                    // left (or moved on) while the start was in flight: the server just made a
+                    // stream nobody is in; end it unless the user is in that stream again
+                    let in_it = self.kind == Kind::Community
+                        && !self.status.is_not_connected()
+                        && self.community_id.as_deref() == Some(community_id.as_str());
+                    if result.is_ok() && !in_it {
+                        effects.push(Effect::Rpc(Rpc::EndCommunity { community_id }));
+                    }
                     return;
                 }
                 match result {
@@ -754,8 +852,8 @@ impl CallState {
                     Err(e) => self.refused(e),
                 }
             }
-            Reply::JoinCommunity(result) => {
-                if self.kind != Kind::Community || self.status != Status::StartingCall {
+            Reply::JoinCommunity(_, attempt, result) => {
+                if !self.awaits_community(attempt) {
                     return;
                 }
                 match result {
@@ -778,6 +876,12 @@ impl CallState {
                 }
             }
         }
+    }
+
+    fn awaits_community(&self, attempt: u64) -> bool {
+        self.kind == Kind::Community
+            && self.status == Status::StartingCall
+            && self.attempt == attempt
     }
 
     /// Unity: `InvalidRequest` and `ConflictingError` are "busy", anything else an error.
@@ -811,6 +915,7 @@ impl CallState {
                 let Some(caller) = update.caller.as_deref().and_then(parse_address) else {
                     return;
                 };
+                self.deferred = None;
                 self.reset();
                 self.error = None;
                 self.status = Status::ReceivedCall;
@@ -1083,7 +1188,11 @@ mod tests {
         let mut s = state();
         s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::JoinCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         assert_eq!(s.status, Status::InCall);
@@ -1105,12 +1214,17 @@ mod tests {
             vec![
                 Effect::Sound(Sound::StartStream),
                 Effect::Rpc(Rpc::StartCommunity {
-                    community_id: "c1".to_owned()
+                    community_id: "c1".to_owned(),
+                    attempt: 1
                 })
             ]
         );
         s.apply(
-            Input::Reply(Reply::StartCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::StartCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         assert_eq!(s.status, Status::InCall);
@@ -1138,7 +1252,11 @@ mod tests {
         let mut s = state();
         s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::JoinCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         let listener = Metadata {
@@ -1208,7 +1326,11 @@ mod tests {
         let mut s = state();
         s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::StartCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::StartCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         s.apply(
@@ -1257,7 +1379,11 @@ mod tests {
         let mut s = state();
         s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::JoinCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         s.apply(Input::RoomConnected, 0.0);
@@ -1291,7 +1417,11 @@ mod tests {
         let mut s = state();
         s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::JoinCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         let effects = s.apply(
@@ -1335,7 +1465,8 @@ mod tests {
         assert_eq!(
             effects,
             vec![Effect::Rpc(Rpc::JoinCommunity {
-                community_id: "c1".to_owned()
+                community_id: "c1".to_owned(),
+                attempt: 1
             })]
         );
     }
@@ -1353,11 +1484,274 @@ mod tests {
         let mut s = state();
         s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
         s.apply(
-            Input::Reply(Reply::JoinCommunity(Ok("livekit:c".to_owned()))),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
             0.0,
         );
         assert!(s.apply(Input::SocialDisconnected, 0.0).is_empty());
         assert_eq!(s.status, Status::InCall);
+    }
+
+    fn ringing_for_me(state: &mut CallState) {
+        let mut requested = update("call-9", PrivateVoiceStatus::Requested);
+        requested.caller = Some(format!("{:#x}", addr(3)));
+        state.apply(Input::PrivateUpdate(requested), 0.0);
+        assert_eq!(state.status, Status::ReceivedCall);
+    }
+
+    #[test]
+    fn joining_a_stream_while_a_call_rings_refuses_it_then_joins() {
+        let mut s = state();
+        ringing_for_me(&mut s);
+        let effects = s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
+        assert_eq!(s.status, Status::RejectingCall);
+        assert!(effects.contains(&Effect::Rpc(Rpc::RejectPrivate {
+            call_id: "call-9".to_owned()
+        })));
+        s.apply(Input::Reply(Reply::RejectPrivate(Ok(()))), 10.1);
+        let effects = s.tick(11.0);
+        assert_eq!(s.status, Status::StartingCall);
+        assert_eq!(s.community_id.as_deref(), Some("c1"));
+        assert!(effects.contains(&Effect::Rpc(Rpc::JoinCommunity {
+            community_id: "c1".to_owned(),
+            attempt: 1
+        })));
+    }
+
+    #[test]
+    fn a_new_call_cancels_a_deferred_join() {
+        let mut s = state();
+        ring(&mut s);
+        s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
+        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 10.1);
+        s.apply(Input::StartPrivate(addr(4)), 10.2);
+        s.apply(
+            Input::Reply(Reply::StartPrivate(Err(VoiceRefusal::Conflict(
+                "busy".to_owned(),
+            )))),
+            10.3,
+        );
+        assert!(s.tick(20.0).is_empty());
+        assert_eq!(s.status, Status::Busy);
+
+        let mut s = state();
+        ring(&mut s);
+        s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
+        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 10.1);
+        ringing_for_me(&mut s);
+        s.apply(Input::Reject, 10.3);
+        s.apply(Input::Reply(Reply::RejectPrivate(Ok(()))), 10.4);
+        assert!(s.tick(20.0).is_empty());
+        assert_eq!(s.status, Status::Disconnected);
+    }
+
+    #[test]
+    fn a_reply_to_an_abandoned_join_is_ignored() {
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        let c1 = s.attempt;
+        s.apply(Input::EndCall, 0.0);
+        s.apply(Input::JoinCommunity("c2".to_owned()), 0.0);
+        let effects = s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                c1,
+                Ok("livekit:c1".to_owned()),
+            )),
+            0.0,
+        );
+        assert!(effects.is_empty());
+        assert_eq!(s.status, Status::StartingCall);
+        assert_eq!(s.community_id.as_deref(), Some("c2"));
+        let effects = s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c2".to_owned(),
+                s.attempt,
+                Ok("livekit:c2".to_owned()),
+            )),
+            0.0,
+        );
+        assert_eq!(effects, vec![Effect::SpawnRoom("livekit:c2".to_owned())]);
+    }
+
+    #[test]
+    fn a_stream_started_after_its_creator_left_is_ended() {
+        let mut s = state();
+        s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
+        let first = s.attempt;
+        s.apply(Input::EndCall, 0.0);
+        let effects = s.apply(
+            Input::Reply(Reply::StartCommunity(
+                "c1".to_owned(),
+                first,
+                Ok("livekit:c1".to_owned()),
+            )),
+            0.0,
+        );
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::EndCommunity {
+                community_id: "c1".to_owned()
+            })]
+        );
+        assert_eq!(s.status, Status::Disconnected);
+
+        // started again before the first reply: the stream the user is in again stays
+        let mut s = state();
+        s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
+        let first = s.attempt;
+        s.apply(Input::EndCall, 0.0);
+        s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
+        let effects = s.apply(
+            Input::Reply(Reply::StartCommunity(
+                "c1".to_owned(),
+                first,
+                Ok("livekit:c1".to_owned()),
+            )),
+            0.0,
+        );
+        assert!(effects.is_empty());
+        assert_eq!(s.status, Status::StartingCall);
+    }
+
+    #[test]
+    fn a_redial_keeps_the_mic_the_user_chose() {
+        let mut s = state();
+        ring(&mut s);
+        let mut accepted = update("call-1", PrivateVoiceStatus::Accepted);
+        accepted.connection_url = Some("livekit:p".to_owned());
+        s.apply(Input::PrivateUpdate(accepted), 0.0);
+        let effects = s.apply(Input::RoomConnected, 0.0);
+        assert!(effects.contains(&Effect::SetCallMic(true)));
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert_eq!(
+            s.apply(Input::SetMic(false), 0.0),
+            vec![Effect::SetCallMic(false)]
+        );
+        s.apply(Input::CallMicChanged(false), 0.0);
+        let blip = Input::RoomDisconnected {
+            terminal: false,
+            reason: "MediaFailure".to_owned(),
+        };
+        s.apply(blip.clone(), 0.0);
+        assert_eq!(
+            s.apply(Input::RoomConnected, 0.0),
+            vec![Effect::Sound(Sound::Join)]
+        );
+
+        s.apply(Input::SetMic(true), 0.0);
+        s.apply(blip, 0.0);
+        assert!(s
+            .apply(Input::RoomConnected, 0.0)
+            .contains(&Effect::SetCallMic(true)));
+    }
+
+    #[test]
+    fn a_promoted_listener_stays_muted_across_a_redial() {
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        s.apply(Input::RoomConnected, 0.0);
+        s.apply(
+            Input::ParticipantMetadata {
+                address: me(),
+                metadata: Metadata {
+                    is_speaker: true,
+                    ..Default::default()
+                },
+            },
+            0.0,
+        );
+        assert!(s.local_speaker);
+        s.apply(
+            Input::RoomDisconnected {
+                terminal: false,
+                reason: "MediaFailure".to_owned(),
+            },
+            0.0,
+        );
+        assert_eq!(
+            s.apply(Input::RoomConnected, 0.0),
+            vec![Effect::Sound(Sound::Join)]
+        );
+    }
+
+    #[test]
+    fn signing_out_ends_the_call() {
+        let mut s = state();
+        ring(&mut s);
+        let mut accepted = update("call-1", PrivateVoiceStatus::Accepted);
+        accepted.connection_url = Some("livekit:p".to_owned());
+        s.apply(Input::PrivateUpdate(accepted), 0.0);
+        s.apply(Input::RoomConnected, 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        let effects = s.apply(Input::SignedOut, 0.0);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Rpc(Rpc::EndPrivate {
+                    call_id: "call-1".to_owned()
+                }),
+                Effect::DespawnRoom,
+                Effect::Sound(Sound::Leave),
+                Effect::SetCallMic(false)
+            ]
+        );
+        assert_eq!(s.status, Status::Disconnected);
+
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        let effects = s.apply(Input::SignedOut, 0.0);
+        assert_eq!(
+            effects,
+            vec![Effect::DespawnRoom, Effect::Sound(Sound::Leave)]
+        );
+        assert_eq!(s.status, Status::Disconnected);
+    }
+
+    #[test]
+    fn a_call_left_ringing_when_the_link_dropped_is_ended_on_reconnect() {
+        let mut s = state();
+        ring(&mut s);
+        s.apply(Input::SocialDisconnected, 0.0);
+        assert_eq!(s.status, Status::GenericError);
+        let effects = s.apply(Input::SocialConnected, 0.0);
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::EndPrivate {
+                call_id: "call-1".to_owned()
+            })]
+        );
+        assert_eq!(s.status, Status::Disconnected);
+        assert!(s.apply(Input::SocialConnected, 0.0).is_empty());
+
+        let mut s = state();
+        ringing_for_me(&mut s);
+        s.apply(Input::SocialDisconnected, 0.0);
+        assert_eq!(
+            s.apply(Input::SocialConnected, 0.0),
+            vec![Effect::Rpc(Rpc::RejectPrivate {
+                call_id: "call-9".to_owned()
+            })]
+        );
     }
 
     #[test]

@@ -156,7 +156,7 @@ describe('community chat and its voice stream', () => {
   const inStream = (communityId: string): VoiceChatState => ({ ...fakeSession().voiceChat.state!, status: 'inCall', kind: 'community', communityId, connection: 'connected' })
   function renderStream(chat: ChatState, voice: { active?: ActiveCommunityVoiceChat[]; state?: VoiceChatState; guest?: boolean } = {}) {
     const s = fakeSession()
-    s.voiceChat = { ...s.voiceChat, active: voice.active ?? [], state: voice.state ?? s.voiceChat.state, act: vi.fn() }
+    s.voiceChat = { ...s.voiceChat, active: voice.active ?? [], state: voice.state ?? s.voiceChat.state, guest: voice.guest === true, act: vi.fn() }
     if (voice.guest) s.profile = { ...s.profile, data: { ...s.profile.data!, isGuest: true } }
     render(
       <SessionProvider value={s}>

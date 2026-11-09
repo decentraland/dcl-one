@@ -439,6 +439,8 @@ export interface ActiveCommunityVoiceChat {
 export interface ActiveCommunityVoiceChatsMessage {
   kind: 'activeCommunityVoiceChats'
   chats: ActiveCommunityVoiceChat[]
+  /** False when the list was cleared (no account), not read: it says nothing about what is live. */
+  loaded?: boolean
 }
 
 /** The live community stream whose places include where the player stands, or none

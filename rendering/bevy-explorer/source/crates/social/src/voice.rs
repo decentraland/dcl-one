@@ -573,19 +573,34 @@ pub(crate) mod rpc {
         }
     }
 
-    /// `None` for the stream's closing message, which carries no update.
-    pub(crate) fn private_update(update: PrivateVoiceChatUpdate) -> Option<PrivateVoiceUpdate> {
+    /// One message of a voice update stream.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) enum StreamMessage<T> {
+        Update(T),
+        /// A status this client does not know (one the server added later): skipped, the
+        /// stream goes on.
+        Unknown(i32),
+        /// The stream's closing message, which carries no update.
+        Closed,
+    }
+
+    pub(crate) fn private_update(
+        update: PrivateVoiceChatUpdate,
+    ) -> StreamMessage<PrivateVoiceUpdate> {
         if update.stream_closed.is_some() {
-            return None;
+            return StreamMessage::Closed;
         }
-        let status = match ProtoPrivateStatus::from_i32(update.status)? {
+        let Some(status) = ProtoPrivateStatus::from_i32(update.status) else {
+            return StreamMessage::Unknown(update.status);
+        };
+        let status = match status {
             ProtoPrivateStatus::VoiceChatRequested => PrivateVoiceStatus::Requested,
             ProtoPrivateStatus::VoiceChatAccepted => PrivateVoiceStatus::Accepted,
             ProtoPrivateStatus::VoiceChatRejected => PrivateVoiceStatus::Rejected,
             ProtoPrivateStatus::VoiceChatEnded => PrivateVoiceStatus::Ended,
             ProtoPrivateStatus::VoiceChatExpired => PrivateVoiceStatus::Expired,
         };
-        Some(PrivateVoiceUpdate {
+        StreamMessage::Update(PrivateVoiceUpdate {
             call_id: update.call_id,
             status,
             caller: update.caller.map(|u| u.address),
@@ -597,18 +612,20 @@ pub(crate) mod rpc {
         })
     }
 
-    /// `None` for the stream's closing message, which carries no update.
     pub(crate) fn community_update(
         update: CommunityVoiceChatUpdate,
-    ) -> Option<CommunityVoiceUpdate> {
+    ) -> StreamMessage<CommunityVoiceUpdate> {
         if update.stream_closed.is_some() {
-            return None;
+            return StreamMessage::Closed;
         }
-        let status = match ProtoCommunityStatus::from_i32(update.status)? {
+        let Some(status) = ProtoCommunityStatus::from_i32(update.status) else {
+            return StreamMessage::Unknown(update.status);
+        };
+        let status = match status {
             ProtoCommunityStatus::CommunityVoiceChatStarted => CommunityVoiceStatus::Started,
             ProtoCommunityStatus::CommunityVoiceChatEnded => CommunityVoiceStatus::Ended,
         };
-        Some(CommunityVoiceUpdate {
+        StreamMessage::Update(CommunityVoiceUpdate {
             community_id: update.community_id,
             status,
             created_at: update.created_at,
@@ -619,5 +636,43 @@ pub(crate) mod rpc {
             community_name: update.community_name,
             community_image: update.community_image.filter(|i| !i.is_empty()),
         })
+    }
+}
+
+#[cfg(all(test, feature = "social"))]
+mod tests {
+    use super::rpc::{community_update, private_update, StreamMessage};
+    use dcl_component::proto_components::social_service::v2::{
+        CommunityVoiceChatUpdate, PrivateVoiceChatUpdate, SubscriptionStreamClosed,
+    };
+
+    #[test]
+    fn an_unknown_status_is_skipped_and_a_close_ends_the_stream() {
+        let unknown = PrivateVoiceChatUpdate {
+            call_id: "c".to_owned(),
+            status: 99,
+            ..Default::default()
+        };
+        assert_eq!(private_update(unknown), StreamMessage::Unknown(99));
+        let closed = PrivateVoiceChatUpdate {
+            stream_closed: Some(SubscriptionStreamClosed::default()),
+            ..Default::default()
+        };
+        assert_eq!(private_update(closed), StreamMessage::Closed);
+        assert!(matches!(
+            private_update(PrivateVoiceChatUpdate::default()),
+            StreamMessage::Update(_)
+        ));
+
+        let unknown = CommunityVoiceChatUpdate {
+            status: 7,
+            ..Default::default()
+        };
+        assert_eq!(community_update(unknown), StreamMessage::Unknown(7));
+        let closed = CommunityVoiceChatUpdate {
+            stream_closed: Some(SubscriptionStreamClosed::default()),
+            ..Default::default()
+        };
+        assert_eq!(community_update(closed), StreamMessage::Closed);
     }
 }

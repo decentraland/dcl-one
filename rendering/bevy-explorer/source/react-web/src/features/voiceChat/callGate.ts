@@ -2,8 +2,8 @@
 // CallButtonPresenter tooltips: the user is offline, accepts calls from friends only, the local user's
 // own privacy blocks it, a call is already running, a community stream is running, the remote is busy.
 import { showToast } from '../../design'
-import type { DmUserState, VoiceChatState } from '../../engine/protocol'
-import type { EngineSession } from '../session/useEngineSession'
+import type { DmUserState, VoiceChatActionWire, VoiceChatState } from '../../engine/protocol'
+import type { EngineSession, VoiceChatSession } from '../session/useEngineSession'
 
 export type CallGate = { allowed: true; reason?: undefined } | { allowed: false; reason: string }
 
@@ -47,6 +47,25 @@ export function streamGate(voice: VoiceChatState | null, isGuest: boolean): Call
   return { allowed: true }
 }
 
+/** A start or join is in flight: another click would hang it up and start over. */
+export function streamPending(voice: VoiceChatState | null): boolean {
+  return voice?.status === 'startingCall'
+}
+
+export function streamAct(voiceChat: VoiceChatSession, action: Extract<VoiceChatActionWire, { op: 'startCommunityCall' | 'joinCommunityCall' }>): void {
+  const gate = streamGate(voiceChat.state, voiceChat.guest)
+  if (!gate.allowed) showToast(gate.reason, { tone: 'error' })
+  else if (!streamPending(voiceChat.state)) voiceChat.act(action)
+}
+
+/** Whether a community's stream is live: the live list once it has been read for this account; until
+ *  then the community's own snapshot (`voiceChatStatus.isActive`, read with the community list) too. */
+export function streamLive(voiceChat: Pick<VoiceChatSession, 'active' | 'activeLoaded'> | undefined, communityId: string, snapshot?: boolean): boolean {
+  const listed = voiceChat?.active.some((c) => c.communityId === communityId) === true
+  if (voiceChat?.activeLoaded === true) return listed
+  return listed || snapshot === true
+}
+
 /** The call is being set up, rings, or runs. */
 export function voiceActive(voice: VoiceChatState | null): boolean {
   return voice != null && voice.status !== 'disconnected' && voice.status !== 'busy' && voice.status !== 'genericError'
@@ -57,10 +76,19 @@ export function inCommunityStream(voice: VoiceChatState | null, communityId: str
   return voiceActive(voice) && voice?.kind === 'community' && voice.communityId === communityId
 }
 
+/** What the HUD knows of a user to call: their DM tab's state, or that the local user blocked them.
+ *  A user never messaged has no state yet; the social service still refuses what it must. */
+function knownPartner(session: EngineSession, address: string): { state: DmUserState | null; online: boolean } | undefined {
+  const a = address.toLowerCase()
+  const known = session.chat.conversations.find((c) => c.address === a)
+  if (session.friends.blocked.some((b) => b.toLowerCase() === a)) return { state: 'blockedByOwnUser', online: known?.online ?? false }
+  return known
+}
+
 /** Ring a user from a profile card, passport or the friends list: opens the DM conversation first
  *  (unity-explorer's `StartPrivateCallWithUserId`), then rings, or says why not. */
 export function startCallWith(session: EngineSession, address: string): void {
-  const gate = callGate(session.voiceChat.state, undefined, session.profile.data?.isGuest === true)
+  const gate = callGate(session.voiceChat.state, knownPartner(session, address), session.profile.data?.isGuest === true)
   if (!gate.allowed) {
     showToast(gate.reason, { tone: 'error' })
     return

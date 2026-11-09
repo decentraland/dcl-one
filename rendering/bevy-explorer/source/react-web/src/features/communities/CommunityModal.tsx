@@ -21,7 +21,7 @@ import type {
   CommunityPlace,
   CommunityPost
 } from '../../engine/protocol'
-import { inCommunityStream } from '../voiceChat/callGate'
+import { inCommunityStream, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
@@ -207,7 +207,7 @@ export function CommunityModal({
   onOpenChat: () => void
   /** The community's voice stream: live, whether the local user is in it, and whether they may
    *  open one (owner or moderator). */
-  stream?: { live: boolean; inStream: boolean; canStart: boolean; participants: number; onStart: () => void; onJoin: () => void; onLeave: () => void }
+  stream?: { live: boolean; inStream: boolean; canStart: boolean; pending: boolean; participants: number; onStart: () => void; onJoin: () => void; onLeave: () => void }
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -255,9 +255,9 @@ export function CommunityModal({
             {stream != null && stream.inStream ? (
               <Button size="sm" variant="secondary" onClick={stream.onLeave}><MaskIcon src={endStreamIcon} size={14} /> Leave stream</Button>
             ) : stream != null && stream.live ? (
-              <Button size="sm" variant="accent" aria-label="Join stream" onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
+              <Button size="sm" variant="accent" aria-label="Join stream" disabled={stream.pending} onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
             ) : stream != null && stream.canStart ? (
-              <Button size="sm" variant="secondary" onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
+              <Button size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
             ) : null}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
@@ -367,12 +367,13 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
   const live = voiceChat.active.find((c) => c.communityId === communityId)
   const stream = {
-    live: live != null || community.voiceChatStatus?.isActive === true,
+    live: streamLive(voiceChat, communityId, community.voiceChatStatus?.isActive),
     inStream: inCommunityStream(voiceChat.state, communityId),
     canStart: community.role === 'owner' || community.role === 'moderator',
+    pending: streamPending(voiceChat.state),
     participants: live?.participantCount ?? community.voiceChatStatus?.participantCount ?? 0,
-    onStart: () => voiceChat.act({ op: 'startCommunityCall', communityId }),
-    onJoin: () => voiceChat.act({ op: 'joinCommunityCall', communityId }),
+    onStart: () => streamAct(voiceChat, { op: 'startCommunityCall', communityId }),
+    onJoin: () => streamAct(voiceChat, { op: 'joinCommunityCall', communityId }),
     onLeave: () => voiceChat.act({ op: 'leaveCall' })
   }
 

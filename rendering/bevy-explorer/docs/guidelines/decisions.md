@@ -35,6 +35,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - The call microphone has no hold-to-talk: Unity's `T` (0.5 s hold threshold) opens the chat
     here, so the `Microphone` key (`V`) toggles the call mic while a call is connected and the
     nearby mic otherwise.
+  - The call mic goes up on a call's first connect for whoever may speak; Unity starts it from the
+    persisted mic setting. A re-dial keeps what the user chose since.
   - Muting unpublishes the track instead of muting a published one (the engine's mic mechanism);
     the server still gets `MuteSpeakerFromCommunityVoiceChat`, so everyone sees the same thing.
   - Call playback follows the one `Voice` volume setting (Unity has a separate `VoiceChat_Volume`)
@@ -54,6 +56,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - The social service does not broadcast a stream's start or end to the user who started or
     ended it. Unity flips its live flags on those replies; the bridge re-reads the live list when
     the user's own community stream is entered or left.
+  - Joining or starting a stream while a private call rings for the user refuses that call first;
+    Unity's hang-up skips a ringing call and starts the stream next to it a second later.
+  - A stream whose start succeeds after its creator left (or moved to another stream) is ended
+    with `EndCommunityVoiceChat`; Unity leaves it running with nobody in it.
 - **Community chat (#223).** A community packet is taken only from the server's message
   router, which checks membership and stamps the author; unity-explorer also accepts one
   straight from a peer under the peer's own identity. Community history is stored like a DM's

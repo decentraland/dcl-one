@@ -767,8 +767,12 @@ export interface VoiceChatSession {
   state: VoiceChatState | null
   /** Every live community stream the local user may see. */
   active: ActiveCommunityVoiceChat[]
+  /** `active` has been read for this account: until then it says nothing about what is live. */
+  activeLoaded: boolean
   /** The live stream whose places include where the player stands. */
   scene: ActiveCommunityVoiceChat | null
+  /** A guest account: voice chat is refused. */
+  guest: boolean
   act: (action: VoiceChatActionWire) => void
 }
 
@@ -1157,6 +1161,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [mic, setMic] = useState({ enabled: false, available: false })
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
+  const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
   const [sceneVoiceChat, setSceneVoiceChat] = useState<ActiveCommunityVoiceChat | null>(null)
   const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
   const [catalogTotal, setCatalogTotal] = useState(0)
@@ -1540,6 +1545,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'activeCommunityVoiceChats':
           setActiveVoiceChats(msg.chats)
+          setActiveVoiceChatsLoaded(msg.loaded !== false)
           break
         case 'sceneVoiceChat':
           setSceneVoiceChat(msg.chat)
@@ -3212,6 +3218,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setNotifications([])
     clearNotificationToasts()
     clearRewardPopups()
+    // the live streams are per account (`isMember`)
+    setActiveVoiceChats([])
+    setActiveVoiceChatsLoaded(false)
+    setSceneVoiceChat(null)
     setCommunities([])
     setCommunityCards({})
     setFriendPending(new Set())
@@ -4050,7 +4060,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
-    voiceChat: { state: voiceChatState, active: activeVoiceChats, scene: sceneVoiceChat, act: voiceChatAct },
+    voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,
     setInteractableArea,

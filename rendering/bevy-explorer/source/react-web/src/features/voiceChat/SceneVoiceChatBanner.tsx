@@ -5,7 +5,7 @@ import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import { nameColor } from '../../lib/identity'
 import { useSession } from '../session/SessionContext'
-import { inCommunityStream, voiceActive } from './callGate'
+import { inCommunityStream, streamAct, voiceActive } from './callGate'
 import { VOICE_PANEL_SIZE, useVoiceDock } from './VoiceChatPanel'
 import styles from './VoiceChatPanel.module.css'
 
@@ -26,7 +26,7 @@ export function SceneVoiceChatBanner(): React.JSX.Element | null {
           <MaskIcon src={streamIcon} size={12} /> Live Voice Stream · {chat.participantCount}
         </span>
       </span>
-      <Button size="sm" onClick={() => voiceChat.act({ op: 'joinCommunityCall', communityId: chat.communityId })}>
+      <Button size="sm" onClick={() => streamAct(voiceChat, { op: 'joinCommunityCall', communityId: chat.communityId })}>
         <MaskIcon src={joinStreamIcon} size={14} /> Join stream
       </Button>
     </div>

@@ -11,7 +11,8 @@ import { MainMenuShell } from '../menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
 import type { Community } from '../../engine/protocol'
-import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
+import type { CommunitiesState, ProfileState, VoiceChatSession } from '../session/useEngineSession'
+import { streamLive } from '../voiceChat/callGate'
 import styles from './CommunitiesPage.module.css'
 
 function isMember(role: string): boolean {
@@ -27,14 +28,14 @@ function Globe(): React.JSX.Element {
   )
 }
 
-function CommunityCard({ c, onJoin, onOpen }: { c: Community; onJoin: (id: string) => void; onOpen: () => void }): React.JSX.Element {
+function CommunityCard({ c, live, onJoin, onOpen }: { c: Community; live: boolean; onJoin: (id: string) => void; onOpen: () => void }): React.JSX.Element {
   const member = isMember(c.role)
   const [failed, setFailed] = useState(false)
   const showImg = c.thumbnail != null && !failed
   return (
     <div className={styles.card} onClick={onOpen} role="button" tabIndex={0}>
       <div className={styles.cover} style={{ background: showImg ? undefined : nameColor(c.id) }}>
-        {c.voiceChatStatus?.isActive && <span className={styles.live} aria-label="Live stream">● LIVE</span>}
+        {live && <span className={styles.live} aria-label="Live stream">● LIVE</span>}
         {showImg ? (
           <img className={styles.coverImg} src={c.thumbnail} alt="" onError={() => setFailed(true)} />
         ) : (
@@ -64,10 +65,13 @@ function CommunityCard({ c, onJoin, onOpen }: { c: Community; onJoin: (id: strin
 export function CommunitiesPage({
   communities,
   profile,
+  voiceChat,
   onNavigate
 }: {
   communities: CommunitiesState
   profile: ProfileState
+  /** The live streams; without them the communities' own snapshot says what is live. */
+  voiceChat?: VoiceChatSession
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
   const [query, setQuery] = useState('')
@@ -89,11 +93,12 @@ export function CommunitiesPage({
     return openCommunityModal(wantOpen, () => setOpenId((id) => (id === wantOpen ? null : id)))
   }, [wantOpen])
 
+  const live = (c: Community): boolean => streamLive(voiceChat, c.id, c.voiceChatStatus?.isActive)
   const matchesQuery = (c: Community): boolean =>
-    (!query || c.name.toLowerCase().includes(query.toLowerCase())) && (!streaming || c.voiceChatStatus?.isActive === true)
+    (!query || c.name.toLowerCase().includes(query.toLowerCase())) && (!streaming || live(c))
   const mine = useMemo(() => communities.list.filter((c) => isMember(c.role)), [communities.list])
-  const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query, streaming])
-  const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query, streaming])
+  const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query, streaming, voiceChat?.active, voiceChat?.activeLoaded])
+  const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query, streaming, voiceChat?.active, voiceChat?.activeLoaded])
   const showingMine = tab === 'mine'
   const gridList = showingMine ? mineFiltered : browse
 
@@ -162,7 +167,7 @@ export function CommunitiesPage({
           ) : (
             <div className={styles.grid}>
               {gridList.map((c) => (
-                <CommunityCard key={c.id} c={c} onJoin={communities.join} onOpen={() => setOpenId(c.id)} />
+                <CommunityCard key={c.id} c={c} live={live(c)} onJoin={communities.join} onOpen={() => setOpenId(c.id)} />
               ))}
             </div>
           )}

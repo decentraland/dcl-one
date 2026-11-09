@@ -434,6 +434,7 @@ function Hud(): React.JSX.Element {
             <CommunitiesPage
               communities={session.communities}
               profile={session.profile}
+              voiceChat={session.voiceChat}
               onNavigate={goToMenuPage}
             />
           </SurfaceBoundary>

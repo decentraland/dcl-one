@@ -317,8 +317,13 @@ fn tear_down_microphone(mut commands: Commands) {
     commands.remove_resource::<MicrophoneDevice>();
 }
 
+/// A call holds the nearby mic off without changing the user's setting.
+fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
+    mic_state.enabled && !call_mic.suppress_nearby
+}
+
 fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if mic_state.enabled || call_mic.enabled {
+    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -395,7 +400,7 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
 }
 
 fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if !mic_state.enabled && !call_mic.enabled {
+    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -442,7 +447,7 @@ fn scope_microphones(
 ) {
     for (entity, hosted_by, has_track) in local_participants.iter() {
         let wanted = match mic_scope(hosted_by, &voice_rooms, &chat_rooms) {
-            MicScope::Nearby => mic_state.enabled,
+            MicScope::Nearby => nearby_mic_on(&mic_state, &call_mic),
             MicScope::Call => call_mic.enabled,
             MicScope::None => false,
         };
@@ -748,4 +753,42 @@ fn ping_disabled(mut commands: Commands) {
     commands.send_event(SystemAudio(
         "embedded://sounds/ui/voice_chat_mic_off.wav".to_owned(),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_call_holds_the_nearby_mic_off_and_gives_it_back() {
+        let mut app = App::new();
+        app.insert_resource(MicState {
+            available: true,
+            enabled: true,
+        })
+        .init_resource::<CallMic>()
+        .add_systems(Update, scope_microphones);
+        // without `HostedBy`: a realm or scene room's participant
+        let nearby = app.world_mut().spawn(LivekitLocalParticipant).id();
+        app.update();
+        assert!(app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+
+        app.world_mut().resource_mut::<CallMic>().suppress_nearby = true;
+        app.update();
+        assert!(!app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+        assert!(app.world().resource::<MicState>().enabled);
+
+        app.world_mut().resource_mut::<CallMic>().suppress_nearby = false;
+        app.update();
+        assert!(app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+    }
 }

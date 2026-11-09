@@ -8,6 +8,8 @@ import { notificationTimeMs } from '../../lib/notificationTime'
 import { relationshipOf } from '../../lib/relationship'
 import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
+import { showToast } from '../../design'
+import { streamAct, streamLive } from '../voiceChat/callGate'
 
 function humanize(s: string): string {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -111,13 +113,16 @@ export function friendshipTarget(n: AppNotification, friends?: FriendsState): ((
   return () => openPassport(address)
 }
 
-/** A community stream notification joins the stream, then opens that community's chat. */
+/** A community stream notification joins the stream if it is still live (an old one would hang up the
+ *  user's call for nothing), then opens that community's chat. */
 export function streamTarget(n: AppNotification, voiceChat?: VoiceChatSession, chat?: ChatState): (() => void) | undefined {
   if (n.type !== 'community_voice_chat_started' || voiceChat == null) return undefined
   const communityId = str(n.metadata, 'communityId')
   if (communityId == null) return undefined
   return () => {
-    voiceChat.act({ op: 'joinCommunityCall', communityId })
+    // before the live list is read the notification is all there is to go by
+    if (streamLive(voiceChat, communityId, true)) streamAct(voiceChat, { op: 'joinCommunityCall', communityId })
+    else showToast('This stream has ended.')
     if (chat == null) return
     const known = chat.communities.find((c) => c.id === communityId)
     chat.openCommunity({

@@ -724,7 +724,10 @@ pub fn op_close_community_voice_update_stream(state: &WorkerContext, rid: u32) {
 
 #[wasm_bindgen]
 pub fn op_voice_chat_action(state: &WorkerContext, action: JsValue) -> Result<(), WasmError> {
-    serde_parse!(action);
+    // map_err rather than serde_parse!'s unwrap: an action this engine does not know (a newer
+    // HUD) is a catchable JS error, not a worker panic
+    let action = serde_wasm_bindgen::from_value(action)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("voiceChatAction: {e}")))?;
     dcl_js::system_api::op_voice_chat_action(state.rc(), action).map_err(WasmError::from)
 }
 

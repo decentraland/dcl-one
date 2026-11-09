@@ -222,18 +222,24 @@ function isModerator(role: string): boolean {
   return role === 'moderator' || role === 'owner'
 }
 
+/** A speaker button's name: its own label hides the face's badges and the state line, so it says them. */
+function speakerLabel(p: VoiceChatParticipant): string {
+  const name = splitName(p.name || p.address).base
+  return p.isSpeaking ? `${name}, speaking` : p.isMuted ? `${name}, muted` : name
+}
+
 function Face({ p, size }: { p: VoiceChatParticipant; size: number }): React.JSX.Element {
   const { base } = splitName(p.name || p.address)
   return (
     <span className={styles.speakerFace} data-speaking={p.isSpeaking}>
       <Avatar src={p.profilePictureUrl || undefined} name={base} color={knownUserColor(p.address, p.name)} size={size} />
       {p.isMuted && p.isSpeaker && (
-        <span className={styles.badge} title="Muted" aria-label="Muted">
+        <span className={styles.badge} title="Muted" role="img" aria-label="Muted">
           <MaskIcon src={micOffIcon} size={10} />
         </span>
       )}
       {p.isRequestingToSpeak && !p.isSpeaker && (
-        <span className={styles.badge} title="Wants to speak" aria-label="Wants to speak">
+        <span className={styles.badge} title="Wants to speak" role="img" aria-label="Wants to speak">
           <MaskIcon src={handIcon} size={10} />
         </span>
       )}
@@ -444,21 +450,25 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
           ) : (
             <div className={styles.speakers} role="list" aria-label="Speakers">
               {speakers.slice(0, MAX_VISIBLE_SPEAKERS).map((p) => (
-                <button key={p.address} type="button" className={styles.speaker} role="listitem" aria-label={splitName(p.name || p.address).base} onClick={openProfile(p)}>
-                  <Face p={p} size={40} />
-                  <span className={styles.speakerName}>{shown(p)}</span>
-                  <span className={styles.speakerState}>
-                    {p.isSpeaking ? (
-                      <>
-                        <img src={speakingFeedbackIcon} alt="" width={10} height={11} /> Speaking
-                      </>
-                    ) : p.isMuted ? (
-                      'Muted'
-                    ) : null}
-                  </span>
-                </button>
+                <div key={p.address} role="listitem" className={styles.speakerItem}>
+                  <button type="button" className={styles.speaker} aria-label={speakerLabel(p)} onClick={openProfile(p)}>
+                    <Face p={p} size={40} />
+                    <span className={styles.speakerName}>{shown(p)}</span>
+                    <span className={styles.speakerState}>
+                      {p.isSpeaking ? (
+                        <>
+                          <img src={speakingFeedbackIcon} alt="" width={10} height={11} /> Speaking
+                        </>
+                      ) : p.isMuted ? (
+                        'Muted'
+                      ) : null}
+                    </span>
+                  </button>
+                </div>
               ))}
-              {speakers.length > MAX_VISIBLE_SPEAKERS && <span className={styles.more}>+{speakers.length - MAX_VISIBLE_SPEAKERS}</span>}
+              {speakers.length > MAX_VISIBLE_SPEAKERS && (
+                <div role="listitem" className={styles.more}>+{speakers.length - MAX_VISIBLE_SPEAKERS}</div>
+              )}
             </div>
           )}
         </div>

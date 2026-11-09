@@ -25,15 +25,18 @@ type ActiveChatRaw = {
   moderatorCount?: number
 }
 
-/** The answer is `{ data: { activeChats, total } }`; `signed` has already taken off `data`. */
-export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[]> {
-  const res = await signed<{ activeChats?: ActiveChatRaw[] }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).catch(
+/** The answer is `{ data: { activeChats, total } }`; `signed` has already taken off `data`. A failed
+ *  fetch is `null`, not an empty list: it says nothing about which streams are live. */
+export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[] | null> {
+  const res = await signed<{ activeChats?: ActiveChatRaw[] }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).then(
+    (r) => r ?? {},
     (e: unknown) => {
       console.error('[voiceChat] active streams failed', e)
-      return undefined
+      return null
     }
   )
-  return (res?.activeChats ?? [])
+  if (res == null) return null
+  return (res.activeChats ?? [])
     .filter((c) => c.communityId != null && c.communityId !== '')
     .map((c) => ({
       communityId: c.communityId ?? '',
@@ -66,13 +69,30 @@ export function registerVoiceChat(ctx: Ctx): void {
     api.action(msg.action)
   })
 
-  // The live streams: read on start, and again whenever one starts or ends.
+  // The live streams: read on start, on sign-in, and again whenever one starts or ends. Reads can
+  // overlap: only the latest answer counts, and a failed read keeps the last list.
   let active: ActiveCommunityVoiceChat[] = []
   let publishedHere = ''
+  let reads = 0
   const refreshActive = async (): Promise<void> => {
-    active = await fetchActiveChats()
+    const read = ++reads
+    const chats = await fetchActiveChats()
+    if (read !== reads || chats == null) return
+    active = chats
     ctx.send({ kind: 'activeCommunityVoiceChats', chats: active })
     publishedHere = ''
+  }
+  // The list is per account (`isMember`) and signed: none before sign-in, the next account's after.
+  let account: string | null = null
+  const accountChanged = (userId: string | null): void => {
+    if (userId === account) return
+    account = userId
+    reads++ // an answer for the previous account is dropped
+    active = []
+    publishedHere = ''
+    ctx.send({ kind: 'activeCommunityVoiceChats', chats: [], loaded: false })
+    ctx.send({ kind: 'sceneVoiceChat', chat: null })
+    if (userId != null) void refreshActive()
   }
 
   // The social service broadcasts a stream's start and end to everyone but the user who started or
@@ -113,6 +133,7 @@ export function registerVoiceChat(ctx: Ctx): void {
   let acc = 2
   let realmName = ''
   ctx.push((dt) => {
+    accountChanged(getPlayer()?.userId ?? null)
     acc += dt
     if (acc < 2) return
     acc = 0
