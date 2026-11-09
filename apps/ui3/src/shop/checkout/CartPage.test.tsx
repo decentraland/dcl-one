@@ -9,6 +9,7 @@ import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { creatorTrade } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
+import { takeTopUpReturn } from "../credits/returns";
 import { RESUME_CART_KEY } from "./purchase/cart";
 
 function renderCart(s: DemoScenario, tweak?: (demo: ReturnType<typeof createDemo>) => void) {
@@ -450,6 +451,20 @@ describe("the cart page", () => {
     expect(within(panel).getByTestId("pack-recommended")).toBeTruthy();
     expect(demo.cart.getSnapshot().lines[0]!.method).toBeNull();
     expect(panel.textContent).not.toMatch(/MANA/);
+  });
+
+  it("the top-up's way back is bound to the pack order it created: that order's grant returns to the cart, another's never", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    demo.services.openExternal = () => {};
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const panel = await screen.findByTestId("topup-panel");
+    await act(async () => fireEvent.click(within(panel).getByTestId("topup-buy")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "createPackOrder")).toBe(true));
+    const order = `order-${(demo.shop.log.find((r) => r.name === "createPackOrder")!.body as { packId: string }).packId}`;
+    const raw = sessionStorage.getItem("dcl-shop-topup-return:v1");
+    expect(takeTopUpReturn(Date.now(), "order-other")).toBeNull();
+    sessionStorage.setItem("dcl-shop-topup-return:v1", raw!);
+    expect(takeTopUpReturn(Date.now(), order)).toMatchObject({ path: "/shop/cart", orderId: order });
   });
 
   it("a balance a few cents short says the whole Credits the buyer must add, rounded up", async () => {

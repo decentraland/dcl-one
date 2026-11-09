@@ -3,11 +3,12 @@
 // before sending the buyer to buy credits; the credits page reads it on return and re-opens the NAMEs
 // page on it. The NAME alone, never its price: the page re-quotes and re-checks availability.
 
+import { clearTopUpHandoffs } from "../credits/returns";
+
 export const RESUME_NAME_KEY = "dcl_shop_resume_name";
 
-/** The sibling hand-offs a NAME top-up supersedes (upstream RESUME_BUY_KEY, RESUME_CART_KEY). */
-export const RESUME_BUY_KEY = "dcl_shop_resume_buy";
-export const RESUME_CART_KEY = "dcl_shop_resume_cart";
+/** Upstream's item hand-off a NAME top-up supersedes; the cart's and Buy now's are credits/returns.ts's, cleared below. */
+const RESUME_BUY_KEY = "dcl_shop_resume_buy";
 
 function store(): Storage | null {
   try {
@@ -17,11 +18,11 @@ function store(): Storage | null {
   }
 }
 
-/** Claims the hand-off for this NAME outright: an older item or cart hand-off would otherwise win. */
+/** Claims the hand-off for this NAME outright: an older item, Buy now or cart hand-off would otherwise win. */
 export function stashNameResume(name: string): void {
+  clearTopUpHandoffs();
   try {
     const s = store();
-    s?.removeItem(RESUME_CART_KEY);
     s?.removeItem(RESUME_BUY_KEY);
     s?.setItem(RESUME_NAME_KEY, name);
   } catch {

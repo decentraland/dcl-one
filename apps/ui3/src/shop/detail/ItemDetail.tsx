@@ -77,7 +77,9 @@ import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
 import { useShopServices } from "../checkout/services";
 import { readManaBalanceWei } from "../checkout/lib/mana";
-import { usePurchaseLauncher } from "./purchase";
+import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
+import BuyModal from "./components/BuyModal";
+import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "../market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
 import "./itemdetail.css";
@@ -263,6 +265,7 @@ export default function ItemDetail() {
   const wallet = useShopWallet();
   const { session, account } = wallet;
   const launch = usePurchaseLauncher();
+  const buysInPlace = useBuysInPlace();
   // Resales, bids, owner actions, LAND, owners and sales are the Marketplace: on only for a web3 wallet session
   // while the rollout is on (market/access.tsx). Off, the page is the old shop's: the item and its primary sale.
   const marketplace = useMarketplace();
@@ -465,6 +468,21 @@ export default function ItemDetail() {
   const [resaleListOpen, setResaleListOpen] = useState(false);
   const [buyingOrder, setBuyingOrder] = useState<{ order: LegacyOrderRef; quoted: ManaWei | null } | null>(null);
   const [buyingMixed, setBuyingMixed] = useState<{ line: CartAddInput; offer: PurchaseOffer; mixed: MixedPayment } | null>(null);
+  // Buy now's dialog (upstream's BuyModal); `resume` when the page is back from the credits top-up it started. The query
+  // alone opens nothing: only this tab's record of the purchase this account confirmed does (credits/returns.ts).
+  const [buyNow, setBuyNow] = useState<{ resume: Pick<BuyNowReturn, "account" | "lineId" | "credits"> | null } | null>(null);
+  useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    if (search.get("buy") !== "resume" || session.kind === "signedOut" || !account) return;
+    search.delete("buy");
+    const rest = search.toString();
+    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : "" }, { replace: true, state: location.state });
+    // The credits page names the order it credited: only that order's top-up may finish the purchase.
+    const order = (location.state as { topUpOrder?: unknown } | null)?.topUpOrder;
+    const handoff = takeBuyNowReturn(location.pathname, account, typeof order === "string" ? order : null);
+    if (handoff) setBuyNow({ resume: { account: handoff.account, lineId: handoff.lineId, credits: handoff.credits } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, session.kind, account]);
   const viewed = useRef<string | null>(null);
   useEffect(() => {
     if (!current.name || viewed.current === current.id) return;
@@ -522,6 +540,10 @@ export default function ItemDetail() {
       }
     : null;
   const showCompareAt = saleActive && !!eligibility?.allowed.includes("credits") && current.compareAtCredits != null;
+  // Signed in, an item Credits can pay for is bought over the page, as upstream's, in every host today (the Explorer's
+  // native shop included, as upstream's web view). A MANA-only resale keeps the payment choice on the page, and so would
+  // a host that installs its own purchase flow (ShopPurchaseProvider, none does yet).
+  const inPlace = buysInPlace && session.kind !== "signedOut" && !!cartInput && !!eligibility?.allowed.includes("credits");
   const supply = isTokenRoute ? null : (current.available ?? null);
   const maxSupply = MAX_SUPPLY[rarity.toLowerCase()];
   const outOfStock = !isTokenRoute && supply === 0;
@@ -788,6 +810,7 @@ export default function ItemDetail() {
                   onRetry={offers.retry}
                   onBuy={onBuy}
                   onAddToCart={onAddToCart}
+                  onBuyNow={inPlace ? () => setBuyNow({ resume: null }) : undefined}
                 />
               ) : (
                 <>
@@ -886,6 +909,20 @@ export default function ItemDetail() {
 
       {!isLand ? <PhotoReel contractAddress={contractAddress} itemId={pageItemId} /> : null}
 
+      {buyNow && inPlace && cartInput ? (
+        <BuyModal
+          line={{ ...cartInput, seen: offer ?? null }}
+          returnPath={itemHref}
+          resume={buyNow.resume}
+          onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
+          onBuyMixed={(mixed) => {
+            if (!offer) return;
+            setBuyNow(null);
+            setBuyingMixed({ line: cartInput, offer, mixed });
+          }}
+          onClose={() => setBuyNow(null)}
+        />
+      ) : null}
       {buyingMixed ? (
         <CombinedBuy
           line={buyingMixed.line}

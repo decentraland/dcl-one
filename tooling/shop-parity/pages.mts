@@ -76,6 +76,26 @@ async function addToCart(page: Page, path?: string, expectedCount = 1) {
   await add.first().click();
   await page.waitForFunction(cartHasCount, expectedCount, { timeout: 20_000 });
 }
+/** The buy dialog's settled screens (upstream BuyModal's titles past its loading phase). */
+const BUY_SCREENS = /Buy Credits and Item|Buy Item|Choose your payment method|Purchase complete!|Something went wrong/i;
+
+/** The detail page's Buy now: upstream's button also carries its price (hidden), so its words only start with it. */
+const BUY_NOW = `xpath=//main//button[starts-with(${UP},'BUY NOW')]`;
+
+/** Opens the detail page's Buy now as a signed-in buyer does, and waits for the dialog to settle on a screen. */
+async function buyNow(page: Page) {
+  const buy = page.locator(BUY_NOW);
+  await buy.first().waitFor({ state: "visible", timeout: 20_000 });
+  await buy.first().click();
+  const dialog = page.getByTestId("buy-modal");
+  await dialog.waitFor({ state: "visible", timeout: 20_000 });
+  await page.waitForFunction(
+    (source) => new RegExp(source, "i").test(document.querySelector("[data-testid=buy-modal]")?.textContent ?? ""),
+    BUY_SCREENS.source,
+    { timeout: 20_000 },
+  );
+}
+
 function cartHasCount(expected: number): boolean {
   const cart = document.querySelector("[data-testid=subnav-cart]");
   if (!cart) return false;
@@ -253,7 +273,7 @@ export const PAGES: PageSpec[] = [
       { name: "creator", selector: both("[data-testid=creator]") },
       { name: "price", selector: both("[data-testid=item-price]") },
       { name: "stock", selector: { reference: "xpath=//main//*[" + UP + "='STOCK' and not(*)]/..", "dcl-one": "[data-testid=detail-stock]" } },
-      { name: "buy-now", selector: both(byText("button", "Buy now")) },
+      { name: "buy-now", selector: both(BUY_NOW) },
       { name: "add-to-cart", selector: both(byText("button", "Add to cart")) },
       { name: "rail", selector: { reference: "[data-testid=carousel]", "dcl-one": "[data-testid=detail-rail]" } },
       { name: "rail.title", selector: { reference: "[data-testid=carousel] h2", "dcl-one": "[data-testid=detail-rail] h2" } },
@@ -470,6 +490,35 @@ const SIGNED_IN_ONLY: PageSpec[] = [
   plain("my-favorites", "My Favorites", "/shop/my-favorites"),
   plain("activity", "Activity", "/shop/activity"),
   plain("my-store", "My Store", "/shop/my-store"),
+  {
+    id: "item-buy",
+    title: "Buy now on the item detail (the reference opens its BuyModal over the page)",
+    path: (t) => t.item ?? "/shop/items",
+    ready: both("[data-testid=item-price]"),
+    setup: async (page) => {
+      await buyNow(page);
+    },
+    // The dialog is fixed over the page: one screen holds it.
+    maxHeight: 800,
+    keys: [
+      ...FRAME_KEYS,
+      { name: "dialog", selector: both("[data-testid=buy-modal]") },
+      { name: "dialog.balance", selector: both(inDrawer("*", "My Credits Balance:")) },
+      { name: "dialog.insufficient", selector: both(inDrawer("*", "Insufficient Funds.")) },
+      { name: "dialog.packs", selector: both("[data-testid=buy-modal] [data-testid=credit-packs]") },
+      { name: "dialog.pack", selector: both("[data-testid=buy-modal] [data-testid=credit-pack]"), max: 4 },
+      { name: "dialog.total", selector: both("[data-testid=buy-modal] [data-testid=topup-total-credits]") },
+      { name: "dialog.cancel", selector: both(inDrawer("button", "Cancel")) },
+      { name: "dialog.buy", selector: both(inDrawer("button", "Buy")) },
+    ],
+    masks: [
+      { selector: both1("[data-testid=item-preview]"), why: "3D preview: a WebGL render that differs between frames and renderers; its box is still compared structurally" },
+      WEBGL,
+    ],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
 ];
 
 PAGES.push(
