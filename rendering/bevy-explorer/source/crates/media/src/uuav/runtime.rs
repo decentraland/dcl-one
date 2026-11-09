@@ -113,10 +113,14 @@ impl HelperRuntime {
                 }
                 // both are `None` until the renderer is up: Bevy inserts the device and the
                 // adapter together, once the GPU is chosen
-                #[cfg(not(windows))]
+                #[cfg(target_os = "macos")]
                 let Some(device) = device else {
                     return;
                 };
+                #[cfg(target_os = "linux")]
+                if device.is_none() {
+                    return;
+                }
                 #[cfg(windows)]
                 let (Some(device), Some(adapter)) = (device, adapter) else {
                     return;
