@@ -207,8 +207,11 @@ State, in every build:
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
-  `customMessage`, `expiresAt`, `checkedAgoSecs`, `error`) and, with an address, its `lookup`
-  (`isBlockedEitherWay`, `direction`). Every `null` reading has its reason in `unavailable`,
+  `customMessage`, `expiresAt`, `checkedAgoSecs`, `error`), the local user's scene admission
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
+  connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
+  `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
   keyed by field path. `/block_user <address>` and `/unblock_user <address>` change the blocks
   through the social service and answer once it has; `/ban_block_refresh` re-checks the
   platform ban now.

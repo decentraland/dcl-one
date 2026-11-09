@@ -6,6 +6,7 @@ pub mod community_chat;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
+pub mod moderation;
 pub mod movement_compressed;
 pub mod preview;
 #[cfg(feature = "livekit")]
@@ -47,6 +48,7 @@ use prost::Message as _;
 use wallet::{sign_service_request, Wallet};
 
 use crate::global_crdt::ChannelControl;
+pub use moderation::{BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -93,6 +95,7 @@ impl Plugin for CommsPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<SetCurrentScene>()
             .init_resource::<SceneRoomConnection>()
+            .init_resource::<SceneAdmission>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<DisableSceneRoomGatekeeper>()
             .insert_resource(SceneRoomAdapterOverride(
@@ -550,8 +553,40 @@ pub struct GatekeeperResponse {
     adapter: String,
 }
 
+/// A gatekeeper answer other than 200: the status and the body's `error`, when it has one.
+#[derive(Debug)]
+pub struct GatekeeperRefusal {
+    pub status: u16,
+    pub message: Option<String>,
+}
+
+impl std::fmt::Display for GatekeeperRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.message {
+            Some(message) => write!(f, "status: {} ({message})", self.status),
+            None => write!(f, "status: {}", self.status),
+        }
+    }
+}
+
+impl std::error::Error for GatekeeperRefusal {}
+
+/// Which scene a scene-room mint was for, attached to its error.
+#[derive(Debug)]
+struct RefusalContext {
+    is_world: bool,
+    scene_id: String,
+}
+
+impl std::fmt::Display for RefusalContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "scene room for {}", self.scene_id)
+    }
+}
+
 /// Signed request to a comms-gatekeeper endpoint, returning the adapter string it mints. `meta`
-/// travels in the signed identity headers, not the body.
+/// travels in the signed identity headers, not the body. A non-200 answer is a
+/// [`GatekeeperRefusal`] error.
 pub(crate) async fn mint_gatekeeper_adapter(
     method: &str,
     client: reqwest::Client,
@@ -571,7 +606,13 @@ pub(crate) async fn mint_gatekeeper_adapter(
     let response = platform::TracedJsonResponse::send(request).await?;
 
     if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.discard()));
+        let status = response.status().as_u16();
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        return Err(GatekeeperRefusal { status, message }.into());
     }
 
     Ok(response.json::<GatekeeperResponse>().await?.adapter)
@@ -616,6 +657,7 @@ fn connect_scene_room(
     mut manager: AdapterManager,
     mut gatekeeper_task: Local<Option<Task<Result<(String, SetCurrentScene), anyhow::Error>>>>,
     mut current: ResMut<SceneRoomConnection>,
+    mut admission: ResMut<SceneAdmission>,
     mut scene: EventReader<SetCurrentScene>,
     wallet: Res<Wallet>,
     ipfs: IpfsAssetServer,
@@ -642,6 +684,9 @@ fn connect_scene_room(
                 commands.despawn();
             }
             warn!("disconnected scene channel {ev:?}");
+        }
+        if admission.scene_id() != Some(ev.scene_id.as_str()) {
+            admission.set_if_neq(SceneAdmission::Unknown);
         }
         if adapter_override.0.is_some() && !preview_mode.is_preview {
             warn_once!("DCL_SCENE_ROOM_ADAPTER is ignored outside preview mode");
@@ -670,6 +715,9 @@ fn connect_scene_room(
                 commands
                     .entity(ent)
                     .try_insert(SceneRoom(ev.scene_id.clone()));
+                admission.set_if_neq(SceneAdmission::Allowed {
+                    scene_id: ev.scene_id.clone(),
+                });
                 current.0 = Some((ev, adapter, ent));
             }
         } else {
@@ -712,11 +760,13 @@ fn connect_scene_room(
             } else {
                 serde_json::to_string(&ev).unwrap()
             };
+            let is_world = world.is_some();
+            let scene_id = ev.scene_id.clone();
             *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-                Ok((
-                    mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await?,
-                    ev,
-                ))
+                mint_gatekeeper_adapter("POST", client, uri, &wallet, meta)
+                    .await
+                    .map(|adapter| (adapter, ev))
+                    .map_err(|e| e.context(RefusalContext { is_world, scene_id }))
             }));
         }
     }
@@ -724,8 +774,26 @@ fn connect_scene_room(
     if let Some(mut task) = gatekeeper_task.take() {
         match task.complete() {
             None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => warn!("failed to get scene room from gatekeeper: {e}"),
+            Some(Err(e)) => {
+                warn!("failed to get scene room from gatekeeper: {e:#}");
+                let refused = e
+                    .downcast_ref::<RefusalContext>()
+                    .zip(e.downcast_ref::<GatekeeperRefusal>())
+                    .map(|(context, refusal)| {
+                        SceneAdmission::from_refusal(
+                            refusal.status,
+                            refusal.message.as_deref(),
+                            context.is_world,
+                            &context.scene_id,
+                        )
+                    })
+                    .unwrap_or(SceneAdmission::Unknown);
+                admission.set_if_neq(refused);
+            }
             Some(Ok((adapter, ev))) => {
+                admission.set_if_neq(SceneAdmission::Allowed {
+                    scene_id: ev.scene_id.clone(),
+                });
                 // client-only (gatekeeper is disabled on servers): the client's scene
                 // rooms feed its single shared context, all scenes share one view
                 let Ok(context) = contexts.single() else {

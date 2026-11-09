@@ -14,6 +14,7 @@ use bevy::{ecs::system::SystemParam, platform::collections::HashSet, prelude::*}
 use serde::Serialize;
 use social::SocialClient;
 
+pub use comms::{BanScope, SceneAdmission, SceneRoomModeration};
 pub use events::BanBlockEvent;
 pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
@@ -22,8 +23,7 @@ pub struct BanBlockPlugin;
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<BanBlockEvent>();
-        // the headless client has no social plugin: nothing to order after, and the facade
-        // reads the missing resource as unavailable
+        // without the social plugin there is no social update system to order after
         if app.world().contains_resource::<SocialClient>() {
             app.add_systems(
                 PostUpdate,
@@ -33,15 +33,68 @@ impl Plugin for BanBlockPlugin {
             app.add_systems(PostUpdate, events::emit_ban_block_events);
         }
         platform_ban::register(app);
+        app.add_systems(
+            PostUpdate,
+            events::cross_feed_admission_refusal.before(events::emit_ban_block_events),
+        );
         debug::register(app);
     }
 }
 
 /// The read side. Take it as a system parameter: `fn my_system(ban_block: BanBlock)`.
 #[derive(SystemParam)]
-pub struct BanBlock<'w> {
+pub struct BanBlock<'w, 's> {
     social: Option<Res<'w, SocialClient>>,
     platform_ban: Res<'w, PlatformBanStatus>,
+    admission: Res<'w, SceneAdmission>,
+    #[cfg(feature = "livekit")]
+    room: Query<
+        'w,
+        's,
+        (
+            &'static comms::SceneRoom,
+            &'static SceneRoomModeration,
+            Has<comms::livekit::room::Connected>,
+        ),
+    >,
+    #[cfg(not(feature = "livekit"))]
+    _no_room: std::marker::PhantomData<&'s ()>,
+}
+
+/// What the connected scene room says about other players, borrowed from comms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneRoomView<'a> {
+    NotConnected,
+    Connected {
+        scene_id: &'a str,
+        banned_addresses: &'a HashSet<Address>,
+        scene_admins: &'a HashSet<Address>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminPermissionsStatus {
+    Admin,
+    NotAdmin,
+    NotLoadedYet,
+}
+
+impl SceneRoomView<'_> {
+    /// True only for a connected room that lists `addr`; a room that is down answers false.
+    pub fn is_addr_banned_in_scene(&self, addr: Address) -> bool {
+        matches!(self, SceneRoomView::Connected { banned_addresses, .. } if banned_addresses.contains(&addr))
+    }
+
+    pub fn admin_permissions_for_addr(&self, addr: Address) -> AdminPermissionsStatus {
+        match self {
+            SceneRoomView::NotConnected => AdminPermissionsStatus::NotLoadedYet,
+            SceneRoomView::Connected { scene_admins, .. } if scene_admins.contains(&addr) => {
+                AdminPermissionsStatus::Admin
+            }
+            SceneRoomView::Connected { .. } => AdminPermissionsStatus::NotAdmin,
+        }
+    }
 }
 
 /// The local user's social blocks, borrowed from the social client. The sets exist only once a
@@ -77,8 +130,8 @@ pub enum BlockDirection {
 }
 
 impl<'a> Blocks<'a> {
-    /// The view of a social client's sets. A client that has disconnected after its first
-    /// snapshot keeps answering `Live` with its last sets: only the next snapshot replaces them.
+    /// `Live` with the sets as they are once the client has had a snapshot, whether or not it
+    /// is still connected; `Unavailable` before that.
     pub fn from_client(
         initialized: bool,
         blocked: &'a HashSet<Address>,
@@ -118,7 +171,7 @@ impl<'a> Blocks<'a> {
     }
 }
 
-impl BanBlock<'_> {
+impl BanBlock<'_, '_> {
     pub fn blocks(&self) -> Blocks<'_> {
         if !social::SOCIAL_FEATURE {
             return Blocks::Unavailable {
@@ -157,9 +210,36 @@ impl BanBlock<'_> {
         self.platform_ban.source()
     }
 
-    /// `Some` only for a checked ban. Unknown and failed answer `None`: the check fails open.
+    /// `Some` only for a checked ban; unknown and failed answer `None`.
     pub fn platform_ban_of_local_user(&self) -> Option<&PlatformBanInfo> {
         self.platform_ban.ban()
+    }
+
+    /// The local user's admission to the current scene's room.
+    pub fn scene_admission(&self) -> &SceneAdmission {
+        &self.admission
+    }
+
+    /// The scene room's lists while it is connected; a reconnecting or absent room is
+    /// `NotConnected`.
+    pub fn scene_room(&self) -> SceneRoomView<'_> {
+        #[cfg(feature = "livekit")]
+        if let Ok((scene, moderation, true)) = self.room.single() {
+            return SceneRoomView::Connected {
+                scene_id: &scene.0,
+                banned_addresses: &moderation.banned_addresses,
+                scene_admins: &moderation.scene_admins,
+            };
+        }
+        SceneRoomView::NotConnected
+    }
+
+    pub fn is_addr_banned_in_scene(&self, addr: Address) -> bool {
+        self.scene_room().is_addr_banned_in_scene(addr)
+    }
+
+    pub fn admin_permissions_for_addr(&self, addr: Address) -> AdminPermissionsStatus {
+        self.scene_room().admin_permissions_for_addr(addr)
     }
 }
 
@@ -204,6 +284,33 @@ mod tests {
         );
         assert!(!blocks.is_blocked_either_way(address(1)));
         assert_eq!(blocks.block_direction(address(1)), BlockDirection::None);
+    }
+
+    #[test]
+    fn a_room_answers_only_while_connected() {
+        let banned = HashSet::from_iter([address(1)]);
+        let admins = HashSet::from_iter([address(2)]);
+        let connected = SceneRoomView::Connected {
+            scene_id: "scene",
+            banned_addresses: &banned,
+            scene_admins: &admins,
+        };
+        assert!(connected.is_addr_banned_in_scene(address(1)));
+        assert!(!connected.is_addr_banned_in_scene(address(2)));
+        assert_eq!(
+            connected.admin_permissions_for_addr(address(2)),
+            AdminPermissionsStatus::Admin
+        );
+        assert_eq!(
+            connected.admin_permissions_for_addr(address(1)),
+            AdminPermissionsStatus::NotAdmin
+        );
+        let down = SceneRoomView::NotConnected;
+        assert!(!down.is_addr_banned_in_scene(address(1)));
+        assert_eq!(
+            down.admin_permissions_for_addr(address(2)),
+            AdminPermissionsStatus::NotLoadedYet
+        );
     }
 
     #[test]

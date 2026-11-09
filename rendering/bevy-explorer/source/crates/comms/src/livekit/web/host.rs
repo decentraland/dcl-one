@@ -38,6 +38,7 @@ extern "C" {
     async fn room_close(room: &JsValue) -> Result<(), JsValue>;
     fn room_drop(room: &JsValue);
     fn room_name(room: &JsValue) -> String;
+    fn room_metadata(room: &JsValue) -> String;
     fn room_local_participant(room: &JsValue) -> JsValue;
 
     #[wasm_bindgen(catch)]
@@ -462,6 +463,7 @@ async fn connect(
 
     let connected = ConnectedRoom {
         name: room_name(&js_room),
+        metadata: room_metadata(&js_room),
         local_participant: local_participant(&room_local_participant(&js_room), room),
     };
     host.borrow_mut().rooms.insert(

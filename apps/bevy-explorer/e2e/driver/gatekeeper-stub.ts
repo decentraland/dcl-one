@@ -1,7 +1,5 @@
 // A comms-gatekeeper on loopback that answers as scripted: the ban-status read and the
-// scene-adapter mint, the two routes the engine's ban and block status reads. A spec points a
-// standalone at it with `--comms-gatekeeper` (`OpenOptions.nativeArgs`) to see a banned answer or
-// a refusal that zone's live accounts cannot be given. Every other path is 404.
+// scene-adapter mint. Every other path is 404.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { listen, type StaticServer } from './serve.ts'
 

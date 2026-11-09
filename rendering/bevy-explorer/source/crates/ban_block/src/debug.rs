@@ -8,7 +8,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::{json, Map, Value};
 use wallet::Wallet;
 
-use crate::{BanBlock, BlockDirection, Blocks, PlatformBanState};
+use crate::{BanBlock, BlockDirection, Blocks, PlatformBanState, SceneAdmission, SceneRoomView};
 
 pub(crate) fn register(app: &mut App) {
     app.add_console_command::<BanBlockStateCommand, _>(ban_block_state)
@@ -23,8 +23,15 @@ pub(crate) fn register(app: &mut App) {
                 ("Ban reason", "platformBan.reason"),
                 ("Ban source", "platformBan.source"),
                 ("Checked (s ago)", "platformBan.checkedAgoSecs"),
+                ("Scene admission", "sceneAdmission.state"),
+                ("Refusal scope", "sceneAdmission.scope"),
+                ("Scene room", "sceneRoom.state"),
+                ("Scene banned addresses", "sceneRoom.bannedAddresses"),
+                ("Scene admins", "sceneRoom.sceneAdmins"),
                 ("Lookup: blocked either way", "lookup.isBlockedEitherWay"),
                 ("Lookup: direction", "lookup.direction"),
+                ("Lookup: banned in scene", "lookup.bannedInScene"),
+                ("Lookup: admin", "lookup.adminPermissions"),
             ],
             actions: &[("Re-check platform ban", "/ban_block_refresh")],
             inputs: &[DebugInput {
@@ -62,7 +69,15 @@ fn ban_block_state(
             }
         },
     };
-    input.reply_ok(snapshot(&ban_block, wallet.address(), lookup, time.elapsed_secs_f64()).to_string());
+    input.reply_ok(
+        snapshot(
+            &ban_block,
+            wallet.address(),
+            lookup,
+            time.elapsed_secs_f64(),
+        )
+        .to_string(),
+    );
 }
 
 fn hex(address: Address) -> String {
@@ -111,6 +126,7 @@ pub(crate) fn snapshot(
             })
         }
     };
+    let room = ban_block.scene_room();
     let lookup_json = match lookup {
         Some(address) => {
             let direction = blocks.block_direction(address);
@@ -118,6 +134,8 @@ pub(crate) fn snapshot(
                 "address": hex(address),
                 "isBlockedEitherWay": direction != BlockDirection::None,
                 "direction": direction,
+                "bannedInScene": room.is_addr_banned_in_scene(address),
+                "adminPermissions": room.admin_permissions_for_addr(address),
             })
         }
         None => {
@@ -129,19 +147,28 @@ pub(crate) fn snapshot(
         "address": own.map(hex),
         "blocks": blocks_json,
         "platformBan": platform_ban,
+        "sceneAdmission": scene_admission_json(ban_block.scene_admission(), &mut unavailable),
+        "sceneRoom": scene_room_json(room, &mut unavailable),
         "lookup": lookup_json,
         "unavailable": unavailable,
     })
 }
 
-fn platform_ban_json(ban_block: &BanBlock, now: f64, unavailable: &mut Map<String, Value>) -> Value {
+fn platform_ban_json(
+    ban_block: &BanBlock,
+    now: f64,
+    unavailable: &mut Map<String, Value>,
+) -> Value {
     let ago = |checked_at: f64| (now - checked_at).max(0.0).round();
     match ban_block.platform_ban() {
         PlatformBanState::Unknown => {
             unavailable.insert("platformBan.isBanned".into(), json!("not checked yet"));
             unavailable.insert("platformBan.reason".into(), json!("not checked yet"));
             unavailable.insert("platformBan.source".into(), json!("not checked yet"));
-            unavailable.insert("platformBan.checkedAgoSecs".into(), json!("not checked yet"));
+            unavailable.insert(
+                "platformBan.checkedAgoSecs".into(),
+                json!("not checked yet"),
+            );
             json!({
                 "state": "unknown",
                 "isBanned": null, "source": null, "reason": null, "customMessage": null,
@@ -175,5 +202,53 @@ fn platform_ban_json(ban_block: &BanBlock, now: f64, unavailable: &mut Map<Strin
                 "error": null,
             })
         }
+    }
+}
+
+fn scene_admission_json(admission: &SceneAdmission, unavailable: &mut Map<String, Value>) -> Value {
+    match admission {
+        SceneAdmission::Unknown => {
+            unavailable.insert(
+                "sceneAdmission.scope".into(),
+                json!("no scene admission yet"),
+            );
+            json!({ "state": "unknown", "scope": null, "message": null, "sceneId": null })
+        }
+        SceneAdmission::Allowed { scene_id } => {
+            unavailable.insert("sceneAdmission.scope".into(), json!("admitted"));
+            json!({ "state": "allowed", "scope": null, "message": null, "sceneId": scene_id })
+        }
+        SceneAdmission::Refused {
+            scope,
+            message,
+            scene_id,
+        } => json!({ "state": "refused", "scope": scope, "message": message, "sceneId": scene_id }),
+    }
+}
+
+fn scene_room_json(room: SceneRoomView, unavailable: &mut Map<String, Value>) -> Value {
+    match room {
+        SceneRoomView::NotConnected => {
+            unavailable.insert("sceneRoom.sceneId".into(), json!("no scene room connected"));
+            unavailable.insert(
+                "sceneRoom.bannedAddresses".into(),
+                json!("no scene room connected"),
+            );
+            unavailable.insert(
+                "sceneRoom.sceneAdmins".into(),
+                json!("no scene room connected"),
+            );
+            json!({ "state": "not_connected", "sceneId": null, "bannedAddresses": [], "sceneAdmins": [] })
+        }
+        SceneRoomView::Connected {
+            scene_id,
+            banned_addresses,
+            scene_admins,
+        } => json!({
+            "state": "connected",
+            "sceneId": scene_id,
+            "bannedAddresses": addresses(banned_addresses),
+            "sceneAdmins": addresses(scene_admins),
+        }),
     }
 }

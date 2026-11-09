@@ -120,6 +120,9 @@ boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-st
 gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default) to see a banned
 answer and a failed check; a scenario's `session.nativeArgs` is what starts that client. On the web
 a service override stops the boot at the launch gate, so those scenarios are todos there.
+`specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
+their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
+adapter reported as a scene ban.
 
 ## Scenario map
 

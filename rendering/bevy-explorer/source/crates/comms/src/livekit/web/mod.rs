@@ -325,6 +325,7 @@ pub enum Reply {
 #[derive(Debug)]
 pub struct ConnectedRoom {
     pub name: String,
+    pub metadata: String,
     pub local_participant: LocalParticipant,
 }
 

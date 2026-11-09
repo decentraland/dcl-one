@@ -159,7 +159,11 @@ impl PlatformBanStatus {
 
     /// Records a failed check. A ban learnt from a scene-admission refusal is kept: a failed poll
     /// is no evidence against it.
-    pub fn platform_ban_check_failed(&mut self, error: String, checked_at: f64) -> Vec<BanBlockEvent> {
+    pub fn platform_ban_check_failed(
+        &mut self,
+        error: String,
+        checked_at: f64,
+    ) -> Vec<BanBlockEvent> {
         if self.source() == Some(PlatformBanSource::SceneAdmissionRefusal) {
             warn!("[ban_block] platform ban check failed, keeping the refusal: {error}");
             return Vec::new();
@@ -174,7 +178,7 @@ impl PlatformBanStatus {
         }
     }
 
-    /// Forgets the answer, for a wallet that is no longer the local user's.
+    /// Forgets the answer.
     pub fn reset_platform_ban(&mut self) -> Vec<BanBlockEvent> {
         if self.state == PlatformBanState::Unknown {
             return Vec::new();
@@ -236,8 +240,6 @@ struct Check {
     task: Task<Result<Option<PlatformBanInfo>, String>>,
 }
 
-/// One request in flight at most; the answer for an address that is no longer the wallet's is
-/// dropped.
 #[derive(Default)]
 struct CheckState {
     address: Option<Address>,
@@ -246,7 +248,8 @@ struct CheckState {
     in_flight: Option<Check>,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Polls the one request in flight, dropping an answer for an address that is no longer the
+/// wallet's, and starts the next one when a check is due.
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,
@@ -285,7 +288,11 @@ fn check_platform_ban(
             Ok(ban) => {
                 info!(
                     "[ban_block] platform ban check: {}",
-                    if ban.is_some() { "banned" } else { "not banned" }
+                    if ban.is_some() {
+                        "banned"
+                    } else {
+                        "not banned"
+                    }
                 );
                 status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now)
             }
@@ -308,7 +315,10 @@ fn check_platform_ban(
     }
     check.last_checked = Some(now);
     check.retry_after = None;
-    let url = base_domain::url(Service::CommsGatekeeper, &format!("/users/{address:#x}/bans"));
+    let url = base_domain::url(
+        Service::CommsGatekeeper,
+        &format!("/users/{address:#x}/bans"),
+    );
     let request = status
         .http
         .get(url)
@@ -319,9 +329,11 @@ fn check_platform_ban(
     });
 }
 
-/// The request's outcome as the status records it. A 503 carries its `Retry-After` in the error
-/// text, where [`retry_after_secs`] reads it back.
-async fn fetch_ban_status(request: reqwest::RequestBuilder) -> Result<Option<PlatformBanInfo>, String> {
+/// The decoded answer, or an error naming the status and, when the answer carries one, its
+/// `Retry-After` in seconds.
+async fn fetch_ban_status(
+    request: reqwest::RequestBuilder,
+) -> Result<Option<PlatformBanInfo>, String> {
     let response = platform::TracedJsonResponse::send(request)
         .await
         .map_err(|e| format!("request failed: {e}"))?;
@@ -367,7 +379,8 @@ mod tests {
             None
         );
         assert_eq!(
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#).unwrap(),
+            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#)
+                .unwrap(),
             None
         );
         assert!(PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#).is_err());
@@ -397,7 +410,10 @@ mod tests {
             vec![BanBlockEvent::PlatformBanChanged]
         );
         assert_eq!(status.ban(), Some(&ban));
-        assert_eq!(status.source(), Some(PlatformBanSource::SceneAdmissionRefusal));
+        assert_eq!(
+            status.source(),
+            Some(PlatformBanSource::SceneAdmissionRefusal)
+        );
     }
 
     #[test]
@@ -414,7 +430,11 @@ mod tests {
         assert!(matches!(status.state(), PlatformBanState::Failed { .. }));
 
         let ban = PlatformBanInfo::from_refusal("banned");
-        status.apply_platform_ban(Some(ban.clone()), PlatformBanSource::SceneAdmissionRefusal, 3.0);
+        status.apply_platform_ban(
+            Some(ban.clone()),
+            PlatformBanSource::SceneAdmissionRefusal,
+            3.0,
+        );
         assert!(status
             .platform_ban_check_failed("status 500".into(), 4.0)
             .is_empty());

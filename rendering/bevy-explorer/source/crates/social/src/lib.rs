@@ -326,7 +326,7 @@ fn dm_privacy_of(
     );
 }
 
-/// `/block_user <address>` blocks a user through the social service, as the passport does.
+/// `/block_user <address>` blocks a user through the social service.
 #[cfg(feature = "social")]
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/block_user")]

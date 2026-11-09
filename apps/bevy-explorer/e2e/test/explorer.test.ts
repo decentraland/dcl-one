@@ -77,7 +77,9 @@ describe('Explorer', () => {
           address: '0x' + '1'.repeat(40),
           blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
           platformBan: { state: 'checked', isBanned: false, source: null, reason: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
-          lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them' } : null,
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
+          lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
           unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
         }),
       block_user: 'block requested',
@@ -92,6 +94,7 @@ describe('Explorer', () => {
     assert.equal(state.unavailable.lookup, 'no address given')
     const lookup = await explorer.banBlockState(other)
     assert.equal(lookup.lookup?.direction, 'local_user_blocked_them')
+    assert.equal(lookup.sceneRoom.state, 'connected')
     await explorer.blockUser(other)
     await explorer.unblockUser(other)
     assert.deepEqual(fake.sent('ban_block_state'), ['/ban_block_state', `/ban_block_state ${other}`])

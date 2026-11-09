@@ -68,7 +68,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `GetBlockingStatus`). The platform ban is read from the gatekeeper's public, unsigned
   `GET /users/{address}/bans` (unity-explorer signs the same request, which the endpoint does
   not need), on sign-in, on a realm change, on `/ban_block_refresh` and every 300 s; a failed
-  check fails open, as there, and the state says so instead of guessing.
+  check fails open, as there, and the state says so instead of guessing. The local user's scene
+  ban is the gatekeeper's refusal of the scene adapter, read from its status and body (403 for a
+  platform or scene ban, 401 with the world-ban message for a world), where unity-explorer treats
+  any 401 or 403 as forbidden access; a platform-scoped refusal also marks the platform ban. The
+  player is not moved out of a scene that refused them, as there. Other players' scene bans and
+  the admins come from the room's metadata and count only while the room is connected, as there.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

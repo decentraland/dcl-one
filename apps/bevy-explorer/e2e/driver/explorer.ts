@@ -166,10 +166,24 @@ export interface BanBlockState {
     checkedAgoSecs: number | null
     error: string | null
   }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
   lookup: {
     address: string
     isBlockedEitherWay: boolean
     direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
   } | null
   unavailable: Record<string, string>
 }

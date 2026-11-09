@@ -26,6 +26,7 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
+use ban_block::BanBlockPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
@@ -78,7 +79,6 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use ban_block::BanBlockPlugin;
 use system_api_types::{
     launch_options::{
         help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},

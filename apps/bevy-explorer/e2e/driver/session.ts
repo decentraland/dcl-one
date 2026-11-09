@@ -26,8 +26,8 @@ export interface OpenOptions {
   signIn?: SignIn
   /** The first login's profile name (1 to 15 alphanumerics) and curated look. */
   firstLogin?: { name?: string; look?: number }
-  /** More arguments for a standalone this session starts (a service override, say); a separate
-   *  client. The web client takes none: its service params stop at the launch gate. */
+  /** More arguments for the standalone this session starts, which make it a separate client;
+   *  an error on the web. */
   nativeArgs?: string[]
 }
 

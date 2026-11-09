@@ -10,6 +10,8 @@ use crate::livekit::web::{
 pub struct Room {
     id: RoomId,
     name: String,
+    /// The room's metadata as it was at connect.
+    metadata: String,
     local_participant: LocalParticipant,
 }
 
@@ -40,6 +42,7 @@ impl Room {
                 Room {
                     id,
                     name: connected.name,
+                    metadata: connected.metadata,
                     local_participant: connected.local_participant,
                 },
                 receiver,
@@ -69,6 +72,10 @@ impl Room {
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn metadata(&self) -> String {
+        self.metadata.clone()
     }
 
     pub fn local_participant(&self) -> LocalParticipant {
