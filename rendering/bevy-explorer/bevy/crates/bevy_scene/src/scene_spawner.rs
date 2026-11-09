@@ -420,6 +420,8 @@ impl SceneSpawner {
     /// Immediately despawns a scene instance, removing all its entities from the world.
     pub fn despawn_instance_sync(&mut self, world: &mut World, instance_id: &InstanceId) {
         self.instance_parents.remove(instance_id);
+        // an instance despawned before it completed would otherwise wait for its parent forever
+        self.scenes_with_parent.retain(|(id, _)| id != instance_id);
         self.keep_hidden.remove(instance_id);
         self.hidden_instances.remove(instance_id);
         if let Some(progress) = self.take_in_progress(*instance_id) {

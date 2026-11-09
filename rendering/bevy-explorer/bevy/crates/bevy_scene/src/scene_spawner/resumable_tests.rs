@@ -78,6 +78,16 @@ fn children(app: &App, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
+/// Whether the spawner has stopped tracking `instance`'s parent.
+fn parent_is_forgotten(app: &App, instance: InstanceId) -> bool {
+    let spawner = app.world().resource::<SceneSpawner>();
+    !spawner.instance_parents.contains_key(&instance)
+        && spawner
+            .scenes_with_parent
+            .iter()
+            .all(|(id, _)| *id != instance)
+}
+
 #[test]
 fn without_a_deadline_an_instance_spawns_whole() {
     let mut app = app();
@@ -208,6 +218,7 @@ fn despawning_the_parent_mid_spawn_leaves_nothing_behind() {
 
     assert!(!is_ready(&app, instance));
     assert_eq!(app.world().entities().len(), entities_before);
+    assert!(parent_is_forgotten(&app, instance));
 }
 
 #[test]
@@ -227,6 +238,7 @@ fn despawning_an_instance_mid_spawn_leaves_nothing_behind() {
     assert!(!is_ready(&app, instance));
     assert_eq!(app.world().entities().len(), entities_before);
     assert!(children(&app, parent).is_empty());
+    assert!(parent_is_forgotten(&app, instance));
 }
 
 #[test]
@@ -247,6 +259,7 @@ fn unregistering_an_instance_mid_spawn_leaves_nothing_behind() {
     assert!(!is_ready(&app, instance));
     assert_eq!(app.world().entities().len(), entities_before);
     assert!(nodes(&mut app).is_empty());
+    assert!(parent_is_forgotten(&app, instance));
 }
 
 #[test]
