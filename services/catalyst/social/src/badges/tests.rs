@@ -586,11 +586,18 @@ async fn a_single_grant_reaches_the_target_and_is_idempotent() {
         return;
     };
     let (pool, addr) = (state.badges.pool().clone(), fresh_address());
+    let err = state
+        .badges
+        .grant_badge(&addr, "open_for_business", Some("bogus"), "t")
+        .await
+        .unwrap_err();
+    assert_eq!(status_of(&err), 400, "a single badge takes no tierId");
+    assert!(progress(&pool, &addr, "open_for_business").await.is_none());
     for actor in ["first", "again"] {
         assert!(
             state
                 .badges
-                .grant_badge(&addr, "open_for_business", Some("ignored-on-single"), actor)
+                .grant_badge(&addr, "open_for_business", None, actor)
                 .await
                 .unwrap()
         );

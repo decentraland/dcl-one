@@ -491,7 +491,7 @@ impl BadgesStore {
     }
 
     /// The console grant: raises the wallet's steps to the target of
-    /// `tier_id` (required for a tiered badge, ignored for a single one), so
+    /// `tier_id` (required for a tiered badge, refused on a single one), so
     /// every tier up to it is earned and the badge completes only at its last
     /// tier, then audits it, through [`apply_progress`] with notifications.
     /// `Ok(false)` is "no such published badge"; an archived badge, a missing
@@ -536,6 +536,10 @@ impl BadgesStore {
             steps.ok_or_else(|| {
                 ApiError::not_found(format!("no tier '{tid}' on badge '{badge_id}'"))
             })?
+        } else if let Some(tid) = tier_id {
+            return Err(ApiError::bad_request(format!(
+                "badge '{badge_id}' has no tiers; tierId '{tid}' does not apply"
+            )));
         } else {
             criteria_steps.unwrap_or(1)
         };
