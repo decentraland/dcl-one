@@ -23,6 +23,7 @@ WORKFLOW = '.github/workflows/web-previews.yml'
 PIPELINE_INPUTS = {
     WORKFLOW,
     '.github/workflows/web-previews-publish.yml',
+    '.github/workflows/web-previews-complete.yml',
     'tooling/web-preview.py',
     'tooling/tests/test_web_preview.py',
 }
