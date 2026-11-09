@@ -22,6 +22,33 @@ fn walks_at_the_speed_and_stops_at_the_target() {
 }
 
 #[test]
+fn a_walk_ends_exactly_on_its_target() {
+    // `from + (to - from)` is not `to` in f32 for some of these, so arriving must not depend on it
+    for (from, to) in [
+        (Vec2::new(0.1, 0.7), Vec2::new(-95.3, 41.9)),
+        (Vec2::new(-12.3, 2.9), Vec2::new(8.0, -40.1)),
+        (Vec2::new(103.7, -0.3), Vec2::new(-7.9, 88.8)),
+        (Vec2::new(-200.6, 15.4), Vec2::new(-183.2, 31.1)),
+    ] {
+        assert_eq!(walk_position(from, to, 6.0, 1000.0), to, "{from} to {to}");
+    }
+}
+
+#[test]
+fn the_walk_target_may_be_a_negative_parcel() {
+    use clap::Parser;
+
+    let arguments = crate::DecentralandArguments::try_parse_from([
+        "decentra-bevy",
+        "--autopilot-walk-to",
+        "-3,5",
+    ])
+    .unwrap();
+
+    assert_eq!(arguments.autopilot_walk_to, Some(IVec2::new(-3, 5)));
+}
+
+#[test]
 fn a_walk_to_where_it_stands_is_there_at_once() {
     let here = Vec2::new(8.0, -8.0);
     assert_eq!(walk_position(here, here, 6.0, 0.0), here);

@@ -46,10 +46,12 @@ fn parcel_centre(parcel: IVec2) -> Vec2 {
 fn walk_position(from: Vec2, to: Vec2, speed: f32, elapsed: f32) -> Vec2 {
     let offset = to - from;
     let distance = offset.length();
-    if distance <= f32::EPSILON {
+    let walked = speed * elapsed;
+    // exactly `to` once there: `from + offset` need not equal it in f32
+    if walked >= distance {
         return to;
     }
-    from + offset * (speed * elapsed / distance).min(1.0)
+    from + offset * (walked / distance)
 }
 
 /// The camera yaw that looks along `direction` (world x, world z): yaw 0 looks along −z.

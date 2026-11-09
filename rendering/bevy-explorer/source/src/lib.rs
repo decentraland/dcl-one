@@ -293,6 +293,7 @@ pub struct DecentralandArguments {
     #[arg(
         long,
         value_name = "x,y",
+        allow_hyphen_values = true,
         value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
         help_heading = DEBUG
     )]
