@@ -51,7 +51,7 @@ describe('when retirement publication is interrupted', () => {
         (await json(root, `${SNAP}/components/Page.json`)).components.map(
           (component: { id: string }) => component.id
         )
-      ).toEqual(['2:2'])
+      ).toEqual(['2:1', '2:2'])
     }
   )
   it('should apply a validated reason edit while publication is pending', async () => {

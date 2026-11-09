@@ -74,11 +74,11 @@ async function report(output: Record<string, string>, extra: Record<string, stri
   return readFile(path.join(root, 'report'), 'utf8')
 }
 describe('when a trusted scan cannot run', () => {
-  it('should report a neutral check on fork heads without exposing the private key', async () => {
+  it('should report a failing check on fork heads without exposing the private key', async () => {
     const { output, status } = await validate({ HEAD_REPO: 'outside/fork' })
     expect(status).toBe(0)
     expect(output.scan).toBe('false')
-    expect(await report(output)).toContain('conclusion=neutral')
+    expect(await report(output)).toContain('conclusion=failure')
     expect(await report(output)).toContain(`head_sha=${head}`)
   })
   it('should resolve an empty workflow_run PR list from the repository API', async () => {

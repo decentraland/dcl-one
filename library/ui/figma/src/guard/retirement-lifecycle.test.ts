@@ -36,7 +36,7 @@ describe('when applying a component retirement in a retained page', () => {
       (await json(root, `${SNAP}/components/Page.json`)).components.map(
         (component: { id: string }) => component.id
       )
-    ).toEqual(['2:2'])
+    ).toEqual(['2:1', '2:2'])
     expect(
       (await json(root, 'figma/review/src/review/catalog.json')).components.map(
         (component: { name: string }) => component.name
@@ -103,7 +103,7 @@ describe('when applying a component retirement in a retained page', () => {
       (await json(root, `${SNAP}/components/Page.json`)).components.map(
         (component: { id: string }) => component.id
       )
-    ).toEqual(['2:2'])
+    ).toEqual(['2:1', '2:2'])
   })
   it('should apply the same committed record from a clean checkout', async () => {
     await put(root, `figma/ledger/retirements.json`, records)
@@ -122,7 +122,7 @@ describe('when applying a component retirement in a retained page', () => {
         (await json(copy, `${SNAP}/components/Page.json`)).components.map(
           (component: { id: string }) => component.id
         )
-      ).toEqual(['2:2'])
+      ).toEqual(['2:1', '2:2'])
     } finally {
       await rm(copy, { recursive: true, force: true })
     }
@@ -138,11 +138,11 @@ describe('when applying a component retirement in a retained page', () => {
       }
     ]
     await put(root, `figma/ledger/retirements.json`, records)
+    const capture = await readFile(path.join(root, `${SNAP}/components/Page.json`))
+    const inventory = await readFile(path.join(root, `${SNAP}/generation-inventory.json`))
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
-    await expect(readFile(path.join(root, `${SNAP}/components/Page.json`))).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
-    expect((await json(root, `${SNAP}/generation-inventory.json`)).review).toEqual([])
+    expect(await readFile(path.join(root, `${SNAP}/components/Page.json`))).toEqual(capture)
+    expect(await readFile(path.join(root, `${SNAP}/generation-inventory.json`))).toEqual(inventory)
     expect((await json(root, 'figma/review/src/review/catalog.json')).components).toEqual([])
     expect((await runDiff(app, { source: 'snapshot' })).diff).toEqual({
       added: [],

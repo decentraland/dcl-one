@@ -65,9 +65,12 @@ describe('when a retired component reappears as a variant of a live set', () => 
     await rm(base, { recursive: true, force: true })
   })
 
+  // The cleanup leaves the pinned cache as it was; a later capture is where the retired component goes away.
   const recapture = async (components: (page: SavedComponent[]) => SavedComponent[]) => {
     const page = await json(root, PAGE)
-    page.components = components(page.components)
+    page.components = components(
+      page.components.filter((component: SavedComponent) => component.id !== retired.id)
+    )
     await put(root, PAGE, page)
   }
   const guard = () =>
@@ -111,11 +114,15 @@ describe('when a retired component reappears as a variant of a live set', () => 
   })
 
   describe('and the retired component itself comes back at the top level', () => {
-    it('should still report the retirement as pending', async () => {
+    it('should keep it out of generation without reporting the capture as pending', async () => {
       await recapture((page) => [retired, ...page])
 
-      expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:${retired.id}`)
-      expect((await guard()).ok).toBe(false)
+      await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
+
+      expect(await pendingRetirements(root, records)).toEqual([])
+      await expect(readFile(path.join(root, GEN, 'page/First.tsx'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
     })
   })
 
@@ -139,18 +146,20 @@ describe('when a retired component reappears as a variant of a live set', () => 
         successor('4:1', 'Other', retired, '4:9')
       ])
 
-      await expect(pendingRetirements(root, records)).rejects.toThrow('duplicate entry variant:2:1')
+      expect((await guard()).violations.map((violation) => violation.cause)).toContainEqual(
+        expect.stringContaining('duplicate entry variant:2:1')
+      )
     })
   })
 
   describe('and the only set listing it is an external copy', () => {
-    it('should keep the retired variant pending and fail the guard', async () => {
+    it('should fail the guard without reporting the capture as pending', async () => {
       await recapture((page) => [
         ...page,
         { ...successor('3:1', 'Merged', retired), external: true }
       ])
 
-      expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:${retired.id}`)
+      expect(await pendingRetirements(root, records)).toEqual([])
       expect((await guard()).ok).toBe(false)
     })
   })
@@ -159,16 +168,16 @@ describe('when a retired component reappears as a variant of a live set', () => 
     ['the only set listing it is truncated', { truncated: true }],
     ['the only component listing it is not a set', { kind: 'component', others: [] }]
   ])('and %s', (_, change) => {
-    it('should keep the retired variant pending and fail the guard', async () => {
+    it('should fail the guard without reporting the capture as pending', async () => {
       await recapture((page) => [...page, { ...successor('3:1', 'Merged', retired), ...change }])
 
-      expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:${retired.id}`)
+      expect(await pendingRetirements(root, records)).toEqual([])
       expect((await guard()).ok).toBe(false)
     })
   })
 
   describe('and the successor is retired too', () => {
-    it('should keep the retired variant pending', async () => {
+    it('should not report the capture as pending', async () => {
       await recapture((page) => [...page, successor('3:1', 'Merged', retired)])
       const both: Retirements = {
         ...records,
@@ -184,36 +193,35 @@ describe('when a retired component reappears as a variant of a live set', () => 
         ]
       }
 
-      expect(await pendingRetirements(root, both)).toContain(`${PAGE}#variant:${retired.id}`)
+      expect(await pendingRetirements(root, both)).toEqual([])
     })
   })
 
   describe('and another saved page is unreadable', () => {
-    it('should keep the retired variant pending', async () => {
+    it('should fail the guard without reporting the capture as pending', async () => {
       await recapture((page) => [...page, successor('3:1', 'Merged', retired)])
       await put(root, `${SNAP}/components/Broken.json`, '{"page":')
 
-      expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:${retired.id}`)
+      expect(await pendingRetirements(root, records)).toEqual([])
+      expect((await guard()).ok).toBe(false)
     })
   })
 })
 
 describe('when a retirement is applied before any recapture', () => {
-  it('should still drain the variant that was never re-parented', async () => {
+  it('should clean the outputs and leave the variant in the capture', async () => {
     const { root, app, records } = await lifecycleFixture()
     try {
       await put(root, `figma/ledger/retirements.json`, records)
-      expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:2:1`)
+      const pending = await pendingRetirements(root, records)
+      expect(pending.length).toBeGreaterThan(0)
+      expect(pending.filter((artifact) => artifact.startsWith(`${SNAP}/`))).toEqual([])
+      const capture = await readFile(path.join(root, PAGE))
 
       await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
 
       expect(await pendingRetirements(root, records)).toEqual([])
-      expect(
-        (await json(root, PAGE)).components.flatMap((component: SavedComponent) => [
-          component.base.id,
-          ...component.others.map((variant) => variant.id)
-        ])
-      ).not.toContain('2:1')
+      expect(await readFile(path.join(root, PAGE))).toEqual(capture)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

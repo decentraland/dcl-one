@@ -207,59 +207,109 @@ describe('when checking a built gallery', () => {
     )
   }, 120_000)
 
-  describe('and the browser session fails to close', () => {
+  describe('and a teardown step fails', () => {
     let origin: string
-    // A stand-in session that records the served origin and answers each check the way a working gallery does.
-    const session = (evaluate: (expression: string) => unknown) => async () => ({
-      requests: [],
-      requestFailures: [],
-      runtimeErrors: [],
-      consoleErrors: [],
-      send: async (method: string, params: { url?: string }) => {
-        if (method === 'Page.navigate') origin ||= new URL(params.url!).origin
-        return {}
-      },
-      evaluate: async (expression: string) => evaluate(expression),
-      close: async () => {
-        throw new Error('browser would not close')
+    let serverCloses: number
+    // A stand-in session that records the served origin and answers each check the way `evaluate` does.
+    const session =
+      (evaluate: (expression: string) => unknown, closes = true) =>
+      async () => ({
+        requests: [],
+        requestFailures: [],
+        runtimeErrors: [],
+        consoleErrors: [],
+        send: async (method: string, params?: Record<string, unknown>) => {
+          if (method === 'Page.navigate') origin ||= new URL(String(params?.url)).origin
+          return {}
+        },
+        evaluate: async (expression: string) => evaluate(expression),
+        close: async () => {
+          if (!closes) throw new Error('browser would not close')
+        }
+      })
+    // Answers every check the way a working gallery does.
+    const passing = (expression: string) => {
+      const page = `${origin}/?component=Button`
+      if (
+        expression === 'location.href' ||
+        expression.includes("readyState === 'complete' && location.href")
+      )
+        return page
+      if (expression.includes('component=')) return [{ href: page, name: 'Button' }]
+      if (expression.includes('main h1')) return true
+      if (expression.includes('select.dispatchEvent')) return { property: 'size', value: 'large' }
+      if (expression.includes("searchParams.get('variant')")) return '1'
+      if (expression.includes('#audit-render')) return { width: 10, height: 10 }
+      throw new Error(`unexpected expression: ${expression}`)
+    }
+    const unreachable = () => {
+      throw new Error('page unreachable')
+    }
+    // A real server that does close, but whose close callback reports an error.
+    const failingServer: typeof createServer = ((...args: Parameters<typeof createServer>) => {
+      const server = createServer(...args)
+      const close = server.close.bind(server)
+      server.close = (callback) => {
+        serverCloses++
+        return close(() => callback?.(new Error('server would not close')))
       }
-    })
+      return server
+    }) as typeof createServer
 
     beforeEach(() => {
       origin = ''
+      serverCloses = 0
     })
 
-    it('should keep the check failure and still close the server', async () => {
-      const open = session(() => {
-        throw new Error('page unreachable')
-      })
-
-      await expect(checkBuild({ dist, browser: 'unused', open })).rejects.toThrow(
-        'page unreachable'
-      )
+    it('should keep the check failure when the browser fails to close and still close the server', async () => {
+      await expect(
+        checkBuild({ dist, browser: 'unused', open: session(unreachable, false) })
+      ).rejects.toThrow('page unreachable')
       expect(origin).not.toBe('')
       await expect(fetch(origin)).rejects.toThrow()
     })
 
-    it('should report the close failure after a passing check and still close the server', async () => {
-      const open = session((expression) => {
-        const page = `${origin}/?component=Button`
-        if (
-          expression === 'location.href' ||
-          expression.includes("readyState === 'complete' && location.href")
-        )
-          return page
-        if (expression.includes('component=')) return [{ href: page, name: 'Button' }]
-        if (expression.includes('main h1')) return true
-        if (expression.includes('select.dispatchEvent')) return { property: 'size', value: 'large' }
-        if (expression.includes("searchParams.get('variant')")) return '1'
-        if (expression.includes('#audit-render')) return { width: 10, height: 10 }
-        throw new Error(`unexpected expression: ${expression}`)
-      })
+    it('should report the browser close failure after a passing check and still close the server', async () => {
+      await expect(
+        checkBuild({ dist, browser: 'unused', open: session(passing, false) })
+      ).rejects.toThrow('browser would not close')
+      await expect(fetch(origin)).rejects.toThrow()
+    })
 
-      await expect(checkBuild({ dist, browser: 'unused', open })).rejects.toThrow(
-        'browser would not close'
-      )
+    it('should report the server close failure after a passing check', async () => {
+      await expect(
+        checkBuild({
+          dist,
+          browser: 'unused',
+          open: session(passing),
+          createServer: failingServer
+        })
+      ).rejects.toThrow('server would not close')
+      expect(serverCloses).toBe(1)
+    })
+
+    it('should report the check failure when the server also fails to close', async () => {
+      await expect(
+        checkBuild({
+          dist,
+          browser: 'unused',
+          open: session(unreachable),
+          createServer: failingServer
+        })
+      ).rejects.toThrow('page unreachable')
+      expect(serverCloses).toBe(1)
+    })
+
+    it('should report the browser close failure when the server also fails to close, after attempting both', async () => {
+      await expect(
+        checkBuild({
+          dist,
+          browser: 'unused',
+          open: session(passing, false),
+          createServer: failingServer
+        })
+      ).rejects.toThrow('browser would not close')
+      expect(serverCloses).toBe(1)
       await expect(fetch(origin)).rejects.toThrow()
     })
   })

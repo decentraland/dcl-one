@@ -10,7 +10,7 @@
 // with no uncaught page error and no console error along the way. It reads no evidence file: the gallery
 // publishes no Figma imagery. It runs the built files it is given, so only run it on an unprivileged build.
 import { readFile, stat } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer as createHttpServer } from 'node:http'
 import path from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -44,8 +44,11 @@ function normalizePrefix(prefix) {
   return prefix.endsWith('/') ? prefix : `${prefix}/`
 }
 
-/** Serves `dist` under `prefix` on the loopback interface; records every request with its status. */
-async function serve(dist, prefix) {
+/**
+ * Serves `dist` under `prefix` on the loopback interface; records every request with its status. `createServer`
+ * builds the HTTP server.
+ */
+async function serve(dist, prefix, createServer) {
   const requests = []
   const server = createServer((request, response) => {
     void (async () => {
@@ -81,7 +84,12 @@ async function serve(dist, prefix) {
   return {
     origin: `http://127.0.0.1:${port}`,
     requests,
-    close: () => new Promise((resolve) => server.close(() => resolve()))
+    // Drop open keep-alive sockets so they cannot hold the process, and surface a failed close.
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+        server.closeAllConnections()
+      })
   }
 }
 
@@ -112,12 +120,19 @@ const componentLinks = `[...document.querySelectorAll('a[href*="component="]')].
 
 /**
  * Runs the five checks. Resolves with a summary; rejects naming the first failed check. `browser` overrides the
- * Chromium executable and `open` the function that starts its session.
+ * Chromium executable, `open` the function that starts its session and `createServer` the one that builds the
+ * HTTP server.
  */
-async function checkBuild({ dist, prefix = '/', browser, open = openSession } = {}) {
+async function checkBuild({
+  dist,
+  prefix = '/',
+  browser,
+  open = openSession,
+  createServer = createHttpServer
+} = {}) {
   const root = path.resolve(dist)
   const base = normalizePrefix(prefix)
-  const server = await serve(root, base)
+  const server = await serve(root, base, createServer)
   let session
   let summary
   let failure

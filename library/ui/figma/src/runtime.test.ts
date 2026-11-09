@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveComponent } from './contract/resolve.js'
 import { makeLibrary } from './contract/test-fixtures.js'
 import type { ComponentSpec } from './ir/components.js'
@@ -8,6 +8,17 @@ import { LfsPointerError } from './lfs.js'
 import { FdsCacheError, MARKER } from './sources/fds-source.js'
 import { createRuntime, supersessionCandidates } from './runtime.js'
 import { copySnapshot, pinTestCapture, testConfig } from '../test/snapshot.js'
+
+// Lets a test make loadSpecsFromSource fail with an arbitrary error; unset, the real loader runs.
+const specsFailure = vi.hoisted(() => ({ error: undefined as Error | undefined }))
+vi.mock('./specs.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./specs.js')>()
+  return {
+    ...actual,
+    loadSpecsFromSource: (...args: Parameters<typeof actual.loadSpecsFromSource>) =>
+      specsFailure.error ? Promise.reject(specsFailure.error) : actual.loadSpecsFromSource(...args)
+  }
+})
 
 const spec = (name: string, extra: Partial<ComponentSpec> = {}) =>
   ({ name, page: 'Buttons', needsManual: [], ...extra }) as ComponentSpec
@@ -59,6 +70,7 @@ describe('when distinguishing configured capture failures from resolve-only mode
     library = await makeLibrary()
   })
   afterEach(async () => {
+    specsFailure.error = undefined
     await rm(library.root, { recursive: true, force: true })
   })
 
@@ -133,6 +145,7 @@ describe('when distinguishing configured capture failures from resolve-only mode
     })
     const context = await runtime.resolveContext()
     expect(context.figmaSets).toEqual([])
+    expect(context.loadSyncedComponents).toBeUndefined()
     expect(await resolveComponent(context, { nodeId: '1:1' })).toMatchObject({
       ok: true,
       warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
@@ -159,5 +172,39 @@ describe('when distinguishing configured capture failures from resolve-only mode
 
     await expect(context.loadSyncedComponents?.()).rejects.toBeInstanceOf(FdsCacheError)
     await expect(runtime.resolveContext()).rejects.toBeInstanceOf(FdsCacheError)
+  })
+  describe('when loading the synced components of a configured, pinned capture', () => {
+    const pinnedRuntime = async () => {
+      const { pages } = await testConfig()
+      await copySnapshot(path.join(library.root, 'figma-snapshot'))
+      await writeFile(
+        path.join(library.root, 'figma.config.json'),
+        JSON.stringify({
+          outDir: 'generated',
+          snapshotDir: 'figma-snapshot',
+          pages,
+          contract: { mappingRoot: 'src' }
+        })
+      )
+      await pinTestCapture(library.root)
+      return createRuntime({ cwd: library.root, env: {} })
+    }
+
+    it('should resolve a map when the capture loads', async () => {
+      const context = await (await pinnedRuntime()).resolveContext()
+      await expect(context.loadSyncedComponents?.()).resolves.toBeInstanceOf(Map)
+    })
+
+    it('should propagate an I/O error instead of resolving an empty map', async () => {
+      const context = await (await pinnedRuntime()).resolveContext()
+      specsFailure.error = Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' })
+      await expect(context.loadSyncedComponents?.()).rejects.toThrow('EIO')
+    })
+
+    it('should propagate a schema error instead of resolving an empty map', async () => {
+      const context = await (await pinnedRuntime()).resolveContext()
+      specsFailure.error = new SyntaxError('Unexpected token } in JSON')
+      await expect(context.loadSyncedComponents?.()).rejects.toBeInstanceOf(SyntaxError)
+    })
   })
 })

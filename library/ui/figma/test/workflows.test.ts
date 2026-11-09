@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
@@ -258,6 +260,82 @@ describe('ui-library-key-scan.yml', () => {
     const scan = allSteps.find((step) => JSON.stringify(step).includes(SECRET))!
     expect(scan.run).toContain('--artifact "$RUNNER_TEMP/pr-artifact"')
     expect(scan.run).not.toContain('--path')
+  })
+
+  it('should never let a skipped scan, a fork run included, conclude a passing check', () => {
+    const [first] = allSteps
+    const report = allSteps.find((step) => step.run?.includes('check-runs'))!
+    expect(first!.run).not.toMatch(/neutral|skipped|conclusion=success/)
+    expect(JSON.stringify(report.env)).not.toContain('outputs.conclusion')
+    expect(report.run).toMatch(/if \[ -n "\$SKIP_REASON" \]; then\n\s+conclusion=failure\n/)
+  })
+
+  it('should report a failed check that says the key check could not run on a fork run, without the key', () => {
+    const [first] = allSteps
+    const report = allSteps.find((step) => step.run?.includes('check-runs'))!
+    const root = mkdtempSync(path.join(os.tmpdir(), 'key-scan-fork-'))
+    const sentinel = 'fake-figma-file-key-sentinel'
+    try {
+      const env = {
+        PATH: process.env.PATH,
+        FIGMA_FILE_KEY: sentinel,
+        REPOSITORY: 'example/repo',
+        HEAD_REPO: 'outside/fork',
+        HEAD_SHA: '1'.repeat(40),
+        RUN_ID: '123',
+        WORKFLOW_PATH: '.github/workflows/ui-library.yml',
+        WORKFLOW_ID: '42',
+        EVENT: 'pull_request',
+        CONCLUSION: 'success',
+        PULL_REQUESTS: '[]',
+        GITHUB_OUTPUT: path.join(root, 'out'),
+        RUNNER_TEMP: root
+      }
+      writeFileSync(env.GITHUB_OUTPUT, '')
+      const validate = spawnSync(
+        'bash',
+        ['-e', '-o', 'pipefail', '-c', `gh() { echo 42; }\n${first!.run!}`],
+        { encoding: 'utf8', env }
+      )
+      expect(validate.status, validate.stderr).toBe(0)
+      const output = Object.fromEntries(
+        readFileSync(env.GITHUB_OUTPUT, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => line.split(/=(.*)/s).slice(0, 2))
+      )
+      expect(output.scan).toBe('false')
+      const posted = spawnSync(
+        'bash',
+        [
+          '-e',
+          '-o',
+          'pipefail',
+          '-c',
+          `gh() { printf '%s\\n' "$@" > "$RUNNER_TEMP/report"; }\n${report.run!}`
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...env,
+            OUTCOME: 'skipped',
+            SKIP_REASON: output.reason,
+            SKIP_CONCLUSION: 'neutral'
+          }
+        }
+      )
+      expect(posted.status, posted.stderr).toBe(0)
+      const request = readFileSync(path.join(root, 'report'), 'utf8')
+      expect(request).toContain('conclusion=failure')
+      expect(request).not.toMatch(/conclusion=(neutral|success|skipped)/)
+      expect(request).toMatch(
+        /output\[summary\]=Not scanned: fork run: the key check could not run/
+      )
+      for (const text of [request, validate.stdout, validate.stderr, posted.stdout, posted.stderr])
+        expect(text).not.toContain(sentinel)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
