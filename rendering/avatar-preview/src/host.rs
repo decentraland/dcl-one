@@ -107,6 +107,21 @@ pub enum Command {
     Boundaries {
         shown: bool,
     },
+    /// The jesus mode's particles, rising off the avatar's surface; every field optional, unset
+    /// fields keep their value (see `effect::EffectSettings`).
+    #[serde(rename_all = "camelCase")]
+    Effect {
+        shown: Option<bool>,
+        rate: Option<f32>,
+        life_min: Option<f32>,
+        life_max: Option<f32>,
+        velocity_min: Option<[f32; 3]>,
+        velocity_max: Option<[f32; 3]>,
+        size_min: Option<f32>,
+        size_max: Option<f32>,
+        color: Option<[f32; 3]>,
+        intensity: Option<f32>,
+    },
     /// The authentication platform: the disc the avatar stands on, turning with it.
     Platform {
         shown: bool,
@@ -538,10 +553,11 @@ fn apply_commands(
         ResMut<LoadGate>,
         ResMut<HideFace>,
     ),
-    (flags, mut images, views): (
+    (flags, mut images, views, mut effect): (
         Res<crate::StageFlags>,
         ResMut<Assets<Image>>,
         Query<(&Transform, &bevy::render::camera::Exposure), With<PreviewCamera>>,
+        ResMut<crate::effect::EffectSettings>,
     ),
 ) {
     let queued: Vec<Command> = COMMANDS.with(|queue| queue.borrow_mut().drain(..).collect());
@@ -639,6 +655,44 @@ fn apply_commands(
             }
             Command::Boundaries { shown } => {
                 orbit.boundaries = shown;
+            }
+            Command::Effect {
+                shown,
+                rate,
+                life_min,
+                life_max,
+                velocity_min,
+                velocity_max,
+                size_min,
+                size_max,
+                color,
+                intensity,
+            } => {
+                let e = effect.as_mut();
+                for (slot, value) in [
+                    (&mut e.rate, rate),
+                    (&mut e.life_min, life_min),
+                    (&mut e.life_max, life_max),
+                    (&mut e.size_min, size_min),
+                    (&mut e.size_max, size_max),
+                    (&mut e.intensity, intensity),
+                ] {
+                    if let Some(value) = value {
+                        *slot = value.max(0.0);
+                    }
+                }
+                if let Some(v) = shown {
+                    e.shown = v;
+                }
+                if let Some(v) = velocity_min {
+                    e.velocity_min = Vec3::from(v);
+                }
+                if let Some(v) = velocity_max {
+                    e.velocity_max = Vec3::from(v);
+                }
+                if let Some(v) = color {
+                    e.color = Vec3::from(v);
+                }
             }
             Command::Platform { shown } => {
                 orbit.platform = shown;
@@ -1354,6 +1408,69 @@ pub struct Surfaces<'w, 's> {
 }
 
 impl Surfaces<'_, '_> {
+    /// A skinned mesh's joint matrices in this frame's pose.
+    fn matrices(
+        &self,
+        skin: &bevy::render::mesh::skinning::SkinnedMesh,
+        inverse: &bevy::render::mesh::skinning::SkinnedMeshInverseBindposes,
+    ) -> Vec<Mat4> {
+        skin.joints
+            .iter()
+            .zip(inverse.iter())
+            .map(|(joint, inverse)| {
+                self.joints
+                    .get(*joint)
+                    .map(|joint| joint.compute_matrix() * *inverse)
+                    .unwrap_or(Mat4::ZERO)
+            })
+            .collect()
+    }
+
+    /// `count` points on the visible skinned surfaces under `root`, in this frame's pose: random
+    /// vertices, each mesh as likely as its share of them. `random` returns 0..1.
+    pub fn sample(
+        &self,
+        root: Entity,
+        count: usize,
+        random: &mut impl FnMut() -> f32,
+        out: &mut impl FnMut(Vec3),
+    ) {
+        if count == 0 {
+            return;
+        }
+        // each source with the running vertex total it ends at
+        let mut sources = Vec::new();
+        let mut total = 0;
+        for entity in self.children.iter_descendants(root) {
+            let Ok((_, _, visible, Some(skin), mesh, _)) = self.meshes.get(entity) else {
+                continue;
+            };
+            let (Some(data), Some(inverse)) = (
+                self.mesh_assets.get(&mesh.0),
+                self.bindposes.get(&skin.inverse_bindposes),
+            ) else {
+                continue;
+            };
+            let vertices = data.count_vertices();
+            if !visible.get() || vertices == 0 {
+                continue;
+            }
+            total += vertices;
+            sources.push((data, self.matrices(skin, inverse), total));
+        }
+        if total == 0 {
+            return;
+        }
+        for _ in 0..count {
+            let pick = ((random() * total as f32) as usize).min(total - 1);
+            let (data, matrices, end) = &sources[sources.partition_point(|s| s.2 <= pick)];
+            let index = pick + data.count_vertices() - end;
+            if let Some(point) = skin_vertex(data, matrices, index) {
+                out(point);
+            }
+        }
+    }
+
     /// Where an avatar's root is.
     fn origin(&self, root: Entity) -> Vec3 {
         self.joints
@@ -1379,20 +1496,7 @@ impl Surfaces<'_, '_> {
                     .mesh_assets
                     .get(&mesh.0)
                     .zip(self.bindposes.get(&skin.inverse_bindposes))
-                    .map(|(data, inverse)| {
-                        let matrices: Vec<Mat4> = skin
-                            .joints
-                            .iter()
-                            .zip(inverse.iter())
-                            .map(|(joint, inverse)| {
-                                self.joints
-                                    .get(*joint)
-                                    .map(|joint| joint.compute_matrix() * *inverse)
-                                    .unwrap_or(Mat4::ZERO)
-                            })
-                            .collect();
-                        skin_points(data, &matrices, grow)
-                    })
+                    .map(|(data, inverse)| skin_points(data, &self.matrices(skin, inverse), grow))
                     .unwrap_or(false);
                 if !skinned {
                     // no vertex data to skin: the skeleton, with a margin for the surface around it
@@ -1583,17 +1687,41 @@ fn skin_points(mesh: &Mesh, matrices: &[Mat4], grow: &mut impl FnMut(Vec3)) -> b
         return false;
     };
     for ((position, index), weight) in positions.iter().zip(indices).zip(weights) {
-        let mut blended = Mat4::ZERO;
-        for k in 0..4 {
-            if weight[k] > 0.0 {
-                if let Some(matrix) = matrices.get(index[k] as usize) {
-                    blended += *matrix * weight[k];
-                }
-            }
-        }
-        grow(blended.transform_point3(Vec3::from(*position)));
+        grow(blend(matrices, index, weight).transform_point3(Vec3::from(*position)));
     }
     true
+}
+
+/// One vertex of a skinned mesh, where the GPU draws it in this pose.
+fn skin_vertex(mesh: &Mesh, matrices: &[Mat4], vertex: usize) -> Option<Vec3> {
+    use bevy::render::mesh::VertexAttributeValues as Values;
+    let (
+        Some(Values::Float32x3(positions)),
+        Some(Values::Uint16x4(indices)),
+        Some(Values::Float32x4(weights)),
+    ) = (
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT),
+    )
+    else {
+        return None;
+    };
+    let matrix = blend(matrices, indices.get(vertex)?, weights.get(vertex)?);
+    Some(matrix.transform_point3(Vec3::from(*positions.get(vertex)?)))
+}
+
+/// A vertex's skinning matrix: its joints' matrices by their weights.
+fn blend(matrices: &[Mat4], index: &[u16; 4], weight: &[f32; 4]) -> Mat4 {
+    let mut blended = Mat4::ZERO;
+    for k in 0..4 {
+        if weight[k] > 0.0 {
+            if let Some(matrix) = matrices.get(index[k] as usize) {
+                blended += *matrix * weight[k];
+            }
+        }
+    }
+    blended
 }
 
 /// What `fit_to_bounds` has measured since the last outfit change: it waits for the outfit (and

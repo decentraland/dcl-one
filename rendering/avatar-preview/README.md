@@ -180,18 +180,22 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   (`src/platform/`), at its 0.7 scale 0.0813 m down. Its colour and glow are calibrated against
   the renderer's captures (`platformBase`, `platformEmission` on `web/compare.html`), as this
   light rig and tonemapping are the toon avatar's.
+- its jesus mode (the download page): profile mode from a camera 0.32 m higher, the avatar
+  floating in the renderer's own looping animation (`web/emotes/particles.glb`, whatever `emote`
+  says), with glowing specks rising off random vertices of its posed surface (`src/effect.rs`, a
+  preview feature with no Explorer counterpart; tuned on `web/compare.html`).
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: jesus mode, social emotes, spring bones, and
+Still to come: social emotes, spring bones, and
 configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.
 
-Not supported yet, answered with an error: `physics.setSpringBonesParams`; social emotes; the
-Unity `mode` flows.
+Not supported yet, answered with an error: `physics.setSpringBonesParams`; social emotes.
+`mode=configurator` renders as the marketplace does for now.
 
 ## Embedding it in the shop
 

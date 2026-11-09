@@ -4,6 +4,7 @@
 //! surface in `host` (commands in, events out).
 
 mod audio;
+mod effect;
 mod host;
 mod stage;
 
@@ -130,6 +131,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         AvatarRenderPlugin,
         HostPlugin,
         stage::StagePlugin,
+        effect::EffectPlugin,
         audio::PreviewAudioPlugin,
     ));
     app.insert_resource(AppConfig::default())

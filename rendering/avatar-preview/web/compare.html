@@ -11,7 +11,7 @@
     header label { display: flex; gap: 6px; align-items: center; }
     header input[type=range] { width: 110px; }
     header output { width: 3.5em; font-variant-numeric: tabular-nums; }
-    main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; height: calc(100% - 70px); box-sizing: border-box; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; height: calc(100% - 110px); box-sizing: border-box; }
     figure { margin: 0; display: flex; flex-direction: column; min-height: 0; }
     figcaption { padding: 4px 0; opacity: .8; }
     iframe { flex: 1; width: 100%; border: 0; background: transparent; }
@@ -33,6 +33,21 @@
     <label>platform base <input id="platformBase" type="range" min="0" max="2" step="0.02"><output></output></label>
     <label>platform emission <input id="platformEmission" type="range" min="0" max="2" step="0.01"><output></output></label>
     <button id="copy" type="button">copy light</button>
+  </header>
+  <!-- the jesus mode's particles (`mode=jesus`), sent to the Bevy frame as `bevy_effect` -->
+  <header id="effect">
+    <label>particles/s <input id="rate" type="range" min="0" max="4000" step="50"><output></output></label>
+    <label>brightness <input id="intensity" type="range" min="0" max="100" step="0.5"><output></output></label>
+    <label>colour <input id="color" type="color"></label>
+    <label>size min <input id="sizeMin" type="range" min="0" max="0.1" step="0.001"><output></output></label>
+    <label>size max <input id="sizeMax" type="range" min="0" max="0.1" step="0.001"><output></output></label>
+    <label>life min <input id="lifeMin" type="range" min="0" max="3" step="0.05"><output></output></label>
+    <label>life max <input id="lifeMax" type="range" min="0" max="3" step="0.05"><output></output></label>
+    <label>rise min <input id="riseMin" type="range" min="-1" max="2" step="0.05"><output></output></label>
+    <label>rise max <input id="riseMax" type="range" min="-1" max="2" step="0.05"><output></output></label>
+    <label>spread <input id="spread" type="range" min="0" max="2" step="0.05"><output></output></label>
+    <label>depth <input id="depth" type="range" min="0" max="2" step="0.05"><output></output></label>
+    <button id="copyEffect" type="button">copy particles</button>
   </header>
   <main>
     <figure><figcaption id="refcap">reference</figcaption><iframe id="ref" allow="autoplay"></iframe></figure>
@@ -62,7 +77,27 @@
       input.value = v; out.value = v;
       input.addEventListener('input', () => { light[k] = Number(input.value); out.value = input.value; send(); });
     }
-    window.addEventListener('message', (e) => { if (e.source === bevy.contentWindow && e.data?.type === 'load') send(); });
+    // defaults mirror effect::EffectSettings; the colour is its hue in sRGB, the brightness its scale
+    const effect = { rate: 650, intensity: 100, color: '#20b2ff', sizeMin: 0.019, sizeMax: 0.04, lifeMin: 0.2, lifeMax: 1, riseMin: 0.1, riseMax: 0.4, spread: 0.5, depth: 0.2 };
+    for (const k of Object.keys(effect)) if (own.has(k)) effect[k] = k === 'color' ? '#' + own.get(k).replace('#', '') : Number(own.get(k));
+    const linear = (hex) => [1, 3, 5].map((i) => { const c = parseInt(hex.slice(i, i + 2), 16) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    const sendEffect = () => {
+      const e = effect;
+      const c = linear(e.color); const m = Math.max(...c, 1e-4);
+      bevy.contentWindow && bevy.contentWindow.postMessage({ type: 'bevy_effect', payload: {
+        rate: e.rate, intensity: e.intensity, color: c.map((v) => v / m),
+        sizeMin: e.sizeMin, sizeMax: e.sizeMax, lifeMin: e.lifeMin, lifeMax: e.lifeMax,
+        velocityMin: [-e.spread, e.riseMin, -e.depth], velocityMax: [e.spread, e.riseMax, e.depth],
+      } }, '*');
+    };
+    for (const [k, v] of Object.entries(effect)) {
+      const input = document.getElementById(k);
+      const out = input.nextElementSibling;
+      input.value = v; if (out) out.value = v;
+      input.addEventListener('input', () => { effect[k] = k === 'color' ? input.value : Number(input.value); if (out) out.value = input.value; sendEffect(); });
+    }
+    document.getElementById('copyEffect').addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(effect)));
+    window.addEventListener('message', (e) => { if (e.source === bevy.contentWindow && e.data?.type === 'load') { send(); if (query.get('mode') === 'jesus') sendEffect(); } });
     document.getElementById('copy').addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(light)));
   </script>
 </body>

@@ -604,6 +604,8 @@ async function apply() {
     command({ op: 'boundaries', shown: !!o.showSceneBoundaries });
     // the Unity renderer's authentication platform; the auth page passes none of its own then
     command({ op: 'platform', shown: modeOf(o) === 'authentication' });
+    // the Unity renderer's jesus mode (the download page): its particles off the avatar
+    command({ op: 'effect', shown: modeOf(o) === 'jesus' });
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
     command(solo
@@ -617,7 +619,8 @@ async function apply() {
       : { op: 'item', urn: null });
     showView(o, itemView);
     const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
-    const urn = itemEmote
+    // jesus mode plays its own animation, looping, whatever emote the page names, as the renderer
+    const urn = modeOf(o) === 'jesus' ? registerPose('particles', true) : itemEmote
       || (o.disableDefaultEmotes ? null : await emoteUrn(o.emote, modeOf(o) === 'builder', peer));
     if (urn) {
       state.emote.urn = urn;
@@ -772,6 +775,9 @@ window.addEventListener('message', async (event) => {
   if (data.type === 'update' && data.payload && typeof data.payload.options === 'object') {
     state.overrides = { ...state.overrides, ...data.payload.options };
     apply();
+  } else if (data.type === 'bevy_effect' && data.payload && typeof data.payload === 'object') {
+    // not part of the preview protocol: web/compare.html tunes the jesus particles with it
+    command({ op: 'effect', ...data.payload });
   } else if (data.type === 'bevy_light' && data.payload && typeof data.payload === 'object') {
     // not part of the preview protocol: web/compare.html tunes the light rig with it
     command({ op: 'light', ...data.payload });
