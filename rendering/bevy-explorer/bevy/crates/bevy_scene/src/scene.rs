@@ -63,13 +63,21 @@ impl Scene {
         entity_map: &mut EntityHashMap<Entity>,
         type_registry: &AppTypeRegistry,
     ) -> Result<(), SceneSpawnError> {
-        let type_registry = type_registry.read();
+        self.write_to_world_with_types(world, entity_map, &type_registry.read())
+    }
 
-        self.write_resources_to_world(world, &type_registry)?;
+    /// [`Self::write_to_world_with`], with the type registry already read.
+    pub(crate) fn write_to_world_with_types(
+        &self,
+        world: &mut World,
+        entity_map: &mut EntityHashMap<Entity>,
+        type_registry: &TypeRegistry,
+    ) -> Result<(), SceneSpawnError> {
+        self.write_resources_to_world(world, type_registry)?;
         self.allocate_entities(world, entity_map);
         for archetype in self.world.archetypes().iter() {
             for scene_entity in archetype.entities() {
-                self.write_entity_to_world(world, scene_entity.id(), entity_map, &type_registry)?;
+                self.write_entity_to_world(world, scene_entity.id(), entity_map, type_registry)?;
             }
         }
 
@@ -137,15 +145,6 @@ impl Scene {
                     .or_insert_with(|| world.spawn_empty().id());
             }
         }
-    }
-
-    /// The scene's entities, in the order [`Self::write_to_world_with`] writes them.
-    pub(crate) fn entities(&self) -> Vec<Entity> {
-        self.world
-            .archetypes()
-            .iter()
-            .flat_map(|archetype| archetype.entities().iter().map(|entity| entity.id()))
-            .collect()
     }
 
     /// Writes the components of one scene entity onto its entity in `world`. Every scene entity

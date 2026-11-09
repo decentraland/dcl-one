@@ -232,12 +232,10 @@ pub struct GltfProcessed {
 }
 
 /// A glTF instance `update_ready_gltfs` has processed part of: it resumes on the next frame, and
-/// the instance stays hidden until it is done.
+/// the instance stays hidden until it is done. A node is processed once it has a
+/// [`ContainerEntity`], which processing gives it first.
 #[derive(Component, Default)]
 struct GltfProcessing {
-    /// The instance's entities, of which the first `processed` are done.
-    nodes: Vec<Entity>,
-    processed: usize,
     /// Collider indices handed out so far, per collider name.
     collider_counter: HashMap<Option<String>, u32>,
     has_animations: bool,
@@ -575,20 +573,22 @@ pub struct SceneResourceLookup {
     pub mesh_hashes_by_id: HashMap<AssetId<Mesh>, u64>,
 }
 
+/// A glTF container `update_ready_gltfs` has not processed yet.
+type UnprocessedGltf = (
+    Entity,
+    &'static SceneEntity,
+    &'static GltfLoaded,
+    &'static GltfDefinition,
+    &'static GltfHandle,
+    Option<&'static mut GltfProcessing>,
+);
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_ready_gltfs(
     mut commands: Commands,
-    mut ready_gltfs: Query<
-        (
-            Entity,
-            &SceneEntity,
-            &GltfLoaded,
-            &GltfDefinition,
-            &GltfHandle,
-            Option<&mut GltfProcessing>,
-        ),
-        Without<GltfProcessed>,
-    >,
+    mut gltfs_in_progress: Query<UnprocessedGltf, (With<GltfProcessing>, Without<GltfProcessed>)>,
+    mut gltfs_to_start: Query<UnprocessedGltf, (Without<GltfProcessing>, Without<GltfProcessed>)>,
+    processed_nodes: Query<Has<ContainerEntity>>,
     gltf_spawned_entities: Query<(
         Option<&Name>,
         &Transform,
@@ -640,21 +640,16 @@ fn update_ready_gltfs(
     };
     let mut processed_any = false;
     let mut slowest: Option<(Duration, usize, String)> = None;
-    let mut order: Vec<_> = ready_gltfs
-        .iter()
-        .map(|(entity, .., processing)| (processing.is_none(), entity))
-        .collect();
-    order.sort();
 
-    'outer: for (_, container) in order {
+    // models already in progress first
+    'outer: for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing) in
+        gltfs_in_progress
+            .iter_mut()
+            .chain(gltfs_to_start.iter_mut())
+    {
         if !has_time(processed_any) {
             break;
         }
-        let Ok((bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing)) =
-            ready_gltfs.get_mut(container)
-        else {
-            continue;
-        };
         if loaded.0.is_none() {
             // nothing to process
             commands
@@ -703,19 +698,24 @@ fn update_ready_gltfs(
 
             // resume where the last frame stopped; the collider counter (unique collider handles
             // per name), the animation flag and the named nodes carry over
-            let mut progress = match processing.as_deref_mut() {
-                Some(progress) => std::mem::take(progress),
-                None => GltfProcessing {
-                    nodes: scene_spawner.iter_instance_entities(instance).collect(),
-                    ..Default::default()
-                },
-            };
+            let mut progress = processing
+                .as_deref_mut()
+                .map(std::mem::take)
+                .unwrap_or_default();
             let slice_started = Instant::now();
-            let processed_before = progress.processed;
+            let mut processed_now = 0;
+            let mut complete = true;
 
-            while progress.processed < progress.nodes.len() && has_time(processed_any) {
-                let spawned_ent = progress.nodes[progress.processed];
-                progress.processed += 1;
+            for spawned_ent in scene_spawner.iter_instance_entities(instance) {
+                // processed nodes have a ContainerEntity, and lights are despawned
+                let Ok(false) = processed_nodes.get(spawned_ent) else {
+                    continue;
+                };
+                if !has_time(processed_any) {
+                    complete = false;
+                    break;
+                }
+                processed_now += 1;
                 processed_any = true;
 
                 // delete any base materials
@@ -1188,13 +1188,9 @@ fn update_ready_gltfs(
                 .as_ref()
                 .is_none_or(|(longest, ..)| slice > *longest)
             {
-                slowest = Some((
-                    slice,
-                    progress.processed - processed_before,
-                    definition.0.src.clone(),
-                ));
+                slowest = Some((slice, processed_now, definition.0.src.clone()));
             }
-            if progress.processed < progress.nodes.len() {
+            if !complete {
                 // out of time: the rest waits for the next frame
                 match processing {
                     Some(mut processing) => *processing = progress,

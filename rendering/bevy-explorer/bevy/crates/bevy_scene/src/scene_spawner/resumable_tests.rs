@@ -6,9 +6,10 @@ use bevy_ecs::{
     hierarchy::{ChildOf, Children},
     observer::Trigger,
     prelude::ReflectComponent,
+    query::Has,
     resource::Resource,
-    system::ResMut,
-    world::World,
+    system::{Query, ResMut},
+    world::{OnAdd, World},
 };
 use bevy_platform::time::Instant;
 use bevy_reflect::Reflect;
@@ -43,6 +44,38 @@ fn tree(first: u32, len: u32) -> impl FnOnce(&mut World) {
             world.spawn((Node(n), ChildOf(root)));
         }
     }
+}
+
+/// `Node(first)` with child `Node(first + 1)`, its child `Node(first + 2)`, … (`len` nodes). The
+/// scene's archetype order puts the last node first: it is written before its parent unless
+/// writing follows the hierarchy.
+fn chain(first: u32, len: u32) -> impl FnOnce(&mut World) {
+    move |world| {
+        let mut parent = world.spawn(Node(first)).id();
+        for n in first + 1..first + len {
+            parent = world.spawn((Node(n), ChildOf(parent))).id();
+        }
+    }
+}
+
+/// The nodes in the order the spawner writes them, and whether each was attached to a parent by
+/// then.
+#[derive(Resource, Default)]
+struct Written(Vec<(u32, bool)>);
+
+fn record_writes(app: &mut App) {
+    app.init_resource::<Written>().add_observer(
+        |trigger: Trigger<OnAdd, Node>,
+         nodes: Query<(&Node, Has<ChildOf>)>,
+         mut written: ResMut<Written>| {
+            let (node, attached) = nodes.get(trigger.target()).unwrap();
+            written.0.push((node.0, attached));
+        },
+    );
+}
+
+fn written(app: &App) -> &[(u32, bool)] {
+    &app.world().resource::<Written>().0
 }
 
 fn spawner(app: &mut App) -> bevy_ecs::world::Mut<'_, SceneSpawner> {
@@ -143,6 +176,66 @@ fn a_sliced_instance_keeps_its_hierarchy_and_child_order() {
         .map(|child| app.world().get::<Node>(child).unwrap().0)
         .collect();
     assert_eq!(below, [1, 2]);
+}
+
+#[test]
+fn a_sliced_instance_writes_parents_before_children() {
+    let mut app = app();
+    record_writes(&mut app);
+    one_entity_per_run(&mut app);
+    let scene = add_scene(&mut app, chain(0, 3));
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+    while !is_ready(&app, instance) {
+        app.update();
+    }
+
+    let order: Vec<_> = written(&app).iter().map(|(node, _)| *node).collect();
+    assert_eq!(order, [0, 1, 2]);
+}
+
+#[test]
+fn without_a_deadline_roots_are_attached_once_written_as_stock_does() {
+    let mut app = app();
+    record_writes(&mut app);
+    let scene = add_scene(&mut app, tree(0, 3));
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+    app.update();
+
+    assert!(is_ready(&app, instance));
+    assert!(written(&app).contains(&(0, false)));
+    assert_eq!(children(&app, parent).len(), 1);
+}
+
+#[test]
+fn an_entity_despawned_by_others_mid_spawn_does_not_stop_the_instance() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    let scene = add_scene(&mut app, chain(0, 3));
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+    app.update();
+    let unwritten: Vec<Entity> = {
+        let spawner = app.world().resource::<SceneSpawner>();
+        let progress = spawner.scene_in_progress.as_ref().expect("in progress");
+        progress
+            .entity_map
+            .values()
+            .copied()
+            .filter(|entity| app.world().get::<Node>(*entity).is_none())
+            .collect()
+    };
+
+    app.world_mut().entity_mut(unwritten[0]).despawn();
+    for _ in 0..5 {
+        app.update();
+    }
+
+    assert!(is_ready(&app, instance));
+    assert_eq!(nodes(&mut app), [0, 1, 2]);
 }
 
 #[test]
@@ -263,6 +356,27 @@ fn unregistering_an_instance_mid_spawn_leaves_nothing_behind() {
 }
 
 #[test]
+fn an_instance_unregistered_and_replaced_in_one_frame_leaves_only_the_new_one() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    let old = add_scene(&mut app, tree(0, 3));
+    let new = add_scene(&mut app, tree(10, 2));
+    let parent = app.world_mut().spawn_empty().id();
+    let old = spawner(&mut app).spawn_as_child(old, parent);
+    app.update();
+
+    spawner(&mut app).unregister_instance(old);
+    let new = spawner(&mut app).spawn_as_child(new, parent);
+    while !is_ready(&app, new) {
+        app.update();
+    }
+
+    assert!(!is_ready(&app, old));
+    assert_eq!(nodes(&mut app), [10, 11]);
+    assert_eq!(children(&app, parent).len(), 1);
+}
+
+#[test]
 fn a_scene_changed_mid_spawn_starts_its_instance_over() {
     let mut app = app();
     one_entity_per_run(&mut app);
@@ -337,7 +451,12 @@ fn dynamic_scenes_still_spawn_whole() {
 
 #[cfg(feature = "bevy_render")]
 mod visibility {
-    use bevy_render::view::visibility::{InheritedVisibility, ViewVisibility, Visibility};
+    use bevy_app::TaskPoolPlugin;
+    use bevy_asset::AssetApp;
+    use bevy_render::{
+        mesh::Mesh,
+        view::visibility::{InheritedVisibility, ViewVisibility, Visibility, VisibilityPlugin},
+    };
 
     use super::*;
 
@@ -347,6 +466,59 @@ mod visibility {
             .register_type::<InheritedVisibility>()
             .register_type::<ViewVisibility>();
         app
+    }
+
+    /// With Bevy's visibility propagation, which resolves a child whose parent has no
+    /// visibility yet as visible.
+    fn propagating_app() -> App {
+        let mut app = app();
+        app.add_plugins((TaskPoolPlugin::default(), VisibilityPlugin))
+            .init_asset::<Mesh>();
+        app
+    }
+
+    /// [`chain`], every node `Visibility::Inherited`.
+    fn shown_chain(len: u32) -> impl FnOnce(&mut World) {
+        move |world| {
+            let mut parent = world.spawn((Node(0), Visibility::Inherited)).id();
+            for n in 1..len {
+                parent = world
+                    .spawn((Node(n), Visibility::Inherited, ChildOf(parent)))
+                    .id();
+            }
+        }
+    }
+
+    /// The nodes visibility propagation resolved as visible.
+    fn shown_nodes(app: &mut App) -> Vec<u32> {
+        let mut shown: Vec<u32> = app
+            .world_mut()
+            .query::<(&Node, &InheritedVisibility)>()
+            .iter(app.world())
+            .filter(|(_, inherited)| inherited.get())
+            .map(|(node, _)| node.0)
+            .collect();
+        shown.sort();
+        shown
+    }
+
+    #[test]
+    fn a_partial_instance_shows_nothing_written_until_it_is_complete() {
+        let mut app = propagating_app();
+        one_entity_per_run(&mut app);
+        let scene = add_scene(&mut app, shown_chain(3));
+        let parent = app.world_mut().spawn(Visibility::Visible).id();
+        let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+        loop {
+            app.update();
+            if is_ready(&app, instance) {
+                break;
+            }
+            assert_eq!(shown_nodes(&mut app), Vec::<u32>::new());
+        }
+
+        assert_eq!(shown_nodes(&mut app), [0, 1, 2]);
     }
 
     /// A root `Node(0)` with `root_visibility`, and one child `Node(1)`.
@@ -398,6 +570,10 @@ mod visibility {
             app.update();
         }
         assert_eq!(root_visibility(&app, parent), None);
+        // nor the components hiding pulled in with it
+        let root = children(&app, parent)[0];
+        assert!(app.world().get::<InheritedVisibility>(root).is_none());
+        assert!(app.world().get::<ViewVisibility>(root).is_none());
     }
 
     #[test]
@@ -474,9 +650,17 @@ mod visibility {
         spawner(&mut app).despawn_instance(instance);
         app.update();
 
-        let spawner = app.world().resource::<SceneSpawner>();
-        assert!(spawner.hidden_instances.is_empty());
-        assert!(spawner.keep_hidden.is_empty());
+        assert!(app
+            .world()
+            .resource::<SceneSpawner>()
+            .keep_hidden
+            .is_empty());
+        let hidden_roots = app
+            .world_mut()
+            .query::<&crate::scene_spawner::HiddenSceneRoot>()
+            .iter(app.world())
+            .count();
+        assert_eq!(hidden_roots, 0);
     }
 
     fn reveal(app: &mut App, instance: InstanceId) {
