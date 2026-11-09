@@ -1655,6 +1655,14 @@ export interface OutfitsMessage {
   metadata: OutfitsMetadata
 }
 
+/** A save or delete of a saved outfit was refused, so the outfits stay as they were (scene → page). */
+export interface OutfitSaveFailedMessage {
+  kind: 'outfitSaveFailed'
+  slot: number
+  action: 'save' | 'delete'
+  message: string
+}
+
 export interface GetOutfitsRequest {
   kind: 'getOutfits'
 }
@@ -1936,6 +1944,7 @@ export type SceneToPage =
   | WearablesMessage
   | CatalogPageMessage
   | OutfitsMessage
+  | OutfitSaveFailedMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityMessage

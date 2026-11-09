@@ -65,7 +65,8 @@ async function bridge() {
   const request = (msg: PageToScene): Promise<unknown> => handlers.get(msg.kind)!(msg)
   const lastOutfits = (): OutfitsMetadata | undefined =>
     sent.flatMap((m) => (m.kind === 'outfits' ? [m.metadata] : [])).at(-1)
-  return { request, lastOutfits }
+  const failures = (): SceneToPage[] => sent.filter((m) => m.kind === 'outfitSaveFailed')
+  return { request, lastOutfits, failures, sent }
 }
 
 describe('the bridge outfits domain', () => {
@@ -119,11 +120,34 @@ describe('the bridge outfits domain', () => {
       deployOutfits.mockRejectedValue(new Error('failed to deploy'))
     })
 
-    it('should show the outfits as they were, keep no picture and fail the request', async () => {
-      const { request, lastOutfits } = await bridge()
-      await expect(request({ kind: 'saveOutfit', slot: 1 })).rejects.toThrow('failed to deploy')
-      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
-      expect(setOutfitThumbnail).not.toHaveBeenCalled()
+    describe('and the player was saving an outfit', () => {
+      it('should show the outfits as they were and keep no picture', async () => {
+        const { request, lastOutfits } = await bridge()
+        await request({ kind: 'saveOutfit', slot: 1 })
+        expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
+        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+      })
+
+      it('should tell the page the save failed after showing the outfits as they were', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'saveOutfit', slot: 1 })
+        expect(sent.slice(-2)).toEqual([
+          { kind: 'outfits', metadata: stored },
+          { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' }
+        ])
+      })
+    })
+
+    describe('and the player was deleting an outfit', () => {
+      it('should keep the outfit and tell the page the delete failed', async () => {
+        const { request, lastOutfits, failures } = await bridge()
+        await request({ kind: 'deleteOutfit', slot: 0 })
+        expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
+        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+        expect(failures()).toEqual([
+          { kind: 'outfitSaveFailed', slot: 0, action: 'delete', message: 'Error: failed to deploy' }
+        ])
+      })
     })
   })
 
@@ -133,10 +157,11 @@ describe('the bridge outfits domain', () => {
     })
 
     it('should keep the outfit for the session without deploying it', async () => {
-      const { request, lastOutfits } = await bridge()
+      const { request, lastOutfits, failures } = await bridge()
       await request({ kind: 'saveOutfit', slot: 1 })
       expect(deployOutfits).not.toHaveBeenCalled()
       expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0, 1])
+      expect(failures()).toEqual([])
     })
   })
 
