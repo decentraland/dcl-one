@@ -12,11 +12,13 @@
 //! decode is marked bad for the session and its asset reloaded from the original.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
-//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Model
-//! variants have none yet: `glb` embeds its textures as KTX2 under `KHR_texture_basisu`, which
-//! the glTF loader rejects when a file requires it, and `glb-meshopt` (meshes only, under
-//! `EXT_meshopt_compression` and `KHR_mesh_quantization`) waits for the loader's meshopt decoder,
-//! behind a feature of its own.
+//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Of the
+//! model variants, `glb-meshopt` (meshes under `EXT_meshopt_compression` and
+//! `KHR_mesh_quantization`, textures untouched) is taken behind the `meshopt-variants` feature,
+//! for the binary whose glTF loader decodes meshopt streams: its bytes are handed to that loader
+//! as they are, at the original `.glb`/`.gltf` path (the asset server picks the loader by that
+//! path's extension, not by the cache file's name). `glb` embeds its textures as KTX2 under
+//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it, and is not taken.
 //!
 //! Preview and local scenes (preview mode, `b64-` ids, loopback or file content servers) never
 //! ask for a manifest.
@@ -55,6 +57,9 @@ use crate::{
 /// through), so a dds decodes at the original path. A path without an extension goes to the
 /// last image loader, which guesses too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
+/// Model paths the glTF loader reads (and the meshopt pre-pass loader stands in for).
+#[cfg(feature = "meshopt-variants")]
+const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
 /// Every `format` the manifest schema (v1) may name, taken or not.
 const SCHEMA_FORMATS: [&str; 5] = ["ktx2-bc7", "ktx2-bc1", "ktx2-bc5", "glb", "glb-meshopt"];
 const RECENT_FALLBACKS: usize = 20;
@@ -64,9 +69,10 @@ const RECENT_FALLBACKS: usize = 20;
 pub enum Decoded {
     /// A BC KTX2 texture, unwrapped to the DDS the image loaders read.
     BcTexture(ktx2::BcFormat),
-    // `glb-meshopt` (kind `model`, at `glb`/`gltf` paths, no GPU need) is handed to the glTF
-    // loader as it is; its row joins [`SUPPORTED_FORMATS`] behind the feature that compiles the
-    // loader's meshopt decoder in.
+    /// Handed to the loader of the original path as it is: a `glb-meshopt` model, whose meshopt
+    /// streams the glTF loader's pre-pass decodes.
+    #[cfg(feature = "meshopt-variants")]
+    AsIs,
 }
 
 /// A manifest format this client takes: the schema's `kind`/`format` pair, the content files it
@@ -111,6 +117,16 @@ pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
     bc_texture("ktx2-bc7", ktx2::BcFormat::Bc7),
     bc_texture("ktx2-bc1", ktx2::BcFormat::Bc1),
     bc_texture("ktx2-bc5", ktx2::BcFormat::Bc5),
+    // the bytes pass through: the meshopt pre-pass glTF loader decodes the streams
+    #[cfg(feature = "meshopt-variants")]
+    SupportedFormat {
+        kind: "model",
+        format: "glb-meshopt",
+        extensions: &MODEL_EXTENSIONS,
+        without_extension: false,
+        needs_bc: false,
+        decoded: Decoded::AsIs,
+    },
 ];
 
 /// The row for a manifest variant's `kind`/`format`, if this client takes it.
@@ -128,7 +144,24 @@ pub fn taken_formats() -> String {
         .copied()
         .filter(|format| !taken.contains(format))
         .collect();
-    let mut words = format!("{} (loaded as DDS)", taken.join(", "));
+    // the formats grouped by what they are handed to the loaders as, in table order
+    let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
+    for row in SUPPORTED_FORMATS {
+        let how = match row.decoded {
+            Decoded::BcTexture(_) => "loaded as DDS",
+            #[cfg(feature = "meshopt-variants")]
+            Decoded::AsIs => "meshopt streams decoded by the glTF loader",
+        };
+        match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
+            Some((formats, _)) => formats.push(row.format),
+            None => groups.push((vec![row.format], how)),
+        }
+    }
+    let mut words = groups
+        .iter()
+        .map(|(formats, how)| format!("{} ({how})", formats.join(", ")))
+        .collect::<Vec<_>>()
+        .join(", ");
     if !not_taken.is_empty() {
         words.push_str("; not ");
         words.push_str(&not_taken.join(", "));
@@ -467,8 +500,8 @@ impl BevyVariants {
     }
 }
 
-/// What the loader reads for a variant (the DDS a BC texture unwraps to), and whether it came
-/// from the cache.
+/// What the loader reads for a variant (the DDS a BC texture unwraps to, a model's own bytes),
+/// and whether it came from the cache.
 pub(crate) struct VariantRead {
     pub(crate) bytes: Vec<u8>,
     pub(crate) cached: bool,
@@ -596,24 +629,26 @@ impl IpfsIo {
         let bc = variants.bc();
         if !options.iter().any(|variant| supports(variant, file, bc)) {
             let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
-            let reason = if bc {
+            // a format this file type would take on a GPU with BC textures
+            let wants_bc = !bc && options.iter().any(|variant| supports(variant, file, true));
+            let reason = if wants_bc {
+                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
+            } else {
                 format!(
                     "no variant format this file type takes ({})",
                     formats.join(", ")
                 )
-            } else {
-                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
             };
             variants.fail(scene, file, None, reason);
             return None;
         }
         let variant = select_variant(options, file, bc, |cid| variants.is_bad(cid))?.clone();
 
-        let Decoded::BcTexture(format) = supported_format(&variant)?.decoded;
+        let decoded = supported_format(&variant)?.decoded;
 
         let url = format!("{base}/{}", variant.path);
         let key = CacheKey::Content(variant.cid.clone());
-        // the unwrapped DDS, under a name no content hash can take
+        // a BC texture's unwrapped DDS, under a name no content hash can take
         #[cfg(not(target_arch = "wasm32"))]
         let dds_key = format!("{}.dds", variant.cid);
         // keyed by the variant CID, not its path: a cache entry must name the bytes it holds
@@ -626,21 +661,23 @@ impl IpfsIo {
             format: variant.format.clone(),
         };
 
-        // a warm visit skips the download and the zstd decode
-        #[cfg(not(target_arch = "wasm32"))]
-        let dds = self
-            .read_disk_cache(&CacheKey::Url(dds_key.clone()))
-            .await
-            .ok()
-            .flatten();
-        #[cfg(target_arch = "wasm32")]
-        let dds = crate::web_cache::read(&dds_url).await;
-        if let Some(dds) = dds.filter(|dds| dds.starts_with(b"DDS ")) {
-            variants.served(path, served, true);
-            return Some(VariantRead {
-                bytes: dds,
-                cached: true,
-            });
+        // a warm visit of a texture skips the download and the zstd decode
+        if matches!(decoded, Decoded::BcTexture(_)) {
+            #[cfg(not(target_arch = "wasm32"))]
+            let dds = self
+                .read_disk_cache(&CacheKey::Url(dds_key.clone()))
+                .await
+                .ok()
+                .flatten();
+            #[cfg(target_arch = "wasm32")]
+            let dds = crate::web_cache::read(&dds_url).await;
+            if let Some(dds) = dds.filter(|dds| dds.starts_with(b"DDS ")) {
+                variants.served(path, served, true);
+                return Some(VariantRead {
+                    bytes: dds,
+                    cached: true,
+                });
+            }
         }
 
         // the cache holds bytes under a content key only once they hash to it
@@ -651,7 +688,7 @@ impl IpfsIo {
         let cached = crate::web_cache::read(&url)
             .await
             .filter(|bytes| content_hash::matches_content_hash(&variant.cid, bytes));
-        let (ktx2, from_cache) = match cached {
+        let (fetched, from_cache) = match cached {
             Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
             None => {
                 let token = self.reqno.fetch_add(1, Ordering::SeqCst);
@@ -694,29 +731,41 @@ impl IpfsIo {
             }
         };
 
-        let dds = match ktx2::bc_ktx2_to_dds(&ktx2, format) {
-            Ok(dds) => dds,
-            Err(reason) => {
-                variants.fail(
-                    scene,
-                    file,
-                    Some(&variant.cid),
-                    format!("invalid KTX2: {reason}"),
-                );
-                return None;
+        let bytes = match decoded {
+            Decoded::BcTexture(format) => {
+                let dds = match ktx2::bc_ktx2_to_dds(&fetched, format) {
+                    Ok(dds) => dds,
+                    Err(reason) => {
+                        variants.fail(
+                            scene,
+                            file,
+                            Some(&variant.cid),
+                            format!("invalid KTX2: {reason}"),
+                        );
+                        return None;
+                    }
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Err(error) = self.cache_bytes(&dds_key, &dds).await {
+                    warn!("failed to cache the DDS of `{}`: {error}", variant.cid);
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Err(error) = crate::web_cache::keep(&dds_url, &dds).await {
+                    warn!("failed to cache the DDS of `{}`: {error:?}", variant.cid);
+                }
+                dds
+            }
+            // the loader of the original path (a `.glb`/`.gltf`: the meshopt pre-pass glTF
+            // loader) reads the variant's bytes as they are; the cache keeps them under the
+            // variant cid alone
+            #[cfg(feature = "meshopt-variants")]
+            Decoded::AsIs => {
+                Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone())
             }
         };
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Err(error) = self.cache_bytes(&dds_key, &dds).await {
-            warn!("failed to cache the DDS of `{}`: {error}", variant.cid);
-        }
-        #[cfg(target_arch = "wasm32")]
-        if let Err(error) = crate::web_cache::keep(&dds_url, &dds).await {
-            warn!("failed to cache the DDS of `{}`: {error:?}", variant.cid);
-        }
         variants.served(path, served, from_cache);
         Some(VariantRead {
-            bytes: dds,
+            bytes,
             cached: from_cache,
         })
     }
