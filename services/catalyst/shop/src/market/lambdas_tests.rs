@@ -120,7 +120,10 @@ fn matic_collections(query: &str) -> Value {
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
             { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } }
+              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
+            // An item no deployed entity describes.
+            { "id": "a3", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:9"), "tokenId": "12", "itemType": "wearable_v2", "transferredAt": "100",
+              "item": { "rarity": "common", "price": "1" }, "metadata": { "wearable": { "name": "Orphan", "category": "hat" } } }
         ] })
     } else {
         json!({ "nfts": [] })
@@ -758,6 +761,55 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["emotes"][0]["emoteDataADR74"]["category"], "dance",
         "{body}"
     );
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500 }),
+        "no lastId asked, none echoed"
+    );
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&lastId=URN:DECENTRALAND:A",
+    )
+    .await;
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500, "lastId": "urn:decentraland:a" }),
+        "the request's lastId, lowercased"
+    );
+    // `textSearch` matches the mirrored subgraph `searchText`, case-sensitively,
+    // and the lowercased name only where the mirror has not filled it.
+    sqlx::query(
+        "UPDATE shop.items SET search_text = 'coffee dance moves' WHERE item_type = 'emote_v1'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for (text, found) in [("moves", 1), ("dance", 1), ("Dance", 1), ("emote", 0)] {
+        let (_, body) = get(
+            &state,
+            &format!("/lambdas/collections/emotes?textSearch={text}&limit=7"),
+        )
+        .await;
+        assert_eq!(
+            body["emotes"].as_array().map(Vec::len),
+            Some(found),
+            "{text}: {body}"
+        );
+    }
+    sqlx::query("UPDATE shop.items SET search_text = 'renamed' WHERE item_type = 'emote_v1'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&limit=8",
+    )
+    .await;
+    assert_eq!(
+        body["emotes"].as_array().map(Vec::len),
+        Some(0),
+        "the name alone no longer matches: {body}"
+    );
 
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -852,12 +904,20 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             ),
             1,
         ),
-        // Two values naming one provider list it once (the old handler
-        // listed it twice).
+        // Two distinct values naming one provider list it once (lamb2 lists
+        // it twice, explorer-handler.ts:119-143), so the value list cannot
+        // multiply the answer.
         (
             format!(
                 "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
             ),
+            1,
+        ),
+        (
+            (0..500)
+                .map(|i| format!("thirdPartyCollectionId={tp_collection}:x{i}"))
+                .collect::<Vec<_>>()
+                .join("&"),
             1,
         ),
         ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
@@ -876,16 +936,102 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     )
     .await;
     assert_eq!((status, &body), (StatusCode::BAD_GATEWAY, &not_found));
-    let too_many = "thirdPartyCollectionId=urn:a&".repeat(101);
-    let (status, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{too_many}")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // No count limit; values that name no provider are dropped.
+    let many = "thirdPartyCollectionId=urn:a&".repeat(101);
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{many}"),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["totalAmount"]),
+        (StatusCode::OK, &json!(0)),
+        "{body}"
+    );
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,
         "the owner holds no emote copy: {body}"
     );
+    // Any `:address`: one that is not an Ethereum address owns nothing, the
+    // base wearables still answer.
     let (status, body) = get(&state, "/explorer/not-an-address/wearables").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let types: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["type"].as_str())
+        .collect();
+    assert!(types.iter().all(|t| *t == "base-wearable"), "{body}");
+    let (_, body) = get(
+        &state,
+        "/explorer/not-an-address/wearables?collectionType=on-chain",
+    )
+    .await;
+    assert_eq!(body["totalAmount"], 0, "{body}");
+
+    // `/users/{address}/wearables`: lamb2's filters, order and include keys.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let orphan = format!("urn:decentraland:matic:collections-v2:{COFFEE}:9");
+    let urns_of = |body: &Value| -> Vec<String> {
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["urn"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (query, entity_key, definition_key) in [
+        ("includeEntities", true, false),
+        ("includeDefinitions", false, true),
+    ] {
+        let (status, body) =
+            get(&state, &format!("/lambdas/users/{OWNER}/wearables?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            urns_of(&body),
+            [hat.clone(), orphan.clone()],
+            "{query}: {body}"
+        );
+        let [with, without] = [&body["elements"][0], &body["elements"][1]];
+        assert_eq!(with.get("entity").is_some(), entity_key, "{query}: {body}");
+        assert_eq!(
+            with.get("definition").is_some(),
+            definition_key,
+            "{query}: {body}"
+        );
+        assert!(
+            without.get("entity").is_none() && without.get("definition").is_none(),
+            "{query}: a missing entity or definition leaves the key out, never null: {body}"
+        );
+    }
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?category=HAT&rarity=Epic"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone()]),
+        "{body}"
+    );
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?direction=sideways"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone(), orphan.clone()]),
+        "no orderBy: no validation, no sort: {body}"
+    );
+    let (_, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?orderBy=rarity&direction=asc"),
+    )
+    .await;
+    assert_eq!(urns_of(&body), [orphan.clone(), hat.clone()], "{body}");
 
     let (status, body) = get(
         &state,
@@ -898,6 +1044,20 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert!(body["elements"][0]["definition"].is_object(), "{body}");
     let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body["totalAmount"], 1, "{body}");
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+        ),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        assert_eq!(status, StatusCode::OK, "no pageSize cap: {uri}: {body}");
+        assert_eq!(
+            (body["pageSize"].as_i64(), body["totalAmount"].as_i64()),
+            (Some(5000), Some(1)),
+            "{body}"
+        );
+    }
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
     assert_eq!((status, body), (StatusCode::BAD_GATEWAY, not_found));
     let (_, body) = get(&state, &format!("/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp")).await;
@@ -941,6 +1101,73 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
+    // An entity a remote list (`DENYLIST_URLS`) names is left out of the
+    // lambdas and explorer reads, as lamb2 reading the content server's
+    // filtered `/entities/active` leaves it out.
+    let denylist = Arc::new(crate::content::Denylist::default());
+    let listed = Arc::new(
+        MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            state.settings.clone(),
+        )
+        .with_denylist(denylist.clone()),
+    );
+    listed
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    denylist.set_remote(
+        "https://registry.example/denylist",
+        [
+            "bafyhat",
+            "bafyeyes",
+            "bafydance",
+            "bafyprofile",
+            "bafyoutfits",
+        ]
+        .map(String::from),
+    );
+    let (status, body) = get(&listed, &format!("/explorer/{OWNER}/wearables?pageSize=10")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let urns: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["urn"].as_str())
+        .collect();
+    assert_eq!(
+        urns,
+        [TP_URN, "urn:decentraland:off-chain:base-avatars:BaseFemale"],
+        "the listed hat and eyes are left out, the others stay: {body}"
+    );
+    let (_, body) = get(&listed, &format!("/explorer/{OWNER}/emotes")).await;
+    assert_eq!(body["totalAmount"], 0, "{body}");
+    // The owned item stays (it comes from the index); its definition goes.
+    let (_, body) = get(
+        &listed,
+        &format!("/lambdas/users/{OWNER}/wearables?includeDefinitions"),
+    )
+    .await;
+    assert_eq!(body["elements"][0]["urn"], hat, "{body}");
+    assert_eq!(body["elements"][0]["definition"], Value::Null, "{body}");
+    let (_, body) = get(&listed, &format!("/lambdas/collections/wearables?collectionId=urn:decentraland:matic:collections-v2:{COFFEE}")).await;
+    assert_eq!(body["wearables"], json!([]), "{body}");
+    let (_, body) = get(
+        &listed,
+        "/lambdas/collections/wearables?collectionType=base-wearable&category=eyes",
+    )
+    .await;
+    assert_eq!(body["wearables"], json!([]), "{body}");
+    let (status, _) = get(&listed, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = get(&listed, &format!("/lambdas/outfits/{OWNER}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Lifted on the next good fetch.
+    denylist.set_remote("https://registry.example/denylist", Vec::<String>::new());
+    listed.profile_cache.clear();
+    let (status, _) = get(&listed, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK);
+
     // The chain endpoint down: the explorer and the profiles leave the
     // third-party items they could not check out, the dedicated route and
     // the outfits answer the old lambdas' FetcherError.
@@ -976,7 +1203,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     let (status, body) = get(&down_state, &uri).await;
     assert_eq!(
         (status, body),
-        (StatusCode::BAD_GATEWAY, fetcher_error),
+        (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
         "{uri}"
     );
     // lamb2's outfits let the third-party checker's error through to its
@@ -991,6 +1218,85 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         ),
         "{uri}"
     );
+    // An active escrow grant joins the explorer's on-chain copies only where
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
+    // as lamb2 lists chain-owned tokens only).
+    sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
+        .bind(OWNER)
+        .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (grants, amount) in [(false, 2), (true, 3)] {
+        let mut settings = state.settings.clone();
+        settings.explorer_escrow_grants = grants;
+        let s = Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        s.test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (status, body) = get(
+            &s,
+            &format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["elements"][0]["amount"], amount,
+            "grants={grants}: {body}"
+        );
+    }
+    sqlx::query("DELETE FROM shop.usage_grants WHERE token_id = '99'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // The registry and the collections subgraphs down: lamb2's 502
+    // FetcherError, never an empty list or a 503.
+    let mut dark_settings = state.settings.clone();
+    dark_settings.third_party_registry_subgraph_url = Some(down.clone());
+    dark_settings.eth_collections_subgraph_url = Some(down.clone());
+    dark_settings.matic_collections_subgraph_url = Some(down.clone());
+    let dark_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        dark_settings,
+    ));
+    dark_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!(
+            "/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!("/explorer/{OWNER}/wearables?collectionType=third-party"),
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/users/{OWNER}/emotes"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
+    ] {
+        let (status, body) = get(&dark_state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+            "{uri}"
+        );
+    }
+    let (status, body) = get(&dark_state, "/lambdas/third-party-integrations").await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "error": "The requested items cannot be fetched right now", "message": "Cannot fetch third party providers" })
+        )
+    );
+
     let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(

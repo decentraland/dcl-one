@@ -189,7 +189,7 @@ impl<S: Socket> Host<S> {
     }
 
     /// Checks for any queued events on the host and dispatches one if available.
-    pub fn check_events(&mut self) -> Option<Event<S>> {
+    pub fn check_events(&mut self) -> Option<Event<'_, S>> {
         unsafe {
             let mut event: ENetEvent<S> = zeroed();
             if enet_host_check_events(self.host, &mut event) {
@@ -208,7 +208,7 @@ impl<S: Socket> Host<S> {
     ///
     /// Returns any error reported by the socket implementation during [`Socket::receive`] or
     /// [`Socket::send`].
-    pub fn service(&mut self) -> Result<Option<Event<S>>, S::Error> {
+    pub fn service(&mut self) -> Result<Option<Event<'_, S>>, S::Error> {
         unsafe {
             let mut event: ENetEvent<S> = zeroed();
             if enet_host_service(self.host, &mut event)? {

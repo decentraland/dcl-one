@@ -1,0 +1,281 @@
+/* In-world Shop on MainMenuShell's 1080-tall reference canvas, laid out as the design's 1920 frame and
+   anchored to its left edge: a 68px title bar, then the stage with the engine's avatar preview at the left
+   and the catalogue to the right edge. */
+.page {
+  position: relative;
+  height: 100%;
+  pointer-events: none;
+}
+/* The design's stage (base glow, spotlight, dust, floor and the DCL floor logo), flattened from the Figma
+   ShopLayout background into one 1920×1080 image. Its top 70px sit under the top bar. The engine draws the
+   same image behind the avatar (setStage), so the avatar's window shows no seam. Past 1920px it continues
+   mirrored, which meets it without a seam. */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--lava-4) url('../../assets/shop/stage.jpg') 0 -70px / 1920px 1080px no-repeat;
+}
+.backdrop::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1920px;
+  width: 1920px;
+  background: inherit;
+  transform: scaleX(-1);
+}
+/* With an engine drawing the avatar, its 573×942 window (the design's Avatar slot) is cut out. */
+.cutout {
+  mask:
+    linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
+    linear-gradient(var(--black), var(--black)) 0 68px / 573px 942px no-repeat;
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+}
+
+/* Above everything on the stage (a lifted card, the item panel's buttons), so what opens from it (the
+   filters, the cart) draws over them. */
+.head {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 21px;
+  height: 68px;
+  padding: 0 20px;
+  background: var(--black-40);
+  pointer-events: auto;
+}
+.title {
+  margin: 0;
+  font-size: var(--type-36);
+  font-weight: var(--fw-semibold);
+  line-height: 44px;
+  color: var(--text);
+}
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+.menuWrap {
+  position: relative;
+}
+.toolBtn {
+  width: 150px;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  text-transform: uppercase;
+}
+.sortBtn {
+  justify-content: space-between;
+}
+.menu {
+  position: absolute;
+  left: 0;
+  top: 52px;
+  z-index: 5;
+}
+.searchWrap {
+  width: 396px;
+}
+.cart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  color: var(--ink-on-light);
+}
+.cart:not(:disabled) {
+  cursor: pointer;
+}
+/* The cart button, its badge 32px in and 5px above it, and the cart popover 17px under it, its right edge
+   on the button's (the design's frame: the popover at 1520,142, the badge at 1890,78). */
+.cartArea {
+  position: relative;
+  display: flex;
+}
+.cartBadge {
+  position: absolute;
+  left: 32px;
+  top: -5px;
+}
+.cartPopover {
+  position: absolute;
+  top: 59px;
+  right: 0;
+  z-index: 6;
+}
+/* "1 Item Added to Cart", 7px under the header, 19px in from the right (the design's 1706,145). */
+.toast {
+  position: absolute;
+  top: 75px;
+  right: 19px;
+  z-index: 6;
+}
+
+.stage {
+  position: absolute;
+  top: 68px;
+  left: 0;
+  right: 0;
+  height: 942px;
+}
+.preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 573px;
+  height: 942px;
+}
+/* Over the avatar while the Shop's first page loads, where the preview avatar will stand. */
+.avatarLoading {
+  position: absolute;
+  display: flex;
+  left: 287px;
+  top: 471px;
+  transform: translate(-50%, -50%);
+}
+
+.content {
+  position: absolute;
+  left: 605px;
+  right: 20px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 24px;
+  pointer-events: auto;
+}
+.chips {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.results {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-xs);
+  background: var(--black-40);
+  color: var(--text);
+  cursor: pointer;
+}
+.back:hover {
+  background: var(--panel);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  gap: 20px;
+  min-height: 0;
+}
+.scrollWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  /* Without it the wrap grows to its widest content (a home rail's whole track of cards). */
+  min-width: 0;
+  min-height: 0;
+}
+/* The design's own scroll thumb (ScrollThumb) stands in for the native bar, past the cards' edge. */
+.thumb {
+  right: -13px;
+}
+.scroller {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  /* A hovered or selected card's ring sits 8px outside it: the scroller bleeds 12px up and left for it,
+     taken back in padding so the grid starts where the design's does. */
+  margin: -8px 0 0 -12px;
+  /* The columns and their gaps fill what is left beside the thumb's gutter. */
+  padding: 12px 13px 20px 12px;
+}
+/* The design system's 203px cards, never stretched, as many as fit: six at the design's 1920 width, the
+   row's spare width spread between them. The columns keep their width when the item panel opens, so no
+   card resizes: only fewer fit. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 203px);
+  justify-content: space-between;
+  gap: 20px 12px;
+  align-content: start;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.stale {
+  opacity: 0.5;
+}
+/* RESALE NAME: the NAMEs variant's 197px cards, six to the design's 1282px row, 20px apart both ways. */
+.nameGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 197px);
+  justify-content: space-between;
+  gap: 20px;
+  align-content: start;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+/* With the item panel open, the same 203px columns beside it (four at the design's 1920, 872px: the spread
+   leaves them 20px apart there), the thumb 9px past them and the panel 23px after that, 8px in from the right. */
+.withPanel .scroller {
+  padding-right: 10px;
+}
+.withPanel > aside {
+  margin: 0 8px 0 3px;
+}
+/* Over the home the panel starts lower, level with the carousel's top band. */
+.homeBody.withPanel > aside {
+  margin-top: 48px;
+}
+.pager {
+  justify-content: center;
+  margin-top: 20px;
+}
+.link {
+  color: var(--chat-link);
+}
+
+/* The EMOTE controls sit on the avatar (its 573px slot), 864px down. */
+.emoteControls {
+  position: absolute;
+  left: 60px;
+  top: 864px;
+  pointer-events: auto;
+}
+
+/* Names' nametag over the avatar: centred 302px in and 126px down its 573px slot, as the design's Avatar
+   places it. */
+.nametag {
+  left: 302.44px;
+  top: 125.97px;
+}

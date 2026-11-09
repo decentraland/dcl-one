@@ -92,10 +92,13 @@ function creditsQuote(spec: Spec): UsdCents | null {
   return spec.couponPpm ? discountedCents(cents, spec.couponPpm) : cents;
 }
 
+/** As the contract and `policy::mana_quote` apply a coupon: to the signed amount first, then a USD price converts. */
 function manaQuote(spec: Spec): ManaWei | null {
-  const wei = "usdWei" in spec.price ? manaFromUsdWei(spec.price.usdWei, RATE) : spec.price.manaWei;
-  if (wei === null) return null;
-  return spec.couponPpm ? discountedMana(wei, spec.couponPpm) : wei;
+  if ("usdWei" in spec.price) {
+    const usd = spec.couponPpm ? discountedMana(spec.price.usdWei as ManaWei, spec.couponPpm) : spec.price.usdWei;
+    return usd === null ? null : manaFromUsdWei(usd, RATE);
+  }
+  return spec.couponPpm ? discountedMana(spec.price.manaWei, spec.couponPpm) : spec.price.manaWei;
 }
 
 /** What the server answers for `spec` and `session`: policy::eligibility, quote and settlement_key. */
@@ -153,8 +156,12 @@ export function storeMint(session: Session, kind: "wearable" | "emote" = "wearab
   );
 }
 
+/** Polygon's CollectionDiscountCoupon, the coupon a creator's sale is priced with. */
+export const CREATOR_COUPON_ADDRESS = "0xc914507fe297b2dddd1232ac3a8903f1c125e794";
+
+/** A creator's USD-pegged primary; with `couponPpm`, priced and keyed with the creator's live sale "sale-1", as the server sends it. */
 export function creatorOrder(session: Session, kind: "wearable" | "emote" = "wearable", couponPpm?: number): PurchaseOffer {
-  return serverOffer(
+  const offer = serverOffer(
     {
       asset: itemAsset(CHAIN.POLYGON, BOOK.collection, ITEM),
       kind,
@@ -166,6 +173,7 @@ export function creatorOrder(session: Session, kind: "wearable" | "emote" = "wea
     },
     session,
   );
+  return couponPpm ? { ...offer, coupon: { id: "sale-1", couponAddress: CREATOR_COUPON_ADDRESS, discountPpm: couponPpm } } : offer;
 }
 
 /** A minted token resold on the Polygon marketplace, by a reseller or by its own creator. */

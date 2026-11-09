@@ -19,6 +19,21 @@ use futures_util::{
 use serde::Serialize;
 pub use tungstenite::client::IntoClientRequest;
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
+
+pub(crate) struct Trace;
+
+impl Trace {
+    pub(crate) fn start(_request: &reqwest::Request) -> Option<Self> {
+        None
+    }
+
+    pub(crate) fn response(&self, _response: &reqwest::Response) {}
+
+    pub(crate) fn finish(&mut self, _size: u64) {}
+
+    pub(crate) fn fail(&mut self, _reason: &str) {}
+}
+
 pub struct WebSocket {
     _meta: WsMeta,
     stream: WsStream,
@@ -298,6 +313,13 @@ mod web_dm_history {
         pub async fn read(account: &str, partner: &str) -> Result<JsValue, JsValue>;
         #[wasm_bindgen(catch, js_name = dmHistoryDelete)]
         pub async fn delete(account: &str, partner: &str) -> Result<(), JsValue>;
+        #[wasm_bindgen(catch, js_name = dmHistoryTrim)]
+        pub async fn trim(
+            account: &str,
+            partner: &str,
+            keep: u32,
+            keep_records: u32,
+        ) -> Result<(), JsValue>;
     }
 }
 
@@ -326,6 +348,24 @@ pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), Strin
     web_dm_history::delete(account, partner)
         .await
         .map_err(|e| js_error_message(&e))
+}
+
+/// Keeps only the last `keep` messages of a conversation and the reactions to them, within the
+/// last `keep_records` records.
+pub async fn dm_history_trim(
+    account: &str,
+    partner: &str,
+    keep: usize,
+    keep_records: usize,
+) -> Result<(), String> {
+    web_dm_history::trim(
+        account,
+        partner,
+        keep.min(u32::MAX as usize) as u32,
+        keep_records.min(u32::MAX as usize) as u32,
+    )
+    .await
+    .map_err(|e| js_error_message(&e))
 }
 
 fn js_error_message(e: &wasm_bindgen::JsValue) -> String {

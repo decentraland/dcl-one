@@ -140,46 +140,46 @@ From this panel you can configure the physics parameters for each spring root bo
 
 
 > [!NOTE]
-> 
+>
 > You cannot add new spring bones from the Builder. The bones must already exist in the uploaded `.glb` file with the correct naming convention. The Builder only lets you configure the physics parameters for detected spring bones. {% endhint %}
-> 
+>
 > ### Parameter Reference
-> 
+>
 > #### Stiffness Force
-> 
+>
 > |             |        |
 > | ----------- | ------ |
 > | **Range**   | 0 to 4 |
 > | **Default** | `2.0`  |
-> 
+>
 > Controls how strongly the bone tries to return to its rest pose. This is the restoring force — think of it as the "firmness" of the spring.
-> 
+>
 > - **0**: The bone won't return to rest at all — it will just hang limply under gravity.
 > - **Low values** (e.g., 0–1): The bone is loose and saggy, swinging freely. Good for long flowing hair or lightweight hanging accessories.
 > - **High values** (e.g., 3–4): The bone is stiff, staying close to its original position and snapping back quickly. Good for short hair or rigid accessories.
-> 
+>
 > #### Gravity Power
-> 
+>
 > |             |        |
 > | ----------- | ------ |
 > | **Range**   | 0 to 2 |
 > | **Default** | `0`    |
-> 
+>
 > Controls the magnitude of the gravity force pulling on the bone each frame.
-> 
+>
 > - **0**: No gravity effect — the bone is only affected by movement inertia and stiffness.
 > - **Low values** (e.g., 0.3–0.8): Subtle gravity pull, good for most accessories.
 > - **High values** (e.g., 1.5–2.0): Strong gravity pull, causing the bone to droop heavily.
-> 
+>
 > #### Gravity Direction
-> 
+>
 > |             |                                |
 > | ----------- | ------------------------------ |
 > | **Format**  | X, Y, Z vector                 |
 > | **Default** | `X: 0, Y: -1, Z: 0` (downward) |
-> 
+>
 > Sets the direction of the gravity force in world space. By default, gravity pulls downward (Y = -1), simulating natural gravity.
-> 
+>
 > | X   | Y   | Z   | Effect                                |
 > | --- | --- | --- | ------------------------------------- |
 > | 0   | -1  | 0   | Downward (natural gravity, default)   |
@@ -188,52 +188,52 @@ From this panel you can configure the physics parameters for each spring root bo
 > | -1  | 0   | 0   | Rightward                             |
 > | 0   | 0   | 1   | Forward                               |
 > | 0   | 0   | -1  | Backward                              |
-> 
+>
 > You can combine axes (e.g., `X: 0.5, Y: -0.5, Z: 0`) for diagonal directions. This is useful for simulating wind-like effects or creating a floating appearance for supernatural characters.
-> 
+>
 > #### Drag Force
-> 
+>
 > |             |       |
 > | ----------- | ----- |
 > | **Range**   | 0 – 1 |
 > | **Default** | `0.5` |
-> 
+>
 > Controls how quickly the bone loses momentum and settles down. Think of it as air resistance or damping.
-> 
+>
 > - **Low values** (e.g., 0–0.2): The bone swings freely for a long time before settling, like a pendulum with little friction.
 > - **High values** (e.g., 0.7–1.0): The bone settles almost instantly after movement, giving a heavy or dampened feel.
 > - **1**: The bone barely moves at all — maximum deceleration.
-> 
+>
 > #### Center (Optional)
-> 
+>
 > |             |                      |
 > | ----------- | -------------------- |
 > | **Format**  | Bone name (dropdown) |
 > | **Default** | None                 |
-> 
+>
 > An optional reference bone used to calculate the spring bone's movement relative to a point on the avatar, instead of relative to world space. This prevents the spring chain from swaying excessively when the avatar moves around (walking, running).
-> 
+>
 > **Without a center bone**, springs calculate inertia in world space — every step the avatar takes causes the bones to react as if the whole world moved, resulting in exaggerated swinging during locomotion.
-> 
+>
 > **With a center bone**, the simulation uses that bone's space as the reference frame, so only the avatar's _local_ movements (head turning, body bending) trigger the spring reaction.
-> 
+>
 > Choose the center bone based on where the wearable is located on the body:
-> 
+>
 > | Wearable location                     | Recommended center bone |
 > | ------------------------------------- | ----------------------- |
 > | Head (hair, earrings, tiaras)         | `Avatar_Head`           |
 > | Upper body (capes, necklaces)         | `Avatar_Spine`          |
 > | Lower body (belts, skirt accessories) | `Avatar_Hips`           |
-> 
+>
 
 > [!WARNING]
-> 
+>
 > The center bone **must not** be part of any spring chain. It should be a bone from the base avatar armature. {% endhint %}
-> 
+>
 > ## Common Use Cases & Recommended Values
-> 
+>
 > These are suggested starting points. Adjust to taste using the Builder's real-time preview.
-> 
+>
 > | Use case | Stiffness | Gravity Power | Gravity Dir | Drag | Center | Notes |
 > | --- | --- | --- | --- | --- | --- | --- |
 > | Long hair / ponytail | 1.0 – 2.0 | 0.3 – 0.8 | 0, -1, 0 | 0.3 – 0.5 | `Avatar_Head` | More bones in the chain = smoother movement |
@@ -242,32 +242,32 @@ From this panel you can configure the physics parameters for each spring root bo
 > | Cape / cloak | 1.0 – 2.0 | 0.5 – 1.0 | 0, -1, 0 | 0.3 – 0.5 | `Avatar_Spine` | Multiple parallel chains for width |
 > | Belt / hanging ornament | 1.5 – 2.5 | 0.3 – 0.8 | 0, -1, 0 | 0.5 – 0.7 | `Avatar_Hips` | Higher drag for heavier items |
 > | Floating / ghost effect | 1.0 – 2.0 | 0.5 – 1.0 | 0, 1, 0 | 0.3 – 0.5 | `Avatar_Spine` | Upward gravity for supernatural look |
-> 
+>
 > ## Limitations
-> 
+>
 > Keep the following limitations in mind when working with spring bones:
-> 
+>
 > - **No colliders**: Spring bones do not collide with the avatar's body or other bones. Chains may clip through the body mesh in extreme poses. Future versions may add collider support.
 > - **No cross-wearable interactions**: Each wearable's spring chains are independent. Chains from different wearables don't affect each other.
 > - **No global wind**: There is no scene-level wind force. You can approximate a wind effect per-wearable by adjusting the `gravityDir` to a diagonal direction.
 > - **Performance on remote avatars**: Spring bone simulation is disabled for avatars that are far from the local player to save performance. Nearby avatars will display spring bone physics normally.
 > - **Alternative clients compatibility**: Wearables with spring bones are backward-compatible with alternative clients and older Explorer versions, but the spring bone elements will remain static. In some cases, there may be minor visual issues.
-> 
+>
 > ## Technical Reference
-> 
+>
 > Spring bone physics uses two separate artifacts that work together:
-> 
+>
 > 1. **The `.glb` file** carries only the bone names (with the `springbone` token) and their hierarchy. No physics parameters are stored in the model file.
 > 2. **The wearable's item metadata** (`wearable.data.springBones`) carries all physics parameters as JSON.
-> 
+>
 > When you configure parameters in the Builder, they are saved into the wearable's item metadata — the `.glb` file is never modified by parameter edits.
-> 
+>
 > You don't need to interact with this format directly — the Builder handles reading and writing it. This section is provided for reference.
-> 
+>
 > ### `.glb` Node Hierarchy (example)
-> 
+>
 > The model file contains only the bone names and parent-child relationships:
-> 
+>
 > ```json
 > {
 >   "asset": {"version": "2.0"},
@@ -280,11 +280,11 @@ From this panel you can configure the physics parameters for each spring root bo
 >   ]
 > }
 > ```
-> 
+>
 > ### Item Metadata (`wearable.data.springBones`)
-> 
+>
 > The physics parameters are stored in the wearable's metadata, keyed by the GLB content hash:
-> 
+>
 > ```json
 > {
 >   "version": 1,
@@ -309,13 +309,13 @@ From this panel you can configure the physics parameters for each spring root bo
 >   }
 > }
 > ```
-> 
+>
 > - `models` is keyed by the GLB content hash. Wearables whose male and female representations share the same `.glb` have a single entry.
 > - Each bone entry uses the exact node name from the `.glb` (case-sensitive).
 > - Tip bones (e.g., `springbone_earring_r_tip`) do not need a metadata entry — they serve only as geometric endpoints.
-> 
+>
 > ### Metadata Parameters
-> 
+>
 > | Parameter | Type | Default | Description |
 > | --- | --- | --- | --- |
 > | `stiffness` | float | `2.0` | Restoring force toward rest pose. Range: 0–4. |

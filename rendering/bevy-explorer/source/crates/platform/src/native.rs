@@ -13,6 +13,8 @@ use futures_util::{
 use serde::Serialize;
 pub use tungstenite::client::IntoClientRequest;
 
+pub(crate) use crate::devtools::Trace;
+
 pub mod deeplink;
 mod dm_history;
 pub use dm_history::*;

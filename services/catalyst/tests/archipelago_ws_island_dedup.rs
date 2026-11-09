@@ -517,7 +517,17 @@ async fn a_closed_socket_publishes_nothing() {
     })
     .await
     .expect("the closed socket was never retired");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     assert!(
         bus.published().is_empty(),
         "no peer.*.disconnect: {:?}",
@@ -555,11 +565,17 @@ async fn a_re_announce_pass_announces_every_live_session() {
         "the handshakes themselves announced each session"
     );
 
-    // Down long enough for the feed job's readiness sample (every 100 ms) to see it. A lookup
-    // needs the link, so nothing reaches Pulse meanwhile.
-    bus.set_connected(false);
+    assert!(catalyst::shared::test_wait::until(async || _state.feed.link_observed()).await);
+    let subscriber = _state.gatekeeper.island_subscriber().upgrade().unwrap();
+    tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+        .await
+        .unwrap();
     let before = announced(&lookups, &address, 0).await.len();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    bus.set_connected(false);
+    assert!(catalyst::shared::test_wait::until(async || !_state.feed.link_observed()).await);
+    tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+        .await
+        .unwrap();
     assert_eq!(
         announced(&lookups, &address, 0).await.len(),
         before,
@@ -906,22 +922,31 @@ async fn an_assigned_socket_recovers_a_lost_move_and_reannounces_after_broker_re
         !link.needs_assignment(),
         "the first assignment reached the wire"
     );
-    // Readiness can race authentication. Silence across two reconciliation ticks ends the
-    // bounded startup burst without assuming how many of its passes observed this socket.
+    assert!(catalyst::shared::test_wait::until(async || state.feed.restoration_complete()).await);
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     let mut startup_announcements = 0;
-    loop {
-        let message = match tokio::time::timeout(Duration::from_secs(11), lookups.next()).await {
-            Ok(Some(message)) => message,
-            Ok(None) => panic!("lookup subscription ended during startup restoration"),
-            Err(_) => break,
-        };
+    // Settled means published, not delivered: the subscription drains until
+    // it is quiet.
+    while let Ok(Some(message)) =
+        tokio::time::timeout(Duration::from_millis(500), lookups.next()).await
+    {
         assert_eq!(message.payload.as_ref(), device.session().as_bytes());
         startup_announcements += 1;
-        assert!(
-            startup_announcements <= 3,
-            "startup restoration exceeded its immediate pass and two followups"
-        );
     }
+    assert!(
+        startup_announcements <= 3,
+        "startup restoration exceeded its immediate pass and two followups"
+    );
     assert!(
         tokio::time::timeout(Duration::from_secs(6), lookups.next())
             .await
@@ -1022,13 +1047,17 @@ async fn an_expired_window_delivers_the_identical_assignment_again() {
     let device = Device::new();
     let mut ws = handshake(port, &wallet, &device).await;
     let assignment = island("same-room");
-    for _ in 0..2 {
+    for attempt in 0..2 {
         route_island(&state, &address, &device.session(), &assignment);
         assert_eq!(
             recv_msg(&mut ws, Duration::from_secs(3)).await,
             Some(server_packet::Message::IslandChanged(assignment.clone()))
         );
-        tokio::time::sleep(Duration::from_millis(75)).await;
+        if attempt == 0 {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_millis(75)).await;
+            tokio::time::resume();
+        }
     }
 }
 

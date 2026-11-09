@@ -571,6 +571,17 @@ CREATE TABLE social.world_secret_attempts (
 -- The expiry sweep.
 CREATE INDEX world_secret_attempts_window_idx ON social.world_secret_attempts (window_start);
 
+-- Keep the latest edit cutoff even after successful enforcement: refreshed tokens can reconnect.
+CREATE TABLE social.world_access_rechecks (
+    world_name text PRIMARY KEY,
+    revision uuid NOT NULL DEFAULT gen_random_uuid(),
+    changed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
+-- The due scan reads this index from the front. A completed check parks its
+-- row at infinity, at the end, so the scan never reads enforced history.
+CREATE INDEX world_access_rechecks_due_idx ON social.world_access_rechecks (next_attempt_at, world_name);
+
 CREATE TABLE social.user_warnings (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     warned_address text NOT NULL,
@@ -672,6 +683,31 @@ CREATE INDEX notifications_unread_idx
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
 
+-- A producer's address-less notification, stored once and listed in every
+-- wallet's inbox (no subscription needed). id = v5 (namespace
+-- 3f8a52d4-9c1e-4b07-a62d-71e05c9318bb) over the JSON `["<type>",null,"<eventKey>"]`;
+-- a repeat updates metadata/occurred_at. Few rows (announcements), read on each
+-- poll; listed and kept only within NOTIFICATIONS_BROADCAST_HORIZON_DAYS.
+CREATE TABLE social.broadcast_notifications (
+    id uuid NOT NULL,
+    type text NOT NULL,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT broadcast_notifications_pkey PRIMARY KEY (id)
+);
+-- The poll's `occurred_at >= $from ORDER BY occurred_at DESC, id DESC LIMIT n`.
+CREATE INDEX broadcast_notifications_time_idx
+    ON social.broadcast_notifications (occurred_at DESC, id DESC);
+
+-- Per-wallet read state of a broadcast; absent = unread.
+CREATE TABLE social.broadcast_reads (
+    broadcast_id uuid NOT NULL REFERENCES social.broadcast_notifications (id) ON DELETE CASCADE,
+    address text NOT NULL,
+    read_at timestamp(3) without time zone NOT NULL,
+    CONSTRAINT broadcast_reads_pkey PRIMARY KEY (broadcast_id, address)
+);
+
 -- Social owns event delivery intents and progress. Explore inserts transitions
 -- in its authoring transaction; Social inserts occurrence notices. No FK: the event
 -- mirror may remove a catalogue row while an already-committed host notice
@@ -724,6 +760,10 @@ CREATE TABLE social.notification_deliveries (
 -- The worker's due set; `now` is the bind, never the predicate.
 CREATE INDEX notification_deliveries_due_idx
     ON social.notification_deliveries (next_attempt_at, notification_id) WHERE state = 'pending';
+
+-- Retention: terminal rows oldest first, deleted in bounded batches after 30 days.
+CREATE INDEX notification_deliveries_terminal_idx
+    ON social.notification_deliveries (updated_at) WHERE state <> 'pending';
 
 -- details is the @dcl/schemas SubscriptionDetails document, read and written
 -- as a unit; the 0001 unconfirmed_email/email_confirmation_token columns were
@@ -1253,6 +1293,54 @@ CREATE TABLE social.land_transfer_cursor (
     CONSTRAINT land_transfer_cursor_pkey PRIMARY KEY (id),
     CONSTRAINT land_transfer_cursor_singleton_check CHECK (id = 1)
 );
+
+-- One row per Segment webhook event the explorer (`client`) or the web
+-- (`web`) delivered to /events-notifier (social/src/segment_webhooks), the
+-- notifier's published event: keyed by Segment's messageId so a redelivery
+-- is one row; address is the owner of the auth chain a client event carried
+-- (a delegation that wallet signed once, not proof it sent this event) or
+-- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
+-- the client-events-purge job deletes those older than
+-- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT client_events_pkey PRIMARY KEY (key),
+    CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
+    CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
+    CONSTRAINT client_events_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+-- Consumers scan forward in insertion order; the purge deletes the oldest.
+CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
+
+-- Every stored client event is announced on the `social.client_events`
+-- channel, the row's identity columns as JSON (never the metadata: the
+-- payload is bounded), for listeners outside the request path. A
+-- redelivered key inserts no row and announces nothing.
+CREATE FUNCTION social.notify_client_event() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('social.client_events', json_build_object(
+        'key', NEW.key, 'source', NEW.source, 'sub_type', NEW.sub_type,
+        'address', NEW.address, 'session_id', NEW.session_id,
+        'anonymous_id', NEW.anonymous_id, 'realm', NEW.realm, 'ip', NEW.ip,
+        'reported_at', NEW.reported_at, 'received_at', NEW.received_at)::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER client_events_notify_trigger
+    AFTER INSERT ON social.client_events
+    FOR EACH ROW EXECUTE FUNCTION social.notify_client_event();
 -- ==== end section: notifications ====
 
 -- ==== section: badges ====
@@ -1381,3 +1469,26 @@ CREATE TABLE social.event_payloads (
     CONSTRAINT event_payloads_size_check CHECK (octet_length(payload) > 0 AND octet_length(payload) <= 536870912)
 );
 CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);
+
+-- Versioned admission SQL; installed by the schema object pass.
+CREATE FUNCTION social.world_authorization_started_5633b2b39c6d(text) RETURNS timestamp without time zone LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ BEGIN
+    PERFORM 1 FROM worlds.worlds WHERE name = $1 FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+    RETURN timezone('UTC', clock_timestamp());
+END $admission$;
+
+CREATE FUNCTION social.world_secret_refund_9424d3307765(text, text, timestamp without time zone) RETURNS void LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ DECLARE
+    charged integer;
+BEGIN
+    SELECT attempts INTO charged FROM social.world_secret_attempts
+    WHERE world_name = $1 AND subject = $2 AND window_start = $3 FOR UPDATE;
+    IF charged = 1 THEN
+        DELETE FROM social.world_secret_attempts
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    ELSIF charged > 1 THEN
+        UPDATE social.world_secret_attempts SET attempts = attempts - 1
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    END IF;
+END $admission$;

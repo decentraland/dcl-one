@@ -1,0 +1,34 @@
+{
+  "anonymousId": "59a4a9de-95a3-40fb-881d-a7ccdfea66fb",
+  "context": {
+    "auth_chain": "[{\"payload\":\"0xf30a4490cde3312338052599604cbd13169b6ef9\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"Decentraland Login\\nEphemeral address: 0x19362Ec729e9fA5311a70EF62Bf519A5Da1eA1C6\\nExpiration: 2025-05-22T12:23:48.547Z\",\"signature\":\"0x75134dfa9936f1c1518e5b3f4f5e32bdeb5f517996f25d0162fb42c67a2ac4bd4fdb59436584bff4205cc0f787ee2c0c9db5f0d5ba3eb7515c37be650216a51b1c\",\"type\":\"ECDSA_EPHEMERAL\"}]",
+    "dcl_eth_address": "0xf30a4490cde3312338052599604cbd13169b6ef9",
+    "dcl_renderer_type": "Desktop",
+    "direct": true,
+    "install_source": "launcher",
+    "ip": "1***.4***.1***.8***",
+    "is_local_scene": false,
+    "launcher_anonymous_id": "59a4a9de-95a3-40fb-881d-a7ccdfea66fb",
+    "library": {
+      "name": "unknown",
+      "version": "unknown"
+    },
+    "operating_system": "Windows 10  (10.0.19045) 64bit",
+    "parcel": "(0, 0)",
+    "position": "(0,0000, 0,0800, 0,0000)",
+    "realm": "main",
+    "realm_url": "https://realm-provider-ea.decentraland.org/main",
+    "renderer_version": "v0.68.0-alpha-main",
+    "runtime": "release",
+    "session_id": "3***-6***-4***-9***-8***"
+  },
+  "event": "logged_in_cached",
+  "integrations": {},
+  "messageId": "api-2xJ0ntGq9ac2QW8ZjRx4zdD8iiO",
+  "originalTimestamp": "2025-05-19T07:50:35.681964Z",
+  "properties": {},
+  "receivedAt": "2025-05-19T07:50:37.655Z",
+  "timestamp": "2025-05-19T07:50:35.681Z",
+  "type": "track",
+  "userId": "0xf30a4490cde3312338052599604cbd13169b6ef9"
+}

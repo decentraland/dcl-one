@@ -25,7 +25,7 @@ You can freely navigate the Marketplace without the need to log in, but it's rec
 
 The Atlas view gives you a bird's-eye perspective of every color-coded parcel, Estate, road, district, and plaza in Decentraland.
 
-![](/docs/player/images/media/market-atlas.webp)
+![](/docs/player/images/media/market-atlas.webp)
 
 You can click and drag the map to move around, zoom in and out, or hover your cursor over a parcel to see its x,y location and owner.
 

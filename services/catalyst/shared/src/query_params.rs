@@ -13,10 +13,6 @@ pub type QueryParams = HashMap<String, Vec<String>>;
 /// Every entity type a content server stores, in the upstream order.
 pub const ENTITY_TYPES: &[&str] = &["scene", "profile", "wearable", "store", "emote", "outfits"];
 
-/// The types the content read routes accept in a path (`/entities/{type}`,
-/// `/audit/{type}/..`); outfits live under lambdas and are rejected here.
-pub const DEPLOYABLE_ENTITY_TYPES: &[&str] = &["scene", "profile", "wearable", "store", "emote"];
-
 pub fn parse_query_string(raw: &str) -> QueryParams {
     let mut map: QueryParams = HashMap::new();
     if raw.is_empty() {
@@ -41,6 +37,16 @@ pub fn qs_get_array(params: &QueryParams, key: &str) -> Vec<String> {
     params.get(key).cloned().unwrap_or_default()
 }
 
+/// The content server's `qsGetArray`: a missing key, a bare key or a single
+/// empty value (`?pointer=`) is absent; empty strings inside a repeated list
+/// are kept and match nothing.
+pub fn qs_get_filter_array(params: &QueryParams, key: &str) -> Vec<String> {
+    match params.get(key) {
+        Some(values) if !(values.len() == 1 && values[0].is_empty()) => values.clone(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn qs_get_string(params: &QueryParams, key: &str) -> Option<String> {
     params.get(key).and_then(|v| v.first()).cloned()
 }
@@ -49,46 +55,15 @@ pub fn qs_get_number(params: &QueryParams, key: &str) -> Option<i64> {
     qs_get_string(params, key).and_then(|s| s.parse::<i64>().ok())
 }
 
-pub fn qs_get_bool(params: &QueryParams, key: &str) -> Option<bool> {
-    qs_get_string(params, key).map(|s| s == "true")
-}
-
-/// Case-insensitive, an exact name first and then with one trailing `s`
-/// stripped, so `scenes` is `scene` and `outfits` stays `outfits`.
+/// Trimmed and case-insensitive: each type name, plus `<type>s` for a name
+/// that does not already end in `s` (`scenes` is `scene`; `outfitss` is
+/// nothing), as upstream builds `ENTITY_TYPES_BY_NAME`.
 pub fn parse_entity_type(raw: &str) -> Option<&'static str> {
     let lowered = raw.trim().to_lowercase();
-    let exact = |s: &str| ENTITY_TYPES.iter().copied().find(|t| *t == s);
-    exact(&lowered).or_else(|| lowered.strip_suffix('s').and_then(exact))
-}
-
-/// The `/entities/{type}` and `/audit/{type}` rule: lower-case, strip one
-/// trailing `s`, then the deployable set only.
-pub fn parse_deployable_entity_type(raw: &str) -> Option<&'static str> {
-    let mut s = raw.trim().to_lowercase();
-    if s.ends_with('s') {
-        s.pop();
-    }
-    DEPLOYABLE_ENTITY_TYPES.iter().copied().find(|t| *t == s)
-}
-
-pub fn to_query_string(filters: &HashMap<String, Vec<String>>) -> String {
-    let mut pairs: Vec<String> = Vec::new();
-    let mut keys: Vec<&String> = filters.keys().collect();
-    keys.sort();
-    for key in keys {
-        if let Some(values) = filters.get(key) {
-            for val in values {
-                if !val.is_empty() {
-                    pairs.push(format!(
-                        "{}={}",
-                        urlencoding_encode(key),
-                        urlencoding_encode(val)
-                    ));
-                }
-            }
-        }
-    }
-    pairs.join("&")
+    ENTITY_TYPES
+        .iter()
+        .copied()
+        .find(|t| *t == lowered || (!t.ends_with('s') && lowered.strip_suffix('s') == Some(*t)))
 }
 
 pub fn camel_to_snake(s: &str) -> String {
@@ -175,21 +150,12 @@ pub fn parse_pagination_with(
     })
 }
 
-pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagination, String> {
-    parse_pagination_with(
-        params,
-        max_page_size,
-        OversizePolicy::Reject,
-        NonPositivePolicy::Reject,
-    )
-}
-
 /// JavaScript's `parseInt`: leading white space, an optional sign, then the
 /// longest run of digits; `None` where JavaScript answers `NaN`. With
 /// `hex_prefix` (`parseInt(s)` with no radix) a `0x`/`0X` reads hex digits.
 /// A value past `i64` saturates.
 pub fn js_parse_int(s: &str, hex_prefix: bool) -> Option<i64> {
-    let s = s.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let s = s.trim_start_matches(is_js_whitespace);
     let (negative, s) = match s.as_bytes().first() {
         Some(b'-') => (true, &s[1..]),
         Some(b'+') => (false, &s[1..]),
@@ -208,6 +174,33 @@ pub fn js_parse_int(s: &str, hex_prefix: bool) -> Option<i64> {
             .saturating_add(i64::from(d))
     });
     Some(if negative { -magnitude } else { magnitude })
+}
+
+/// JavaScript `parseInt(s, 10)` ([`js_parse_int`] without the hex prefix):
+/// `"10abc"` is 10, `"1.5"` is 1, `None` is `NaN`. A value past `i64`
+/// saturates (JS keeps the float, so only an echoed value differs, never
+/// the slice).
+pub fn parse_int_js(s: &str) -> Option<i64> {
+    js_parse_int(s, false)
+}
+
+/// JavaScript's `WhiteSpace` and `LineTerminator`, which `parseInt` skips:
+/// Unicode `White_Space` without U+0085, plus U+FEFF.
+fn is_js_whitespace(c: char) -> bool {
+    c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace())
+}
+
+/// The `[start, end)` of JavaScript's `elements.slice(offset, offset +
+/// limit)` over `len` elements: a negative index counts from the end.
+pub fn js_slice_range(len: usize, offset: i64, limit: i64) -> (usize, usize) {
+    let len = len as i64;
+    let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+    let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
+    if start < end {
+        (start as usize, end as usize)
+    } else {
+        (0, 0)
+    }
 }
 
 /// lamb2's `paginationObject` with `fetchAndPaginate`'s slicing: each of
@@ -267,6 +260,28 @@ impl JsPagination {
             Some(_) => None,
         }
     }
+
+    /// `(offset, limit)` for a JavaScript `slice`, `None` when either is `NaN`.
+    pub fn offset_limit(&self) -> Option<(i64, i64)> {
+        let (size, num) = (self.page_size?, self.page_num?);
+        Some((num.saturating_sub(1).saturating_mul(size), size))
+    }
+
+    /// The `[start, end)` of `elements.slice(offset, offset + limit)` over
+    /// `len` elements: a negative index counts from the end, a `NaN` is 0.
+    pub fn slice_range(&self, len: usize) -> (usize, usize) {
+        let r = self.range(len);
+        (r.start, r.end)
+    }
+}
+
+/// [`JsPagination::parse`], lamb2's `paginationObject`
+/// (decentraland/lamb2:src/logic/pagination.ts:4-19).
+pub fn parse_pagination_js(
+    params: &QueryParams,
+    max_page_size: i64,
+) -> Result<JsPagination, String> {
+    JsPagination::parse(params, max_page_size)
 }
 
 fn urlencoding_decode(s: &str) -> String {
@@ -321,6 +336,94 @@ fn strip_array_index(key: &str) -> String {
     key.to_string()
 }
 
+/// The value `qs` gives a handler that casts it to a string: a repeated key
+/// is an array, which JavaScript joins with commas. `None` for a missing key
+/// or a single empty value (both falsy).
+fn qs_js_string(params: &QueryParams, key: &str) -> Option<String> {
+    match params.get(key) {
+        Some(values) if !values.is_empty() && !(values.len() == 1 && values[0].is_empty()) => {
+            Some(values.join(","))
+        }
+        _ => None,
+    }
+}
+
+/// The content server's `qsGetNumber`: absent when missing or empty, else
+/// `parseInt`, absent on `NaN`.
+pub fn qs_get_js_number(params: &QueryParams, key: &str) -> Option<i64> {
+    qs_js_string(params, key).and_then(|s| js_parse_int(&s, false))
+}
+
+/// PostgreSQL's `timestamptz` range in Unix milliseconds (4714-11-24 BC to
+/// 294276-12-31 AD).
+const PG_TIMESTAMP_MS: std::ops::RangeInclusive<i64> = -210_866_803_200_000..=9_224_318_015_999_000;
+
+/// [`qs_get_js_number`] for a millisecond bound (`from`, `to`), clamped to
+/// what `to_timestamp` accepts. Upstream hands any value to PostgreSQL and
+/// answers its "timestamp out of range" as a 500; no deployment lies outside
+/// that range, so the clamped bound selects the same rows.
+pub fn qs_get_js_timestamp(params: &QueryParams, key: &str) -> Option<i64> {
+    qs_get_js_number(params, key)
+        .map(|ms| ms.clamp(*PG_TIMESTAMP_MS.start(), *PG_TIMESTAMP_MS.end()))
+}
+
+/// The content server's `qsGetBoolean`: absent when missing or empty, else
+/// whether the value is exactly `true` (a repeated key is an array, never
+/// `'true'`).
+pub fn qs_get_js_bool(params: &QueryParams, key: &str) -> Option<bool> {
+    let values = params.get(key)?;
+    match values.as_slice() {
+        [] => None,
+        [only] if only.is_empty() => None,
+        [only] => Some(only == "true"),
+        _ => Some(false),
+    }
+}
+
+/// The content server's `paginationObject` (`src/controllers/utils.ts`): a
+/// present `pageSize`/`pageNum` is read with `parseInt` (`10abc` is 10), and
+/// one that reads as `NaN` (empty included) or below 1 is a 400.
+pub fn parse_content_pagination(
+    params: &QueryParams,
+    max_page_size: i64,
+) -> Result<Pagination, String> {
+    let read = |key: &str, default: i64| match params.get(key).and_then(|v| v.first()) {
+        Some(raw) => js_parse_int(raw, false),
+        None => Some(default),
+    };
+    let page_size = match read("pageSize", 100) {
+        Some(n) if n >= 1 => n,
+        _ => return Err("pageSize must be a positive integer".to_string()),
+    };
+    let page_num = match read("pageNum", 1) {
+        Some(n) if n >= 1 => n,
+        _ => return Err("pageNum must be a positive integer".to_string()),
+    };
+    if page_size > max_page_size {
+        return Err(format!("max allowed pageSize is {}", max_page_size));
+    }
+    Ok(Pagination {
+        page_size,
+        page_num,
+        offset: page_num.saturating_sub(1).saturating_mul(page_size),
+        limit: page_size,
+    })
+}
+
+/// `qs.stringify(..., {arrayFormat: 'repeat'})` over keys in the given order:
+/// each value percent-encoded as RFC 3986, empty values kept (`key=`).
+pub fn to_ordered_query_string(pairs: &[(&str, Vec<String>)]) -> String {
+    pairs
+        .iter()
+        .flat_map(|(key, values)| {
+            values
+                .iter()
+                .map(move |v| format!("{}={}", urlencoding_encode(key), urlencoding_encode(v)))
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,9 +464,84 @@ mod tests {
     }
 
     #[test]
+    fn js_parse_int_reads_a_numeric_prefix() {
+        for (raw, want) in [
+            ("10", Some(10)),
+            ("10abc", Some(10)),
+            ("1.5", Some(1)),
+            ("  7", Some(7)),
+            ("-3", Some(-3)),
+            ("+4", Some(4)),
+            ("", None),
+            ("abc", None),
+            ("-", None),
+            ("0x10", Some(0)),
+            ("99999999999999999999999", Some(i64::MAX)),
+        ] {
+            assert_eq!(js_parse_int(raw, false), want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn js_number_and_bool_follow_qs_get_number_and_boolean() {
+        let params = parse_query_string("a=10abc&b=&c=x&d=5&d=6&t=true&f=TRUE&e=&r=true&r=true");
+        assert_eq!(qs_get_js_number(&params, "a"), Some(10));
+        assert_eq!(qs_get_js_number(&params, "b"), None);
+        assert_eq!(qs_get_js_number(&params, "c"), None);
+        assert_eq!(qs_get_js_number(&params, "d"), Some(5));
+        assert_eq!(qs_get_js_number(&params, "missing"), None);
+        assert_eq!(qs_get_js_bool(&params, "t"), Some(true));
+        assert_eq!(qs_get_js_bool(&params, "f"), Some(false));
+        assert_eq!(qs_get_js_bool(&params, "e"), None);
+        assert_eq!(qs_get_js_bool(&params, "r"), Some(false));
+        assert_eq!(qs_get_js_bool(&params, "missing"), None);
+    }
+
+    #[test]
+    fn js_pagination_reads_like_pagination_object() {
+        let p = parse_content_pagination(&parse_query_string("pageSize=10abc&pageNum=1.5"), 1000)
+            .unwrap();
+        assert_eq!((p.page_size, p.page_num, p.offset), (10, 1, 0));
+        let p = parse_content_pagination(&parse_query_string(""), 1000).unwrap();
+        assert_eq!((p.page_size, p.page_num), (100, 1));
+        for (query, message) in [
+            ("pageSize=", "pageSize must be a positive integer"),
+            ("pageSize=abc", "pageSize must be a positive integer"),
+            ("pageSize=0", "pageSize must be a positive integer"),
+            ("pageNum=", "pageNum must be a positive integer"),
+            ("pageNum=x", "pageNum must be a positive integer"),
+            ("pageSize=1001", "max allowed pageSize is 1000"),
+        ] {
+            assert_eq!(
+                parse_content_pagination(&parse_query_string(query), 1000).unwrap_err(),
+                message,
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_query_string_keeps_order_and_empty_values() {
+        let pairs = [
+            ("pointer", vec!["0,0".to_string(), String::new()]),
+            ("from", vec!["1".to_string()]),
+        ];
+        assert_eq!(
+            to_ordered_query_string(&pairs),
+            "pointer=0%2C0&pointer=&from=1"
+        );
+    }
+
+    #[test]
     fn parse_pagination_defaults() {
         let params = parse_query_string("");
-        let p = parse_pagination(&params, 1000).unwrap();
+        let p = parse_pagination_with(
+            &params,
+            1000,
+            OversizePolicy::Reject,
+            NonPositivePolicy::Reject,
+        )
+        .unwrap();
         assert_eq!(p.page_size, 100);
         assert_eq!(p.page_num, 1);
         assert_eq!(p.offset, 0);
@@ -383,10 +561,22 @@ mod tests {
         assert_eq!(parse_entity_type("outfits"), Some("outfits"));
         assert_eq!(parse_entity_type("outfit"), None);
         assert_eq!(parse_entity_type("totallybogus"), None);
-        assert_eq!(parse_deployable_entity_type("scenes"), Some("scene"));
-        assert_eq!(parse_deployable_entity_type("outfits"), None);
-        assert_eq!(parse_deployable_entity_type("outfit"), None);
-        assert_eq!(parse_deployable_entity_type("banana"), None);
+        assert_eq!(parse_entity_type(" Emotes "), Some("emote"));
+        assert_eq!(parse_entity_type("outfitss"), None);
+        assert_eq!(parse_entity_type("sceness"), None);
+        assert_eq!(parse_entity_type("s"), None);
+        assert_eq!(parse_entity_type(""), None);
+    }
+
+    #[test]
+    fn filter_array_treats_a_single_empty_value_as_absent() {
+        let get = |q: &str| qs_get_filter_array(&parse_query_string(q), "pointer");
+        assert!(get("").is_empty());
+        assert!(get("pointer=").is_empty());
+        assert!(get("pointer").is_empty());
+        assert_eq!(get("pointer=a&pointer="), vec!["a", ""]);
+        assert_eq!(get("pointer=&pointer="), vec!["", ""]);
+        assert_eq!(get("pointer=a"), vec!["a"]);
     }
 
     #[test]
@@ -435,12 +625,24 @@ mod tests {
     fn pagination_strict_rejects_non_positive() {
         let zero = parse_query_string("pageSize=0");
         assert_eq!(
-            parse_pagination(&zero, 1000).unwrap_err(),
+            parse_pagination_with(
+                &zero,
+                1000,
+                OversizePolicy::Reject,
+                NonPositivePolicy::Reject
+            )
+            .unwrap_err(),
             "pageSize must be a positive integer"
         );
         let neg = parse_query_string("pageNum=-1");
         assert_eq!(
-            parse_pagination(&neg, 1000).unwrap_err(),
+            parse_pagination_with(
+                &neg,
+                1000,
+                OversizePolicy::Reject,
+                NonPositivePolicy::Reject
+            )
+            .unwrap_err(),
             "pageNum must be a positive integer"
         );
     }
@@ -542,14 +744,58 @@ mod tests {
     }
 
     #[test]
-    fn next_page_query_string_is_sorted_and_encoded() {
-        let mut filters: HashMap<String, Vec<String>> = HashMap::new();
-        filters.insert("to".into(), vec!["5".into()]);
-        filters.insert("entityType".into(), vec!["scene".into(), "".into()]);
-        filters.insert("lastId".into(), vec!["a b".into()]);
+    fn parse_int_js_reads_the_leading_digits() {
+        assert_eq!(parse_int_js("10abc"), Some(10));
+        assert_eq!(parse_int_js("1.5"), Some(1));
+        assert_eq!(parse_int_js(" -7x"), Some(-7));
+        assert_eq!(parse_int_js("+3"), Some(3));
+        assert_eq!(parse_int_js("abc"), None);
+        assert_eq!(parse_int_js(""), None);
+        assert_eq!(parse_int_js("-"), None);
+        assert_eq!(parse_int_js("99999999999999999999"), Some(i64::MAX));
+        assert_eq!(parse_int_js("\u{feff}\u{2028}5"), Some(5), "JS whitespace");
+        assert_eq!(parse_int_js("\u{85}5"), None, "U+0085 is not JS whitespace");
+    }
+
+    #[test]
+    fn js_pagination_keeps_nan_and_slices_like_javascript() {
+        let p = |qs: &str| parse_pagination_js(&parse_query_string(qs), 1000);
         assert_eq!(
-            to_query_string(&filters),
-            "entityType=scene&lastId=a%20b&to=5"
+            p("").unwrap(),
+            JsPagination {
+                page_size: Some(100),
+                page_num: Some(1)
+            }
+        );
+        assert_eq!(
+            p("pageSize=10abc&pageNum=2.9").unwrap(),
+            JsPagination {
+                page_size: Some(10),
+                page_num: Some(2)
+            }
+        );
+        let nan = p("pageSize=abc").unwrap();
+        assert_eq!(nan.page_size, None);
+        assert_eq!(nan.slice_range(50), (0, 0), "a NaN pages nothing");
+        assert_eq!(
+            p("pageSize=").unwrap().page_size,
+            None,
+            "present but empty is NaN"
+        );
+        assert_eq!(
+            p("pageSize=1001").unwrap_err(),
+            "max allowed pageSize is 1000"
+        );
+        // pageNum=0: slice(-10, 0) is empty; pageNum=-1 with 25 elements:
+        // slice(-20, -10) is [5, 15).
+        assert_eq!(p("pageSize=10&pageNum=0").unwrap().slice_range(25), (0, 0));
+        assert_eq!(
+            p("pageSize=10&pageNum=-1").unwrap().slice_range(25),
+            (5, 15)
+        );
+        assert_eq!(
+            p("pageSize=10&pageNum=3").unwrap().slice_range(25),
+            (20, 25)
         );
     }
 }

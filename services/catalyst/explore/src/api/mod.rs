@@ -479,8 +479,9 @@ pub struct State {
     pub auth_api: auth_api::AuthApiState,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
-    /// The onboarding checkpoints (process state).
-    pub onboarding: onboarding::OnboardingState,
+    /// The onboarding checkpoints (process state), shared with the Segment
+    /// webhooks that forward them (`social::segment_webhooks`).
+    pub onboarding: Arc<onboarding::OnboardingState>,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 }
@@ -522,7 +523,7 @@ impl State {
             opensea: opensea::Runtime::default(),
             auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
-            onboarding: onboarding::OnboardingState::default(),
+            onboarding: Arc::default(),
             eip1654: std::sync::OnceLock::new(),
         });
         state

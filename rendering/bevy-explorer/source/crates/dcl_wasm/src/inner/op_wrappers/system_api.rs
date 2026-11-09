@@ -441,6 +441,25 @@ pub async fn op_read_proximity_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_photo_mode_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_photo_mode_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_photo_mode_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let photo_mode = dcl_js::system_api::op_read_photo_mode_stream(state.rc(), rid).await;
+    photo_mode
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_profile_changed_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_profile_changed_stream(state.rc()).await
 }
@@ -678,6 +697,24 @@ pub async fn op_get_dm_history(
 #[wasm_bindgen]
 pub fn op_delete_dm_history(state: &WorkerContext, address: String) {
     dcl_js::system_api::op_delete_dm_history(state.rc(), address)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_community_connectivity_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_community_connectivity_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_community_connectivity_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_community_connectivity_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_community_channels(state: &WorkerContext, ids: Vec<String>) {
+    dcl_js::system_api::op_set_community_channels(state.rc(), ids)
 }
 
 #[wasm_bindgen]

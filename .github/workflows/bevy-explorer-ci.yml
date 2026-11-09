@@ -9,12 +9,14 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
+      - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
-      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -40,12 +42,14 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
+      - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
-      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -75,7 +79,8 @@
         default: ''
 concurrency:
   group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
-  cancel-in-progress: true
+  # Main runs finish; runs started meanwhile wait as one pending run (the newest replaces it).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
 name: Bevy Explorer / CI
 jobs:
   source:
@@ -99,6 +104,8 @@ jobs:
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
+      - name: Verify the vendored texture decoder bytes and patch replay
+        run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
   changes:
     name: Changes
     runs-on: ubuntu-24.04
@@ -119,7 +126,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          # Compare the PR's tested merge tree with its actual base, not the default branch.
+          # Fallback only: bevy-ci.py compares the merge tree with the main tip it was merged onto.
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 tooling/bevy-ci.py plan
       - name: Select image consumers
@@ -143,7 +150,7 @@ jobs:
       matrix:
         os: ${{ (needs.changes.outputs.native-matrix == 'true' && github.actor != 'dependabot[bot]') && fromJSON('["windows-2025",
           "ubuntu-24.04", "macos-15"]') || fromJSON('["ubuntu-24.04"]') }}
-    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os == 'macos-15' && 'macos-15-xlarge' || matrix.os }}
     concurrency:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
@@ -152,26 +159,9 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
-      # the lock target the test binaries spawn on this runner
-      UUAV_TARGET: ${{ matrix.os == 'windows-2025' && 'windows-x86_64' || matrix.os == 'macos-15' && 'macos-universal'
-        || 'linux-x86_64' }}
+      CEF_EXPORT_VERSION: 139.8.0+139.0.40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          lfs: false
-      - name: Restore this runner's UUAV runtime set
-        # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
-        # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
-        # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
-        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
-        id: uuav-dist
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: library/uuav/dist/${{ env.UUAV_TARGET }}
-          key: uuav-dist-${{ env.UUAV_TARGET }}-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
-      - name: Fetch this runner's UUAV runtime set
-        if: steps.uuav-dist.outputs.cache-hit != 'true'
-        run: git lfs pull --include 'library/uuav/dist/${{ env.UUAV_TARGET }}/**'
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -188,30 +178,78 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native-ci-test
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc from the flake
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/bevy-explorer-tools
+      - name: Keep the verified protoc archive in the Actions cache
+        if: runner.os != 'Linux' && matrix.os != 'self-hosted-windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/protoc-archive
+          key: bevy-protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/bevy-explorer/install-protoc.py') }}
       - name: Install protoc
-        if: matrix.os != 'self-hosted-windows'
+        if: runner.os != 'Linux' && matrix.os != 'self-hosted-windows'
+        env:
+          PROTOC_ARCHIVE_CACHE: ${{ runner.temp }}/protoc-archive
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev ninja-build clang curl pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libssl-dev libx11-dev libgl1-mesa-dev libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
+      - name: Install ffmpeg from the flake
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/bevy-explorer-tools
+        with:
+          package: bevy-ffmpeg
+      - name: install ffmpeg deps (windows)
+        if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
+        run: |
+          # Prefer the standalone LLVM install (stable across runner image rolls); fall back to the VS-bundled Clang toolset, whose version moves with the image and has produced opaque bindgen structs on rollover.
+          $vsLlvm = "$(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)\VC\Tools\LLVM\x64\bin"
+          $libclang = @("C:\Program Files\LLVM\bin", $vsLlvm) | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $libclang) { throw "libclang.dll not found (checked standalone LLVM and VS Clang toolset)" }
+          Write-Host "Using LIBCLANG_PATH=$libclang"
+          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=$libclang`n"
+          $ffUrl = "https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z"
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
+            catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
+          }
+          7z x ffmpeg-6.0-full_build-shared.7z
+          mkdir ffmpeg
+          mv ffmpeg-*/* ffmpeg/
+          if (-not (Test-Path "ffmpeg\include")) { throw "ffmpeg headers missing after extract (ffmpeg\include not found)" }
+          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
+          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
+        shell: pwsh
       - name: Install ninja (macos)
         if: runner.os == 'macos'
         run: brew install ninja
+      - name: Keep the exported CEF distribution in the Actions cache
+        id: cef
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/cef
+          key: bevy-cef-${{ runner.os }}-${{ runner.arch }}-${{ env.CEF_EXPORT_VERSION }}
       - name: Export CEF distribution
         shell: bash
         run: |
-          cargo install export-cef-dir --version "139.8.0+139.0.40"
-          export-cef-dir --force "$HOME/.local/share/cef"
+          if [ "${{ steps.cef.outputs.cache-hit }}" != true ]; then
+            cargo install export-cef-dir --version "$CEF_EXPORT_VERSION"
+            export-cef-dir --force "$HOME/.local/share/cef"
+          fi
           # GITHUB_ENV/GITHUB_PATH reach native processes verbatim: on windows the git-bash
           # $HOME (/c/Users/...) would resolve as C:\c\Users\... — write windows paths there.
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -228,13 +266,14 @@ jobs:
         uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
-      - name: Stage the UUAV runtime set
-        # the test binaries spawn the video helper as a sibling (library/uuav/dist, Git LFS)
-        run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" host target/ci-test/deps
+      - name: Test the texture decoder boundaries
+        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
         run: |
+          # macOS builds the workspace crates without optimization; the dependencies keep opt-level 3 from the cache.
+          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.
@@ -277,6 +316,8 @@ jobs:
             export RUSTC_WRAPPER=
             cargo build --package benchmark --release --locked
           fi
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Name the benchmark runner
         id: benchmark
         run: |
@@ -334,19 +375,23 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: bevy-explorer-headless-linux-x64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py clang cmake pkg-config \
             libasound2-dev libudev-dev libgl-dev libx11-dev libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Strip the Linux distribution before testing
         run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
       - name: Smoke test
@@ -466,20 +511,25 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev ninja-build clang curl pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - run: cargo clippy --locked -- -D warnings
         shell: bash
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -495,9 +545,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install taplo
-        run: curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz | gzip -d - | install
-          -m 755 /dev/stdin /usr/local/bin/taplo
+      - name: Install taplo from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Run Taplo
         id: taplo
         run: taplo fmt --check --diff
@@ -520,6 +569,9 @@ jobs:
       # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
       BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
+      # Bevy Explorer / Benchmark refuses unoptimized web apps; while its fleet is off ('none'),
+      # nothing measures a PR's, so PR builds skip wasm-opt.
+      BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
     permissions:
       id-token: write
       contents: read
@@ -528,19 +580,23 @@ jobs:
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .
-        run: echo "key=$(python3 tooling/play-artifact.py engine-cache-key)" >> "$GITHUB_OUTPUT"
+        # A failing script must fail the step: an empty key would make restore-keys match any engine.
+        run: |
+          key=$(python3 tooling/play-artifact.py engine-cache-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
       - name: Restore compiled engine
         id: engine-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/bevy-engine
-          # Every build goes through wasm-opt, on PRs as on main: Bevy Explorer / Benchmark compares
-          # a PR's web app with main's, and refuses an unoptimized one.
-          key: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}
+          # An unoptimized build may reuse main's optimized engine; an optimized one never reads an
+          # unoptimized engine.
+          key: bevy-engine-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.engine-inputs.outputs.key }}
+          restore-keys: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}
       - name: Verify restored engine before skipping compiler setup
         if: steps.engine-cache.outputs.cache-matched-key != ''
         working-directory: .
-        run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine --production
+        run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}
       - name: Reserve disk space on the hosted Linux runner
         if: steps.engine-cache.outputs.cache-matched-key == ''
         working-directory: .
@@ -577,21 +633,22 @@ jobs:
             ~/.cargo/git/db/
             rendering/bevy-explorer/source/target/
           key: bevy-explorer-web-${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
-            'rendering/bevy-explorer/source/.cargo/config.toml') }}
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/bevy/**') }}
           restore-keys: bevy-explorer-web-
-      - name: Install protoc
+      - name: Restore the vendored Bevy's cached file times
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: python ../../../apps/bevy-explorer/install-protoc.py
-      - name: Install wasm-pack
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc and wasm-pack from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: |
-          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
-            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
       - name: Build and test the local web app
-        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine
+        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
+      - name: Record the vendored Bevy's file times for the cache
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -638,6 +695,8 @@ jobs:
           echo "PUBLIC_URL=$PUBLIC_URL"
           npm run build --prefix react-web
       - name: Test scene Fetch in Chromium
+        env:
+          DEBUG: pw:browser  # Chrome's own output, timestamped
         run: CHROME_BIN="$(command -v google-chrome)" npm run test:scene-fetch --prefix react-web
       - name: Bundle bridge scene
         run: |

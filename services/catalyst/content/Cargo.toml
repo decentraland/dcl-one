@@ -6,6 +6,7 @@ description = "The content server: entity deployment, validation, sync from the 
 publish = false
 
 [dependencies]
+catalyst-db = { path = "../db" }
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-jobs = { path = "../jobs" }
@@ -28,6 +29,7 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+ipnet.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true
 hex.workspace = true

@@ -159,7 +159,11 @@ fn webtransport_stream_and_datagram_roundtrip() {
         peer as u32,
         Packet::reliable(0, vec![0u8; DEFAULT_MAX_MESSAGE_BYTES + 100]),
     );
-    std::thread::sleep(Duration::from_millis(150));
+    assert!(catalyst::shared::test_wait::until_blocking(|| host
+        .metrics()
+        .messages_dropped_oversize
+        .load(Ordering::Relaxed)
+        == 1));
     assert_eq!(
         host.metrics()
             .messages_dropped_oversize

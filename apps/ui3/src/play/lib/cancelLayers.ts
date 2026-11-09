@@ -8,25 +8,34 @@
 // Cancel (never a DOM event) peel these layers too. Registration order is the stack order,
 // so nested layers must mount innermost-last (they do: a layer only exists while open).
 //
-// Popups are dispatched BEFORE these layers (see useEngineSession): every current layer sits
-// under any popup that can appear over it (profile card over the lightbox). If a layer ever
-// lives inside a popup (a dropdown in a modal), the two stacks need merging by recency.
+// Layers and popups are merged by recency (see useEngineSession): both take their place from one
+// counter, and Cancel closes whichever opened last. A layer under a popup (the lightbox under a
+// profile card) waits for the popup; a layer inside a popup (the passport's options menu) closes
+// before it.
 
-const layers: (() => void)[] = []
+let order = 0
+/** The next place in the shared layer/popup order; popups take theirs when they open. */
+export function nextLayerOrder(): number {
+  return ++order
+}
+
+const layers: { onCancel: () => void; order: number }[] = []
 
 /** Register while open/mounted; returns the unregister. The handler closes the layer. */
 export function registerCancelLayer(onCancel: () => void): () => void {
-  layers.push(onCancel)
+  const layer = { onCancel, order: nextLayerOrder() }
+  layers.push(layer)
   return () => {
-    const i = layers.lastIndexOf(onCancel)
+    const i = layers.lastIndexOf(layer)
     if (i >= 0) layers.splice(i, 1)
   }
 }
 
-/** Close the topmost layer. Returns false if none is open (dispatch falls through to panels). */
-export function dispatchCancelLayer(): boolean {
+/** Close the topmost layer if it opened after `openedAfter` (the top popup's order). Returns false
+ *  if there is none, so dispatch falls through to the popup, then the panels. */
+export function dispatchCancelLayer(openedAfter = 0): boolean {
   const top = layers[layers.length - 1]
-  if (top == null) return false
-  top()
+  if (top == null || top.order <= openedAfter) return false
+  top.onCancel()
   return true
 }

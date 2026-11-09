@@ -30,7 +30,7 @@ for (const [entity] of engine.getEntitiesWith(
 
 
 > [!NOTE]
-> **💡 Tip**: If your query returns entities that you don't need to deal with, consider creating a custom component to act as a [flag](/docs/creator/sdk7/architecture/entities-components/#components-as-flags). This component doesn't need to have any properties in it, but can be used to mark a specific subgroup of entities that you might want to treat differently.
+> **💡 Tip**: If your query returns entities that you don't need to deal with, consider creating a custom component to act as a [flag](/docs/creator/sdk7/architecture/custom-components/#components-as-flags). This component doesn't need to have any properties in it, but can be used to mark a specific subgroup of entities that you might want to treat differently.
 
 
 ## Use queries in a system

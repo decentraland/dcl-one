@@ -88,6 +88,36 @@ The workflow also stages the CEF helper, runtime libraries, assets and sidecar. 
 platform packaging steps, then launch the packaged executable with `--realm <about-url>
 --position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
 
+### Native Network inspector
+
+Explorer engineers and deployment integrators can inspect selected native Rust HTTP
+transfers in Chrome DevTools. These requests run outside the embedded browser and do not
+appear in its Network panel. Start the desktop client with
+`just native-debug --network-devtools 9223`, open `http://127.0.0.1:9223/json/list`, and open
+its `devtoolsFrontendUrl` in Chrome. Attach before reproducing a transfer: the target retains
+no history for future subscribers. The headless executable does not start this target.
+
+The target reports methods, request paths, final response status, elapsed transfer time
+and consumed body bytes. Full normalized paths retain content hashes and identifiers;
+URLs are capped at 4,096 characters. Userinfo, query strings, fragments, headers and bodies
+are excluded. Any values embedded in the path remain visible. The target is read-only,
+binds only to loopback and accepts Chrome DevTools origins or local clients without an Origin
+header. It supports at most eight concurrent clients and disconnects a slow subscriber
+instead of delaying requests.
+
+Observed transports are content-budget downloads (including asset and catalog blobs),
+active-entity POSTs, font metadata, realm `/about` and `/scenes`, registry profiles,
+signed comms login and gatekeeper adapters. Each admitted retry has its own trace; the
+existing scheduler permit remains held through the response body. A status-only response
+reports zero consumed body bytes. Redirects show the initial request and final response,
+without intermediate hops.
+
+Coverage is limited to these transports. Direct reqwest callers such as wallet sign-in,
+world access and profile uploads do not appear. Native scene and HUD Fetch run in a separate
+process and need IPC event forwarding to join this target. Cache hits, admission wait time,
+deduplicated readers, initiators, incremental body events and DNS/TLS timing are also outside
+the transfer traces. The web client continues to use the browser's Network panel.
+
 ## Web
 
 `just wasm` builds the wasm package and the sandbox worker bundle, then starts the page dev
@@ -177,6 +207,22 @@ State, in every build:
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
+  `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
+  once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's
+  `captures`, `uploaded`, `failed`, `lastPhotoId` and `lastError`, and `requested` (the `on`/`off`
+  asked for, else `null`). While on it adds `yaw`, `pitch`, `roll`, `fov`, `cursorLocked`,
+  `hudHidden` and `source` (what opened it); while off, `unavailable` names why (off, or a scene
+  controls the camera). With `on` or `off` it opens or closes the mode, which lands a frame
+  later; the second word is the source the analytics record, `console` by default (the HUD's
+  buttons pass `button`). The debug panel's "Photo mode" section binds it.
+- `/take_photo [button|shortcut|console]`: a photo in photo mode, captured from the window, cut to
+  the photo frame, encoded and uploaded to the camera-reel service; the reply is the same state,
+  and a refusal names why (mode off, a photo in flight, the storage unknown or full, the capture
+  effect playing).
+- `/delete_photo <id>`: deletes one of the player's camera-reel photos; the reply is
+  `{"deleting": id}`, a finished deletion frees a slot in `storage`, and a refused one (another
+  owner's, or absent) lands in `lastError`. The E2E capture scenario restores with it.
 - `/open_deep_link <url>` (standalone): applies a `decentraland://` place link (realm, position)
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
@@ -189,6 +235,18 @@ The HUD and input:
   `actionable`) and `"timeout"` in ms (10000 by default). A click needs the control visible,
   enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+- `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
+  when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
+  AuthIdentity encoded as `/login_identity` takes it. The HUD takes it as the page's stored sign-in
+  and goes in as its Jump In does, so it leaves its start page, which `/login_identity` alone never
+  makes it do; the sign-in accepts the terms the welcome page asks for, the pick names and dresses
+  a first login's profile (needed for an account with no profile yet; an existing one keeps its
+  own), and the destination is picked from the lobby as a link's would be, which releases the held
+  world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
+  `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
+  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 

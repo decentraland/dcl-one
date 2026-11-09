@@ -60,6 +60,58 @@ pub(crate) mod support {
         )))
     }
 
+    /// A schema-applied database of its own, for tests that own singleton
+    /// rows; `None` (skip) without CATALYST_TEST_DATABASE_URL.
+    pub struct OwnDb {
+        pub pool: sqlx::PgPool,
+        admin: sqlx::PgPool,
+        name: String,
+    }
+
+    impl OwnDb {
+        pub async fn create(tag: &str) -> Option<Self> {
+            use sqlx::postgres::PgConnectOptions;
+            let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
+            let opts: PgConnectOptions = base.parse().unwrap();
+            let admin = PgPoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts.database("postgres"))
+                .await
+                .unwrap();
+            let name = format!(
+                "catalyst_z_{tag}_{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            );
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+                .execute(&admin)
+                .await
+                .unwrap();
+            let mut url = url::Url::parse(&base).unwrap();
+            url.set_path(&format!("/{name}"));
+            let pool = crate::db::connect_pool(
+                url.as_str(),
+                &crate::db::PoolSettings {
+                    max_connections: 4,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            crate::db::apply_schema(&pool).await.unwrap();
+            Some(Self { pool, admin, name })
+        }
+
+        pub async fn drop(self) {
+            self.pool.close().await;
+            let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE \"{}\" WITH (FORCE)",
+                self.name
+            )))
+            .execute(&self.admin)
+            .await;
+        }
+    }
+
     /// `shop.mirror_state` rows are shared across the parallel tests
     /// that write them: they take turns.
     pub static MIRROR_STATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -408,10 +460,11 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// The old lambdas answered 400 before touching a reader; a configured
-/// subgraph must not see the string.
+/// lamb2 takes any `:address` on the item routes: one that is not an
+/// Ethereum address owns nothing, answered before any reader call, so a
+/// configured subgraph never sees the string. The names route still refuses it.
 #[tokio::test]
-async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
+async fn user_item_routes_answer_a_malformed_address_empty_before_any_reader_call() {
     let settings = Settings {
         eth_collections_subgraph_url: Some("http://127.0.0.1:1/collections".into()),
         marketplace_subgraph_url: Some("http://127.0.0.1:1/marketplace".into()),
@@ -420,15 +473,22 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
     let state = support::state_without_db_settings(settings);
     for path in [
         "/lambdas/users/not-an-address/wearables",
-        "/lambdas/users/0xZZ/emotes",
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc",
     ] {
         let (status, body) = get_json(router(state.clone()), path).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
-        assert_eq!(
-            body["message"], "Address must be a valid Ethereum address",
-            "{path}"
-        );
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body["elements"], json!([]), "{path}");
+        assert_eq!(body["totalAmount"], 0, "{path}");
     }
+    let (_, body) = get_json(
+        router(state.clone()),
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc&pageNum=x",
+    )
+    .await;
+    assert_eq!(
+        (&body["pageSize"], &body["pageNum"]),
+        (&json!(10), &Value::Null)
+    );
     // lamb2's names answer an empty page for a string that owns nothing
     // (the unreachable reader would answer the 502 if it were asked).
     let (status, body) = get_json(

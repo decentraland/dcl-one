@@ -10,7 +10,7 @@ Script Components allow the execution of an Entity's custom behaviour without th
 
 1. Add the Script Component to an Entity by clicking on the `+` button and select it. Create a new Script by clicking on **+ Add New Script Module** and choose a name, or using the File Path (browse or drag and drop an existing file).
 
-![](/docs/.gitbook/assets/new-script-component.webp)
+![](/docs/creator/.gitbook/assets/new-script-component.webp)
 
 2. Click on the CODE button in the component to open the default code editor. Let's check its structure. For more details on how to select and manage your default editor, please go to [Combine with code](/docs/creator/scene-editor/code/overview/).
 
@@ -90,11 +90,11 @@ export class BuildingScript {
 
 Once the file is saved, the **Refresh** button in the Script Component updates all changes done.
 
-<img src="/docs/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
+<img src="/docs/creator/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
 
 Once refreshed, the Script Component now shows the `numericVariable` added in the code.
 
-![](/docs/.gitbook/assets/parameter-script-component.webp)
+![](/docs/creator/.gitbook/assets/parameter-script-component.webp)
 
 ## Parameters
 
@@ -197,7 +197,7 @@ To add tooltips to your constructor, add a commented out block right before the 
 
 You may need to click the refresh icon on the Script component UI to see changes in your tooltips.
 
-<img src="/docs/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
+<img src="/docs/creator/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
 
 
 ## start() & update() Method
@@ -206,7 +206,7 @@ The **start()** method contains code that is executed only once, when the Entity
 
 Preview the scene and check the logs (**Tip**: you can use the `` ` `` shortcut): It displays the new message including the `numericVariable` parameter.
 
-![](/docs/.gitbook/assets/script-log-message.webp)
+![](/docs/creator/.gitbook/assets/script-log-message.webp)
 
 The **update()** method, on the other hand, executes its code every frame of the game (as Systems do). For example, checking values of the `PlayerEntity` to trigger behaviours in the script. 
 
@@ -219,7 +219,7 @@ update(dt: number) {
     }}
 ```
 
-<img src="/docs/.gitbook/assets/update-script-logs.webp" alt="Update Method" data-size="line"> 
+<img src="/docs/creator/.gitbook/assets/update-script-logs.webp" alt="Update Method" data-size="line">
 
 The first log belongs to the start() method, indicating that we set numericVariable. The second one belongs to the update() method, when the player is higher than that value.
 
@@ -239,11 +239,11 @@ It is possible to define an `Action` inside a Script Component script and have i
 
 `creatorHubParameter` will be exposed as an `Action` parameter to give it a custom value. After refreshing the Script Component, the new action will be available as an option for the Actions dropdown.
 
-![](/docs/.gitbook/assets/script-component-action.webp)
+![](/docs/creator/.gitbook/assets/script-component-action.webp)
 
 After adding the Action, any Entity in the Creator Hub can trigger it using `Triggers`
 
-![](/docs/.gitbook/assets/script-component-action-trigger.webp)
+![](/docs/creator/.gitbook/assets/script-component-action-trigger.webp)
 
 
 > [!NOTE]
@@ -313,7 +313,7 @@ Third, we call the defined `callScriptMethod`, in this case, `scriptMethod`.
 
 With the parameters' values given, the output is:
 
-![](/docs/.gitbook/assets/script-component-public-method.webp)
+![](/docs/creator/.gitbook/assets/script-component-public-method.webp)
 
 
 > [!NOTE]
@@ -340,7 +340,7 @@ export class BuildingScript {
 
 A selectable `Entity` and `Action` are now available when the Script Component is refreshed in the Creator Hub UI. `Sphere` is an already existing Entity in the scene that has an action called `Scale`.
 
-![](/docs/.gitbook/assets/script-component-action-callback.webp)
+![](/docs/creator/.gitbook/assets/script-component-action-callback.webp)
 
 The action from the other Entity is now accessible on the Script class. It could be used in many different ways. In the following example, pressing E will trigger `this.anotherEntityAction` by defining a `pointerEventsSystem` in the `start` method.
 
@@ -384,4 +384,4 @@ if (this.anotherEntityAction) {
 * [Making any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/)
 * [SDK Quick start](/docs/creator/sdk7/getting-started/sdk-101/): follow this mini tutorial for a quick crash course.
 * [Development workflow](/docs/creator/sdk7/getting-started/dev-workflow/): read this to understand scene creation from end to end.
-* [Examples](https://studios.decentraland.org/resources?sdk_version=SDK7): dive right into working example scenes.
+* [Examples](/docs/creator/tutorials/examples/): dive right into working example scenes.

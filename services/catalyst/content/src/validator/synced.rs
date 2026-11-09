@@ -6,8 +6,7 @@
 //!
 //! What differs from a local deployment:
 //! - the files are the entity file alone; content files are read from the
-//!   store sync downloaded them into. Profile render files sync deliberately
-//!   does not download (`PROFILE_RENDER_FILES`) count as present with size 0.
+//!   store sync downloaded them into.
 //!   [`SyncedContent::Pending`] (the read-through's check before it stores
 //!   anything) counts every content file as present.
 //! - the auth chain: expiry against the entity timestamp, an expiration that
@@ -31,7 +30,7 @@
 //!   (the reference has no cap). A source unset or failing, or a node without
 //!   that block's state, is undecidable; a revert is a "no".
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -40,7 +39,7 @@ use async_trait::async_trait;
 use super::checker::{BlockchainChecker, BlockchainLayer};
 use super::error::{PermissionResult, ValidationError, ValidationResponse, ValidatorError};
 use super::rules::{ContentValidator, ExternalCalls};
-use super::types::{Deployment, Entity, EntityType, Timestamp};
+use super::types::{Deployment, Entity, Timestamp};
 use super::{Sources, entity_parser};
 use crate::auth::verify::{ChainVerdict, verify_synced_auth_chain};
 use crate::auth::{AuthChain, AuthError, Eip1654Validator};
@@ -56,15 +55,14 @@ pub enum SyncedContent {
 
 struct Synced<'a> {
     sources: &'a Sources,
-    /// Hashes the sync path does not download; present with size 0.
-    not_fetched: HashSet<String>,
     content: SyncedContent,
     trusted_expirations: Mutex<Vec<String>>,
 }
 
 impl Synced<'_> {
-    fn assumed_present(&self, hash: &str) -> bool {
-        self.content == SyncedContent::Pending || self.not_fetched.contains(hash)
+    /// Whether every content file counts as present (with size 0) without asking the store.
+    fn assumed_present(&self) -> bool {
+        self.content == SyncedContent::Pending
     }
 }
 
@@ -74,26 +72,17 @@ impl ExternalCalls for Synced<'_> {
         &self,
         hashes: &[String],
     ) -> Result<HashMap<String, bool>, String> {
-        let ask: Vec<String> = hashes
-            .iter()
-            .filter(|h| !self.assumed_present(h))
-            .cloned()
-            .collect();
-        let mut stored = if ask.is_empty() {
-            HashMap::new()
-        } else {
-            self.sources.is_content_stored_already(&ask).await?
-        };
-        for hash in hashes {
-            if self.assumed_present(hash) {
-                stored.insert(hash.clone(), true);
-            }
+        if self.assumed_present() {
+            return Ok(hashes.iter().map(|h| (h.clone(), true)).collect());
         }
-        Ok(stored)
+        if hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.sources.is_content_stored_already(hashes).await
     }
 
     async fn fetch_content_file_size(&self, hash: &str) -> Result<Option<usize>, String> {
-        if self.assumed_present(hash) {
+        if self.assumed_present() {
             return Ok(Some(0));
         }
         self.sources.fetch_content_file_size(hash).await
@@ -247,24 +236,6 @@ impl BlockchainChecker for Synced<'_> {
     }
 }
 
-/// The content hashes of `entity` that sync leaves undownloaded: profile
-/// render files no other file of the entity shares.
-fn not_fetched_hashes(entity: &Entity) -> HashSet<String> {
-    if entity.entity_type != EntityType::Profile {
-        return HashSet::new();
-    }
-    let (renders, others): (Vec<_>, Vec<_>) = entity
-        .content
-        .iter()
-        .partition(|c| crate::deploy_remote_entity::is_profile_render_file(&c.file));
-    let fetched: HashSet<&str> = others.iter().map(|c| c.hash.as_str()).collect();
-    renders
-        .into_iter()
-        .filter(|c| !fetched.contains(c.hash.as_str()))
-        .map(|c| c.hash.clone())
-        .collect()
-}
-
 /// How far ahead of this node's clock a synced entity may be and still wait
 /// for it; beyond it the entity is refused. A node accepts a deploy at most
 /// `REQUEST_TTL_FORWARDS_MS` ahead of its own clock, so only a skew of a day
@@ -330,7 +301,6 @@ async fn validate_synced_within(
     )]);
     let synced = Synced {
         sources,
-        not_fetched: not_fetched_hashes(&entity),
         content,
         trusted_expirations: Mutex::new(Vec::new()),
     };
@@ -363,6 +333,7 @@ async fn validate_synced_within(
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::EntityType;
     use super::*;
     use crate::entity::ContentMapping;
 
@@ -820,7 +791,6 @@ mod tests {
         );
         let synced = Synced {
             sources: &sources,
-            not_fetched: HashSet::new(),
             content: SyncedContent::Fetched,
             trusted_expirations: Mutex::new(Vec::new()),
         };
@@ -861,7 +831,6 @@ mod tests {
         );
         let synced = Synced {
             sources: &sources,
-            not_fetched: HashSet::new(),
             content: SyncedContent::Fetched,
             trusted_expirations: Mutex::new(Vec::new()),
         };
@@ -901,7 +870,6 @@ mod tests {
         );
         let synced = Synced {
             sources: &sources,
-            not_fetched: HashSet::new(),
             content: SyncedContent::Fetched,
             trusted_expirations: Mutex::new(Vec::new()),
         };
@@ -919,24 +887,5 @@ mod tests {
         assert!(!verdict.result, "{verdict:?}");
         assert_eq!(verdict.failing, Some(urns));
         let _ = std::fs::remove_dir_all(tmp);
-    }
-
-    #[test]
-    fn only_profile_renders_no_other_file_shares_are_left_unfetched() {
-        let entity = profile(&[
-            ("face256.png", "bafyface"),
-            ("./body.png", "bafybody"),
-            ("face.png", "bafyshared"),
-            ("avatar.glb", "bafyshared"),
-            ("model.glb", "bafymodel"),
-        ]);
-        assert_eq!(
-            not_fetched_hashes(&entity),
-            HashSet::from(["bafyface".to_string(), "bafybody".to_string()])
-        );
-
-        let mut scene = entity;
-        scene.entity_type = EntityType::Scene;
-        assert!(not_fetched_hashes(&scene).is_empty());
     }
 }

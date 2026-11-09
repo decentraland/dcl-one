@@ -138,6 +138,15 @@
       ]
     },
     {
+      "id": "sdk",
+      "description": "The creator SDK packages (@dcl/sdk, ecs, react-ecs, js-runtime, sdk-commands, playground-assets)",
+      "owners": [],
+      "paths": [
+        "/library/js-sdk-toolchain/",
+        "/.github/workflows/sdk.yml"
+      ]
+    },
+    {
       "id": "database",
       "description": "One schema bootstrap, migrations and database invariants",
       "owners": [
@@ -197,6 +206,17 @@
       ]
     },
     {
+      "id": "async",
+      "description": "Shared asynchronous waiting and backoff utilities",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/async/"
+      ]
+    },
+    {
       "id": "shop-ui",
       "description": "Shop product UI",
       "owners": [
@@ -242,6 +262,27 @@
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"
+      ]
+    },
+    {
+      "id": "explorer-rust",
+      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates including Bevy, and the generated fork pins",
+      "owners": [
+        "@robtfm"
+      ],
+      "paths": [
+        "/rendering/bevy-explorer/source/crates/",
+        "/rendering/bevy-explorer/source/src/",
+        "/rendering/bevy-explorer/source/Cargo.toml",
+        "/rendering/bevy-explorer/source/Cargo.lock",
+        "/rendering/bevy-explorer/source/build.rs",
+        "/rendering/bevy-explorer/source/.cargo/config.toml",
+        "/rendering/bevy-explorer/source/local-harness/benchmark/",
+        "/rendering/bevy-explorer/source/local-harness/presence/harness-util/",
+        "/rendering/bevy-explorer/source/vendor/",
+        "/rendering/bevy-explorer/bevy/",
+        "/rendering/bevy-explorer/cargo-patches.toml",
+        "/rendering/bevy-explorer/forks.toml"
       ]
     },
     {

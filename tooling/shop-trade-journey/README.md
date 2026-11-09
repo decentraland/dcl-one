@@ -43,7 +43,7 @@ outside the repository. The journey prints addresses, never keys.
 | `E2E_ITEM` | `--primary` only: `<collection>:<itemId>`, an Amoy item of a collection the seller created, listed in the Shop for credits and MANA. |
 | `E2E_DISCOUNT` | `--primary` only: the discount, a whole percentage from 5 to 70. The default is 10. |
 | `E2E_TOPUP` | `--primary` only: the test credits the buyer tops up with the mock card. The default is 100. |
-| `E2E_CREDITS_SIGNER` | `--primary` only, optional: the address of the stack's credits signer. The preflight checks it holds `CREDITS_SIGNER_ROLE` on Amoy's CreditsManager. |
+| `E2E_CREDITS_SIGNER` | `--primary` only, optional: the address of the stack's credits signer. The preflight checks it holds `CREDITS_SIGNER_ROLE` on dcl-one's CreditsManager on Amoy. |
 | `E2E_RPC_AMOY` | The Amoy RPC for balance and ownership reads. The default is `rpc.decentraland.org/amoy`. |
 
 ## The loop
@@ -89,8 +89,9 @@ step. Before running again:
 5. The buyer buys one unit with credits through the cart.
 6. The seller ends the discount, a transaction the seller pays for in POL.
 
-Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag, which is off, so the loop
-turns them on in both browsers the way a host does (`window.__SHOP_FLAGS__`). The preflight reads the item's
+Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag, and My Store its
+`dapps-shop-my-store` flag. Both are off, so the loop turns them on in both browsers the way a host does
+(`window.__SHOP_FLAGS__`). The preflight reads the item's
 MANA price, checks the buyer can pay it, and refuses a collection that still has a live discount. If a step
 fails after the discount starts, the loop still ends it. The MANA purchase must cost less than the regular
 price, and the credits purchase must leave the buyer's MANA untouched.
@@ -100,9 +101,11 @@ buyer POL and enough MANA for one unit at the discounted price.
 
 ### Credits
 
-The stack signs credits with its own key against Amoy's CreditsManager
-(`0x8052a560e6e6ac86eeb7e711a4497f639b322fb3`), and the contract accepts only a signer that holds
-`CREDITS_SIGNER_ROLE`. The testnet profile turns on credits when the gitignored stack state holds that key:
+The stack signs credits with its own key against dcl-one's own CreditsManager on Amoy
+(`0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c`, `lib/contracts.mts`), the one the testnet profile names in
+`CREDITS_MANAGER_CONTRACT`. The Shop refuses the shared upstream manager (`0x8052…2fb3`). The contract accepts
+only a signer that holds `CREDITS_SIGNER_ROLE`. The testnet profile turns on credits when the gitignored stack
+state holds that key:
 
 ```sh
 install -m 600 <key file outside the repo> .cache/dev/credits-signer.key
@@ -121,13 +124,16 @@ The signer is the address of `.cache/dev/credits-signer.key` (or of `E2E_CREDITS
 `E2E_CREDITS_SIGNER`. The script simulates the call first, refuses a wallet without the admin role, waits for
 the receipt and reads the role back. It prints addresses, never keys.
 
-Amoy's CreditsManager is shared with Decentraland's testnet, and a stack holding a granted key signs credits that
-the mock card hands out for free. Keep the stack on loopback, as `foundation-dev` runs it, and have the signer's
-role revoked when you no longer run the primary loop, so grants on the shared contract do not pile up.
+A stack holding a granted key signs credits that the mock card hands out for free, and the manager pays them
+in its own test MANA. Keep the stack on loopback, as `foundation-dev` runs it, and have the signer's role
+revoked when you no longer run the primary loop.
 
-The profile also runs the CreditsManager usage index on Amoy, and the stack signs only once it has caught
-up. `GET /credits/usage-index/status` reports both, and the primary preflight reads it. Without the key,
-the preflight says so and the full loop stops before the discount.
+The profile also runs the CreditsManager usage index on Amoy, from the block that deployed the manager, and
+the stack signs only once it has caught up. `GET /credits/usage-index/status` reports both, and the primary
+preflight reads it. Without the key, the preflight says so and the full loop stops before the discount.
+
+A credits purchase through this manager is a transaction the buyer pays gas for: the relay doesn't admit
+the manager yet, so the Shop falls back to the wallet.
 
 ## The wallet
 

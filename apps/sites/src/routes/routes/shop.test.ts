@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.mocked(track).mockReset();
   vi.mocked(loadShopPage).mockReset().mockImplementation(async (page) => ({
     status: page === "notFound" ? 404 : 200,
-    data: { page, seo: { title: "Pirate Hat", description: "A hat.", noindex: page === "notFound" }, queries: [[["shop-item", C, "7"], { name: "Pirate Hat" }, 1]] },
+    data: { page, seo: { title: "Pirate Hat", description: "A hat.", noindex: page === "notFound" }, queries: [[["shop-item", C, "7", "primary"], { name: "Pirate Hat" }, 1]] },
   }));
 });
 

@@ -1189,12 +1189,6 @@ pub enum AudioDecoderError {
     Other(String),
 }
 
-/// Hold native video textures while a requested snapshot waits for render readiness and GPU
-/// readback. The resource exists only when the scene test harness is enabled; it is extracted
-/// to the render world, where the video backend presents frames.
-#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
-pub struct SnapshotInProgress(pub bool);
-
 #[derive(Resource)]
 pub struct SceneLoadDistance {
     pub load: f32,
@@ -1643,6 +1637,11 @@ pub struct PlayerTeleported {
 #[derive(Component)]
 pub struct OutOfWorld;
 
+/// The primary camera is the camera reel's free photo camera: the player camera systems leave its
+/// transform and projection alone until it is removed.
+#[derive(Component)]
+pub struct PhotoMode;
+
 /// The player is let back into the world (`OutOfWorld` removed), and why: the parcel scene is
 /// ready (or there is none), or it never will be and they go in regardless.
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
@@ -2017,6 +2016,19 @@ impl CameraSmoothing {
             CameraSmoothing::Smoothed => Some(15.0),
             CameraSmoothing::Drunk => Some(5.0),
         }
+    }
+
+    /// This frame's look delta: `raw` filtered against `smoothed`, the previous frame's result,
+    /// which is updated in place.
+    pub fn smooth(&self, raw: Vec2, smoothed: &mut Vec2, dt: f32) -> Vec2 {
+        match self.rate() {
+            Some(rate) => {
+                let factor = 1.0 - (-dt * rate).exp();
+                *smoothed = factor * raw + (1.0 - factor) * *smoothed;
+            }
+            None => *smoothed = raw,
+        }
+        *smoothed
     }
 }
 

@@ -7,7 +7,7 @@ As a creator, it's very valuable to track player visits and the way in which pla
 The [Creator Hub](https://decentraland.org/create) includes an **Analytics** section with detailed metrics for every scene you publish or have permissions on. You don't need to add anything to your scene, this data is collected automatically for all published scenes.
 
 <!--
-![ ](/docs/creator/images/editor/analytics/analytics-list.png)
+![ ](../../images/editor/analytics/analytics-list.png)
 -->
 
 

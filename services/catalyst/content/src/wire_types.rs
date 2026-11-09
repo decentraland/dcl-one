@@ -168,7 +168,8 @@ pub struct FailedDeploymentResponse {
     pub reason: String,
     pub auth_chain: Value,
     pub error_description: String,
-    pub snapshot_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_hash: Option<String>,
     pub retry_count: i32,
     pub next_retry_at: i64,
 }

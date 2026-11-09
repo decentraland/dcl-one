@@ -9,11 +9,12 @@ use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 
 // list of op declarations
@@ -76,6 +77,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_hover_stream(),
             op_get_proximity_stream(),
             op_read_proximity_stream(),
+            op_get_photo_mode_stream(),
+            op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
             op_set_world_password(),
@@ -114,6 +117,10 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_close_dm_user_state_stream(),
             op_get_dm_history(),
             op_delete_dm_history(),
+            // Social / Communities
+            op_get_community_connectivity_stream(),
+            op_read_community_connectivity_stream(),
+            op_set_community_channels(),
         ]
     } else {
         Vec::default()
@@ -526,6 +533,20 @@ pub async fn op_read_proximity_stream(
 }
 
 #[op2(async)]
+pub async fn op_get_photo_mode_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_photo_mode_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_photo_mode_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<PhotoModeState>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_photo_mode_stream(state, rid).await
+}
+
+#[op2(async)]
 pub async fn op_get_world_access_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_world_access_stream(state).await
 }
@@ -781,6 +802,25 @@ pub async fn op_get_dm_history(
 #[op2(fast)]
 pub fn op_delete_dm_history(state: Rc<RefCell<OpState>>, #[string] address: String) {
     dcl_js::system_api::op_delete_dm_history(state, address)
+}
+
+#[op2(async)]
+pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_community_connectivity_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_community_connectivity_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<CommunityMemberConnectivityData>, anyhow::Error> {
+    dcl_js::system_api::op_read_community_connectivity_stream(state, rid).await
+}
+
+#[op2]
+pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
+    dcl_js::system_api::op_set_community_channels(state, ids)
 }
 
 #[op2(async)]

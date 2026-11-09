@@ -925,7 +925,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 314,
+          "line": 316,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -948,7 +948,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 315,
+          "line": 317,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []

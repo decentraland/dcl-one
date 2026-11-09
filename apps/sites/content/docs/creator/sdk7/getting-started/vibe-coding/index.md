@@ -71,6 +71,16 @@ Running `add` again re-fetches the repository, so it refreshes the skills you al
 > **📔 Note**: Don't use `npx skills update` for this. It only refreshes the skills already on your machine, so any skills added to the repository after your last install are silently skipped. Always use `npx skills add decentraland/sdk-skills --all` instead.
 
 
+## Debug a Deployed Multiplayer Scene
+
+The updated `authoritative-server` skill can search persistent server logs, follow logs for a bounded period, and retrieve CPU, memory, and other metrics when you ask it to investigate a deployed scene. Update your skills and the scene's `auth-server` SDK first; see [Scene Insights](/docs/creator/sdk7/debugging/scene-insights/) for setup, permissions, and limits.
+
+For example, ask:
+
+> Investigate errors and CPU or memory growth in my deployed multiplayer scene over the last two hours. Use Scene Insights and correlate the logs and metrics with the source code.
+
+You approve the wallet login yourself in the browser. The assistant can then reuse the read-only session; it does not need your private key or session file.
+
 ## Available AI Skills
 
 When you install skills into your agent, the following capabilities are available:
@@ -117,11 +127,11 @@ This turns vibe coding from "describe, wait, review" into a loop the agent can r
 
 > [!NOTE]
 > **💡 Tip**: Install the `unity-explorer-mcp` skill before trying this. It teaches the agent the whole workflow — how to launch the client, how to frame useful screenshots, how to cross-check what it sees against the scene's actual state, and how to recover when the scene stops loading.
-> 
+>
 > ```bash
 > npx skills add decentraland/sdk-skills --skill unity-explorer-mcp
 > ```
-> 
+>
 
 
 ### What you need
@@ -245,7 +255,7 @@ Break complex requests into steps:
 
 After each change:
 
-1. Preview the scene (click **Preview** in Creator Hub, or `npm run start` in the command line)
+1. Preview the scene (click **Play** in Creator Hub, or `npm run start` in the command line)
 2. Check what works and what doesn't
 3. Tell the AI what to adjust: "Move the NPC 2 meters to the left and make it face the player"
 
@@ -302,5 +312,5 @@ While AI tools are powerful, keep these in mind:
 - [SDK Quick Start](/docs/creator/sdk7/getting-started/sdk-101/) — Learn SDK7 fundamentals
 - [Combine with Code](/docs/creator/scene-editor/code/overview/) — Mix visual editing with code
 - [Multiplayer Server](/docs/creator/sdk7/networking/authoritative-servers/) — Server-authoritative multiplayer
-- [Scene Examples](https://studios.decentraland.org/resources?sdk_version=SDK7) — Browse example scenes for inspiration
+- [Scene Examples](/docs/creator/tutorials/examples/) — Browse reusable scene mechanics and repositories
 - [Useful Resources](/docs/creator/sdk7/getting-started/useful-resources/) — More AI tools, asset libraries, and add-ons to speed up your workflow

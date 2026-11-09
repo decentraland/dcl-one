@@ -1,19 +1,103 @@
-//! Optional Slack moderation adapter. Authoring captures an outbox intent;
-//! a bounded leased worker sends outside the transaction. HTTP retry is at
-//! least once (Slack has no idempotency contract), with a six-attempt ceiling.
+//! The events channel of the moderation outbox (`crate::moderation_hooks`):
+//! authoring captures the public labels of a notice in its transaction, the
+//! worker renders and posts the message. The messages are the old events
+//! service's (`Slack/utils.ts`): new, approved, rejected, deleted and edited
+//! events, the reminder job's upcoming notice and a profile's permission
+//! change. Its `notifyEventError` (`Slack/utils.ts:261-294`) had no caller at
+//! `b60d5bbd` and is not ported.
 
-use std::time::Duration;
-
-use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
-const RETENTION_DAYS: i32 = 30;
-const CLEANUP_LIMIT: i64 = 1000;
+use crate::moderation_hooks::{Channel, capture_at, enqueue};
+
+/// The sites the notices link to.
+#[derive(Clone, Debug)]
+pub struct Links {
+    /// `BASE_URL` (`Slack/utils.ts:17`): the review link
+    /// `/whats-on/admin/pending-events?id=`, and here also the edit link's
+    /// site (`eventSlackUrl`, `:19-21`, hard-coded `https://decentraland.org`
+    /// upstream; equal on a decentraland.org deployment).
+    pub base: String,
+    /// `JUMP_IN_SITE_URL` (`:13-16`): a stored url under it is the generated
+    /// jump-in link the submission notice labels with the place.
+    pub jump_in_site_url: String,
+    /// The events asset mount a stored poster path (`/poster/<file>`, the
+    /// default asset) is served under: Slack's `image_url` must be absolute.
+    pub asset_base: String,
+}
+
+impl Links {
+    /// A stored poster path on the asset mount; any other image as stored.
+    fn image(&self, image: &str) -> String {
+        if image.starts_with('/') {
+            format!("{}{image}", self.asset_base.trim_end_matches('/'))
+        } else {
+            image.to_owned()
+        }
+    }
+
+    /// `eventReviewSlackUrl` (`Slack/utils.ts:23-27`).
+    fn review(&self, event_id: &str) -> String {
+        format!(
+            "{}/whats-on/admin/pending-events?id={}",
+            self.base.trim_end_matches('/'),
+            urlencoding::encode(event_id)
+        )
+    }
+
+    /// `eventSlackUrl` (`Slack/utils.ts:19-21`).
+    fn edit(&self, event_id: &str) -> String {
+        format!(
+            "{}/whats-on/edit-hangout/{}?openPreview",
+            self.base.trim_end_matches('/'),
+            urlencoding::encode(event_id)
+        )
+    }
+}
 
 fn flag(raw: &Value, key: &str) -> bool {
     raw.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn text<'a>(raw: &'a Value, key: &str) -> &'a str {
+    raw.get(key).and_then(Value::as_str).unwrap_or_default()
+}
+
+/// The public labels a notice renders, bounded so the outbox row stays small:
+/// the texts the old messages print (`Slack/utils.ts:33-257`), the actors and
+/// the location. Never the organizer's `contact` or `details`.
+fn labels(after: &Value) -> Value {
+    let mut event = serde_json::Map::new();
+    for (key, limit) in [
+        ("name", 500),
+        ("user_name", 500),
+        ("rejection_reason", 500),
+        ("deleted_reason", 500),
+        ("user", 42),
+        ("approved_by", 42),
+        ("rejected_by", 42),
+        ("deleted_by", 42),
+        ("scene_name", 500),
+        ("estate_name", 500),
+        ("url", 2000),
+        ("image", 2000),
+        ("description", 1800),
+    ] {
+        if let Some(value) = after.get(key).and_then(Value::as_str) {
+            event.insert(
+                key.into(),
+                json!(value.chars().take(limit).collect::<String>()),
+            );
+        }
+    }
+    for key in ["x", "y"] {
+        if let Some(value) = after.get(key).and_then(Value::as_i64) {
+            event.insert(key.into(), json!(value));
+        }
+    }
+    Value::Object(event)
 }
 
 pub(super) async fn record(
@@ -63,24 +147,8 @@ pub(super) async fn record(
     } else {
         return Ok(());
     };
-    let mut event = serde_json::Map::new();
-    for key in ["name", "user_name", "rejection_reason", "deleted_reason"] {
-        if let Some(value) = after.get(key).and_then(Value::as_str) {
-            event.insert(
-                key.into(),
-                json!(value.chars().take(500).collect::<String>()),
-            );
-        }
-    }
-    // Use the same database clock for capture and activation, in the author's
-    // transaction. The first leader tick cannot discard already queued work.
-    sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES(clock_timestamp() AT TIME ZONE 'UTC') ON CONFLICT DO NOTHING")
-        .execute(&mut **tx).await?;
-    // A concurrent author may have won activation while this INSERT waited.
-    // Read that committed cutoff before sampling capture time, and floor the
-    // sample against it so even a backward wall-clock adjustment loses no intent.
-    let at: NaiveDateTime = sqlx::query_scalar("SELECT GREATEST(clock_timestamp() AT TIME ZONE 'UTC',activated_at) FROM explore.event_moderation_hook_activation WHERE singleton")
-        .fetch_one(&mut **tx).await?;
+    let event = labels(after);
+    let at = capture_at(tx).await?;
     let creator = after
         .get("user")
         .and_then(Value::as_str)
@@ -93,169 +161,631 @@ pub(super) async fn record(
             .bind(&creator)
             .execute(&mut **tx)
             .await?;
-        let updated = sqlx::query("UPDATE explore.event_moderation_hooks SET event=$2 WHERE event_id=$1 AND kind='edited' AND completed_at IS NULL AND attempts=0")
-            .bind(event_id).bind(Value::Object(event.clone())).execute(&mut **tx).await?.rows_affected();
+        let updated = sqlx::query("UPDATE explore.moderation_hooks SET payload=$2 WHERE channel='events' AND subject=$1 AND kind='edited' AND completed_at IS NULL AND attempts=0")
+            .bind(event_id).bind(&event).execute(&mut **tx).await?.rows_affected();
         if updated > 0 {
             return Ok(());
         }
     }
-    sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,creator_address,edit_bucket,created_at,next_attempt_at) \
-        SELECT $1,$2,$3,$4,$5,CASE WHEN $3='edited' THEN date_trunc('minute',$6::timestamp) END,$6,$6 \
-        WHERE ($3<>'edited' OR (SELECT count(*) FROM explore.event_moderation_hooks \
-            WHERE creator_address=$5 AND kind='edited' AND created_at>$6-interval '1 minute')<2) \
-        AND ($3<>'edited' OR NOT EXISTS (SELECT 1 FROM explore.event_moderation_hooks h \
-            WHERE h.event_id=$2 AND h.kind='edited' AND h.edit_bucket>=date_trunc('minute',$6::timestamp)-interval '1 minute' \
+    sqlx::query("INSERT INTO explore.moderation_hooks (id,channel,subject,kind,payload,creator_address,edit_bucket,created_at,next_attempt_at) \
+        SELECT $1,'events',$2,$3,$4,$5,CASE WHEN $3='edited' THEN date_trunc('minute',$6::timestamp) END,$6,$6 \
+        WHERE ($3<>'edited' OR (SELECT count(*) FROM explore.moderation_hooks \
+            WHERE channel='events' AND creator_address=$5 AND kind='edited' AND created_at>$6-interval '1 minute')<2) \
+        AND ($3<>'edited' OR NOT EXISTS (SELECT 1 FROM explore.moderation_hooks h \
+            WHERE h.channel='events' AND h.subject=$2 AND h.kind='edited' AND h.edit_bucket>=date_trunc('minute',$6::timestamp)-interval '1 minute' \
               AND h.created_at>$6-interval '60 seconds')) ON CONFLICT DO NOTHING")
-        .bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(Value::Object(event))
+        .bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(event)
         .bind(creator).bind(at).execute(&mut **tx).await?;
     Ok(())
 }
 
-fn message(event_id: &str, kind: &str, event: &Value, base: &str) -> Value {
-    let route = if kind == "submitted" {
-        format!(
-            "/whats-on/admin/pending-events?id={}",
-            urlencoding::encode(event_id)
-        )
-    } else {
-        format!("/whats-on/{}", urlencoding::encode(event_id))
-    };
-    // Use plain_text for user content: names and reasons cannot inject Slack
-    // mentions, links or mrkdwn. Only the fixed action/link uses mrkdwn.
-    let text = ["name", "user_name", "rejection_reason", "deleted_reason"]
-        .iter()
-        .filter_map(|key| event.get(*key).and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("\n");
-    json!({"blocks":[
-        {"type":"section","text":{"type":"mrkdwn","text":format!("Event {kind}: <{}{route}|Review event>",base.trim_end_matches('/'))}},
-        {"type":"section","text":{"type":"plain_text","text":if text.is_empty(){"Decentraland event".to_string()}else{text}}}
-    ]})
-}
-
-// Never remove deliverable retries. Expired terminal rows and history outside
-// the activation boundary can be collected even after delivery is disabled.
-async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET LOCAL statement_timeout = '500ms'")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("SET LOCAL lock_timeout = '100ms'")
-        .execute(&mut *tx)
-        .await?;
-    let removed = sqlx::query(
-        "DELETE FROM explore.event_moderation_hooks h WHERE h.id IN ( \
-            SELECT id FROM explore.event_moderation_hooks \
-            WHERE created_at < $1 - $2::int4 * interval '1 day' \
-              AND (completed_at < $1 - $2::int4 * interval '1 day' \
-                OR (attempts >= 6 AND next_attempt_at < $1 - $2::int4 * interval '1 day') \
-                OR created_at < COALESCE((SELECT activated_at FROM explore.event_moderation_hook_activation WHERE singleton),$1)) \
-            ORDER BY created_at,id LIMIT $3 FOR UPDATE SKIP LOCKED)",
-    ).bind(now).bind(RETENTION_DAYS).bind(CLEANUP_LIMIT).execute(&mut *tx).await?.rows_affected();
-    tx.commit().await?;
-    Ok(removed)
-}
-
-pub(super) async fn run_once(
-    pool: &PgPool,
-    client: &crate::http::Outbound,
-    endpoint: Option<&str>,
-    base: &str,
-    now: NaiveDateTime,
-) -> anyhow::Result<u64> {
-    match tokio::time::timeout(Duration::from_secs(1), cleanup(pool, now)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => tracing::warn!(%error, "event moderation hook cleanup deferred"),
-        Err(_) => tracing::warn!("event moderation hook cleanup exceeded budget"),
-    }
-    let Some(endpoint) = endpoint.filter(|endpoint| !endpoint.trim().is_empty()) else {
-        return Ok(0);
-    };
-    if !sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM explore.event_moderation_hook_activation)",
+/// The old `notifyProfileSettingUpdate` (`Slack/utils.ts:322-358`): a
+/// profile's permission set changed. The notice is about a wallet, not an
+/// event: the wallet is the row's subject.
+pub(super) async fn record_profile_permissions(
+    tx: &mut Transaction<'_, Postgres>,
+    user: &str,
+    permissions: &[String],
+) -> Result<(), sqlx::Error> {
+    let user = user.to_ascii_lowercase();
+    let payload = json!({"user": user, "permissions": permissions});
+    enqueue(
+        tx,
+        Channel::Events,
+        &user,
+        "profile_permissions",
+        &payload,
+        Some(&user),
     )
-    .fetch_one(pool)
-    .await?
-    {
-        return Ok(0);
-    }
-    let mut sent = 0;
-    for _ in 0..10 {
-        let claim = Uuid::new_v4();
-        let mut tx = pool.begin().await?;
-        sqlx::query("SET LOCAL statement_timeout='2s'")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("SET LOCAL lock_timeout='100ms'")
-            .execute(&mut *tx)
-            .await?;
-        let row:Option<(Uuid,String,String,Value,i32)>=sqlx::query_as(
-            "WITH due AS (SELECT id FROM explore.event_moderation_hooks \
-             WHERE completed_at IS NULL AND attempts<6 AND next_attempt_at<=$1 \
-               AND created_at >= (SELECT activated_at FROM explore.event_moderation_hook_activation WHERE singleton) \
-             ORDER BY CASE WHEN kind IN ('approved','rejected','deleted') THEN 0 WHEN kind='submitted' THEN 1 ELSE 2 END,next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) \
-             UPDATE explore.event_moderation_hooks h SET claim=$2,attempts=attempts+1,next_attempt_at=$1+interval '1 minute' \
-             FROM due WHERE h.id=due.id RETURNING h.id,h.event_id,h.kind,h.event,h.attempts")
-            .bind(now).bind(claim).fetch_optional(&mut *tx).await?;
-        tx.commit().await?;
-        let Some((id, event_id, kind, event, attempts)) = row else {
-            break;
-        };
-        let success = client
-            .post(endpoint)
-            .timeout(Duration::from_secs(5))
-            .json(&message(&event_id, &kind, &event, base))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success());
-        sqlx::query("UPDATE explore.event_moderation_hooks SET completed_at=CASE WHEN $3 THEN $4 ELSE NULL END,next_attempt_at=$4 + $5::int4*interval '1 second',claim=NULL WHERE id=$1 AND claim=$2")
-            .bind(id).bind(claim).bind(success).bind(now).bind(30_i32 * (1 << attempts.min(6))).execute(pool).await?;
-        if success {
-            sent += 1
-        } else {
-            tracing::warn!(%id,attempts,"event moderation hook delivery failed");
-        }
-    }
-    Ok(sent)
+    .await
 }
 
-pub(crate) fn spawn(
-    pool: PgPool,
-    client: crate::http::Outbound,
-    endpoint: Option<String>,
-    base: String,
-    jobs: &crate::jobs::Jobs,
-) {
-    jobs.spawn_periodic_leased(
-        "event-moderation-hook",
-        crate::jobs::PeriodicCfg::every(Duration::from_secs(60)),
-        move |_| {
-            let (pool, client, endpoint, base) =
-                (pool.clone(), client.clone(), endpoint.clone(), base.clone());
-            async move {
-                run_once(
-                    &pool,
-                    &client,
-                    endpoint.as_deref(),
-                    &base,
-                    Utc::now().naive_utc(),
-                )
-                .await?;
-                Ok(())
+/// The old `notifyUpcomingEvent` (`Slack/utils.ts:222-257`, called from
+/// `Event/cron.ts:76` once per occurrence whose reminders went out): one row
+/// per occurrence, carrying the count the message prints. No throttle: the
+/// reminder job completes an occurrence once (`social.event_notification_intents`
+/// is unique per occurrence and kind).
+pub(super) async fn record_upcoming(
+    tx: &mut Transaction<'_, Postgres>,
+    event_id: &str,
+    event: &Value,
+    notifications: i64,
+) -> Result<(), sqlx::Error> {
+    let payload = json!({
+        "name": text(event, "name").chars().take(500).collect::<String>(),
+        "notifications": notifications,
+    });
+    let creator = event
+        .get("user")
+        .and_then(Value::as_str)
+        .unwrap_or(event_id)
+        .to_ascii_lowercase();
+    enqueue(
+        tx,
+        Channel::Events,
+        event_id,
+        "upcoming",
+        &payload,
+        Some(&creator),
+    )
+    .await
+}
+
+/// Slack's mrkdwn escapes (`&`, `<`, `>`): user content spliced into a
+/// mrkdwn block renders as text, never as a link, mention or command.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// An actor in a `` `code` `` span: no backtick can close it early.
+fn actor(text: &str) -> String {
+    escape(&text.replace('`', ""))
+}
+
+fn section(kind: &str, text: String) -> Value {
+    json!({"type":"section","text":{"type":kind,"text":text}})
+}
+
+/// `` _by:_ `actor` `` with upstream's self-moderation suffix
+/// (`Slack/utils.ts:85-86,105-111,118-119,143-149,179-185`).
+fn by_block(event: &Value, key: &str, self_suffix: bool) -> Option<Value> {
+    let by = text(event, key);
+    if by.is_empty() {
+        return None;
+    }
+    let suffix = if self_suffix && text(event, "user").eq_ignore_ascii_case(by) {
+        " _(him/her self)_"
+    } else {
+        ""
+    };
+    Some(section(
+        "mrkdwn",
+        format!("\n_by:_ `{}`{suffix}", actor(by)),
+    ))
+}
+
+/// The Slack message of a notice about an event (every kind but
+/// `profile_permissions`, which [`permissions_message`] renders from the
+/// row's `subject`).
+fn message(event_id: &str, kind: &str, event: &Value, links: &Links) -> Value {
+    let id = escape(event_id);
+    let edit = escape(&links.edit(event_id));
+    let name = text(event, "name");
+    let blocks: Vec<Value> = match kind {
+        // `notifyNewEvent` (`Slack/utils.ts:33-81`).
+        "submitted" => {
+            let review = escape(&links.review(event_id));
+            let user_name = text(event, "user_name");
+            let description = text(event, "description");
+            let mut details = section(
+                "plain_text",
+                format!(
+                    "{name} by {}\n\n{}",
+                    if user_name.is_empty() {
+                        "Guest"
+                    } else {
+                        user_name
+                    },
+                    if description.is_empty() {
+                        "No description"
+                    } else {
+                        description
+                    }
+                ),
+            );
+            let image = text(event, "image");
+            if !image.is_empty() {
+                let scene = text(event, "scene_name");
+                details["accessory"] = json!({"type":"image","image_url":links.image(image),
+                    "alt_text":if scene.is_empty(){"Decentraland"}else{scene}});
             }
-        },
-    );
+            let mut at = vec![format!("at <{review}|Events page>")];
+            let url = text(event, "url");
+            if !url.is_empty() {
+                if url.starts_with(links.jump_in_site_url.trim_end_matches('/')) {
+                    let place = ["estate_name", "scene_name"]
+                        .iter()
+                        .map(|key| text(event, key))
+                        .find(|value| !value.is_empty())
+                        .unwrap_or("Decentraland");
+                    at.push(format!(
+                        "at <{}|{} ({},{})>",
+                        escape(url),
+                        escape(place),
+                        event.get("x").and_then(Value::as_i64).unwrap_or(0),
+                        event.get("y").and_then(Value::as_i64).unwrap_or(0)
+                    ));
+                } else {
+                    at.push(format!("at {}", escape(url)));
+                }
+            }
+            vec![
+                section(
+                    "mrkdwn",
+                    format!(":tada: New event submitted: <{review}|{id}>"),
+                ),
+                details,
+                section("mrkdwn", at.join("\n")),
+            ]
+        }
+        // `notifyApprovedEvent` (`Slack/utils.ts:83-114`).
+        "approved" => [
+            Some(section(
+                "mrkdwn",
+                format!(":white_check_mark: new event approved: *<{edit}|{id}>*"),
+            )),
+            Some(section("plain_text", format!("Name: {name}"))),
+            by_block(event, "approved_by", true),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        // `notifyRejectedEvent` (`Slack/utils.ts:116-152`).
+        "rejected" => [
+            Some(section(
+                "mrkdwn",
+                format!(":x: new event rejected: *<{edit}|{id}>*"),
+            )),
+            Some(section(
+                "plain_text",
+                name_and_reason(name, text(event, "rejection_reason")),
+            )),
+            by_block(event, "rejected_by", true),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        // `notifyDeletedEvent` (`Slack/utils.ts:154-188`).
+        "deleted" => [
+            Some(section(
+                "mrkdwn",
+                format!(":wastebasket: event deleted by admin: *<{edit}|{id}>*"),
+            )),
+            Some(section(
+                "plain_text",
+                name_and_reason(name, text(event, "deleted_reason")),
+            )),
+            by_block(event, "deleted_by", false),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        // `notifyUpcomingEvent` (`Slack/utils.ts:222-257`).
+        "upcoming" => vec![
+            section(
+                "mrkdwn",
+                format!(":runner: *<{edit}|{id}>* is about to start"),
+            ),
+            section(
+                "plain_text",
+                format!(
+                    "Name: {name}\nSent: {} push notifications :bell:",
+                    event
+                        .get("notifications")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0)
+                ),
+            ),
+        ],
+        // `notifyEditedEvent` (`Slack/utils.ts:190-220`); the per-event
+        // minute throttle is `record`'s edit bucket.
+        _ => {
+            let user_name = text(event, "user_name");
+            vec![
+                section(
+                    "mrkdwn",
+                    format!(
+                        ":pencil2: user {} just edited his event: *<{edit}|{id}>*",
+                        if user_name.is_empty() {
+                            "Guest".to_string()
+                        } else {
+                            escape(user_name)
+                        }
+                    ),
+                ),
+                section("plain_text", name.to_string()),
+            ]
+        }
+    };
+    json!({ "blocks": blocks })
+}
+
+/// `["Name: " + name, reason && "Reason: " + reason].filter(Boolean).join("\n")`.
+fn name_and_reason(name: &str, reason: &str) -> String {
+    if reason.is_empty() {
+        format!("Name: {name}")
+    } else {
+        format!("Name: {name}\nReason: {reason}")
+    }
+}
+
+/// `intl/en.json` `page.users.permissions` at `b60d5bbd`, as the old
+/// message printed them (the two approve descriptions are swapped there).
+const PERMISSION_LABELS: [(&str, &str, &str); 6] = [
+    (
+        "approve_own_event",
+        "Approve events",
+        "User can approve events from any other user",
+    ),
+    (
+        "approve_any_event",
+        "Approve own events",
+        "User can approve events created by it self",
+    ),
+    (
+        "edit_any_event",
+        "Edit events",
+        "User can edit event's details from any other user",
+    ),
+    (
+        "edit_any_schedule",
+        "Edit schedules",
+        "User can create, edit and remove schedules",
+    ),
+    (
+        "edit_any_profile",
+        "Edit Users",
+        "User can grant permissions to any other user",
+    ),
+    (
+        "test_any_notification",
+        "Test notifications",
+        "User can send test notifications to it self",
+    ),
+];
+
+/// `Slack/utils.ts:325-357`: the lost-all text, or the new set one line per
+/// permission: `- *Name*: _description_` for a known permission, `- *perm*`
+/// otherwise. The wallet is a checked address, so the only user content in
+/// the mrkdwn is its hex.
+fn permissions_message(user: &str, event: &Value) -> Value {
+    let permissions: Vec<String> = event
+        .get("permissions")
+        .and_then(Value::as_array)
+        .map(|p| {
+            p.iter()
+                .filter_map(|p| p.as_str())
+                .filter(|p| p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+                .map(|p| {
+                    PERMISSION_LABELS
+                        .iter()
+                        .find(|(id, _, _)| *id == p)
+                        .map(|(_, name, description)| format!("- *{name}*: _{description}_"))
+                        .unwrap_or_else(|| format!("- *{p}*"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let user: String = user
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(42)
+        .collect();
+    let text = if permissions.is_empty() {
+        format!(":magic_wand: user `{user}` just lost all his/her permissions")
+    } else {
+        format!(
+            ":magic_wand: user `{user}` has new permissions:\n\n{}",
+            permissions.join("\n")
+        )
+    };
+    json!({"blocks":[{"type":"section","text":{"type":"mrkdwn","text":text}}]})
+}
+
+/// The message of a claimed events row: the permission notice for its
+/// wallet, else the event notice for its id.
+pub(crate) fn render(subject: &str, kind: &str, payload: &Value, links: &Links) -> Value {
+    if kind == "profile_permissions" {
+        permissions_message(subject, payload)
+    } else {
+        message(subject, kind, payload, links)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::moderation_hooks::{CLEANUP_LIMIT, Endpoints, TEST_LOCK, cleanup, run_once};
+    use chrono::{NaiveDateTime, Utc};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use std::time::Duration;
 
-    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    /// The events webhook alone.
+    fn to(endpoint: Option<&str>) -> Endpoints {
+        Endpoints {
+            events: endpoint.map(str::to_owned),
+            places: None,
+        }
+    }
+
+    fn links() -> Links {
+        Links {
+            base: "https://example.org".into(),
+            jump_in_site_url: "https://decentraland.org/jump".into(),
+            asset_base: "https://assets.example.org/events/".into(),
+        }
+    }
+
+    fn block_text(message: &Value, index: usize) -> &str {
+        message["blocks"][index]["text"]["text"].as_str().unwrap()
+    }
+
+    /// `Slack/utils.ts:322-358`: the lost-all text and the one-line-per-permission
+    /// text with `intl/en.json`'s names, the fallback line for an unknown one.
+    #[test]
+    fn profile_permission_notices_follow_the_old_texts() {
+        let lost = permissions_message("0xabc", &json!({"permissions":[]}));
+        assert_eq!(
+            block_text(&lost, 0),
+            ":magic_wand: user `0xabc` just lost all his/her permissions"
+        );
+        let gained = permissions_message(
+            "0xabc <@here>",
+            &json!({"permissions":["edit_any_event","<script>","custom_grant"]}),
+        );
+        assert_eq!(
+            block_text(&gained, 0),
+            ":magic_wand: user `0xabchere` has new permissions:\n\n- *Edit events*: _User can edit event's details from any other user_\n- *custom_grant*"
+        );
+    }
+
+    /// `Slack/utils.ts:33-81`: the three submission blocks, the review link
+    /// (`eventReviewSlackUrl`, `:23-27`) and the place label of a generated
+    /// jump-in url; a custom url is printed as is.
+    #[test]
+    fn new_event_notices_follow_notify_new_event() {
+        let event = labels(
+            &json!({"name":"Launch & <party>","user_name":"Host","description":"Come <b>all</b>",
+            "image":"https://img.example.org/p.png","scene_name":"Plaza","estate_name":"",
+            "url":"https://decentraland.org/jump/events?position=10%2C-20","x":10,"y":-20,"contact":"secret"}),
+        );
+        let notice = message("ev-1", "submitted", &event, &links());
+        assert_eq!(
+            block_text(&notice, 0),
+            ":tada: New event submitted: <https://example.org/whats-on/admin/pending-events?id=ev-1|ev-1>"
+        );
+        assert_eq!(
+            notice["blocks"][1],
+            json!({"type":"section","text":{"type":"plain_text","text":"Launch & <party> by Host\n\nCome <b>all</b>"},
+                "accessory":{"type":"image","image_url":"https://img.example.org/p.png","alt_text":"Plaza"}})
+        );
+        assert_eq!(
+            block_text(&notice, 2),
+            "at <https://example.org/whats-on/admin/pending-events?id=ev-1|Events page>\nat <https://decentraland.org/jump/events?position=10%2C-20|Plaza (10,-20)>"
+        );
+        assert!(!notice.to_string().contains("secret"));
+        let custom = message(
+            "ev-2",
+            "submitted",
+            &labels(&json!({"name":"Guest event","url":"https://example.com/x?a=1&b=<2>"})),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&custom, 1),
+            "Guest event by Guest\n\nNo description"
+        );
+        assert!(custom["blocks"][1].get("accessory").is_none());
+        assert_eq!(
+            block_text(&custom, 2),
+            "at <https://example.org/whats-on/admin/pending-events?id=ev-2|Events page>\nat https://example.com/x?a=1&amp;b=&lt;2&gt;"
+        );
+        // A stored poster is a path on the events mount (`/poster/<file>`,
+        // the default asset); Slack's `image_url` must be absolute.
+        for (stored, absolute) in [
+            (
+                "/poster/abc.webp",
+                "https://assets.example.org/events/poster/abc.webp",
+            ),
+            (
+                "/assets/event-default.webp",
+                "https://assets.example.org/events/assets/event-default.webp",
+            ),
+            (
+                "https://img.example.org/p.png",
+                "https://img.example.org/p.png",
+            ),
+        ] {
+            let notice = message(
+                "ev-3",
+                "submitted",
+                &labels(&json!({"name":"Poster","image":stored})),
+                &links(),
+            );
+            assert_eq!(
+                notice["blocks"][1]["accessory"]["image_url"], absolute,
+                "{stored}"
+            );
+        }
+    }
+
+    /// `Slack/utils.ts:83-220`: approved (self-approval suffix), rejected and
+    /// deleted with their reasons and actors, edited by a named or Guest
+    /// user; every one links `eventSlackUrl` (`:19-21`).
+    #[test]
+    fn moderation_notices_follow_the_old_texts_and_links() {
+        let edit = "https://example.org/whats-on/edit-hangout/ev-1?openPreview";
+        let approved = message(
+            "ev-1",
+            "approved",
+            &labels(&json!({"name":"Launch","user":"0xAbC","approved_by":"0xabc"})),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&approved, 0),
+            format!(":white_check_mark: new event approved: *<{edit}|ev-1>*")
+        );
+        assert_eq!(block_text(&approved, 1), "Name: Launch");
+        assert_eq!(block_text(&approved, 2), "\n_by:_ `0xabc` _(him/her self)_");
+        let rejected = message(
+            "ev-1",
+            "rejected",
+            &labels(
+                &json!({"name":"Launch","user":"0xabc","rejected_by":"ad`min","rejection_reason":"Spam"}),
+            ),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&rejected, 0),
+            format!(":x: new event rejected: *<{edit}|ev-1>*")
+        );
+        assert_eq!(block_text(&rejected, 1), "Name: Launch\nReason: Spam");
+        assert_eq!(block_text(&rejected, 2), "\n_by:_ `admin`");
+        let deleted = message(
+            "ev-1",
+            "deleted",
+            &labels(&json!({"name":"Launch","user":"0xabc","deleted_by":"0xabc"})),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&deleted, 0),
+            format!(":wastebasket: event deleted by admin: *<{edit}|ev-1>*")
+        );
+        assert_eq!(block_text(&deleted, 1), "Name: Launch");
+        assert_eq!(
+            block_text(&deleted, 2),
+            "\n_by:_ `0xabc`",
+            "deletion carries no self suffix"
+        );
+        let unattributed = message(
+            "ev-1",
+            "deleted",
+            &labels(&json!({"name":"Launch"})),
+            &links(),
+        );
+        assert_eq!(unattributed["blocks"].as_array().unwrap().len(), 2);
+        let edited = message(
+            "ev-1",
+            "edited",
+            &labels(&json!({"name":"Launch","user_name":"Host <!channel>"})),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&edited, 0),
+            format!(":pencil2: user Host &lt;!channel&gt; just edited his event: *<{edit}|ev-1>*")
+        );
+        assert_eq!(block_text(&edited, 1), "Launch");
+        let guest = message("ev-1", "edited", &labels(&json!({})), &links());
+        assert_eq!(
+            block_text(&guest, 0),
+            format!(":pencil2: user Guest just edited his event: *<{edit}|ev-1>*")
+        );
+        // `Slack/utils.ts:222-257`
+        let upcoming = message(
+            "ev-1",
+            "upcoming",
+            &json!({"name":"Launch","notifications":3}),
+            &links(),
+        );
+        assert_eq!(
+            block_text(&upcoming, 0),
+            format!(":runner: *<{edit}|ev-1>* is about to start")
+        );
+        assert_eq!(
+            block_text(&upcoming, 1),
+            "Name: Launch\nSent: 3 push notifications :bell:"
+        );
+    }
+
+    /// `Event/cron.ts:71-76`: no notice without reminders; one row per
+    /// occurrence with the count, delivered with the upstream text.
+    #[tokio::test]
+    async fn upcoming_notices_are_queued_per_reminded_occurrence_and_delivered() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let copy = captured.clone();
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let copy = copy.clone();
+                async move {
+                    copy.lock().await.push(body);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/hook", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let id = format!("upcoming-{}", Uuid::new_v4());
+        let event = json!({"name":"Reminded","user":"0xHOST","contact":"secret"});
+        let mut tx = pool.begin().await.unwrap();
+        super::super::notifications::record_upcoming_notice(&mut tx, &id, &event, 0)
+            .await
+            .unwrap();
+        super::super::notifications::record_upcoming_notice(&mut tx, &id, &event, 2)
+            .await
+            .unwrap();
+        super::super::notifications::record_upcoming_notice(&mut tx, &id, &event, 5)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let rows: Vec<(String, Value)> = sqlx::query_as(
+            "SELECT kind,payload FROM explore.moderation_hooks WHERE subject=$1 ORDER BY payload->>'notifications'",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2, "zero reminders queue nothing");
+        assert!(rows.iter().all(|(kind, _)| kind == "upcoming"));
+        assert_eq!(rows[0].1["notifications"], 2);
+        assert_eq!(rows[0].1["name"], "Reminded");
+        assert!(rows[0].1.get("contact").is_none());
+        assert_eq!(
+            run_once(
+                &pool,
+                &crate::http::Outbound::for_tests(),
+                &to(Some(&endpoint)),
+                &links(),
+                Utc::now().naive_utc() + chrono::Duration::seconds(1)
+            )
+            .await
+            .unwrap(),
+            2
+        );
+        let payloads = captured.lock().await;
+        assert!(
+            payloads.iter().any(|payload| block_text(payload, 1)
+                == "Name: Reminded\nSent: 5 push notifications :bell:")
+        );
+        assert!(payloads.iter().all(|payload| block_text(payload, 0)
+            == format!(":runner: *<https://example.org/whats-on/edit-hangout/{id}?openPreview|{id}>* is about to start")));
+        drop(payloads);
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject=$1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        server.abort();
+    }
 
     #[tokio::test]
     async fn concurrent_first_captures_and_backward_clock_samples_never_precede_activation() {
@@ -263,12 +793,12 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query("CREATE FUNCTION explore.test_hook_capture_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='hook-capture-race' THEN PERFORM pg_advisory_xact_lock(742119); END IF; RETURN NEW; END $$").execute(&pool).await.unwrap();
-        sqlx::query("CREATE TRIGGER test_hook_capture_barrier BEFORE INSERT ON explore.event_moderation_hook_activation FOR EACH ROW EXECUTE FUNCTION explore.test_hook_capture_barrier()").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TRIGGER test_hook_capture_barrier BEFORE INSERT ON explore.moderation_hook_activation FOR EACH ROW EXECUTE FUNCTION explore.test_hook_capture_barrier()").execute(&pool).await.unwrap();
         let prefix = Uuid::new_v4().to_string();
         let mut held = pool.acquire().await.unwrap();
         sqlx::query("SELECT pg_advisory_lock(742119)")
@@ -325,11 +855,11 @@ mod tests {
             .await
             .unwrap();
         slow.await.unwrap();
-        let concurrent_eligible:bool=sqlx::query_scalar("SELECT bool_and(h.created_at>=a.activated_at) FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id LIKE $1")
+        let concurrent_eligible:bool=sqlx::query_scalar("SELECT bool_and(h.created_at>=a.activated_at) FROM explore.moderation_hooks h CROSS JOIN explore.moderation_hook_activation a WHERE h.subject LIKE $1")
             .bind(format!("{prefix}-%")).fetch_one(&pool).await.unwrap();
         // A future cutoff simulates the wall clock stepping backward after activation.
         let mut tx = pool.begin().await.unwrap();
-        sqlx::query("UPDATE explore.event_moderation_hook_activation SET activated_at=(clock_timestamp() AT TIME ZONE 'UTC')+interval '1 minute'")
+        sqlx::query("UPDATE explore.moderation_hook_activation SET activated_at=(clock_timestamp() AT TIME ZONE 'UTC')+interval '1 minute'")
             .execute(&mut *tx).await.unwrap();
         record(
             &mut tx,
@@ -340,25 +870,23 @@ mod tests {
         )
         .await
         .unwrap();
-        let clock_eligible:bool=sqlx::query_scalar("SELECT h.created_at=a.activated_at FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id=$1")
+        let clock_eligible:bool=sqlx::query_scalar("SELECT h.created_at=a.activated_at FROM explore.moderation_hooks h CROSS JOIN explore.moderation_hook_activation a WHERE h.subject=$1")
             .bind(format!("{prefix}-clock")).fetch_one(&mut *tx).await.unwrap();
         tx.rollback().await.unwrap();
-        sqlx::query(
-            "DROP TRIGGER test_hook_capture_barrier ON explore.event_moderation_hook_activation",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DROP TRIGGER test_hook_capture_barrier ON explore.moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DROP FUNCTION explore.test_hook_capture_barrier()")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
             .bind(format!("{prefix}-%"))
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
@@ -378,7 +906,7 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
@@ -394,20 +922,20 @@ mod tests {
         .await
         .unwrap();
         tx.commit().await.unwrap();
-        let (created,activated):(NaiveDateTime,NaiveDateTime)=sqlx::query_as("SELECT h.created_at,a.activated_at FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id=$1")
+        let (created,activated):(NaiveDateTime,NaiveDateTime)=sqlx::query_as("SELECT h.created_at,a.activated_at FROM explore.moderation_hooks h CROSS JOIN explore.moderation_hook_activation a WHERE h.subject=$1")
             .bind(&id).fetch_one(&pool).await.unwrap();
         assert!(created >= activated);
         run_once(
             &pool,
             &crate::http::Outbound::for_tests(),
-            Some("http://127.0.0.1:1/unreachable"),
-            "https://example.org",
+            &to(Some("http://127.0.0.1:1/unreachable")),
+            &links(),
             Utc::now().naive_utc() + chrono::Duration::minutes(1),
         )
         .await
         .unwrap();
         let (attempts, completed): (i32, Option<NaiveDateTime>) = sqlx::query_as(
-            "SELECT attempts,completed_at FROM explore.event_moderation_hooks WHERE event_id=$1",
+            "SELECT attempts,completed_at FROM explore.moderation_hooks WHERE subject=$1",
         )
         .bind(&id)
         .fetch_one(&pool)
@@ -418,12 +946,12 @@ mod tests {
             "first captured intent is not discarded on leader activation"
         );
         assert_eq!(completed, None);
-        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id=$1")
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject=$1")
             .bind(id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
@@ -515,8 +1043,8 @@ mod tests {
             run_once(
                 &pool,
                 &crate::http::Outbound::for_tests(),
-                Some(&endpoint),
-                "https://example.org",
+                &to(Some(&endpoint)),
+                &links(),
                 Utc::now().naive_utc() + chrono::Duration::seconds(1)
             )
             .await
@@ -529,16 +1057,28 @@ mod tests {
             .take(3)
             .map(|body| body["blocks"][0]["text"]["text"].as_str().unwrap())
             .collect();
-        assert!(first.iter().any(|text| text.starts_with("Event approved:")));
-        assert!(first.iter().any(|text| text.starts_with("Event rejected:")));
-        assert!(first.iter().any(|text| text.starts_with("Event deleted:")));
+        assert!(
+            first
+                .iter()
+                .any(|text| text.starts_with(":white_check_mark: new event approved:"))
+        );
+        assert!(
+            first
+                .iter()
+                .any(|text| text.starts_with(":x: new event rejected:"))
+        );
+        assert!(
+            first
+                .iter()
+                .any(|text| text.starts_with(":wastebasket: event deleted by admin:"))
+        );
         assert!(
             payloads[3]["blocks"][0]["text"]["text"]
                 .as_str()
                 .unwrap()
-                .starts_with("Event submitted:")
+                .starts_with(":tada: New event submitted:")
         );
-        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
             .bind(format!("{prefix}-%"))
             .execute(&pool)
             .await
@@ -565,7 +1105,7 @@ mod tests {
             .unwrap();
         }
         let count: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE creator_address=$1",
         )
         .bind(&actor)
         .fetch_one(&mut *tx)
@@ -586,7 +1126,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let edits:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1 AND kind='edited'")
+        let edits:i64=sqlx::query_scalar("SELECT count(*) FROM explore.moderation_hooks WHERE creator_address=$1 AND kind='edited'")
             .bind(&actor).fetch_one(&mut *tx).await.unwrap();
         assert_eq!(
             edits, 2,
@@ -601,7 +1141,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let submissions:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1 AND kind='submitted'")
+        let submissions:i64=sqlx::query_scalar("SELECT count(*) FROM explore.moderation_hooks WHERE creator_address=$1 AND kind='submitted'")
             .bind(&actor).fetch_one(&mut *tx).await.unwrap();
         assert_eq!(
             submissions, 6,
@@ -618,7 +1158,7 @@ mod tests {
         .await
         .unwrap();
         let count: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE creator_address=$1",
         )
         .bind(&actor)
         .fetch_one(&mut *tx)
@@ -646,7 +1186,7 @@ mod tests {
         .await
         .unwrap();
         let names: Vec<String> = sqlx::query_scalar(
-            "SELECT event->>'name' FROM explore.event_moderation_hooks WHERE event_id=$1",
+            "SELECT payload->>'name' FROM explore.moderation_hooks WHERE subject=$1",
         )
         .bind(&other)
         .fetch_all(&mut *tx)
@@ -691,7 +1231,7 @@ mod tests {
             .unwrap();
         }
         let captured: Vec<String> = sqlx::query_scalar(
-            "SELECT event_id FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+            "SELECT subject FROM explore.moderation_hooks WHERE subject LIKE $1",
         )
         .bind(format!("{prefix}-%"))
         .fetch_all(&mut *tx)
@@ -711,12 +1251,12 @@ mod tests {
         let now = Utc::now().naive_utc();
         let prefix = Uuid::new_v4().to_string();
         // This integration test owns the activation singleton while holding TEST_LOCK.
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES($1-interval '50 days')").bind(now).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,created_at,completed_at) SELECT gen_random_uuid(),$1||'-completed','approved','{}',$2-interval '40 days',$2-interval '31 days' FROM generate_series(1,$3)")
+        sqlx::query("INSERT INTO explore.moderation_hook_activation(activated_at) VALUES($1-interval '50 days')").bind(now).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.moderation_hooks(id,channel,subject,kind,payload,created_at,completed_at) SELECT gen_random_uuid(),'events',$1||'-completed','approved','{}',$2-interval '40 days',$2-interval '31 days' FROM generate_series(1,$3)")
             .bind(&prefix).bind(now).bind(CLEANUP_LIMIT+5).execute(&pool).await.unwrap();
         for (suffix, age, completed_age, attempts, retry_age) in [
             ("before-activation", 60, None, 0, 60),
@@ -726,17 +1266,17 @@ mod tests {
             ("recent-edit", 0, Some(0), 1, 0),
             ("locked", 70, Some(31), 1, 31),
         ] {
-            sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,created_at,completed_at,attempts,next_attempt_at) VALUES($1,$2,'edited','{}',$3-$4::int4*interval '1 day',CASE WHEN $5::int4 IS NOT NULL THEN $3-$5::int4*interval '1 day' END,$6,$3-$7::int4*interval '1 day')")
+            sqlx::query("INSERT INTO explore.moderation_hooks(id,channel,subject,kind,payload,created_at,completed_at,attempts,next_attempt_at) VALUES($1,'events',$2,'edited','{}',$3-$4::int4*interval '1 day',CASE WHEN $5::int4 IS NOT NULL THEN $3-$5::int4*interval '1 day' END,$6,$3-$7::int4*interval '1 day')")
                 .bind(Uuid::new_v4()).bind(format!("{prefix}-{suffix}")).bind(now).bind(age).bind(completed_age).bind(attempts).bind(retry_age).execute(&pool).await.unwrap();
         }
         let mut held = pool.begin().await.unwrap();
-        sqlx::query("SELECT id FROM explore.event_moderation_hooks WHERE event_id=$1 FOR UPDATE")
+        sqlx::query("SELECT id FROM explore.moderation_hooks WHERE subject=$1 FOR UPDATE")
             .bind(format!("{prefix}-locked"))
             .fetch_one(&mut *held)
             .await
             .unwrap();
         let before: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject LIKE $1",
         )
         .bind(format!("{prefix}-%"))
         .fetch_one(&pool)
@@ -746,8 +1286,8 @@ mod tests {
             run_once(
                 &pool,
                 &crate::http::Outbound::for_tests(),
-                None,
-                "https://example.org",
+                &to(None),
+                &links(),
                 now
             )
             .await
@@ -755,7 +1295,7 @@ mod tests {
             0
         );
         let after: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject LIKE $1",
         )
         .bind(format!("{prefix}-%"))
         .fetch_one(&pool)
@@ -763,7 +1303,13 @@ mod tests {
         .unwrap();
         assert_eq!(before - after, CLEANUP_LIMIT);
         assert_eq!(cleanup(&pool, now).await.unwrap(), 7);
-        let retained:Vec<String> = sqlx::query_scalar("SELECT event_id FROM explore.event_moderation_hooks WHERE event_id LIKE $1 ORDER BY event_id").bind(format!("{prefix}-%")).fetch_all(&pool).await.unwrap();
+        let retained: Vec<String> = sqlx::query_scalar(
+            "SELECT subject FROM explore.moderation_hooks WHERE subject LIKE $1 ORDER BY subject",
+        )
+        .bind(format!("{prefix}-%"))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             retained,
             ["locked", "recent-completion", "recent-edit", "retry"]
@@ -771,12 +1317,12 @@ mod tests {
         );
         held.rollback().await.unwrap();
         assert_eq!(cleanup(&pool, now).await.unwrap(), 1);
-        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
             .bind(format!("{prefix}-%"))
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+        sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
             .unwrap();
@@ -788,8 +1334,8 @@ mod tests {
             return;
         };
         let mut tx = pool.begin().await.unwrap();
-        sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,edit_bucket,created_at) \
-            VALUES ($1,'rolling-hook','edited','{}',date_trunc('minute',now() AT TIME ZONE 'UTC')-interval '1 minute', \
+        sqlx::query("INSERT INTO explore.moderation_hooks (id,channel,subject,kind,payload,edit_bucket,created_at) \
+            VALUES ($1,'events','rolling-hook','edited','{}',date_trunc('minute',now() AT TIME ZONE 'UTC')-interval '1 minute', \
                 (now() AT TIME ZONE 'UTC')-interval '30 seconds')")
             .bind(Uuid::new_v4()).execute(&mut *tx).await.unwrap();
         let before = json!({"name":"Before"});
@@ -798,7 +1344,7 @@ mod tests {
             .await
             .unwrap();
         let one: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='rolling-hook'",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='rolling-hook'",
         )
         .fetch_one(&mut *tx)
         .await
@@ -807,13 +1353,13 @@ mod tests {
             one, 1,
             "last bucket still suppresses an edit within 60 seconds"
         );
-        sqlx::query("UPDATE explore.event_moderation_hooks SET edit_bucket=edit_bucket-interval '1 minute',created_at=created_at-interval '1 minute' WHERE event_id='rolling-hook'")
+        sqlx::query("UPDATE explore.moderation_hooks SET edit_bucket=edit_bucket-interval '1 minute',created_at=created_at-interval '1 minute' WHERE subject='rolling-hook'")
             .execute(&mut *tx).await.unwrap();
         record(&mut tx, "rolling-hook", &before, &after, true)
             .await
             .unwrap();
         let two: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='rolling-hook'",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='rolling-hook'",
         )
         .fetch_one(&mut *tx)
         .await
@@ -856,7 +1402,7 @@ mod tests {
             .naive_utc();
         let client = crate::http::Outbound::for_tests();
         assert_eq!(
-            run_once(&pool, &client, Some(&endpoint), "https://example.org", now)
+            run_once(&pool, &client, &to(Some(&endpoint)), &links(), now)
                 .await
                 .unwrap(),
             0
@@ -875,24 +1421,24 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
-        sqlx::query("UPDATE explore.event_moderation_hooks SET created_at=$1,next_attempt_at=$1 WHERE event_id='hook-event'")
+        sqlx::query("UPDATE explore.moderation_hooks SET created_at=$1,next_attempt_at=$1 WHERE subject='hook-event'")
             .bind(now+chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         let queued: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='hook-event'",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='hook-event'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(queued, 2, "owner edits are throttled once per event/minute");
         // Any pre-existing disabled backlog remains behind the activation cutoff.
-        sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,created_at) VALUES ($1,'old-hook','submitted','{}',(SELECT activated_at-interval '1 day' FROM explore.event_moderation_hook_activation WHERE singleton))")
+        sqlx::query("INSERT INTO explore.moderation_hooks (id,channel,subject,kind,payload,created_at) VALUES ($1,'events','old-hook','submitted','{}',(SELECT activated_at-interval '1 day' FROM explore.moderation_hook_activation WHERE singleton))")
             .bind(Uuid::new_v4()).execute(&pool).await.unwrap();
         assert_eq!(
             run_once(
                 &pool,
                 &client,
-                Some(&endpoint),
-                "https://example.org",
+                &to(Some(&endpoint)),
+                &links(),
                 now + chrono::Duration::seconds(1)
             )
             .await
@@ -908,8 +1454,8 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                Some(&endpoint),
-                "https://example.org",
+                &to(Some(&endpoint)),
+                &links(),
                 now + chrono::Duration::seconds(2)
             )
             .await
@@ -920,8 +1466,8 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                Some(&endpoint),
-                "https://example.org",
+                &to(Some(&endpoint)),
+                &links(),
                 now + chrono::Duration::minutes(2)
             )
             .await
@@ -933,19 +1479,19 @@ mod tests {
             assert_eq!(payload["blocks"][1]["text"]["type"], "plain_text");
         }
         // Exhaustion is durable; the worker never retries a sixth failed attempt.
-        sqlx::query("UPDATE explore.event_moderation_hooks SET completed_at=NULL,attempts=5,next_attempt_at=$1 WHERE event_id='hook-event'")
+        sqlx::query("UPDATE explore.moderation_hooks SET completed_at=NULL,attempts=5,next_attempt_at=$1 WHERE subject='hook-event'")
             .bind(now).execute(&pool).await.unwrap();
         let exhausted = run_once(
             &pool,
             &client,
-            Some("http://127.0.0.1:1/unreachable"),
-            "https://example.org",
+            &to(Some("http://127.0.0.1:1/unreachable")),
+            &links(),
             now + chrono::Duration::minutes(3),
         )
         .await
         .unwrap();
         assert_eq!(exhausted, 0);
-        let pending:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='hook-event' AND completed_at IS NULL").fetch_one(&pool).await.unwrap();
+        let pending:i64=sqlx::query_scalar("SELECT count(*) FROM explore.moderation_hooks WHERE subject='hook-event' AND completed_at IS NULL").fetch_one(&pool).await.unwrap();
         assert_eq!(
             pending, 2,
             "exhausted failures are distinct from successful completion"
@@ -966,12 +1512,12 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let kinds:Vec<String>=sqlx::query_scalar("SELECT kind FROM explore.event_moderation_hooks WHERE event_id='hook-lifecycle' ORDER BY kind")
+        let kinds:Vec<String>=sqlx::query_scalar("SELECT kind FROM explore.moderation_hooks WHERE subject='hook-lifecycle' ORDER BY kind")
             .fetch_all(&mut *tx).await.unwrap();
         assert_eq!(kinds, vec!["approved", "deleted", "rejected", "submitted"]);
         tx.rollback().await.unwrap();
         let rolled_back: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='hook-lifecycle'",
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='hook-lifecycle'",
         )
         .fetch_one(&pool)
         .await

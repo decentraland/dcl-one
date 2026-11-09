@@ -7,9 +7,8 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
 libraries, Rust, protoc, Node 24, npm. Web also needs `nightly-2026-04-15` with `rust-src` and
-`wasm32-unknown-unknown`, and wasm-pack 0.15.0; desktop needs the pinned CEF and the UUAV
-video runtime set (`library/uuav/dist/<target>`, Git LFS: `git lfs pull --include 'library/uuav/dist/**'`),
-which `tooling/uuav/stage-dist.py` copies next to the binary that spawns it.
+`wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
+desktop needs FFmpeg and the pinned CEF.
 
 ```sh
 make web          # engine WASM, scene WASM, sandbox guard, HUD tests, bridge scene -> dist/web
@@ -26,8 +25,10 @@ Importing into Sites (production requires the main CI artifact):
 [Explorer integration](../../rendering/bevy-explorer/README.md#native-builds-and-hud-updates).
 
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or
-checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 26.1; see
-the current measurement evidence in the task report before claiming time savings.
+checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 36.2: Linux takes it from the
+flake's `bevy-tools` package (`install-tools.sh` checks the major), Windows and macOS install the
+release archive `install-protoc.py` pins. See the current measurement evidence in the task report
+before claiming time savings.
 
 Analytics: every environment reports to one Segment source, keyed by `BEVY_SEGMENT_WRITE_KEY` (a
 repository variable; unset, the engine keeps the key it shared with the mobile client). Every event
@@ -97,12 +98,18 @@ over 12000 characters, re-reads to confirm the write and collapses duplicate com
 (`upsert-ci-status.sh`). The scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's
 *Integration guards*.
 
-Image and headless publishers run on successful main CI completion. They verify the source
-repository, workflow, SHA, attempt, complete platform matrix and artifacts before publishing.
-The launcher takes its version from all four platform packages, never the callback run ID.
-Unrelated newer commits do not supersede a component's release. Any failed consumer build
-also fails the coordinated run and prevents automatic publication; graphical acceptance is
-still a separate verdict. The standalone manual build/release entrypoints remain available.
+On main, a new push does not cancel a running CI run: it waits, replacing any run already waiting,
+so each completed run tests every earlier commit. A manual dispatch or re-run on main also waits
+and can replace a waiting push; to re-test main, push or dispatch rather than re-running an older
+run. A pull request push replaces that pull request's running run. Image and headless publishers
+run on successful main CI completion. They verify the source repository, workflow, SHA, attempt,
+complete platform matrix and artifacts before publishing. The launcher takes its version from all
+four platform packages, never the callback run ID. An APIs + Sites or headless release is
+superseded only by a newer main run that changed that component and succeeded or was re-run (an
+earlier attempt may have published); a newer first attempt still waiting or failed does not. Any
+failed consumer build also fails the coordinated run and prevents automatic publication; graphical
+acceptance is still a separate verdict. The standalone manual build/release entrypoints remain
+available.
 
 For timing queries, image jobs now appear under `Bevy Explorer / CI` as `APIs + Sites / build (...)`;
 non-Linux package jobs use `Headless packages / build (...)`. Linux package compilation is the
@@ -150,10 +157,14 @@ manual headless run on main, a chosen `publish-tag` from a branch. npm trusted p
 of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. The CDN upload needs
 `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`. Retry with "re-run failed jobs".
 
-Same-repo PRs publish under the `pr-<n>` dist-tag, which the CI status *Build* section links; a PR publish failure does not
-fail the build, and closing the PR removes the tag (the trusted publisher needs "npm dist-tag"). The
-automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout". Before
-archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
+Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
+package version for the run after checking its npm commit against the web checkout SHA. It uses the
+PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
+A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
+publisher needs "npm dist-tag"). A `pr-<n>` version is for testing only, never for a rollout;
+while `BENCHMARK_ENABLED_RUNNERS` is `none`, a PR that compiles the engine also skips wasm-opt. The
+automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout".
+Before archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
 `apps/ui3/src/play`.
 
 ## Container runtime

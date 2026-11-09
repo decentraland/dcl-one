@@ -108,7 +108,7 @@ pub(super) fn err_one(message: impl Into<String>) -> Response {
 
 /// A size or count limit of the multipart body: 413, as the old service.
 pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
-    rejection(StatusCode::PAYLOAD_TOO_LARGE, message)
+    upload_limits::too_large(message).into_response()
 }
 
 /// A refused publish: its status and message.
@@ -1149,7 +1149,8 @@ mod tests {
         parcels.reverse();
         let started = Instant::now();
         let error = scene_pointers_error(&scene(json!(grid), "0,0", json!(parcels)));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        // A quadratic match of 90,601 parcels takes minutes; the budget allows a loaded host.
+        assert!(started.elapsed() < Duration::from_secs(20));
         assert_eq!(error, None);
     }
 

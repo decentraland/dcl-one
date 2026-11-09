@@ -23,7 +23,11 @@ function observeTransport() {
   }
 }
 
-test('scene Fetch isolates workers and preserves the browser request', { timeout: 30_000 }, async t => {
+// Chrome's cold start on a CI runner has taken 1 s in some runs and over 30 s in others. The
+// budget covers it; the diagnostics and DEBUG=pw:browser in CI say where the time went.
+test('scene Fetch isolates workers and preserves the browser request', { timeout: 120_000 }, async t => {
+  const started = performance.now()
+  const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s`
   const gates = new Map()
   const server = createServer(async (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
@@ -58,8 +62,9 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) })
-  const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN })
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN, timeout: 90_000 })
   t.after(() => browser.close())
+  t.diagnostic(`browser launched at ${elapsed()}`)
   const page = await browser.newPage()
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   await page.evaluate(async () => {
@@ -73,6 +78,7 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     await page.evaluate(role => window[role].spawn(), role)
     return ready
   }
+  t.diagnostic(`page ready at ${elapsed()}`)
 
   const ids = Array.from({ length: 40 }, (_, i) => String(i))
   for (const role of ['client', 'server']) {

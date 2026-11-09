@@ -46,6 +46,8 @@ pub enum CallError {
     NoLegacyMarketplace,
     #[error("the chain has no NAME controller")]
     NoNameController,
+    #[error("coupon {0}")]
+    Coupon(String),
 }
 
 fn bytes_of(label: &str, raw: Option<&str>) -> Result<Vec<u8>, CallError> {
@@ -142,6 +144,24 @@ fn external_checks(
 /// `checks`, the `sent` assets delivered to `caller` (the signature does not
 /// cover a sent beneficiary; the caller names itself), the `received` ones
 /// as signed (the signer, or the beneficiary it named).
+/// The on-chain `Checks` of a signed trade or coupon, under its own allowed root.
+fn on_chain_checks(
+    c: &crate::checkout::trade::TradeChecksIn,
+    allowed_root: B256,
+) -> Result<offchain::Checks, CallError> {
+    Ok(offchain::Checks {
+        uses: U256::from(c.uses),
+        expiration: secs(c.expiration),
+        effective: secs(c.effective),
+        salt: word("checks.salt", Some(&c.salt))?,
+        contractSignatureIndex: U256::from(c.contract_signature_index),
+        signerSignatureIndex: U256::from(c.signer_signature_index),
+        allowedRoot: allowed_root,
+        allowedProof: Vec::new(),
+        externalChecks: external_checks(&c.external_checks)?,
+    })
+}
+
 pub fn on_chain_trade(trade: &TradeIn, caller: Address) -> Result<offchain::Trade, CallError> {
     let c = &trade.checks;
     let allowed_root = word("checks.allowedRoot", c.allowed_root.as_deref())?;
@@ -172,17 +192,7 @@ pub fn on_chain_trade(trade: &TradeIn, caller: Address) -> Result<offchain::Trad
     Ok(offchain::Trade {
         signer,
         signature: signature.into(),
-        checks: offchain::Checks {
-            uses: U256::from(c.uses),
-            expiration: secs(c.expiration),
-            effective: secs(c.effective),
-            salt: word("checks.salt", Some(&c.salt))?,
-            contractSignatureIndex: U256::from(c.contract_signature_index),
-            signerSignatureIndex: U256::from(c.signer_signature_index),
-            allowedRoot: allowed_root,
-            allowedProof: Vec::new(),
-            externalChecks: external_checks(&c.external_checks)?,
-        },
+        checks: on_chain_checks(c, allowed_root)?,
         sent: trade
             .sent
             .iter()
@@ -261,6 +271,73 @@ pub fn accept(
         .into(),
         allowance: allowance.map(|amount| (chain.mana, venue, amount)),
         approval,
+    })
+}
+
+/// A creator's stored coupon (`shop.coupons`), as `acceptWithCoupon` takes it.
+#[derive(Debug, Clone)]
+pub struct CouponIn {
+    pub id: String,
+    pub coupon_address: Address,
+    pub discount_type: u64,
+    pub discount_ppm: u32,
+    pub root: String,
+    pub collections: Vec<String>,
+    pub signature: String,
+    pub checks: crate::checkout::trade::TradeChecksIn,
+}
+
+/// `acceptWithCoupon([trade], [coupon])` on the venue the trade was signed
+/// for, encoded as the Shop's UI encodes it (upstream `getOnChainCoupon`):
+/// `data` is `(discountType, discount, root)`, and `callerData` wraps one
+/// collection proof per sent asset, in the order of `sent`: the coupon checks
+/// `proofs[i]` against `sent[i].contractAddress`. An asset whose collection the
+/// coupon does not cover is refused here, with no call to fall back on.
+pub fn accept_with_coupon(
+    chain: &Chain,
+    venue: Address,
+    trade: &TradeIn,
+    coupon: &CouponIn,
+    caller: Address,
+    allowance: Option<U256>,
+) -> Result<Call, CallError> {
+    let accept = accept(chain, venue, trade, caller, allowance)?;
+    let on_chain = on_chain_trade(trade, caller)?;
+    if on_chain.sent.is_empty() {
+        return Err(CallError::Trade("no sent asset".into()));
+    }
+    let proofs = on_chain
+        .sent
+        .iter()
+        .map(|asset| {
+            let collection = format!("{:#x}", asset.contractAddress);
+            crate::coupons::merkle::collection_proof(&coupon.collections, &collection)
+                .map(|proof| proof.into_iter().map(B256::from).collect::<Vec<B256>>())
+                .map_err(|e| CallError::Coupon(e.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let signature = bytes_of("coupon.signature", Some(&coupon.signature))?;
+    let coupon = offchain::Coupon {
+        signature: signature.into(),
+        checks: on_chain_checks(&coupon.checks, B256::ZERO)?,
+        couponAddress: coupon.coupon_address,
+        data: (
+            U256::from(coupon.discount_type),
+            U256::from(coupon.discount_ppm),
+            word("coupon.root", Some(&coupon.root))?,
+        )
+            .abi_encode()
+            .into(),
+        callerData: (proofs,).abi_encode().into(),
+    };
+    Ok(Call {
+        data: offchain::acceptWithCouponCall {
+            _trades: vec![on_chain],
+            _coupons: vec![coupon],
+        }
+        .abi_encode()
+        .into(),
+        ..accept
     })
 }
 
@@ -621,6 +698,186 @@ mod tests {
             Some(keccak256(
                 hex::decode(format!("{}1b", "ab".repeat(64))).unwrap()
             ))
+        );
+    }
+
+    #[test]
+    fn a_coupon_carries_each_sent_assets_own_proof_and_refuses_an_uncovered_one() {
+        use crate::coupons::merkle;
+        let chain = chain();
+        let venue: Address = "0xe38ef22abe871513555cba89adfe45ab4f548ada"
+            .parse()
+            .unwrap();
+        let (cc, dd, ee, ff) = (
+            "0x00000000000000000000000000000000000000cc",
+            "0x00000000000000000000000000000000000000dd",
+            "0x00000000000000000000000000000000000000ee",
+            "0x00000000000000000000000000000000000000ff",
+        );
+        let covered: Vec<String> = [cc, dd, ee].iter().map(|c| c.to_string()).collect();
+        let root = merkle::collections_root(&covered).unwrap();
+        let coupon = CouponIn {
+            id: "c".into(),
+            coupon_address: Address::repeat_byte(0xc0),
+            discount_type: 1,
+            discount_ppm: 100_000,
+            root: merkle::to_hex32(root),
+            collections: covered,
+            signature: format!("0x{}1c", "cd".repeat(64)),
+            checks: trade("public_item_order").checks,
+        };
+        let with_second = |collection: &str| {
+            let mut t = trade("public_item_order");
+            let mut second = t.sent[0].clone();
+            second.contract_address = collection.into();
+            t.sent.push(second);
+            t
+        };
+
+        let call = accept_with_coupon(
+            &chain,
+            venue,
+            &with_second(dd),
+            &coupon,
+            Address::repeat_byte(0xb0),
+            None,
+        )
+        .unwrap();
+        let decoded = offchain::acceptWithCouponCall::abi_decode(&call.data).unwrap();
+        let (proofs,): (Vec<Vec<B256>>,) =
+            <(Vec<Vec<B256>>,)>::abi_decode(&decoded._coupons[0].callerData).unwrap();
+        assert_eq!(proofs.len(), 2, "one proof per sent asset");
+        assert_ne!(proofs[0], proofs[1], "each asset proves its own collection");
+        for (asset, proof) in decoded._trades[0].sent.iter().zip(&proofs) {
+            let proof: Vec<[u8; 32]> = proof.iter().map(|n| n.0).collect();
+            assert!(
+                merkle::verify_collection_proof(
+                    root,
+                    &format!("{:#x}", asset.contractAddress),
+                    &proof
+                ),
+                "the proof for {:#x} verifies against the coupon's root",
+                asset.contractAddress
+            );
+        }
+
+        assert!(
+            matches!(
+                accept_with_coupon(
+                    &chain,
+                    venue,
+                    &with_second(ff),
+                    &coupon,
+                    Address::repeat_byte(0xb0),
+                    None
+                ),
+                Err(CallError::Coupon(_))
+            ),
+            "an asset of a collection the coupon does not cover gets no calldata"
+        );
+    }
+
+    #[test]
+    fn the_tracker_prices_a_trade_by_the_coupon_its_own_calldata_carried() {
+        use super::super::tracker::applied_coupon;
+        use crate::evm::abi::{combined_sig, discounted_amount};
+        let chain = chain();
+        let venue: Address = "0xe38ef22abe871513555cba89adfe45ab4f548ada"
+            .parse()
+            .unwrap();
+        let buyer = Address::repeat_byte(0xb0);
+        let sold = trade("public_item_order");
+        let reference = format!("{:#x}", hashed_signature(&sold.signature).unwrap());
+        let covered = vec!["0x00000000000000000000000000000000000000cc".to_string()];
+        let coupon = |address: &str, ppm: u32| CouponIn {
+            id: "c".into(),
+            coupon_address: address.parse().unwrap(),
+            discount_type: 1,
+            discount_ppm: ppm,
+            root: crate::coupons::merkle::to_hex32(
+                crate::coupons::merkle::collections_root(&covered).unwrap(),
+            ),
+            collections: covered.clone(),
+            signature: format!("0x{}1c", "cd".repeat(64)),
+            checks: sold.checks.clone(),
+        };
+        let signed = U256::from(2_000_000_000_000_000_000u128);
+        let price = |data: &[u8]| -> Result<Option<U256>, String> {
+            applied_coupon(137, venue, &reference, Some(venue), data)
+                .map(|c| c.map(|(_, d)| discounted_amount(&d, signed).unwrap()))
+        };
+        let modelled = "0xc914507fe297b2dddd1232ac3a8903f1c125e794";
+
+        // The coupon sent is the one priced, whatever the coupons look like
+        // by settlement: the tracker reads no coupon state at all.
+        let ten = accept_with_coupon(
+            &chain,
+            venue,
+            &sold,
+            &coupon(modelled, 100_000),
+            buyer,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            price(&ten.data),
+            Ok(Some(U256::from(1_800_000_000_000_000_000u128)))
+        );
+        let relayed = combined_sig::executeMetaTransactionCall {
+            userAddress: buyer,
+            functionData: ten.data.clone(),
+            signature: vec![0u8; 65].into(),
+        }
+        .abi_encode();
+        assert_eq!(
+            price(&relayed),
+            Ok(Some(U256::from(1_800_000_000_000_000_000u128))),
+            "a relayed call is unwrapped"
+        );
+
+        // A plain accept pays the signed price, even if a coupon is live now.
+        let plain = accept(&chain, venue, &sold, buyer, None).unwrap();
+        assert_eq!(price(&plain.data), Ok(None));
+
+        // What does not settle this row as the Shop prices it is refused.
+        assert!(
+            applied_coupon(
+                137,
+                venue,
+                &reference,
+                Some(Address::repeat_byte(0x99)),
+                &ten.data
+            )
+            .is_err(),
+            "another target"
+        );
+        assert!(
+            applied_coupon(
+                137,
+                venue,
+                &format!("0x{}", "00".repeat(32)),
+                Some(venue),
+                &ten.data
+            )
+            .is_err(),
+            "another trade"
+        );
+        let unknown = accept_with_coupon(
+            &chain,
+            venue,
+            &sold,
+            &coupon("0x00000000000000000000000000000000000000c0", 100_000),
+            buyer,
+            None,
+        )
+        .unwrap();
+        assert!(
+            price(&unknown.data).is_err(),
+            "an implementation whose data the Shop does not model"
+        );
+        assert!(
+            price(&cancel_signature(&chain, venue, &sold).unwrap().data).is_err(),
+            "not an accept"
         );
     }
 }
