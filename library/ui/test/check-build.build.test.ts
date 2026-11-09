@@ -1,11 +1,12 @@
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
+import { createServer, type RequestListener, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { build } from 'vite'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { checkBuild } from '../figma/review/scripts/check-build.mjs'
+import { openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 // The gallery's functional proof, run against a real relative-base build served under a nested prefix, and
 // against broken copies of it: each must fail the check rather than pass vacuously.
@@ -167,6 +168,44 @@ describe('when checking a built gallery', () => {
       }, 120_000)
     })
 
+    describe.each(['document', 'module'] as const)(
+      'and the %s entry responds with HTTP 302',
+      (kind) => {
+        let redirectServer: typeof createServer
+        let redirected: boolean
+        let destination: string
+
+        beforeEach(async () => {
+          redirected = false
+          destination = origin + (kind === 'module' ? '/escape.js' : '/landed.html')
+          const html = await readFile(path.join(dist, 'index.html'), 'utf8')
+          const module = /<script[^>]*type="module"[^>]*src="([^"]+)"[^>]*><\/script>/.exec(html)
+          if (!module) throw new Error('The fixture has no module entry')
+          const route =
+            '/nested/prefix/' + (kind === 'module' ? module[1]!.replace(/^\.\//, '') : '')
+          redirectServer = ((listener: RequestListener) =>
+            createServer((request, response) => {
+              if (request.url === route) {
+                redirected = true
+                response.writeHead(302, { Location: destination }).end()
+              } else listener(request, response)
+            })) as typeof createServer
+        })
+
+        it('should reject the HTTP redirect destination even though it returns 200', async () => {
+          await expect(
+            checkBuild({ dist, prefix: '/nested/prefix/', createServer: redirectServer })
+          ).rejects.toThrow(
+            (kind === 'module' ? 'a request' : 'the document') +
+              ' left the expected origin or prefix: ' +
+              destination
+          )
+          expect(redirected).toBe(true)
+          expect(requests).toContain(kind === 'module' ? '/escape.js' : '/landed.html')
+        }, 120_000)
+      }
+    )
+
     it('should name the second origin when the entry redirects there and it responds with HTTP 200', async () => {
       copy = await brokenCopy('redirect-external', async (target) => {
         const entry = path.join(target, 'index.html')
@@ -206,6 +245,59 @@ describe('when checking a built gallery', () => {
       /the document left the expected origin or prefix: http:\/\/127\.0\.0\.1:\d+\/outside\/landed\.html/
     )
   }, 120_000)
+
+  describe('and history escapes after the final audit render is measured', () => {
+    let escaped: string
+    let auditLocation: string
+    let auditBox: { width: number; height: number } | undefined
+    let open: typeof openSession
+
+    beforeEach(() => {
+      escaped = ''
+      auditLocation = ''
+      auditBox = undefined
+      open = async (...args) => {
+        const session = await openSession(...args)
+        const send = session.send
+        session.send = async (method, params) => {
+          const result = await send(method, params)
+          if (
+            method === 'Runtime.evaluate' &&
+            String(params?.expression).includes(
+              "document.querySelector('#audit-render')?.firstElementChild"
+            )
+          ) {
+            const box = (result as { result?: { value?: { width: number; height: number } } })
+              .result?.value
+            if (box && box.width > 0 && box.height > 0) {
+              auditBox = box
+              const moved = (await send('Runtime.evaluate', {
+                expression:
+                  '(() => { const before = location.href; history.replaceState(null, "", "/outside/final-audit.html"); return { before, after: location.href }; })()',
+                returnByValue: true
+              })) as { result: { value: { before: string; after: string } } }
+              auditLocation = moved.result.value.before
+              escaped = moved.result.value.after
+            }
+          }
+          return result
+        }
+        return session
+      }
+    })
+
+    it('should reject the observed escape after reaching the actual gallery audit step', async () => {
+      const proof = checkBuild({ dist, prefix: '/nested/prefix/', open })
+      await proof.catch(() => undefined)
+      expect(auditLocation).toMatch(/\/nested\/prefix\/dcl-ui-review\/.*[?&]audit=1(?:&|$)/)
+      expect(auditBox?.width).toBeGreaterThan(0)
+      expect(auditBox?.height).toBeGreaterThan(0)
+      expect(escaped).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/outside\/final-audit\.html$/)
+      await expect(proof).rejects.toThrow(
+        'the document left the expected origin or prefix: ' + escaped
+      )
+    }, 120_000)
+  })
 
   describe('and a teardown step fails', () => {
     let origin: string
