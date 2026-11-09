@@ -15,11 +15,17 @@
 //! The mirrors are read once their first complete pass is recorded
 //! (`shop.mirror_state`). Each recount's `badge_cursors.position` counts its
 //! completed passes; the first pass (`0`) brings the stored progress up to
-//! the node's rows without notifying, so a node never announces history.
+//! the node's rows without notifying, so a node never announces history. A
+//! pass walks the candidates in address order and records the last one it
+//! recounted (`resume_after`), so a wallet the evaluator cannot move (an
+//! imported document whose flag is not `true`) never holds back the ones
+//! after it; the next pass starts over.
 
 use super::super::evaluators::{self as ev, BusinessStep};
 use super::super::progress::Applied;
-use super::{Pass, award, lock_cursor};
+use std::collections::HashMap;
+
+use super::{Pass, award};
 use crate::identity::Address;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,27 +70,29 @@ impl Recount {
         }
     }
 
-    /// The wallets whose stored progress is behind their rows: `$1` the
-    /// badge, `$2` the batch; (address, count).
+    /// The wallets after `$3` whose stored progress is behind their rows,
+    /// in address order: `$1` the badge, `$2` the batch; (address, count).
     fn candidates_sql(self) -> &'static str {
         match self {
             Recount::EmoteCreator => {
                 "SELECT c.address, c.n FROM (SELECT lower(creator) AS address, count(*) AS n \
-                   FROM shop.items WHERE network = 'matic' AND item_type LIKE 'emote%' GROUP BY 1) c \
+                   FROM shop.items WHERE network = 'matic' AND item_type LIKE 'emote%' \
+                     AND lower(creator) > $3 GROUP BY 1) c \
                  LEFT JOIN social.user_badge_progress p ON p.address = c.address AND p.badge_id = $1 \
                  WHERE p.address IS NULL OR (p.completed_at IS NULL AND p.steps_done < c.n) \
                  ORDER BY c.address LIMIT $2"
             }
             Recount::WearableDesigner => {
                 "SELECT c.address, c.n FROM (SELECT lower(creator) AS address, count(*) AS n \
-                   FROM shop.items WHERE network = 'matic' AND item_type NOT LIKE 'emote%' GROUP BY 1) c \
+                   FROM shop.items WHERE network = 'matic' AND item_type NOT LIKE 'emote%' \
+                     AND lower(creator) > $3 GROUP BY 1) c \
                  LEFT JOIN social.user_badge_progress p ON p.address = c.address AND p.badge_id = $1 \
                  WHERE p.address IS NULL OR (p.completed_at IS NULL AND p.steps_done < c.n) \
                  ORDER BY c.address LIMIT $2"
             }
             Recount::Collections => {
                 "SELECT c.address, 1::bigint FROM (SELECT DISTINCT lower(creator) AS address \
-                   FROM shop.collections WHERE network = 'matic') c \
+                   FROM shop.collections WHERE network = 'matic' AND lower(creator) > $3) c \
                  LEFT JOIN social.user_badge_progress p ON p.address = c.address AND p.badge_id = $1 \
                  WHERE p.address IS NULL OR (p.completed_at IS NULL \
                    AND (p.progress->'collection_submitted') IS DISTINCT FROM 'true'::jsonb) \
@@ -92,7 +100,7 @@ impl Recount {
             }
             Recount::Referrals => {
                 "SELECT c.address, c.n FROM (SELECT lower(referrer) AS address, count(*) AS n \
-                   FROM social.referral_progress WHERE tier_granted GROUP BY 1) c \
+                   FROM social.referral_progress WHERE tier_granted AND lower(referrer) > $3 GROUP BY 1) c \
                  LEFT JOIN social.user_badge_progress p ON p.address = c.address AND p.badge_id = $1 \
                  WHERE p.address IS NULL OR (p.completed_at IS NULL AND p.steps_done <> c.n) \
                  ORDER BY c.address LIMIT $2"
@@ -109,9 +117,7 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
     Ok(written)
 }
 
-/// Batches of one recount until no wallet is behind or a batch writes
-/// nothing (a candidate the evaluator cannot move, such as an imported
-/// document whose flag is not `true`, stays one until its rows change);
+/// Batches of one recount until its pass completes (or the tick's budget);
 /// returns the wallets written.
 pub(crate) async fn run_one(pass: &Pass, recount: Recount) -> anyhow::Result<u64> {
     let mut written = 0;
@@ -151,11 +157,17 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
         tx.rollback().await?;
         return Ok((0, false));
     }
-    let passes = match lock_cursor(&mut tx, recount.source()).await? {
-        Some((passes, _)) => passes,
+    let cursor: Option<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT position, resume_after FROM social.badge_cursors WHERE source = $1 FOR UPDATE",
+    )
+    .bind(recount.source())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (passes, after) = match cursor {
+        Some(c) => c,
         None => {
             super::init_cursor(&mut tx, recount.source(), 0, 0).await?;
-            0
+            (0, None)
         }
     };
     let notify = (passes > 0).then_some(pass.asset_base.as_str());
@@ -164,8 +176,16 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
         sqlx::query_as(sqlx::AssertSqlSafe(recount.candidates_sql()))
             .bind(recount.badge())
             .bind(limit)
+            .bind(after.as_deref().unwrap_or(""))
             .fetch_all(&mut *tx)
             .await?;
+    let items = match recount {
+        Recount::EmoteCreator | Recount::WearableDesigner => {
+            let wallets: Vec<&str> = candidates.iter().map(|(a, _)| a.as_str()).collect();
+            creators_items(&mut tx, &wallets, recount == Recount::EmoteCreator).await?
+        }
+        _ => HashMap::new(),
+    };
     let mut written = 0;
     for (raw, count) in &candidates {
         let Ok(address) = Address::parse(raw) else {
@@ -178,20 +198,10 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
         };
         let applied = match recount {
             Recount::EmoteCreator | Recount::WearableDesigner => {
-                let emote = recount == Recount::EmoteCreator;
-                let items: Vec<(String, i64)> = sqlx::query_as(
-                    "SELECT contract_address || '-' || item_id::text, created_at * 1000 \
-                     FROM shop.items WHERE network = 'matic' AND lower(creator) = $1 \
-                       AND (item_type LIKE 'emote%') = $2 \
-                     ORDER BY created_at, contract_address, item_id",
-                )
-                .bind(address.as_str())
-                .bind(emote)
-                .fetch_all(&mut *tx)
-                .await?;
                 let badge = recount.badge();
+                let mine = items.get(raw).map(Vec::as_slice).unwrap_or_default();
                 award(&mut tx, &address, badge, notify, |p| {
-                    ev::creator(p, badge, &items)
+                    ev::creator(p, badge, mine)
                 })
                 .await?
             }
@@ -212,10 +222,47 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
             written += 1;
         }
     }
-    let more = candidates.len() as i64 == limit && written > 0;
-    if !more {
-        super::advance(&mut tx, recount.source(), passes + 1, 0).await?;
-    }
+    let more = candidates.len() as i64 == limit;
+    let (position, resume_after) = match candidates.last() {
+        Some((last, _)) if more => (passes, Some(last.as_str())),
+        _ => (passes + 1, None),
+    };
+    sqlx::query(
+        "UPDATE social.badge_cursors SET position = $2, resume_after = $3, \
+         updated_at = timezone('UTC', now()) WHERE source = $1",
+    )
+    .bind(recount.source())
+    .bind(position)
+    .bind(resume_after)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok((written, more))
+}
+
+/// The Polygon items of `wallets` (lowercase), emotes or the rest, each
+/// wallet's in creation order: one read through `items_creator_lower_idx`.
+async fn creators_items(
+    conn: &mut sqlx::PgConnection,
+    wallets: &[&str],
+    emotes: bool,
+) -> Result<HashMap<String, Vec<(String, i64)>>, sqlx::Error> {
+    if wallets.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT lower(creator), contract_address || '-' || item_id::text, created_at * 1000 \
+         FROM shop.items WHERE network = 'matic' AND lower(creator) = ANY($1) \
+           AND (item_type LIKE 'emote%') = $2 \
+         ORDER BY created_at, contract_address, item_id",
+    )
+    .bind(wallets)
+    .bind(emotes)
+    .fetch_all(conn)
+    .await?;
+    let mut out: HashMap<String, Vec<(String, i64)>> = HashMap::new();
+    for (creator, item, at) in rows {
+        out.entry(creator).or_default().push((item, at));
+    }
+    Ok(out)
 }

@@ -981,3 +981,46 @@ async fn recounts_bring_progress_up_silently_first_then_notify() {
         ["referral-starter"]
     );
 }
+
+#[tokio::test]
+async fn a_recount_resumes_past_a_wallet_it_cannot_move() {
+    let Some(pool) = private_pool("badges_recount_resume").await else {
+        return;
+    };
+    let mut p = pass(&pool);
+    p.settings.batch_size = 1;
+    mirror_ready(&pool, "collections").await;
+    let stuck = format!("0x{}1", "0".repeat(39));
+    let next = format!("0x{}2", "0".repeat(39));
+    // An imported document whose flag is truthy but not `true`: the
+    // evaluator leaves it, so it stays a candidate.
+    sqlx::query(
+        "INSERT INTO social.user_badge_progress (address, badge_id, steps_done, progress) \
+         VALUES ($1, 'open_for_business', 1, '{\"steps\": 1, \"collection_submitted\": 1}')",
+    )
+    .bind(&stuck)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for creator in [&stuck, &next] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'C', $2, $2, 'urn:c', true, true, false, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(contract())
+        .bind(creator)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    assert_eq!(recount::run_one(&p, Recount::Collections).await.unwrap(), 1);
+    assert_eq!(
+        progress(&pool, &next, "open_for_business").await.unwrap().1,
+        json!({"steps": 1, "collection_submitted": true})
+    );
+    assert_eq!(
+        cursor(&pool, Recount::Collections.source()).await,
+        Some((1, 0)),
+        "the pass completed"
+    );
+}

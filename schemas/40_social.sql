@@ -901,11 +901,13 @@ CREATE TABLE social.badge_admin_audit (
 -- `client_events` (social.client_events.seq), `deployments`
 -- (content.deployments.id), `sales:<table>:<network>` (block_number,
 -- log_index of a shop log) and the recount passes (`position` counts the
--- passes; the first pass writes no notification).
+-- passes, the first of which writes no notification; `resume_after` is the
+-- last wallet the pass in progress recounted, NULL between passes).
 CREATE TABLE social.badge_cursors (
     source text NOT NULL,
     position bigint NOT NULL,
     log_index integer NOT NULL DEFAULT 0,
+    resume_after text,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
 );

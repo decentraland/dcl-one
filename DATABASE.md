@@ -1307,7 +1307,20 @@ default, and social writes are), each a reader of tables other areas own, with o
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for
-  business, referral), for the wallets whose stored steps are behind.
+  business, referral), for the wallets whose stored steps are behind. A pass
+  walks those wallets in address order and records the last one recounted
+  (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
+  imported document whose flag is truthy but not `true`) never starves the
+  ones after it; `position` counts completed passes. A batch reads its
+  creators' items in one statement through `items_creator_lower_idx`
+  (`lower(creator)`: the mirror lowercases, no constraint says so): 20 ms
+  for 200 creators on 1M synthetic items (781 MB), where the unindexed
+  per-creator read scanned the table once per creator. The candidate scan
+  itself reads the table once per batch (150 ms on the same rows). The
+  object pass builds the index in the migrate transaction under SHARE on
+  `shop.items` (the mirror's upserts wait): 1.7 s on those rows; it can be
+  built beforehand with `CREATE INDEX CONCURRENTLY` and the definition of
+  `schemas/30_shop.sql`.
 
 One transaction holds a batch (`BADGES_PROCESSOR_BATCH_SIZE`, default 200):
 the cursor row `FOR UPDATE`, the batch's progress writes through
