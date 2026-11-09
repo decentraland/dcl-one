@@ -47,7 +47,7 @@ pub fn create_runtime(
     #[cfg(test)]
     crate::test_platform();
 
-    let [webidl, web] = web_extensions();
+    let [webidl, web, fetch_ext] = web_extensions();
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
@@ -144,7 +144,7 @@ pub fn create_runtime(
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![webidl, web, ext],
+        extensions: vec![webidl, web, fetch_ext, ext],
         inspector: inspect,
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
@@ -227,8 +227,8 @@ pub fn create_runtime(
     }
 }
 
-/// deno_webidl and deno_web, with every script compiled in.
-fn web_extensions() -> [Extension; 2] {
+/// deno_webidl, deno_web and the vendored fetch scripts, with every script compiled in.
+fn web_extensions() -> [Extension; 3] {
     let mut webidl = deno_webidl::deno_webidl::init();
     // per runtime, so no Blob or BroadcastChannel state is shared between scenes
     let mut web = deno_web::deno_web::init(
@@ -243,7 +243,12 @@ fn web_extensions() -> [Extension; 2] {
     web.objects = Default::default();
     sources::embed_upstream(&mut webidl);
     sources::embed_upstream(&mut web);
-    [webidl, web]
+    let fetch = Extension {
+        name: "deno_fetch",
+        lazy_loaded_js_files: sources::deno_fetch().into(),
+        ..Default::default()
+    };
+    [webidl, web, fetch]
 }
 
 /// Overrides that did not replace an op exactly, logged at runtime creation.
@@ -891,57 +896,41 @@ mod tests {
         }
     }
 
-    /// A scene-supplied proxy is dialled instead of the URL host, so it walks straight past
-    /// the per-request `assert_public_url` check -- the check only ever sees the URL. On the
-    /// authoritative server the option must be refused outright.
+    /// Scenes cannot create HTTP clients, so a client rid passed to `op_fetch` is refused.
     #[test]
-    fn server_refuses_a_scene_supplied_proxy() {
-        let (mut runtime, _) = create_runtime(false, false, Default::default());
-        runtime.op_state().borrow_mut().put(context(true));
-        let err = runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: [], proxy: { url: "http://169.254.169.254:80" } })"#
-                ),
-            )
-            .expect_err("proxy must be refused on the authoritative server")
-            .to_string();
-        assert!(err.contains("proxy"), "unexpected error: {err}");
-    }
-
-    /// Same for a scene-supplied trust root: it would make the scene a CA for the server's
-    /// own outbound TLS.
-    #[test]
-    fn server_refuses_scene_supplied_ca_certs() {
-        let (mut runtime, _) = create_runtime(false, false, Default::default());
-        runtime.op_state().borrow_mut().put(context(true));
-        let err = runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: ["-----BEGIN CERTIFICATE-----"] })"#
-                ),
-            )
-            .expect_err("ca_certs must be refused on the authoritative server")
-            .to_string();
-        assert!(err.contains("root certificates"), "unexpected error: {err}");
-    }
-
-    /// The desktop/web client runs on the user's own machine and keeps the old behaviour --
-    /// this restriction is server-only.
-    #[test]
-    fn client_still_allows_custom_clients() {
-        let (mut runtime, _) = create_runtime(false, false, Default::default());
-        runtime.op_state().borrow_mut().put(context(false));
-        runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: [], proxy: { url: "http://localhost:8080" } })"#
-                ),
-            )
-            .expect("client mode must keep working");
+    fn op_fetch_refuses_a_client_rid() {
+        for is_server in [false, true] {
+            let (mut runtime, _) = create_runtime(false, false, Default::default());
+            runtime.op_state().borrow_mut().put(context(is_server));
+            runtime
+                .op_state()
+                .borrow_mut()
+                .put(dcl_types::SceneResourceCounters::default());
+            let err = runtime
+                .execute_script(
+                    "<test>",
+                    ascii_str!(
+                        r#"Deno.core.ops.op_fetch("GET", "https://example.org/", [], 0, false, null, null)"#
+                    ),
+                )
+                .expect_err("a client rid must be refused")
+                .to_string();
+            assert!(
+                err.contains("custom HTTP clients"),
+                "unexpected error: {err}"
+            );
+            let removed = runtime
+                .execute_script(
+                    "<test>",
+                    ascii_str!("typeof Deno.core.ops.op_fetch_custom_client"),
+                )
+                .unwrap();
+            deno_core::scope!(scope, runtime);
+            assert_eq!(
+                deno_core::v8::Local::new(scope, removed).to_rust_string_lossy(scope),
+                "undefined"
+            );
+        }
     }
 
     /// Drive one scene `fetch` against a local server that answers `/redirect` with a 302 to
@@ -1049,19 +1038,15 @@ mod tests {
         deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
     }
 
-    /// The server never auto-follows a redirect: the scene gets the 3xx back. (Following
-    /// would also need the `URL` global, which this runtime does not install -- pinned here
-    /// so the outcome is the policy, not that accident.)
+    /// The server never follows a redirect: the scene gets the 3xx back.
     #[test]
-    #[ignore = "stage 2: vendored fetch"]
     fn server_hands_redirects_back_to_the_scene() {
         let outcome = fetch_redirect_outcome(true);
         assert!(outcome.starts_with("302 "), "unexpected outcome: {outcome}");
     }
 
-    /// The client keeps following, like the browser does.
+    /// The client follows, like the browser does; each hop goes back through `op_fetch`.
     #[test]
-    #[ignore = "stage 2: vendored fetch"]
     fn client_follows_redirects() {
         assert_eq!(fetch_redirect_outcome(false), "200 arrived");
     }

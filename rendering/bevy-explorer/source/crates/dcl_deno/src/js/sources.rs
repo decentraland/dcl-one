@@ -18,6 +18,20 @@ pub(super) fn own() -> Vec<ExtensionFileSource> {
     )
 }
 
+/// Upstream deno_fetch 0.284.0 JS (see `vendor/upstream.lock.json`), loaded as `ext:deno_fetch/*`.
+pub(super) fn deno_fetch() -> Vec<ExtensionFileSource> {
+    embedded!(
+        "ext:deno_fetch/20_headers.js" = "vendor/deno_fetch/20_headers.js",
+        "ext:deno_fetch/21_formdata.js" = "vendor/deno_fetch/21_formdata.js",
+        "ext:deno_fetch/22_body.js" = "vendor/deno_fetch/22_body.js",
+        "ext:deno_fetch/22_http_client.js" = "vendor/deno_fetch/22_http_client.js",
+        "ext:deno_fetch/23_request.js" = "vendor/deno_fetch/23_request.js",
+        "ext:deno_fetch/23_response.js" = "vendor/deno_fetch/23_response.js",
+        "ext:deno_fetch/26_fetch.js" = "vendor/deno_fetch/26_fetch.js",
+        "ext:deno_fetch/27_eventsource.js" = "vendor/deno_fetch/27_eventsource.js",
+    )
+}
+
 /// Unmodified copies of the deno_web and deno_webidl scripts the runtime loads.
 fn deno_web() -> Vec<ExtensionFileSource> {
     embedded!(

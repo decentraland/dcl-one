@@ -1,5 +1,7 @@
 // this code is executed as the runtime is created, all scopes get these definitions
 
+import { internals } from "ext:core/mod.js";
+
 // required for async ops (engine.sendMessage is declared as async)
 // Deno.core.initializeAsyncOps();
 
@@ -167,8 +169,29 @@ globalThis.DOMException = DOMException;
 globalThis.AbortController = AbortController;
 globalThis.AbortSignal = AbortSignal;
 
-// stage 2: vendored fetch. deno_fetch's JS needs the deno_fetch crate, so scenes get no
-// `fetch` or `Request` until the vendored copy lands.
+// The fetch scripts read their tracing hooks from these; scenes are never traced.
+internals.__telemetry ??= {
+    TRACING_ENABLED: false,
+    DID_NOT_ENTER: Symbol("DID_NOT_ENTER"),
+    PROPAGATORS: [],
+    ContextManager: { active() { return undefined; } },
+    builtinTracer() { return undefined; },
+    enterSpan() { return undefined; },
+    exitSpan() {},
+};
+internals.__telemetryUtil ??= {};
+
+const { Request } = loadExtScript("ext:deno_fetch/23_request.js");
+globalThis.Request = Request;
+
+const { fetch } = loadExtScript("ext:deno_fetch/26_fetch.js");
+// On the authoritative server a 3xx is never followed: the scene gets the redirect response
+// back and re-issues the request itself. Decided per call, as the scene context is not in
+// place while this module is evaluated.
+globalThis.fetch = (input, init) =>
+    isAuthoritativeServer()
+        ? fetch(input, { ...init, redirect: "manual" })
+        : fetch(input, init);
 
 const timers = loadExtScript("ext:deno_web/02_timers.js");
 globalThis.setTimeout = timers.setTimeout;

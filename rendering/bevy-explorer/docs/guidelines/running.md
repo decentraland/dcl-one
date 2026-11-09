@@ -51,7 +51,12 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
-Ordinary and authoritative hosted scenes use their own address policies. Native scene
+Ordinary and authoritative hosted scenes use their own address policies. Native scene Fetch
+follows a redirect by sending the next hop through the same permission, request budget and
+address checks as a new request; it refuses a redirect from `https` to `http`, drops the
+signed-fetch `x-identity-*` headers on a cross-origin hop, and on the authoritative server
+returns the redirect response instead of following it. Scenes cannot create custom HTTP
+clients, proxies or trust roots. Native scene
 WebSockets follow the same rule as native Fetch: preview, the bundled bridge and an
 operator-selected `--system-scene` on desktop may use `ws://` and reach loopback and LAN
 addresses; every other scene, and every scene on the authoritative server, needs `wss://` to

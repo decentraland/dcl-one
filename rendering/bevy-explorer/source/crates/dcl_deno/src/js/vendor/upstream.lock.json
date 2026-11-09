@@ -7,6 +7,61 @@
   },
   "packages": [
     {
+      "package": "deno_fetch",
+      "version": "0.284.0",
+      "crate_sha256": "752387783c99f75ea6962bb88af3735baba9f4a9e66716eacd39586db0e28d99",
+      "files": [
+        {
+          "path": "deno_fetch/20_headers.js",
+          "upstream_sha256": "9d15a8f8547b3a7a0d57900eeaa3d6232abf00b5705b55f830962f0470d3dbe1",
+          "sha256": "9d15a8f8547b3a7a0d57900eeaa3d6232abf00b5705b55f830962f0470d3dbe1"
+        },
+        {
+          "path": "deno_fetch/21_formdata.js",
+          "upstream_sha256": "0a557fb5e81be7f6b00c2a71d50bb0a6451ee98f590b52e0bee225f9f5068b20",
+          "sha256": "0a557fb5e81be7f6b00c2a71d50bb0a6451ee98f590b52e0bee225f9f5068b20"
+        },
+        {
+          "path": "deno_fetch/22_body.js",
+          "upstream_sha256": "280ccc9bb1713350b3f8a108c34793618447503fcd0197e81455b6721f22cb7c",
+          "sha256": "280ccc9bb1713350b3f8a108c34793618447503fcd0197e81455b6721f22cb7c"
+        },
+        {
+          "path": "deno_fetch/22_http_client.js",
+          "upstream_sha256": "e3554c6dbc2799cf4d52398ded1afec32f1c6fdbaad559df10e78e50960484d3",
+          "sha256": "aa72bfb22451358a3a306105c1520c41b847c2ed80137d7bec63fb504c35fb42",
+          "changes": [
+            "Replaced: scenes cannot create HTTP clients; only HttpClient/HttpClientPrototype remain for 23_request.js"
+          ]
+        },
+        {
+          "path": "deno_fetch/23_request.js",
+          "upstream_sha256": "6c12910b0c2aa1e746a000ab718769b42a411b91f28ce93686c0a31499562ba3",
+          "sha256": "6c12910b0c2aa1e746a000ab718769b42a411b91f28ce93686c0a31499562ba3"
+        },
+        {
+          "path": "deno_fetch/23_response.js",
+          "upstream_sha256": "d50a693c9661512944e76f1dc1b2b5b8570a0f3a6de2e60191763c3db2120360",
+          "sha256": "d50a693c9661512944e76f1dc1b2b5b8570a0f3a6de2e60191763c3db2120360"
+        },
+        {
+          "path": "deno_fetch/26_fetch.js",
+          "upstream_sha256": "f0b1453bd5dd41982016faea149ccfe588cc061a30ab0f032dceff4c2a0d679a",
+          "sha256": "202502adc71ede895368f2e8001dc30612e93ebcab755d9079c8edb9ff247c29",
+          "changes": [
+            "Load URL from ext:deno_web/00_url.js instead of reading the global",
+            "Refuse a redirect from https to http",
+            "Drop x-identity-* (signed fetch) headers on a cross-origin redirect, with the existing sensitive headers"
+          ]
+        },
+        {
+          "path": "deno_fetch/27_eventsource.js",
+          "upstream_sha256": "ea0c37bea058f422724048df75291699e08a00596960c3863ab93f6e9897db7e",
+          "sha256": "ea0c37bea058f422724048df75291699e08a00596960c3863ab93f6e9897db7e"
+        }
+      ]
+    },
+    {
       "package": "deno_web",
       "version": "0.291.0",
       "crate_sha256": "8658d7955894408e10b53018f651435ca6418b873be2e0b7d98224f3493c20f2",
@@ -102,7 +157,7 @@
     }
   ],
   "update_instructions": [
-    "Copy the listed scripts from the exact crates.io release that Cargo.lock pins.",
+    "Copy the listed scripts from the exact crates.io release that Cargo.lock pins (deno_fetch is not a dependency; take the release matching the locked deno_web), and re-apply the listed changes.",
     "deno_web and deno_webidl copies stay byte-identical: embedded_upstream_scripts_match_the_locked_crates fails otherwise.",
     "Run the closure of core.loadExtScript specifiers from init.js and websocket.js; every reached ext:deno_web script needs a copy here and an entry in sources.rs."
   ]

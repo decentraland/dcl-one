@@ -338,7 +338,6 @@ fn eval_string(runtime: &mut JsRuntime, script: &'static str) -> String {
 /// A fetch with a streamed body reaches the server whole, through every producer path:
 /// sync writes, the backpressured async write and close.
 #[test]
-#[ignore = "stage 2: vendored fetch"]
 fn streamed_upload_reaches_the_server() {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -395,10 +394,10 @@ fn streamed_upload_reaches_the_server() {
     rt.block_on(async {
         let script = runtime
             .load_side_es_module_from_code(
-                &deno_core::ModuleSpecifier::parse("ext:test/streamed_upload.js").unwrap(),
+                &deno_core::ModuleSpecifier::parse("file:///test/streamed_upload.js").unwrap(),
                 format!(
                     r#"
-                import {{ ReadableStream }} from "ext:deno_web/06_streams.js";
+                const {{ ReadableStream }} = Deno.core.loadExtScript("ext:deno_web/06_streams.js");
                 const chunks = [new Uint8Array(10).fill(1), new Uint8Array(200 * 1024).fill(2), new Uint8Array(5).fill(3)];
                 const body = new ReadableStream({{
                     pull(controller) {{

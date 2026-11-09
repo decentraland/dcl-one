@@ -82,7 +82,6 @@ fn run_scene(
 }
 
 #[test]
-#[ignore = "stage 2: vendored fetch"]
 fn operator_system_scene_fetches_private_http_services() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());

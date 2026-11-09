@@ -11,14 +11,14 @@ use common::rpc::{RpcCall, RpcResultSender};
 use deno_core::{
     error::AnyError,
     futures::{FutureExt, TryStreamExt},
-    op2, AsyncRefCell, BufView, ByteString, CancelFuture, CancelHandle, JsBuffer, OpDecl, OpState,
-    Resource, ResourceId,
+    op2, v8, AsyncRefCell, BufView, ByteString, CancelFuture, CancelHandle, JsBuffer, OpDecl,
+    OpState, Resource, ResourceId,
 };
 use http::{
     header::{ACCEPT_ENCODING, CONTENT_LENGTH, HOST, RANGE},
     HeaderName, HeaderValue, Method,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::plain::Plain;
 use fetch_response_body_resource::FetchResponseBodyResource;
@@ -55,7 +55,8 @@ pub fn ops() -> Vec<OpDecl> {
     vec![
         op_fetch(),
         op_fetch_send(),
-        op_fetch_custom_client(),
+        op_fetch_promise_is_settled(),
+        op_utf8_to_byte_string(),
         op_signed_fetch_headers(),
     ]
 }
@@ -125,23 +126,19 @@ pub fn op_fetch(
         (true, None, None) => return Err(type_error("missing fetch body").into()),
     };
 
-    // On the authoritative server redirects are never auto-followed, so a 3xx onto a private
-    // host can't bypass the per-request SSRF check or leak signed headers. The desktop/web
-    // client still follows them, but under the public-only redirect policy (see
-    // `build_scene_client` / `public_only_redirect`).
-    let is_server = state.borrow::<CrdtContext>().is_server;
+    // Scenes cannot create HTTP clients, so a client rid is a forged one.
+    if client_rid.is_some() {
+        return Err(type_error("custom HTTP clients are not supported").into());
+    }
+    // Redirects are never followed here: the fetch JS sends each hop back through this op,
+    // so the permission, budget and address checks apply to every hop.
     let allow_private = allow_private_network(state);
-    let client = if let Some(rid) = client_rid {
-        let r = state.resource_table.get::<ClientResource>(rid)?;
-        r.0.clone()
-    } else {
-        match state.try_borrow::<SceneHttpClient>() {
-            Some(client) => client.0.clone(),
-            None => {
-                let client = build_scene_client(allow_private, is_server);
-                state.put(SceneHttpClient(client.clone()));
-                client
-            }
+    let client = match state.try_borrow::<SceneHttpClient>() {
+        Some(client) => client.0.clone(),
+        None => {
+            let client = build_scene_client(allow_private)?;
+            state.put(SceneHttpClient(client.clone()));
+            client
         }
     };
 
@@ -202,7 +199,7 @@ pub fn op_fetch(
     })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchResponse {
     status: u16,
@@ -211,9 +208,10 @@ pub struct FetchResponse {
     url: String,
     response_rid: ResourceId,
     content_length: Option<u64>,
-    pub remote_addr_ip: Option<String>,
-    pub remote_addr_port: Option<u16>,
-    pub error: Option<String>,
+    /// The client never decompresses, so the headers always describe the body.
+    body_decoded: bool,
+    /// A transport failure as `(detail, cause)`; the fetch JS throws `TypeError("fetch failed")`.
+    error: Option<(String, String)>,
 }
 
 #[op2]
@@ -235,7 +233,7 @@ pub async fn op_fetch_send(
     let counters = op_state.borrow_mut::<SceneResourceCounters>();
     counters.fetch_duration_us += started.elapsed().as_micros() as u64;
     match &result {
-        Ok(response) => {
+        Ok(response) if response.error.is_none() => {
             counters.fetch_completed += 1;
             match response.status {
                 200..=299 => counters.fetch_status_2xx += 1,
@@ -251,7 +249,7 @@ pub async fn op_fetch_send(
                 }
             }
         }
-        Err(_) => {
+        _ => {
             counters.fetch_failed += 1;
             if is_storage {
                 counters.storage_failed += 1;
@@ -271,9 +269,9 @@ async fn fetch_send_inner(
         .resource_table
         .take::<FetchRequestResource>(rid)?;
 
-    let request = Rc::try_unwrap(request)
-        .ok()
-        .expect("multiple op_fetch_send ongoing");
+    let Ok(request) = Rc::try_unwrap(request) else {
+        bail!("fetch request is already being sent");
+    };
 
     // Take the request first so its upload is dropped even when the signal has
     // already fired and Deno never polls the permission or transfer future.
@@ -351,10 +349,22 @@ async fn send_request(
     } else {
         request
     };
-    let mut res = request
-        .send()
-        .await
-        .map_err(|err| type_error(err.to_string()))?;
+    let mut res = match request.send().await {
+        Ok(res) => res,
+        Err(err) => {
+            let detail = err.to_string();
+            let mut cause: &dyn std::error::Error = &err;
+            while let Some(source) = cause.source() {
+                cause = source;
+            }
+            let cause = cause.to_string();
+            return Ok(FetchResponse {
+                url,
+                error: Some((detail, cause)),
+                ..Default::default()
+            });
+        }
+    };
 
     let status = res.status();
     let mut headers = Vec::new();
@@ -423,43 +433,13 @@ async fn send_request(
         url,
         response_rid,
         content_length,
-        remote_addr_ip: None,
-        remote_addr_port: None,
+        body_decoded: false,
         error: None,
     })
 }
 
-// copy out the args struct so we can access the members...
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateHttpClientOptions {
-    ca_certs: Vec<String>,
-    proxy: Option<Proxy>,
-    cert_chain: Option<String>,
-    private_key: Option<String>,
-}
-
-#[derive(Deserialize, Default, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-pub struct Proxy {
-    pub url: String,
-    pub basic_auth: Option<BasicAuth>,
-}
-
-#[derive(Deserialize, Default, Debug, Clone)]
-#[serde(default)]
-pub struct BasicAuth {
-    pub username: String,
-    pub password: String,
-}
-
-pub struct ClientResource(reqwest::Client);
-impl deno_core::Resource for ClientResource {}
-
-/// Cached default client for a scene's own requests, in both server and client mode. Its
-/// connections follow the scene's private-network allowance (see [`PublicOnlyResolver`]);
-/// on the server, redirects are disabled too.
+/// Cached default client for a scene's own requests. Its connections follow the scene's
+/// private-network allowance (see [`PublicOnlyResolver`]).
 struct SceneHttpClient(reqwest::Client);
 
 pub(super) fn allow_private_network(state: &OpState) -> bool {
@@ -510,139 +490,23 @@ fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
         .dns_resolver(std::sync::Arc::new(PublicOnlyResolver { allow_private }))
 }
 
-/// The default client for a scene's own requests. On the authoritative server redirects are
-/// disabled entirely (a 3xx must not silently re-target or forward signed headers). The
-/// desktop client keeps following them — matching the browser — but through
-/// [`public_only_redirect`]: a hostname hop is re-resolved by [`PublicOnlyResolver`] at
-/// connect, and an IP-literal hop (dialled with no DNS lookup, so the resolver never sees it)
-/// is vetted by the policy.
-fn build_scene_client(allow_private: bool, is_server: bool) -> reqwest::Client {
+/// The client for a scene's own requests. It never follows a redirect: the fetch JS does,
+/// sending each hop back through `op_fetch`.
+fn build_scene_client(allow_private: bool) -> Result<reqwest::Client, reqwest::Error> {
     scene_client_builder(allow_private)
-        .redirect(if is_server {
-            reqwest::redirect::Policy::none()
-        } else {
-            public_only_redirect(allow_private)
-        })
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap()
 }
 
-/// Parse a URL host component as an IP literal, tolerating the brackets the `url` crate keeps
-/// around an IPv6 literal (`[::1]`). Returns `None` for a hostname.
-fn host_ip_literal(host: &str) -> Option<std::net::IpAddr> {
-    host.strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host)
-        .parse()
-        .ok()
-}
-
-/// Redirect policy for the desktop client. Redirects are followed (as the browser would), but
-/// a hop onto a non-public IP *literal* is refused: reqwest dials an IP literal with no DNS
-/// lookup, so [`PublicOnlyResolver`] — which vets every hostname hop at connect — never sees
-/// it. This is the redirect-time twin of [`reject_non_public_proxy`]. `allow_private`
-/// (preview or a native system scene) permits the local network but never link-local / metadata.
-fn public_only_redirect(allow_private: bool) -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(move |attempt| {
-        // Policy::custom replaces reqwest's built-in hop cap, so re-impose the default of 10.
-        if attempt.previous().len() >= 10 {
-            return attempt.error("too many redirects".to_string());
-        }
-        if let Some(ip) = attempt.url().host_str().and_then(host_ip_literal) {
-            let permitted = allow_private && common::util::is_private_lan(&ip);
-            if !permitted && common::util::is_forbidden_ip(&ip) {
-                return attempt.error(format!(
-                    "redirect to non-public address {ip} is not allowed"
-                ));
-            }
-        }
-        attempt.follow()
-    })
-}
-
-/// Vet a scene-supplied proxy endpoint. Only an IP *literal* needs checking here: reqwest's
-/// proxy connector is an `HttpConnector<DynResolver>`, which dials an IP literal directly but
-/// routes a *hostname* endpoint through [`PublicOnlyResolver`] at connect — so a hostname
-/// proxy is already egress-checked there and a literal is the one case that skips it. (A
-/// `socks*://` proxy needs no handling: the `socks` feature is off, so `reqwest::Proxy::http`
-/// rejects it before we get here.) `allow_private` (preview or a native system scene)
-/// permits the local network but never link-local / metadata.
-fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), AnyError> {
-    let url = deno_core::url::Url::parse(proxy_url)?;
-    if let Some(ip) = url.host_str().and_then(host_ip_literal) {
-        let permitted = allow_private && common::util::is_private_lan(&ip);
-        if !permitted && common::util::is_forbidden_ip(&ip) {
-            bail!("custom fetch client proxy may not target a non-public address");
-        }
-    }
-    Ok(())
+#[op2(fast)]
+fn op_fetch_promise_is_settled(promise: v8::Local<v8::Promise>) -> bool {
+    promise.state() != v8::PromiseState::Pending
 }
 
 #[op2]
 #[serde]
-pub fn op_fetch_custom_client(
-    state: &mut OpState,
-    #[scoped] args: Plain<CreateHttpClientOptions>,
-) -> Result<ResourceId, OpError> {
-    debug!("op_fetch_custom_client");
-    let args = args.0;
-
-    // A custom client is scene-supplied transport configuration, and on the shared
-    // authoritative server none of it may be honoured:
-    //
-    // * `proxy` re-targets the connection at an address the SSRF guard never sees. The
-    //   guard inspects the request URL; the proxy is what actually gets dialled. Pointing
-    //   it at 169.254.169.254 reaches cloud metadata with a perfectly public-looking URL,
-    //   and disabling redirects does nothing about it.
-    // * `ca_certs` makes the scene a trust root for the server's outbound TLS.
-    // * `cert_chain`/`private_key` let a scene present a client identity as the server.
-    //
-    // Refused rather than ignored so a scene that tries gets an error it can see.
-    // Everything else (the plain `createHttpClient()` case) still works.
-    let is_server = state.borrow::<CrdtContext>().is_server;
-    let allow_private = allow_private_network(state);
-    if is_server {
-        if args.proxy.is_some() {
-            bail!("custom fetch clients may not set a proxy on the authoritative server");
-        }
-        if !args.ca_certs.is_empty() {
-            bail!("custom fetch clients may not add root certificates on the authoritative server");
-        }
-        if args.cert_chain.is_some() || args.private_key.is_some() {
-            bail!("custom fetch clients may not set a client identity on the authoritative server");
-        }
-        // same transport rules as the default server client: no redirects, public-only DNS
-        return Ok(state
-            .resource_table
-            .add(ClientResource(build_scene_client(allow_private, true))));
-    }
-
-    // Client mode: the scene may still tune TLS trust/identity for its own machine, but its
-    // connections use the scene's private-network allowance, and redirects are held
-    // to the same egress policy as the default client (see `public_only_redirect`). A proxy
-    // endpoint given as an IP literal skips that resolver, so it is vetted synchronously by
-    // `reject_non_public_proxy` (a hostname endpoint is resolved through the resolver).
-    let mut builder =
-        scene_client_builder(allow_private).redirect(public_only_redirect(allow_private));
-    if let Some(proxy_def) = args.proxy {
-        reject_non_public_proxy(&proxy_def.url, allow_private)?;
-        let mut proxy = reqwest::Proxy::http(proxy_def.url)?;
-        if let Some(creds) = proxy_def.basic_auth {
-            proxy = proxy.basic_auth(&creds.username, &creds.password);
-        }
-        builder = builder.proxy(proxy);
-    }
-    if !args.ca_certs.is_empty() {
-        for ca_cert in &args.ca_certs {
-            builder =
-                builder.add_root_certificate(reqwest::Certificate::from_pem(ca_cert.as_bytes())?);
-        }
-    }
-    if let (Some(chain), Some(key)) = (args.cert_chain, args.private_key) {
-        builder = builder.identity(reqwest::Identity::from_pkcs12_der(chain.as_bytes(), &key)?);
-    }
-
-    Ok(state.resource_table.add(ClientResource(builder.build()?)))
+fn op_utf8_to_byte_string(#[string] input: String) -> ByteString {
+    input.into()
 }
 
 #[op2]
@@ -723,7 +587,6 @@ mod upload_tests {
     use dcl_types::SceneId;
 
     #[tokio::test]
-    #[ignore = "stage 2: vendored fetch"]
     async fn rejected_upload_closes_its_resource_and_cancels_the_stream() {
         let (mut runtime, _) = crate::js::create_runtime(false, false, Default::default());
         let state = runtime.op_state();
@@ -742,9 +605,9 @@ mod upload_tests {
         }
         let script = runtime
             .load_side_es_module_from_code(
-                &deno_core::ModuleSpecifier::parse("ext:test/upload.js").unwrap(),
+                &deno_core::ModuleSpecifier::parse("file:///test/upload.js").unwrap(),
                 r#"
-                import { ReadableStream } from "ext:deno_web/06_streams.js";
+                const { ReadableStream } = Deno.core.loadExtScript("ext:deno_web/06_streams.js");
                 globalThis.cancelled = false;
                 globalThis.failure = "";
                 const body = new ReadableStream({ cancel() { globalThis.cancelled = true; } });

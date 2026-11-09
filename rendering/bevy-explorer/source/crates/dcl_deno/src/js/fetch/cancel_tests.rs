@@ -64,7 +64,6 @@ fn assert_released(runtime: &mut JsRuntime) {
 }
 
 #[tokio::test]
-#[ignore = "stage 2: vendored fetch"]
 async fn all_forty_fetch_and_signed_fetch_calls_complete() {
     let mut runtime = client_runtime();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -141,7 +140,6 @@ async fn all_forty_fetch_and_signed_fetch_calls_complete() {
 }
 
 #[tokio::test]
-#[ignore = "stage 2: vendored fetch"]
 async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
     let mut runtime = client_runtime();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -149,9 +147,9 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let script = runtime
         .load_side_es_module_from_code(
-            &deno_core::ModuleSpecifier::parse("ext:test/abort-upload.js").unwrap(),
+            &deno_core::ModuleSpecifier::parse("file:///test/abort-upload.js").unwrap(),
             format!(r#"
-                import {{ ReadableStream }} from "ext:deno_web/06_streams.js";
+                const {{ ReadableStream }} = Deno.core.loadExtScript("ext:deno_web/06_streams.js");
                 globalThis.controller = new AbortController();
                 const body = new ReadableStream({{cancel() {{ globalThis.uploadClosed = true; }} }});
                 fetch({origin:?}, {{method: "POST", body, signal: controller.signal}})
@@ -190,7 +188,6 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
 }
 
 #[tokio::test]
-#[ignore = "stage 2: vendored fetch"]
 async fn abort_skips_a_queued_fetch_and_releases_an_active_body_read() {
     let mut runtime = client_runtime();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
