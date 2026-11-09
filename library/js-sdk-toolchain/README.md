@@ -74,9 +74,9 @@ npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:
 ```
 
 Every push to `main` that touches the SDK or the protocol publishes `ecs`, `js-runtime`,
-`react-ecs`, `sdk-commands` and `sdk` under the `next` dist-tag (`playground-assets` is built and
-tested but not published) (`.github/workflows/sdk.yml`). The version is `<base>-<run>.commit-<sha>`, where
-oddish takes the base from the registry's `latest` of the manifest's name (the placeholder `7.0.0`
+`react-ecs`, `sdk-commands` and `sdk` under the `next` dist-tag (`.github/workflows/sdk.yml`);
+`playground-assets` is built and tested but not published. The version is
+`<base>-<run>.commit-<sha>`, where oddish takes the base from the registry's `latest` of the manifest's name (the placeholder `7.0.0`
 until a release exists under the scope); the manifests' version is never bumped.
 
 A pull request from this repository publishes the same packages under the shared `pr` dist-tag and
