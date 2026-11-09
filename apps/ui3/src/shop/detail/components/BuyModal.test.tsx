@@ -12,7 +12,7 @@ import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
 import { CHAIN } from "../../model/chain";
 import { BOOK, storeMint } from "../../payment/fixtures";
-import BuyModal, { resetBuyNowCarts } from "./BuyModal";
+import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
@@ -105,11 +105,11 @@ describe("Buy now's dialog", () => {
   it("focus stays where the buyer put it while the dialog re-renders: ticking MANA keeps it on that row", async () => {
     renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
-    const mana = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("pay-with-mana");
+    const mana = within(await within(dialog).findByTestId("payment-method-step")).getByRole("checkbox", { name: /^Polygon MANA/ });
     mana.focus();
     fireEvent.click(mana);
     // The pick re-prices the line: the dialog renders again, more than once.
-    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByTestId("confirm-payment")).toBeEnabled());
+    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByRole("button", { name: "Buy" })).toBeEnabled());
     expect(document.activeElement).toBe(mana);
   });
 
@@ -171,29 +171,26 @@ describe("Buy now's dialog", () => {
     // The step replaces the dialog's own header: no "Buy Item" above it.
     expect(within(dialog).queryByRole("heading", { name: "Buy Item" })).toBeNull();
     expect(within(step).getByTestId("payment-method-asset")).toHaveTextContent("Rainbow Hat");
-    const credits = within(step).getByTestId("pay-with-credits");
-    const mana = within(step).getByTestId("pay-with-mana");
+    const credits = within(step).getByRole("checkbox", { name: /^Credits/ });
+    const mana = within(step).getByRole("checkbox", { name: /^Polygon MANA/ });
     expect(credits).toHaveAttribute("aria-checked", "true");
     expect(mana).toHaveAttribute("aria-checked", "false");
     expect(credits).toHaveTextContent("CreditsCredits Balance:10K12");
     expect(mana).toHaveTextContent("Polygon MANAMana Balance:1,0002.3");
-    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+    await waitFor(() => expect(within(step).getByRole("button", { name: "Buy" })).toBeEnabled());
   });
 
   it("MANA ticked alone pays in MANA: the line's method follows the ticks and no Credit is authorized", async () => {
     const { demo } = renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    fireEvent.click(within(step).getByTestId("pay-with-credits"));
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Credits/ }));
     // Nothing ticked: nothing to pay with.
-    expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
-    fireEvent.click(within(step).getByTestId("pay-with-mana"));
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByRole("button", { name: "Buy" })).toBeDisabled();
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Polygon MANA/ }));
+    expect(within(step).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "true");
     expect(demo.cart.getSnapshot().lines).toEqual([]);
-    // The pick is the line's own method in the dialog's cart, which the checkout prices and pays.
-    const held = Object.keys(sessionStorage).find((k) => k.startsWith("dcl-shop-buynow:v1:") && k.includes("dcl-shop-cart:v1:"))!;
-    await waitFor(() => expect((JSON.parse(sessionStorage.getItem(held)!) as { lines: { method: string | null }[] }).lines[0]!.method).toBe("mana"));
-    const confirm = within(step).getByTestId("confirm-payment");
+    const confirm = within(step).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     // A self-custody wallet approves the MANA spend first, then the purchase settles in MANA.
@@ -211,15 +208,15 @@ describe("Buy now's dialog", () => {
     renderBuy({ session: "web3" }, { tweak: holdMana(1n) });
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    const mana = within(step).getByTestId("pay-with-mana");
+    const mana = within(step).getByRole("checkbox", { name: /^Polygon MANA/ });
     // Disabled, but reachable: its reason is what a keyboard or screen reader user lands on.
     expect(mana).toHaveAttribute("aria-disabled", "true");
     expect(mana).not.toBeDisabled();
     expect(mana).toHaveAccessibleDescription("Not enough MANA");
     fireEvent.click(mana);
     expect(mana).toHaveAttribute("aria-checked", "false");
-    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "true");
-    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+    expect(within(step).getByRole("checkbox", { name: /^Credits/ })).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(within(step).getByRole("button", { name: "Buy" })).toBeEnabled());
   });
 
   it("short on Credits, with MANA that covers only the rest: both are ticked, and the split settles in the dialog", async () => {
@@ -228,11 +225,11 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
     // The Credits do not pay alone, so both are ticked: the split, each row stating its own leg.
-    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "true");
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByRole("checkbox", { name: /^Credits/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "true");
     expect(within(step).getByTestId("pay-with-credits-amount")).toHaveTextContent("3");
     expect(within(step).getByTestId("pay-with-mana-amount")).toHaveTextContent("1.7");
-    const confirm = within(step).getByTestId("confirm-payment");
+    const confirm = within(step).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     // The manager's MANA allowance first, on the dialog's own approval step, then one credit and one transaction.
@@ -254,10 +251,10 @@ describe("Buy now's dialog", () => {
     );
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "true");
     const held = await within(step).findByTestId("buy-modal-held");
     expect(held).toHaveTextContent("Your wallet is on another account than the one you're signed in with.");
-    expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
+    expect(within(step).getByRole("button", { name: "Buy" })).toBeDisabled();
     fireEvent.click(within(held).getByRole("button", { name: "Sign in with this wallet" }));
     expect(switched).toBe(1);
   });
@@ -266,23 +263,22 @@ describe("Buy now's dialog", () => {
     renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    fireEvent.click(within(step).getByTestId("pay-with-mana"));
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
-    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "false");
-    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Polygon MANA/ }));
+    expect(within(step).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByRole("checkbox", { name: /^Credits/ })).toHaveAttribute("aria-checked", "false");
+    await waitFor(() => expect(within(step).getByRole("button", { name: "Buy" })).toBeEnabled());
   });
 
   it("MANA picked and then the Credits again: the line goes back to the Credits, which pay", async () => {
     const { demo } = renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    const held = () => Object.keys(sessionStorage).find((k) => k.startsWith("dcl-shop-buynow:v1:") && k.includes("dcl-shop-cart:v1:"))!;
-    const method = () => (JSON.parse(sessionStorage.getItem(held())!) as { lines: { method: string | null }[] }).lines[0]!.method;
-    fireEvent.click(within(step).getByTestId("pay-with-mana"));
-    await waitFor(() => expect(method()).toBe("mana"));
-    fireEvent.click(within(step).getByTestId("pay-with-credits"));
-    await waitFor(() => expect(method()).toBeNull());
-    const confirm = within(step).getByTestId("confirm-payment");
+    const buy = within(step).getByRole("button", { name: "Buy" });
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Polygon MANA/ }));
+    await waitFor(() => expect(buy).toBeEnabled());
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Credits/ }));
+    expect(within(step).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "false");
+    const confirm = within(step).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
@@ -292,7 +288,7 @@ describe("Buy now's dialog", () => {
   it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {
     const { demo, closed } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
-    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
@@ -307,12 +303,15 @@ describe("Buy now's dialog", () => {
   it("an approval that lands after the dialog is gone buys nothing", async () => {
     const { demo, unmount } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
-    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
     unmount();
-    await act(async () => new Promise((r) => setTimeout(r, 200)));
+    // The approval lands after the dialog is gone: the allowance is granted on chain, and nothing goes on to buy.
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    await waitFor(() => expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBeGreaterThan(0n), { timeout: 5000 });
+    await act(async () => {});
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
@@ -322,7 +321,7 @@ describe("Buy now's dialog", () => {
       { tweak: holdMana(2n * 10n ** 18n) },
     );
     const dialog = await settledDialog();
-    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
@@ -341,7 +340,7 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
     expect(await within(step).findByTestId("price-changed")).toBeTruthy();
-    const confirm = within(step).getByTestId("confirm-payment");
+    const confirm = within(step).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     // Agreed: the notice goes, the step stays, and Buy is there for the press that pays (the demo's chain keeps the
@@ -349,7 +348,53 @@ describe("Buy now's dialog", () => {
     await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).queryByTestId("price-changed")).toBeNull());
     expect(screen.queryByTestId("authorize-step-action")).toBeNull();
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
-    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByTestId("confirm-payment")).toBeEnabled());
+    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByRole("button", { name: "Buy" })).toBeEnabled());
+  });
+
+  it("a split still confirming is remembered: the dialog opened again shows it confirming and offers no second one", async () => {
+    const first = renderBuy(
+      { session: "web3", balanceCents: 30, confirm: "none", handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n) },
+    );
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
+    await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
+    first.unmount();
+    resetBuyNowCarts();
+    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const again = await screen.findByTestId("buy-modal");
+    const pending = await within(again).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    expect(pending).toHaveTextContent("Your purchase is still being confirmed.");
+    expect(within(again).queryByTestId("payment-method-step")).toBeNull();
+    expect(within(again).queryByRole("button", { name: "Check again" })).toBeNull();
+  });
+
+  it("MANA picked, failed, and Try again: the step comes back with MANA still ticked", async () => {
+    const { demo } = renderBuy(
+      { session: "web3" },
+      {
+        tweak: (d) => {
+          holdMana(10n ** 21n)(d);
+          // MANA already approved for the store, so the purchase itself is what the wallet declines.
+          d.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${BOOK.store.contract.toLowerCase()}`, 10n ** 21n);
+        },
+      },
+    );
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    fireEvent.click(within(step).getByRole("checkbox", { name: /^Polygon MANA/ }));
+    const buy = within(step).getByRole("button", { name: "Buy" });
+    await waitFor(() => expect(buy).toBeEnabled());
+    demo.wallet.next = "reject";
+    await act(async () => fireEvent.click(buy));
+    const failed = await within(screen.getByTestId("buy-modal")).findByTestId("buy-error", undefined, { timeout: 8000 });
+    fireEvent.click(within(failed.parentElement!).getByRole("button", { name: "Try again" }));
+    const back = await within(screen.getByTestId("buy-modal")).findByTestId("payment-method-step", undefined, { timeout: 5000 });
+    expect(within(back).getByRole("checkbox", { name: /^Polygon MANA/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(back).getByRole("checkbox", { name: /^Credits/ })).toHaveAttribute("aria-checked", "false");
   });
 
   it("a split the wallet declines ends on the failure panel, and Try again goes back to the step", async () => {
@@ -358,7 +403,7 @@ describe("Buy now's dialog", () => {
     demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
     demo.wallet.next = "reject";
     const dialog = await settledDialog();
-    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await act(async () => fireEvent.click(confirm));
     expect(await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("You cancelled the request in your wallet. Nothing was charged.");
@@ -549,5 +594,18 @@ describe("Buy now's dialog", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     fireEvent.click(within(dialog).getByTestId("buy-modal-scrim"));
     expect(closed()).toBe(3);
+  });
+});
+
+describe("why the split cannot be bought", () => {
+  const gone = { kind: "itemsChanged", text: "Some items changed since you added them. See the note on each item." } as const;
+  const short = { kind: "creditsShort", text: "Your Credits balance doesn't cover the Credits part of this cart." } as const;
+  it("the wallet first, with its way back", () => {
+    expect(splitReason("Connect your wallet to pay with Credits and MANA.", false, [gone])).toEqual({ kind: "reconnect", text: "Connect your wallet to pay with Credits and MANA." });
+    expect(splitReason("Your wallet is on another account than the one you're signed in with.", true, [])).toMatchObject({ kind: "accountMismatch" });
+  });
+  it("then the checkout's word on the line itself, never on the Credits the split tops up with MANA", () => {
+    expect(splitReason(null, false, [short, gone])).toEqual(gone);
+    expect(splitReason(null, false, [short])).toBeNull();
   });
 });

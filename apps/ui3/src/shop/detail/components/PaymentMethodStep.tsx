@@ -34,6 +34,9 @@ const TEXT = {
   mana: "Polygon MANA",
   manaBalance: "Mana Balance:",
   notEnoughMana: "Not enough MANA",
+  notEnoughCredits: "Not enough Credits",
+  creditsAlone: "Your Credits don't cover this on their own. Tick MANA too to pay the rest with it.",
+  manaAlone: "Your MANA doesn't cover this on its own. Tick Credits too to pay part of it with them.",
   buy: "Buy",
   itemFallback: "Item",
 } as const;
@@ -62,8 +65,11 @@ function railFor(picked: ReadonlySet<Ticked>, rails: StepRails): StepRail | null
   return null;
 }
 
-/** What is ticked first: the Credits when they pay, both when only the split does, MANA last. */
-function seed(credits: boolean, combined: boolean, mana: boolean): Set<Ticked> {
+/** What is ticked first: the buyer's earlier pick while it still pays, else the Credits when they pay, both when only the split does, MANA last. */
+function seed(credits: boolean, combined: boolean, mana: boolean, earlier: StepRail | null = null): Set<Ticked> {
+  if (earlier === "credits" && credits) return new Set<Ticked>(["credits"]);
+  if (earlier === "mana" && mana) return new Set<Ticked>(["mana"]);
+  if (earlier === "combined" && combined) return new Set<Ticked>(["credits", "mana"]);
   if (credits) return new Set<Ticked>(["credits"]);
   if (combined) return new Set<Ticked>(["credits", "mana"]);
   if (mana) return new Set<Ticked>(["mana"]);
@@ -77,12 +83,14 @@ type PaymentMethodStepProps = {
   rails: StepRails;
   /** What the item costs in MANA now (0n when unknown): the MANA row's amount when that row cannot pay. */
   priceManaWei: ManaWei;
-  /** The buyer's Credits balance, in whole credits. */
-  balanceCredits: number;
+  /** The buyer's Credits balance, in whole credits; null when it could not be read. */
+  balanceCredits: number | null;
   /** The buyer's MANA balance. */
   manaBalanceWei: ManaWei;
   /** The rail the ticks resolve to, each time they change: the dialog makes it the purchase's. */
   onPick(rail: StepRail | null): void;
+  /** What the buyer picked before the step was drawn again (after a failure): ticked again while it still pays. */
+  initial?: StepRail | null;
   /** Whether Buy can settle the picked rail now (priced, a wallet to sign): Buy waits otherwise. */
   ready: boolean;
   onBuy(rail: StepRail): void;
@@ -94,10 +102,11 @@ type PaymentMethodStepProps = {
 export default function PaymentMethodStep(props: PaymentMethodStepProps) {
   const { display, rails } = props;
   const shortfallId = useId();
+  const creditsShortId = useId();
   const hasCredits = !!rails.credits;
   const hasMana = !!rails.mana;
   const hasCombined = !!rails.combined;
-  const [picked, setPicked] = useState<Set<Ticked>>(() => seed(hasCredits, hasCombined, hasMana));
+  const [picked, setPicked] = useState<Set<Ticked>>(() => seed(hasCredits, hasCombined, hasMana, props.initial));
   const creditsUsable = hasCredits || hasCombined;
   const manaUsable = hasMana || hasCombined;
 
@@ -138,6 +147,9 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
       return prev.size > 0 && !hasCombined ? new Set<Ticked>([r]) : new Set<Ticked>([...prev, r]);
     });
   };
+
+  // One tick that cannot pay on its own while both together would: said, rather than a disabled Buy with no reason.
+  const alone = rail === null && picked.size === 1 && hasCombined ? (picked.has("credits") ? TEXT.creditsAlone : TEXT.manaAlone) : null;
 
   const tile = { "--pms-tile": rarityCardPalette(display.rarity).background } as CSSProperties;
   const hasC = picked.has("credits");
@@ -180,6 +192,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
           data-disabled={!creditsUsable}
           aria-disabled={!creditsUsable}
           aria-checked={hasC}
+          aria-describedby={creditsUsable ? undefined : creditsShortId}
           onClick={() => toggle("credits")}
         >
           <span className={styles.left}>
@@ -194,11 +207,17 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
               </span>
               <span className={styles.text}>
                 <span className={styles.label}>{TEXT.credits}</span>
+                {creditsUsable ? null : (
+                  // Upstream draws no reason on this row; a reader still gets one.
+                  <span className={styles.srOnly} id={creditsShortId}>
+                    {TEXT.notEnoughCredits}
+                  </span>
+                )}
                 <span className={styles.balance}>
                   {TEXT.creditsBalance}
                   <Icon name="credits" className={styles.balanceIco} />
-                  <span className={styles.balanceValue} title={formatCreditsFull(props.balanceCredits)}>
-                    {formatCredits(props.balanceCredits)}
+                  <span className={styles.balanceValue} title={props.balanceCredits === null ? undefined : formatCreditsFull(props.balanceCredits)}>
+                    {props.balanceCredits === null ? "—" : formatCredits(props.balanceCredits)}
                   </span>
                 </span>
               </span>
@@ -266,6 +285,11 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
       {props.notice ? (
         <div className={styles.notice} role="status">
           {props.notice}
+        </div>
+      ) : null}
+      {alone ? (
+        <div className={styles.notice} role="status" data-testid="payment-method-alone">
+          {alone}
         </div>
       ) : null}
 

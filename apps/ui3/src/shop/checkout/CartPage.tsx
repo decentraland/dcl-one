@@ -255,9 +255,12 @@ function CartScreen() {
         : co.topUp && (topUpOpen || executorTopUp)
           ? { kind: "nofunds", shortfall: Math.max(1, creditsCeil(co.topUp.shortCents)) }
           : null;
-  const checkoutLines: CheckoutLine[] = buyable.map((l) => {
-    const credits = co.views[l.id]?.options.find((o) => o.method === "credits");
-    return { id: l.id, display: l.display, priceCredits: credits?.charge != null ? creditsFloor(credits.charge) : (l.display.priceCredits ?? 0), quantity: lineUnitsOf(l) };
+  // The lines the Credits pay, which are what the packs top up: a line paid in MANA (a LAND resale) is not short of them.
+  const checkoutLines: CheckoutLine[] = buyable.flatMap((l) => {
+    const view = co.views[l.id];
+    const credits = view?.options.find((o) => o.method === "credits");
+    if (!view || (l.method ?? view.primary) !== "credits" || credits?.charge == null) return [];
+    return [{ id: l.id, display: l.display, priceCredits: creditsFloor(credits.charge), quantity: lineUnitsOf(l) }];
   });
 
   return (
@@ -434,10 +437,15 @@ function CartScreen() {
               co.dismissTopUp();
             }
           }}
-          onRetry={() => {
-            setFailure(null);
-            if (co.canResume) void co.resume();
-          }}
+          // Nothing to run again while something else holds the cart (a wallet, a price to accept): no Try again then.
+          onRetry={
+            co.canResume
+              ? () => {
+                  setFailure(null);
+                  void co.resume();
+                }
+              : undefined
+          }
           onLeave={co.stashForTopUp}
           onLeaveFailed={clearTopUpHandoffs}
           onCheckout={(s) => {

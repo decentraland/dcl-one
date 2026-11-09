@@ -37,7 +37,8 @@ export default function CartCheckoutModal(props: {
   /** The Credits balance as the head shows it. */
   balance: string;
   onClose(): void;
-  onRetry(): void;
+  /** Runs again what did not complete; absent when nothing can run now (the cart's banner says why). */
+  onRetry?: () => void;
   /** The cart's top-up hand-off (useCheckout's stashForTopUp), left before the pack checkout opens. */
   onLeave(): void;
   /** The pack checkout did not open: the hand-off it left is dropped. */
@@ -65,7 +66,7 @@ export default function CartCheckoutModal(props: {
           items={
             <DialogAssetList>
               {props.lines.map((l) => (
-                <DialogAsset key={l.id} display={l.display} priceCredits={l.priceCredits} quantity={l.quantity} />
+                <DialogAsset key={l.id} display={l.display} priceCredits={l.priceCredits} quantity={l.quantity} flapTestId="cart-checkout-flap" />
               ))}
             </DialogAssetList>
           }
@@ -79,7 +80,7 @@ export default function CartCheckoutModal(props: {
         />
       ) : null}
       {phase.kind === "processing" ? (
-        phase.stage === "preparing" ? <ProcessingBody text={TEXT.preparing} step={1} total={1} /> : <ProcessingBody text={TEXT.completing} />
+        <ProcessingBody text={phase.stage === "preparing" ? TEXT.preparing : TEXT.completing} />
       ) : null}
       {phase.kind === "error" ? <ErrorBody message={phase.message} onClose={close} onRetry={props.onRetry} /> : null}
     </DialogShell>,

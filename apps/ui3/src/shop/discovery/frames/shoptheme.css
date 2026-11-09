@@ -57,6 +57,9 @@
   --shop-glass-strong: rgba(255, 255, 255, 0.3);
   --shop-glass-faint: rgba(255, 255, 255, 0.1);
   --shop-flare-amber: #ffbc5b;
+  --shop-flare: linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%);
+  /* The warm wash behind a warning or a notice in the checkout dialogs. */
+  --shop-warning-wash: rgba(255, 162, 90, 0.3);
   --shop-card-line: rgba(160, 155, 168, 0.25);
   --shop-buy-btn: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
   --shop-cerise: linear-gradient(135deg, #ff2d55 0%, #c640cd 100%);

@@ -82,7 +82,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const services = useShopServices();
   const [phase, setPhase] = useState<CombinedPhase>({ kind: "review" });
   const guard = useRef(createSpendGuard());
+  // The terms `start` agreed: kept in a ref for the purchase that runs on, and in state for the screen that shows them.
   const terms = useRef<Terms | null>(null);
+  const [agreed, setAgreed] = useState<MixedPayment | null>(null);
   // An approval granted after its screen closed must not go on to buy: nothing would be left to show it.
   const mounted = useRef(true);
   useEffect(() => {
@@ -132,19 +134,20 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   async function start() {
     const ctx = context();
     if (!ctx || blocked || !offer || !mixed || busy) return;
-    const agreed: Terms = { offer, mixed };
-    terms.current = agreed;
+    const agreedTerms: Terms = { offer, mixed };
+    terms.current = agreedTerms;
+    setAgreed(mixed);
     setPhase({ kind: "working" });
     try {
-      const target = await resolveTarget(ctx, agreed.offer);
+      const target = await resolveTarget(ctx, agreedTerms.offer);
       const { spender, chainId } = manaSpenderFor("combined", target);
       const auth: ShopAuthorization = { kind: AuthorizationKind.Allowance, contractAddress: requireContracts(chainId).mana.address, spenderAddress: spender, chainId };
-      const allowed = await getAuthorizationStatus(auth, ctx.buyer, agreed.mixed.manaWei, ctx.reader).catch(() => false);
+      const allowed = await getAuthorizationStatus(auth, ctx.buyer, agreedTerms.mixed.manaWei, ctx.reader).catch(() => false);
       if (!allowed && needsApprovalStep(ctx.walletKind, false)) {
         setPhase({ kind: "approve", auth });
         return;
       }
-      await pay(ctx, agreed, target);
+      await pay(ctx, agreedTerms, target);
     } catch (e) {
       setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
     }
@@ -203,7 +206,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   return {
     phase,
     busy,
-    agreed: terms.current?.mixed ?? null,
+    agreed,
     blocked,
     start,
     grant: async () => {
