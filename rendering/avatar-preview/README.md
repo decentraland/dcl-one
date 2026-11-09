@@ -169,10 +169,10 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   with the live look and vertical framing, no controls; without a size, the canvas as it is; an
   invalid size, one over 4096, or a request while loading fails as the renderer's does.
 
-- its builder mode (the publishing tool, which takes its thumbnails from it): no profile, but the
+- its builder mode (the publishing tool, which takes its thumbnails from it): not the profile's outfit, but the
   page's own items and the requested urns (the page's win a category), dressed with the renderer's
   base wearables where nothing covers a category (the face's too unless `disableFace`, which also
-  clears the face's features), a male body unless one is asked for, the builder's skin `#cc9b76` and
+  clears the face's features), the body shape asked for, else the profile's (as wearable-preview passes it on), else male, the builder's skin `#cc9b76` and
   black hair and eyes; only an emote of the page's own plays. Its view fits the avatar whatever its
   size, as the renderer's builder camera does;
 - its scene boundaries (`showSceneBoundaries`, `showAnimationReference`): the translucent cylinder,

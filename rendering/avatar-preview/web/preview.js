@@ -241,6 +241,16 @@ async function fetchProfile(peer, profile) {
   return avatar;
 }
 
+// a profile's body shape urn, or null when the profile does not resolve or names another shape
+async function profileBodyShape(peer, profile) {
+  try {
+    const shape = String((await fetchProfile(peer, profile)).bodyShape || '').toLowerCase();
+    return Object.values(BODY).find((urn) => urn.toLowerCase() === shape) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // what the catalyst says `urns` are: emote or wearable, its category and the body shapes it has
 // a representation for. Hosts pass emote items by urn (the shop does), and only the catalyst knows
 // what a urn names; a urn it does not answer for stays a wearable, as before.
@@ -360,9 +370,11 @@ const BUILDER_SKIN = '#cc9b76';
 // builder mode, as the Unity renderer loads it: the page's own items, then the requested urns (the
 // page's win a category), dressed with base wearables where nothing covers it (and the face's
 // unless `disableFace`), a male body unless one is asked for, the builder's skin and black hair
-// and eyes. Only an emote of the page's own plays; a urn emote is not worn.
+// and eyes. Only an emote of the page's own plays; a urn emote is not worn. A profile gives only
+// its body shape, when the page names none, as wearable-preview hands the renderer the profile's
+// body shape (`options.bodyShape || profile.avatar.bodyShape`); its wearables and colours stay out.
 async function resolveBuilder(o, peer) {
-  const bodyShape = o.bodyShape || BODY.male;
+  const bodyShape = o.bodyShape || (o.profile ? await profileBodyShape(peer, o.profile) : null) || BODY.male;
   const male = bodyShape === BODY.male;
   const urns = o.urns || [];
   const described = await describe(peer, urns);
