@@ -216,30 +216,37 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
-  /* A hovered card grows 5% and takes a 3px ring (~8px a side, ~11px top and bottom): the scroller
-     bleeds 12px up and left for it, taken back in padding so the grid starts where the design's does. */
+  /* A hovered or selected card's ring sits 8px outside it: the scroller bleeds 12px up and left for it,
+     taken back in padding so the grid starts where the design's does. */
   margin: -8px 0 0 -12px;
-  /* Six 197px columns and their gaps fill what is left beside the thumb's gutter. */
+  /* The columns and their gaps fill what is left beside the thumb's gutter. */
   padding: 12px 13px 20px 12px;
 }
-/* Six 197px columns at the design's 1920 width (exactly what the scroller holds there); at any other, as
-   many as fit, widened to fill the row, so no width is left over past the last one. */
+/* The design system's 203px cards, never stretched, as many as fit: six at the design's 1920 width, the
+   row's spare width spread between them. The columns keep their width when the item panel opens, so no
+   card resizes: only fewer fit. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(197px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, 203px);
+  justify-content: space-between;
+  gap: 20px 12px;
   align-content: start;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 .stale {
   opacity: 0.5;
 }
-/* With the item panel open the grid takes 203px columns beside it (four at the design's 1920: 872px), the
-   thumb 9px past them and the panel 23px after that, 8px in from the right. At any other width the columns
-   widen to fill what the panel leaves, so neither a gap before the panel nor one after it is left. */
-.withPanel .grid {
-  grid-template-columns: repeat(auto-fill, minmax(203px, 1fr));
+/* RESALE NAME: the NAMEs variant's 197px cards, six to the design's 1282px row, 20px apart both ways. */
+.nameGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 197px);
+  justify-content: space-between;
+  gap: 20px;
+  align-content: start;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
+/* With the item panel open, the same 203px columns beside it (four at the design's 1920, 872px: the spread
+   leaves them 20px apart there), the thumb 9px past them and the panel 23px after that, 8px in from the right. */
 .withPanel .scroller {
   padding-right: 10px;
 }
@@ -264,4 +271,11 @@
   left: 60px;
   top: 864px;
   pointer-events: auto;
+}
+
+/* Names' nametag over the avatar: centred 302px in and 126px down its 573px slot, as the design's Avatar
+   places it. */
+.nametag {
+  left: 302.44px;
+  top: 125.97px;
 }

@@ -51,13 +51,8 @@ async function base(version: 'v1' | 'v2'): Promise<string> {
   return `${await serviceBase('socialApi')}/${version}/communities`
 }
 
-// A picture the user just saved, by community id. Its URL does not change on update, so the browser
-// and the CDN would keep showing the old one; as unity-explorer replaces its sprite cache, the HUD
-// shows the saved picture for the rest of the session.
-const savedThumbnails = new Map<string, string>()
-
 async function thumbnail(c: CommunityRaw): Promise<string> {
-  return savedThumbnails.get(c.id) || c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
+  return c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
 }
 
 async function communities(raw: CommunityRaw[]): Promise<Community[]> {
@@ -77,9 +72,17 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
   }))
 }
 
+// The page's list: the first 50 of the browse order, then the user's own communities it left out,
+// so My Communities holds every one the user is a member of, however far down the browse order it
+// is. A failed member-of read leaves the browse list as it is.
 async function list(): Promise<Community[]> {
-  const res = await signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`)
-  return await communities(res?.results ?? [])
+  const [browse, member] = await Promise.all([
+    signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`),
+    memberOfRaw().catch((): CommunityRaw[] => [])
+  ])
+  const raw = browse?.results ?? []
+  const listed = new Set(raw.map((c) => c.id))
+  return await communities([...raw, ...member.filter((c) => !listed.has(c.id))])
 }
 
 async function rawOne(id: string): Promise<CommunityRaw | undefined> {
@@ -110,7 +113,11 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
 // malformed answer would delete its history.
 const MEMBER_OF_PAGE = 100
 const MEMBER_OF_PAGES = 10
-async function memberOf(): Promise<CommunityRaw[]> {
+async function memberOf(): Promise<CommunityChannel[]> {
+  return await Promise.all((await memberOfRaw()).map(channel))
+}
+
+async function memberOfRaw(): Promise<CommunityRaw[]> {
   const b = await base('v2')
   const raw: CommunityRaw[] = []
   for (let page = 0; page < MEMBER_OF_PAGES; page++) {
@@ -237,7 +244,6 @@ export function registerCommunities(ctx: Ctx): void {
     const communities = await list()
     communities.forEach(remember)
     ctx.send({ kind: 'communities', communities })
-    await sendMembership()
   })
   ctx.on('getCommunity', async (msg) => {
     const raw = await rawOne(msg.id).catch((e: unknown) => {
@@ -252,19 +258,24 @@ export function registerCommunities(ctx: Ctx): void {
   })
   // The member-of list is authoritative when it arrives: an empty one closes every community
   // chat. So a failed read sends nothing, and the page keeps the list it has (the next join, leave
-  // or login reads it again), rather than emptying it for a passing error. One read feeds both the
-  // chat channels and My Communities, which lists every membership, unlisted ones included (the
-  // browse list leaves those out), as unity-explorer's does.
-  const sendMembership = async (): Promise<void> => {
-    const raw = await memberOf().catch((e: unknown) => {
+  // or login reads it again), rather than emptying it for a passing error.
+  const sendChannels = async (): Promise<void> => {
+    const communities = await memberOf().catch((e: unknown) => {
       console.error('[communities] member-of list failed', e)
       return undefined
     })
-    if (raw == null) return
-    ctx.send({ kind: 'communityChannels', communities: await Promise.all(raw.map(channel)) })
-    ctx.send({ kind: 'myCommunities', communities: await communities(raw) })
+    if (communities != null) ctx.send({ kind: 'communityChannels', communities })
   }
-  ctx.on('getCommunityChannels', sendMembership)
+  ctx.on('getCommunityChannels', sendChannels)
+  // After a create, update or delete: the list and the chat channels, each on its own, so a failed
+  // list read never skips the channels.
+  const refreshLists = async (): Promise<void> => {
+    await list().then(
+      (communities) => ctx.send({ kind: 'communities', communities }),
+      (e: unknown) => console.error('[communities] list failed', e)
+    )
+    await sendChannels()
+  }
   ctx.on('setCommunityChannels', (msg) => {
     BevyApi.social.setCommunityChannels(msg.ids)
   })
@@ -315,20 +326,17 @@ export function registerCommunities(ctx: Ctx): void {
       msg.thumbnail != null
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
         : []
-    const result = await signedForm<{ id?: string }>(
-      await base('v1'),
-      'POST',
-      { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' },
-      files
-    )
+    const fields = { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' }
+    // the service url is resolved inside the chain, so a failure there is a reported error too
+    const result = await base('v1')
+      .then((b) => signedForm<{ id?: string }>(b, 'POST', fields, files))
       .then((created): CommunitySaveResultMessage => ({ kind: 'communitySaveResult', mode: 'create', id: created?.id ?? '' }))
       .catch((e: unknown): CommunitySaveResultMessage => {
         console.error('[communities] create failed', e)
         return { kind: 'communitySaveResult', mode: 'create', ...saveFailure(e) }
       })
     ctx.send(result)
-    ctx.send({ kind: 'communities', communities: await list() })
-    await sendMembership()
+    await refreshLists()
   })
   ctx.on('updateCommunity', async (msg) => {
     // unity-explorer's update: a multipart PUT with only the fields that changed, and the picture
@@ -343,11 +351,9 @@ export function registerCommunities(ctx: Ctx): void {
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
         : []
     const id = encodeURIComponent(msg.id)
-    const result = await signedForm(`${await base('v1')}/${id}`, 'PUT', fields, files)
-      .then((): CommunitySaveResultMessage => {
-        if (msg.thumbnail != null) savedThumbnails.set(msg.id, msg.thumbnail)
-        return { kind: 'communitySaveResult', mode: 'update', id: msg.id }
-      })
+    const result = await base('v1')
+      .then((b) => signedForm(`${b}/${id}`, 'PUT', fields, files))
+      .then((): CommunitySaveResultMessage => ({ kind: 'communitySaveResult', mode: 'update', id: msg.id }))
       .catch((e: unknown): CommunitySaveResultMessage => {
         console.error('[communities] update failed', e)
         return { kind: 'communitySaveResult', mode: 'update', ...saveFailure(e) }
@@ -360,8 +366,7 @@ export function registerCommunities(ctx: Ctx): void {
       const [community] = await communities([raw])
       if (community != null) ctx.send({ kind: 'community', community })
     }
-    ctx.send({ kind: 'communities', communities: await list() })
-    await sendMembership()
+    await refreshLists()
   })
   // Every write reports a rejection to the page (the modal shows it) and then re-reads the list,
   // so the buttons always reflect the server.
@@ -383,12 +388,14 @@ export function registerCommunities(ctx: Ctx): void {
       if (community != null) ctx.send({ kind: 'community', community })
     }
     // joining or leaving changes the chat channels too
-    await sendMembership()
+    await sendChannels()
   }
   ctx.on('deleteCommunity', async (msg) => {
     // unity-explorer's delete: DELETE /v1/communities/{id}; on success the card closes. Not through
     // `write`, which re-reads the community it acted on, and this one is gone.
-    const deleted = await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}`, 'DELETE').then(
+    const deleted = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}`, 'DELETE'))
+      .then(
       () => true,
       (e: unknown) => {
         console.error('[communities] delete failed', e)
@@ -396,12 +403,8 @@ export function registerCommunities(ctx: Ctx): void {
         return false
       }
     )
-    if (deleted) {
-      savedThumbnails.delete(msg.id)
-      ctx.send({ kind: 'communityDeleted', id: msg.id })
-    }
-    ctx.send({ kind: 'communities', communities: await list() })
-    await sendMembership()
+    if (deleted) ctx.send({ kind: 'communityDeleted', id: msg.id })
+    await refreshLists()
   })
   ctx.on('joinCommunity', async (msg) => {
     await write(msg.id, 'join', async () => await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members`, 'POST'))

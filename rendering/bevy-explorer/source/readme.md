@@ -169,10 +169,13 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
+  after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
+  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
+  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
   and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
@@ -190,8 +193,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
-  `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
-  `{"name", "role", "index", "exact"}`; several matches need an `index`.
+  `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
+  `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving
+  (a CSS animation or transition), or under a pointer lock that takes every click, is not
+  `actionable`; one inside an `aria-busy` region reads
+  `"busy"`, and `ready` waits it out.
+- Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
+  <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
+  lobby or on the way to the destination; `/login_identity` alone signs the engine in under a HUD
+  that keeps its start page.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make

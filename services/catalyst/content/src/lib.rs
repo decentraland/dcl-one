@@ -19,7 +19,6 @@
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;
-#[cfg(test)]
 pub(crate) use catalyst_db as db;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;

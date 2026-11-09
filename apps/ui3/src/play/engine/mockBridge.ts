@@ -18,6 +18,7 @@ import {
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
+  type PhotoModeSnapshot,
   type Profile,
   type ProfileEdit,
   type SceneToPage,
@@ -258,6 +259,12 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'HideNames' }, ['KeyN']],
   [{ System: 'RollLeft' }, []],
   [{ System: 'RollRight' }, []],
+  [{ System: 'PhotoMode' }, ['KeyC']],
+  [{ System: 'TakePhoto' }, ['Space', 'Gamepad South']],
+  [{ System: 'PhotoCameraUp' }, ['KeyR', 'Gamepad DPadUp']],
+  [{ System: 'PhotoCameraDown' }, ['KeyF', 'Gamepad DPadDown']],
+  [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
+  [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
   [{ System: 'Microphone' }, ['KeyV']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
@@ -347,6 +354,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     isPublic: i % 2 === 0,
     dateTime: String(Math.floor((mockNow - i * 3 * DAY) / 1000))
   }))
+  let mockPhotoMode: PhotoModeSnapshot = {
+    active: false,
+    hudHidden: false,
+    cursorLocked: true,
+    phase: 'idle',
+    storageCurrent: 0,
+    storageMax: 500,
+    storageLoaded: true,
+    event: 'none',
+    eventSeq: 0,
+    previewJpegBase64: '',
+    message: ''
+  }
   // Stateful saved outfits so save/delete persist across reopens (mirrors the real store).
   const mockOutfits: OutfitsMetadata = {
     outfits: [
@@ -564,7 +584,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
@@ -857,8 +879,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
-    // No engine in mock mode — the Shop's stage and emote try-on have no avatar to show on.
-    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
@@ -898,7 +920,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getCommunities') {
       reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'getCommunity') {
@@ -947,7 +968,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => {
         reply({ kind: 'communitySaveResult', mode: 'create', id })
         reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       }, 600)
       return
     }
@@ -957,7 +977,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => {
         reply({ kind: 'communityDeleted', id: msg.id })
         reply({ kind: 'communities', communities: mockCommunities })
-        reply({ kind: 'myCommunities', communities: mockCommunities.filter((m) => m.role !== 'none') })
       }, 300)
       return
     }
@@ -982,7 +1001,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
         if (c != null) reply({ kind: 'community', community: { ...c } })
         reply({ kind: 'communities', communities: mockCommunities })
-        reply({ kind: 'myCommunities', communities: mockCommunities.filter((m) => m.role !== 'none') })
       }, 600)
       return
     }
@@ -994,21 +1012,18 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
       }
       reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
       reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
       reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -1019,7 +1034,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'communityChannelRemoved', id: c.id })
       }
       reply({ kind: 'communities', communities: mockCommunities })
-      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'getCommunityDetail') {
@@ -1080,6 +1094,29 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'markNotificationsRead') {
       // Persist read state in the mock so reopening reflects it (mirrors the real service).
       for (const n of mockNotifications) if (msg.ids.includes(n.id)) n.read = true
+      return
+    }
+    if (msg.kind === 'setPhotoMode') {
+      mockPhotoMode = { ...mockPhotoMode, active: msg.enable, event: 'none', previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      return
+    }
+    if (msg.kind === 'takePhoto') {
+      if (!mockPhotoMode.active) return
+      mockPhotoMode = { ...mockPhotoMode, event: 'captured', eventSeq: mockPhotoMode.eventSeq + 1, previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      setTimeout(() => {
+        const id = `mock-photo-${mockPhotoMode.eventSeq}`
+        mockGallery.unshift({ id, url: mockGallery[0]?.url ?? '', thumbnailUrl: mockGallery[0]?.thumbnailUrl, dateTime: String(Math.floor(Date.now() / 1000)), isPublic: false })
+        mockPhotoMode = {
+          ...mockPhotoMode,
+          event: 'uploaded',
+          eventSeq: mockPhotoMode.eventSeq + 1,
+          storageCurrent: mockGallery.length,
+          message: id
+        }
+        reply({ kind: 'photoMode', state: mockPhotoMode })
+      }, 800)
       return
     }
     if (msg.kind === 'getGallery') {

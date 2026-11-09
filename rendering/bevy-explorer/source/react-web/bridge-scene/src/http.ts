@@ -117,7 +117,8 @@ export async function signedForm<T>(
   fields: Record<string, string>,
   files: FormFile[] = []
 ): Promise<T | undefined> {
-  const boundary = '----DclBridgeFormBoundaryqZ1x9b7Kt3'
+  // a fresh boundary per request, so no field value or file can contain it by chance
+  const boundary = `----DclBridgeFormBoundary${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
   const enc = new TextEncoder()
   const parts: Uint8Array[] = []
   for (const [key, value] of Object.entries(fields)) {

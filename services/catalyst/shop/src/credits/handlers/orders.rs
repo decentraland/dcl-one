@@ -21,6 +21,11 @@ use crate::credits::errors::ApiError;
 use crate::credits::packs::{MAX_PACK_QUANTITY, PackRow, parse_marketplace_source};
 use crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER;
 
+/// What an order lookup answers when the order has no record for this signer. The shop UI tells "no such order" from
+/// any other 404 (a gateway's route) by it (apps/ui3 `credits/payments-stripe.ts`, `isOrderNotFound`), so the two
+/// must change together; `order_not_found_wire_body` pins it.
+const ORDER_NOT_FOUND: &str = "order not found";
+
 #[derive(Debug, Deserialize)]
 pub struct CheckoutRequestBody {
     #[serde(rename = "packId")]
@@ -205,7 +210,7 @@ pub async fn order_status(
         .credits
         .get_order_with_balance(&order_id, signer.as_str())
         .await?
-        .ok_or_else(|| ApiError::not_found("order not found"))?;
+        .ok_or_else(|| ApiError::not_found(ORDER_NOT_FOUND))?;
 
     let status = wire_status(&order.status);
     let credits_granted = if status == "credited" {
@@ -237,7 +242,7 @@ async fn order_status_out(
         .credits
         .get_order_with_balance(order_id, address)
         .await?
-        .ok_or_else(|| ApiError::not_found("order not found"))?;
+        .ok_or_else(|| ApiError::not_found(ORDER_NOT_FOUND))?;
     let status = wire_status(&order.status);
     Ok(CreditsOrderStatusOut {
         status: status.to_string(),
@@ -272,7 +277,7 @@ pub async fn cancel_order(
         .credits
         .get_order_with_session(&order_id, signer.as_str())
         .await?
-        .ok_or_else(|| ApiError::not_found("order not found"))?;
+        .ok_or_else(|| ApiError::not_found(ORDER_NOT_FOUND))?;
     if order.status == "pending" {
         if let (Some(stripe), Some(session)) = (state.stripe.as_ref(), session.as_deref()) {
             let key = format!("expire:{session}");
@@ -341,7 +346,7 @@ async fn resume(
         .credits
         .get_order_with_session(order_id, address)
         .await?
-        .ok_or_else(|| ApiError::not_found("order not found"))?;
+        .ok_or_else(|| ApiError::not_found(ORDER_NOT_FOUND))?;
     if order.status != "pending" {
         let status = wire_status(&order.status);
         return Ok(if status == "credited" {
@@ -422,6 +427,18 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&out).unwrap(),
             json!({ "orderId": "ord_abc", "url": "https://checkout.example/session/cs_test" })
+        );
+    }
+
+    #[tokio::test]
+    async fn order_not_found_wire_body() {
+        let resp = ApiError::not_found(ORDER_NOT_FOUND).into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            v,
+            json!({ "ok": false, "error": "order not found", "message": "order not found" })
         );
     }
 

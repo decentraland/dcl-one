@@ -99,6 +99,29 @@ export function CameraIcon({ size = 16, className }: GlyphProps): React.JSX.Elem
 
 // Walking-person glyph — the "too far, get closer" hover state in bevy-ui-scene used a walking-
 // figure sprite (avatar/hover-actions' unreachable icon); this is that concept re-drawn as a vector.
+/** A mouse with its left button marked: click and drag. */
+export function MouseIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <rect x="5" y="3" width="14" height="19" rx="7" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M5 11h14" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M12 3v8" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M6.2 10.2V9a5.8 5.8 0 0 1 5.8-5.8v7H6.2z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** A mouse wheel with arrows: scroll. */
+export function ScrollIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <rect x="5" y="3" width="14" height="19" rx="7" stroke="currentColor" strokeWidth="1.8" />
+      <rect x="10.5" y="6" width="3" height="5" rx="1.5" fill="currentColor" />
+      <path d="M12 13.5v5M10 16l2 2 2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function WalkIcon({ size = 16, className }: GlyphProps): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className={className}>
@@ -350,6 +373,27 @@ export function BlockedUser({ size = 72, className }: GlyphProps): React.JSX.Ele
       <path d="M17 52c1.5-8 7.5-12 14-12 3 0 5.6.8 7.8 2.3" strokeLinecap="round" />
       <circle cx="48" cy="48" r="9" />
       <path d="M41.6 54.4l12.8-12.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Block a user: a person with a no-entry sign (menu rows, 20px). */
+export function BlockUserIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <circle cx="10" cy="8" r="3.4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M4 19c0-3.2 2.7-5 6-5 1 0 2 .2 2.8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="17.5" cy="16.5" r="4.2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M14.7 13.7l5.6 5.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Report a user: a flag (menu rows, 20px). */
+export function ReportFlag({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M5 21V4h11l-1.5 4L16 12H5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
     </svg>
   )
 }

@@ -147,7 +147,7 @@ pub async fn get_scene_adapter(
         },
         state
             .moderation
-            .connection_gate(&identity, device_id.as_deref(), &resolved_scene_id),
+            .connection_gate(&identity, device_id.as_deref(), resolved_scene_id),
         async {
             if !is_world {
                 return Ok(true);
@@ -156,7 +156,7 @@ pub async fn get_scene_adapter(
                 &state,
                 &identity,
                 &realm_name,
-                Some(&resolved_scene_id),
+                Some(resolved_scene_id),
                 secret.as_deref(),
                 device_id.as_deref(),
                 caller,

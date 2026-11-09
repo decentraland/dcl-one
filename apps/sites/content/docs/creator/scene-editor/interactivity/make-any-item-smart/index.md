@@ -37,7 +37,7 @@ The **Trigger** component can be configured to be aware of any of these types of
 
 > [!NOTE]
 > **💡 Tip**: You can also combine these triggers with [conditional logic](/docs/creator/scene-editor/interactivity/states-and-conditions/), so that the actions don't get called every time the trigger happens, only if the conditions are true.
-> 
+>
 > For example, you could add a **Pointer Events** trigger to a door, so that it opens when clicked, but include conditional logic so that it only opens if it's unlocked.
 
 
@@ -48,7 +48,7 @@ Add a **Trigger** component with **On Click** or **On Input Action** Trigger eve
 * **On Click** reacts to every time the player clicks the left-mouse button while pointing at the item.
 * **On Input Action** reacts to every time the player presses the Primary Button (E) while pointing at the item.
 
-![](/docs/creator/images/editor/on_click.webp)
+![](/docs/creator/images/editor/on_click.webp)
 
 **Colliders**
 

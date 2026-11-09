@@ -88,7 +88,7 @@ NftShape.create(nftEntity, {
 })
 ```
 
-![](/docs/creator/images/media/nft-frames.webp)
+![](/docs/creator/images/media/nft-frames.webp)
 
 Here's the full list of supported frame styles:
 
@@ -127,7 +127,7 @@ Some frames use more materials than others. For example, the default frame adds 
 
 Open a prebuilt UI that displays the name, owner, and description of an NFT. It also includes the NFT's current price and price of last sale if applicable, and a button that links to the NFT's page on OpenSea, where more information is available and it can be purchased.
 
-![](/docs/creator/images/media/nft-ui.webp)
+![](/docs/creator/images/media/nft-ui.webp)
 
 Open this UI by calling the function `openNftDialog()`. This function requires an object as an argument that contains a single `urn` field. This field takes a string that should follow this structure:
 

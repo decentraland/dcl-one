@@ -41,6 +41,7 @@ use bevy::{
 };
 #[cfg(not(debug_assertions))]
 use build_time::build_time_utc;
+use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
 use common::{
     inputs::InputMap,
@@ -662,6 +663,7 @@ impl DecentralandApp {
             .add_plugins(CollectiblesPlugin)
             .add_plugins(WorldUiPlugin)
             .add_plugins(TextureCameraPlugin)
+            .add_plugins(CameraReelPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
             .add_plugins(world_state::WorldStatePlugin)
             .add_plugins(deep_link::DeepLinkPlugin)

@@ -10,7 +10,7 @@
 // answer changes. Transitional: it goes when those fetchers take the flag as an input.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { fetchRemoteFlags, primeRemoteFlags, type RemoteFlag } from '../../../shop/discovery/lib/remoteFlags'
+import { primeRemoteFlags, readRemoteFlags, type RemoteFlag } from '../../../shop/discovery/lib/remoteFlags'
 
 const READ_TIMEOUT_MS = 3_000
 
@@ -19,8 +19,10 @@ export const flagQueries = {
     queryOptions({
       queryKey: ['featureFlags', 'dapps'] as const,
       queryFn: async ({ signal }) => {
-        const flags = await fetchRemoteFlags(AbortSignal.any([signal, AbortSignal.timeout(READ_TIMEOUT_MS)]))
-        primeRemoteFlags(flags)
+        // The variants go with the flags: priming without them would drop an address list (My Store's) for
+        // the rest of the document, the web Shop's pages included.
+        const { flags, variants } = await readRemoteFlags(AbortSignal.any([signal, AbortSignal.timeout(READ_TIMEOUT_MS)]))
+        primeRemoteFlags(flags, variants)
         return flags
       },
       staleTime: 60_000,

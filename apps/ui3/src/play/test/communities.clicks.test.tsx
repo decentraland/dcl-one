@@ -26,9 +26,9 @@ const community = (over: Partial<Community>): Community => ({
 describe('communities page clicks', () => {
   // The community detail modal opens as a popup and reads live data via useSession(), so the page and
   // <PopupHost/> must share one SessionProvider (its `communities` is what the popup content reads).
-  function renderPage(list: Community[], mine: Community[] = list.filter((c) => c.role !== 'none')): CommunitiesState {
+  function renderPage(list: Community[]): CommunitiesState {
     const session = fakeSession()
-    session.communities = { ...session.communities, open: true, list, mine, join: vi.fn(), loadDetail: vi.fn() }
+    session.communities = { ...session.communities, open: true, list, join: vi.fn(), loadDetail: vi.fn() }
     render(
       <SessionProvider value={session}>
         <CommunitiesPage communities={session.communities} profile={fakeProfileState()} onNavigate={vi.fn()} />
@@ -51,17 +51,21 @@ describe('communities page clicks', () => {
     expect(screen.getByRole('heading', { name: 'Builders' })).toBeInTheDocument()
   })
 
-  it('My Communities lists every membership, unlisted ones the browse list leaves out included', async () => {
-    const hidden = community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner', privacy: 'private' })
-    const communities = renderPage([community({ id: 'c1', role: 'none' })], [hidden])
+  // the bridge adds the user's communities the browse page left out (unlisted ones too) to the list
+  it('My Communities lists every membership in the list, an unlisted one included', async () => {
+    const hidden = community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner', privacy: 'private', visibility: 'unlisted' })
+    const communities = renderPage([community({ id: 'c1', role: 'none' }), hidden])
     expect(screen.queryByText("You haven't joined any communities yet.")).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: /Secret Club/ }))
+    // its row under My Communities, and its card at the end of the Browse grid
+    const rows = screen.getAllByRole('button', { name: /Secret Club/ })
+    expect(rows).toHaveLength(2)
+    await userEvent.click(rows[0])
     expect(vi.mocked(communities.loadDetail)).toHaveBeenCalledWith('c-unlisted')
     expect(screen.getByRole('heading', { name: 'Secret Club' })).toBeInTheDocument()
   })
 
-  it('VIEW ALL shows My Communities from the membership list', async () => {
-    renderPage([community({ id: 'c1', role: 'none' })], [community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })])
+  it('VIEW ALL shows the communities the user is a member of', async () => {
+    renderPage([community({ id: 'c1', role: 'none' }), community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })])
     await userEvent.click(screen.getByRole('button', { name: /VIEW ALL/ }))
     expect(screen.getByText('My Communities (1)')).toBeInTheDocument()
   })

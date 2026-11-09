@@ -98,7 +98,8 @@ export type CheckoutSession = {
 };
 
 /** The server's order vocabulary plus 'pending': the poll gave up with money in and the grant not written. */
-export type OrderStatus = { status: PackOrderStatus["status"] | "initiated" | "crediting" | "abandoned" | "pending"; creditsGranted?: number; newBalance?: number; error?: string };
+/** `missing`: the node has no such order for this signer (a made-up or mistyped `?order=`, or another account's order). */
+export type OrderStatus = { status: PackOrderStatus["status"] | "initiated" | "crediting" | "abandoned" | "pending" | "missing"; creditsGranted?: number; newBalance?: number; error?: string };
 
 export const MOCK_ORDER_PREFIX = "mock_cs_";
 
@@ -119,13 +120,17 @@ export async function createPackCheckout(packId: string, client: ShopClient = sh
   return createPackCheckoutReal(packId, client);
 }
 
-/** Wait for the verified webhook to grant the pack's credits (real) or simulate the grant (mock). */
+/**
+ * Wait for the verified webhook to grant the pack's credits (real) or simulate the grant (mock). Only with mock payments
+ * on: otherwise a `mock_cs_` id is an order like any other, asked of the server, so a link carrying one never shows
+ * Credits that were not bought.
+ */
 export async function pollCreditGrant(
   orderId: string,
-  opts: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal; packs?: CreditPack[] } = {},
+  opts: { intervalMs?: number; timeoutMs?: number; missingGraceMs?: number; signal?: AbortSignal; now?: () => number; packs?: CreditPack[] } = {},
   client: ShopClient = shopClient(),
 ): Promise<OrderStatus> {
-  if (orderId.startsWith(MOCK_ORDER_PREFIX)) {
+  if (isMockPayments() && orderId.startsWith(MOCK_ORDER_PREFIX)) {
     await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 300));
     const packId = orderId.slice(MOCK_ORDER_PREFIX.length).replace(/_\d+$/, "");
     const pack = getPack(packId, opts.packs ?? CREDIT_PACKS);

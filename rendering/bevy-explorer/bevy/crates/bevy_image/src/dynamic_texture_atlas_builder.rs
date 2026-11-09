@@ -3,7 +3,6 @@ use bevy_asset::RenderAssetUsages;
 use bevy_math::{URect, UVec2};
 use guillotiere::{size2, Allocation, AtlasAllocator};
 use thiserror::Error;
-use tracing::error;
 
 #[derive(Debug, Error)]
 pub enum DynamicTextureAtlasBuilderError {

@@ -4,7 +4,7 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
@@ -44,6 +44,7 @@ import { isEditableTarget } from '../../lib/bindingLabels'
 import { catalystThumbUrl } from '../../lib/identity'
 import { CatalystImg } from '../../components/CatalystImg'
 import { CategoryIcon } from './categoryIcons'
+import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
@@ -392,6 +393,8 @@ export function BackpackPage({
   initialTab?: 'wearables' | 'emotes'
 }): React.JSX.Element | null {
   const [tab, setTab] = useState<BackpackTab>(initialTab)
+  // The engine's camera view (the 960×960 preview), which the drag surface measures its zoom anchor on.
+  const previewBox = useRef<HTMLDivElement>(null)
   const [section, setSection] = useState<Section>('categories')
   const [cat, setCat] = useState('all')
   const [query, setQuery] = useState('')
@@ -449,10 +452,19 @@ export function BackpackPage({
   useEffect(() => {
     setPage(0)
   }, [cat, searchDebounced, collectiblesOnly, smartOnly, sortBy, sortDir])
+  // The query the grid's page answers, recorded as it is asked: a render that changes the query
+  // still shows the old page until the effect below asks for the new one. None while the grid is
+  // not shown (the page stays mounted while closed), so a reopened grid asks again first.
+  const catalogKey = JSON.stringify([page, cat, searchDebounced, sortBy, sortDir, collectiblesOnly, smartOnly])
+  const [askedKey, setAskedKey] = useState<string | null>(null)
   // Fetch the current catalog page from the catalyst (wearables tab). Filters/sort are applied
   // server-side; the session drops stale responses via a request id.
   useEffect(() => {
-    if (!backpack.open || tab !== 'wearables') return
+    if (!backpack.open || tab !== 'wearables') {
+      setAskedKey(null)
+      return
+    }
+    setAskedKey(catalogKey)
     backpack.query({
       page,
       pageSize: PAGE_SIZE,
@@ -463,7 +475,12 @@ export function BackpackPage({
       collectiblesOnly,
       smartOnly
     })
-  }, [backpack.open, tab, page, cat, searchDebounced, sortBy, sortDir, collectiblesOnly, smartOnly, backpack.query])
+  }, [backpack.open, tab, page, cat, searchDebounced, sortBy, sortDir, collectiblesOnly, smartOnly, backpack.query, catalogKey])
+
+  // The grid shows the answer to an older query while the newest is in flight, or while the search
+  // box waits out its debounce, or in the render that changed the query before it is asked: the
+  // region says so (aria-busy) until the page it shows is current.
+  const catalogBusy = backpack.loading || query !== searchDebounced || askedKey !== catalogKey
 
   const pageCount = Math.max(1, Math.ceil(backpack.total / PAGE_SIZE))
   const safePage = Math.min(page, pageCount - 1)
@@ -601,8 +618,13 @@ export function BackpackPage({
         <div className={styles.stage}>
           <div className={`${styles.frame} ${styles.fadeIn}`}>
             {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
-            <div className={styles.preview}>
+            <div ref={previewBox} className={styles.preview}>
               <EngineViewport region="avatarPreview" report={setEngineViewport} />
+            </div>
+            {/* Drag to turn the avatar, the wheel to zoom toward the pointer (HINTS); the zoom's anchor is
+                measured on the camera's whole view, wider than the column that takes the pointer. */}
+            <div className={styles.avatarDrag}>
+              <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} view={() => previewBox.current?.getBoundingClientRect() ?? null} />
             </div>
             <HintsButton className={styles.hints} hints={HINTS} />
             <RandomizeBar
@@ -625,7 +647,13 @@ export function BackpackPage({
 
             {tab === 'wearables' ? (
               section === 'outfits' ? (
-                <div key="outfits" className={`${styles.outfits} ${styles.slideFromRight}`}>
+                <div
+                  key="outfits"
+                  className={`${styles.outfits} ${styles.slideFromRight}`}
+                  role="region"
+                  aria-label="Saved outfits"
+                  aria-busy={!backpack.outfitsLoaded}
+                >
                   {[0, 1].map((row) => (
                     row === 1 && backpack.outfitSlots <= 5 ? <NameBanner key="banner" /> : (
                       <div key={row} className={styles.outfitRow}>
@@ -672,7 +700,7 @@ export function BackpackPage({
                     )
                   })}
                 </div>
-                <div className={styles.gridArea}>
+                <div className={styles.gridArea} role="region" aria-label="Catalog" aria-busy={catalogBusy}>
                   {(backpack.loading || pageItems.length > 0) && <div className={styles.breadcrumb}>
                     <Chip label="All" icon={<MaskIcon src={allIcon} size={32} />} selected={cat === 'all' && query === ''} onClick={() => { pick('all'); setQuery('') }} />
                     {cat !== 'all' && (

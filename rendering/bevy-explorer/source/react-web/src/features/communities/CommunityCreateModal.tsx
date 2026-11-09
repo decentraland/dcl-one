@@ -227,9 +227,11 @@ export function CommunityCreateModal({
 
   const moderation = result?.moderation
   if (moderation != null) {
+    // unity-explorer shows "Created" for both; an edit says "Updated" here (decisions guide)
+    const refused = isEdit ? "Your Community Couldn't Be Updated" : "Your Community Couldn't Be Created"
     return (
-      <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Your Community Couldn't Be Created" onClick={(e) => e.stopPropagation()}>
-        <h2 className={styles.title}>Your Community Couldn&apos;t Be Created</h2>
+      <div className={styles.modal} role="dialog" aria-modal="true" aria-label={refused} onClick={(e) => e.stopPropagation()}>
+        <h2 className={styles.title}>{refused}</h2>
         {moderation.unavailable ? (
           <p className={styles.notice}>Content verification is temporarily unavailable. Please try again later.</p>
         ) : (

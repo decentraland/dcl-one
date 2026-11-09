@@ -63,7 +63,7 @@ export function ShopCard({
       rarity={item.rarity}
       creator={creatorName}
       creatorPicture={creator?.picture}
-      price={<PriceTag price={price} size={15} />}
+      price={<PriceTag price={price} size={16} />}
       discount={discount}
       categoryIcon={item.category === 'emote' || item.wearableCategory != null ? itemIcon(item, 16) : undefined}
       selected={selected || triedOn}

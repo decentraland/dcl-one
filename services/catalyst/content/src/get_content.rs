@@ -91,25 +91,116 @@ fn apply_headers(response: &mut Response, headers: &[(&'static str, String)]) {
 }
 
 /// How a mount serves `/contents/{hash}`: the root content server's contract, or
-/// worlds-content-server's (legacy SHA-256 hex keys, always sniffed).
+/// worlds-content-server's (`content-file-handler.ts`: legacy SHA-256 hex keys,
+/// always sniffed, a `Range` on HEAD ignored, a bare 404).
 #[derive(Clone, Copy)]
 struct Mount {
     legacy_sha256: bool,
     always_sniff: bool,
+    head_ignores_range: bool,
+    bare_not_found: bool,
 }
 
+/// The bytes the worlds mount sniffs: enough for every signature
+/// [`file_type_extra`] reads (the Ogg codec id ends at byte 36).
+const WORLDS_SNIFF_BYTES: u64 = 64;
+/// The root's sniff window.
+const ROOT_SNIFF_BYTES: u64 = 32;
+
 impl Mount {
-    /// The root answers `file-type`'s binary signatures only, as upstream's
-    /// catalyst; the worlds mount also answers JSON as `application/json`,
-    /// as worlds-content-server does (services/catalyst/docs/worlds-compatibility.md).
+    /// The root answers [`detect_content_type`]'s `file-type` signatures, as
+    /// upstream's catalyst. The worlds mount reads `file-type@16`'s answers for
+    /// the formats in [`file_type_extra`] first, and answers a head that opens
+    /// a JSON object or array as `application/json`, which `file-type` (and so
+    /// worlds-content-server) answers as `application/octet-stream`
+    /// (services/catalyst/docs/worlds-compatibility.md).
     fn sniff(self, head: &[u8]) -> &'static str {
-        match detect_content_type(head) {
-            "application/octet-stream" if self.always_sniff && looks_like_json(head) => {
-                "application/json"
-            }
+        if !self.always_sniff {
+            return detect_content_type(head);
+        }
+        match file_type_extra(head).unwrap_or_else(|| detect_content_type(head)) {
+            "application/octet-stream" if looks_like_json(head) => "application/json",
             detected => detected,
         }
     }
+
+    fn sniff_bytes(self) -> u64 {
+        if self.always_sniff {
+            WORLDS_SNIFF_BYTES
+        } else {
+            ROOT_SNIFF_BYTES
+        }
+    }
+}
+
+/// `file-type@16.5.4` (`core.js`, the version worlds-content-server's `yarn.lock`
+/// pins) for scene-file formats [`detect_content_type`] answers otherwise:
+/// BMP (checked first, as there), the ISO-BMFF major brands, fonts, FLAC,
+/// WebAssembly, RIFF WAV/AVI and the Ogg codecs.
+fn file_type_extra(b: &[u8]) -> Option<&'static str> {
+    let at = |offset: usize, sig: &[u8]| b.get(offset..offset + sig.len()) == Some(sig);
+    if at(0, b"BM") {
+        return Some("image/bmp");
+    }
+    if at(0, b"OggS") {
+        let codec = |sig: &[u8]| at(28, sig);
+        return Some(if codec(b"OpusHead") {
+            "audio/opus"
+        } else if codec(b"\x80theora") || codec(b"\x01video\0") {
+            "video/ogg"
+        } else if codec(b"\x7fFLAC") || codec(b"Speex  ") || codec(b"\x01vorbis") {
+            "audio/ogg"
+        } else {
+            "application/ogg"
+        });
+    }
+    if at(4, b"ftyp") && b.len() >= 12 && b[8] & 0x60 != 0 {
+        let brand = String::from_utf8_lossy(&b[8..12]).replacen('\0', " ", 1);
+        let brand = brand.trim();
+        return Some(match brand {
+            "avif" => "image/avif",
+            "mif1" => "image/heif",
+            "msf1" => "image/heif-sequence",
+            "heic" | "heix" => "image/heic",
+            "hevc" | "hevx" => "image/heic-sequence",
+            "qt" => "video/quicktime",
+            "M4V" | "M4VH" | "M4VP" => "video/x-m4v",
+            "M4B" | "F4A" | "F4B" => "audio/mp4",
+            "M4A" => "audio/x-m4a",
+            "crx" => "image/x-canon-cr3",
+            b if b.starts_with("3g2") => "video/3gpp2",
+            b if b.starts_with("3g") => "video/3gpp",
+            _ => "video/mp4",
+        });
+    }
+    let sfnt = |offset| at(offset, &[0x00, 0x01, 0x00, 0x00]) || at(offset, b"OTTO");
+    if at(0, b"wOFF") && sfnt(4) {
+        return Some("font/woff");
+    }
+    if at(0, b"wOF2") && sfnt(4) {
+        return Some("font/woff2");
+    }
+    if at(0, b"fLaC") {
+        return Some("audio/x-flac");
+    }
+    if at(0, &[0x00, 0x61, 0x73, 0x6D]) {
+        return Some("application/wasm");
+    }
+    if at(0, b"RIFF") {
+        if at(8, b"AVI") {
+            return Some("video/vnd.avi");
+        }
+        if at(8, b"WAVE") {
+            return Some("audio/vnd.wave");
+        }
+    }
+    if at(0, b"OTTO\0") {
+        return Some("font/otf");
+    }
+    if at(0, &[0x00, 0x01, 0x00, 0x00, 0x00]) {
+        return Some("font/ttf");
+    }
+    None
 }
 
 /// A head that opens a JSON object or array, after an optional UTF-8 BOM.
@@ -121,10 +212,14 @@ fn looks_like_json(head: &[u8]) -> bool {
 const ROOT: Mount = Mount {
     legacy_sha256: false,
     always_sniff: false,
+    head_ignores_range: false,
+    bare_not_found: false,
 };
 const WORLDS: Mount = Mount {
     legacy_sha256: true,
     always_sniff: true,
+    head_ignores_range: true,
+    bare_not_found: true,
 };
 
 /// GET and HEAD /contents/{hash}. A malformed hash is a 404 like any other
@@ -143,14 +238,20 @@ pub async fn get_content(
 
 /// The worlds mount's GET and HEAD /contents/{hash}: worlds-content-server
 /// always sniffs the Content-Type and also answers a thumbnail's legacy
-/// SHA-256 hex key, read here as the raw-leaf CIDv1 with that digest.
+/// SHA-256 hex key, read here as the raw-leaf CIDv1 with that digest. A miss
+/// is a 404 without a body (`content-file-handler.ts` `{ status: 404 }`).
 pub async fn get_world_content(
     State(state): State<SharedState>,
     Path(hash_id): Path<String>,
     method: Method,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    serve(state, hash_id, true, method, headers, WORLDS).await
+    match serve(state, hash_id, true, method, headers, WORLDS).await {
+        Err(AppError::NotFound(_)) if WORLDS.bare_not_found => {
+            Ok(StatusCode::NOT_FOUND.into_response())
+        }
+        answered => answered,
+    }
 }
 
 async fn serve(
@@ -195,7 +296,11 @@ async fn serve(
         },
     };
 
-    let range_header = headers.get("range").and_then(|v| v.to_str().ok());
+    // WCS's `headContentFile` answers a HEAD's full headers whatever its `Range`.
+    let range_header = headers
+        .get("range")
+        .filter(|_| !(method == Method::HEAD && mount.head_ignores_range))
+        .and_then(|v| v.to_str().ok());
     let total = opened.size;
     let range = parse_range_header(range_header, Some(total));
     let mut base_headers = content_file_headers(&hash_id, Some(total));
@@ -216,7 +321,9 @@ async fn serve(
             if sniff {
                 // The worlds mount sniffs the file's head, as WCS does; the root the range's.
                 let from = if mount.always_sniff { 0 } else { start };
-                let head = opened.read_range(from, from + 31).await?;
+                let head = opened
+                    .read_range(from, from + mount.sniff_bytes() - 1)
+                    .await?;
                 set_content_type(&mut base_headers, mount.sniff(&head));
             }
 
@@ -244,7 +351,7 @@ async fn serve(
     // Upstream sniffs for HEAD as for GET: the headers are the same. The
     // worlds mount sniffs every HEAD, as WCS does.
     let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
-        let head = opened.read_range(0, 31).await?;
+        let head = opened.read_range(0, mount.sniff_bytes() - 1).await?;
         set_content_type(&mut base_headers, mount.sniff(&head));
         head
     } else {
@@ -652,8 +759,9 @@ mod tests {
         assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
         assert_eq!(body_of(resp).await, png.slice(8..11));
 
-        // Worlds JSON keeps WCS's application/json; the root, as upstream's
-        // `file-type`, has no text detector.
+        // The worlds mount answers JSON as application/json (an intended
+        // difference: `file-type`, and so WCS, has no text detector); the root
+        // answers as upstream's catalyst.
         let json = Bytes::from_static(b"\xEF\xBB\xBF{\"version\":\"v3\"}");
         let json_cid = crate::auth::hash_bytes_v1(&json);
         node.store(&json_cid, json.clone()).await;
@@ -690,6 +798,65 @@ mod tests {
         assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
     }
 
+    /// `file-type@16.5.4` `core.js` on the worlds mount; the root keeps its table.
+    #[test]
+    fn the_worlds_mount_reads_file_types_other_signatures() {
+        let mut ogg_opus = b"OggS".to_vec();
+        ogg_opus.resize(28, 0);
+        ogg_opus.extend_from_slice(b"OpusHead");
+        let cases: [(&[u8], &str); 12] = [
+            (b"BM\x36\x00\x00\x00", "image/bmp"),
+            (b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00", "image/avif"),
+            (
+                b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00",
+                "video/quicktime",
+            ),
+            (b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "audio/x-m4a"),
+            (b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00", "video/mp4"),
+            (b"wOFF\x00\x01\x00\x00", "font/woff"),
+            (b"wOF2OTTO", "font/woff2"),
+            (b"OTTO\x00\x0a", "font/otf"),
+            (b"\x00\x01\x00\x00\x00\x0f", "font/ttf"),
+            (b"fLaC\x00\x00\x00\x22", "audio/x-flac"),
+            (b"\x00asm\x01\x00\x00\x00", "application/wasm"),
+            (&ogg_opus, "audio/opus"),
+        ];
+        for (head, mime) in cases {
+            assert_eq!(WORLDS.sniff(head), mime, "{head:?}");
+        }
+        assert_eq!(
+            WORLDS.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "),
+            "audio/vnd.wave"
+        );
+        assert_eq!(WORLDS.sniff(b"OggS\x00\x02"), "application/ogg");
+        assert_eq!(
+            ROOT.sniff(b"BM\x36\x00\x00\x00"),
+            "application/octet-stream"
+        );
+        assert_eq!(ROOT.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "), "audio/wav");
+    }
+
+    #[tokio::test]
+    async fn a_worlds_head_ignores_its_range() {
+        let node = TestNode::without_db("content-world-head-range").await;
+        node.store(TEST_CID, Bytes::from_static(b"0123456789"))
+            .await;
+        let resp = world_get(&node, TEST_CID, Method::HEAD, Some("bytes=2-4"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(header(&resp, "content-length").unwrap(), "10");
+        assert!(header(&resp, "content-range").is_none());
+        let resp = get(&node, Method::HEAD, None, Some("bytes=2-4"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::PARTIAL_CONTENT,
+            "the root keeps it"
+        );
+    }
+
     #[tokio::test]
     async fn the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not() {
         let thumb = Bytes::from_static(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F']);
@@ -706,9 +873,11 @@ mod tests {
         let resp = world_get(&node, &hex, Method::HEAD, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
+        // worlds-content-server answers a miss with a bare 404.
         for bad in [hex.to_uppercase(), hex[..63].to_string()] {
-            let err = world_get(&node, &bad, Method::GET, None).await.unwrap_err();
-            assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND, "{bad}");
+            let resp = world_get(&node, &bad, Method::GET, None).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{bad}");
+            assert!(body_of(resp).await.is_empty(), "{bad}");
         }
         let err = get_content(
             State(node.state.clone()),
@@ -725,8 +894,8 @@ mod tests {
 
         // The denylist withholds the blob under either name.
         node.state.denylist.add(&hex);
-        let err = world_get(&node, &hex, Method::GET, None).await.unwrap_err();
-        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
+        let resp = world_get(&node, &hex, Method::GET, None).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

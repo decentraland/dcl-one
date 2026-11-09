@@ -55,6 +55,15 @@ impl ScanBudget {
     }
 }
 
+/// One observation's result before it is published.
+struct Candidate {
+    rooms: Vec<RecoveredRoom>,
+    refused: Vec<String>,
+    observed: Observation,
+    unknown: u64,
+    generations: HashMap<String, u64>,
+}
+
 #[derive(Clone)]
 struct Classified {
     source: OccupancyRoom,
@@ -105,13 +114,17 @@ impl Presence {
         .map_err(|_| RecoveryFailure::Deadline)?
     }
 
+    /// The classified rooms of `scope`, and the names of the relevant rooms
+    /// this node refuses (no catalogue row, a foreign or non-canonical name).
+    /// A refused room is left out of the counts; it fails the read only when
+    /// it could hold participants of the scope being counted.
     async fn inventory(
         &self,
         source: &RoomServiceClient<'_>,
         scenes: &dyn crate::interfaces::SceneIdentity,
         background: bool,
         scope: Option<&Scope>,
-    ) -> Result<Vec<Classified>, RecoveryFailure> {
+    ) -> Result<(Vec<Classified>, Vec<String>), RecoveryFailure> {
         let rooms = self
             .operation(background, async {
                 source
@@ -121,6 +134,7 @@ impl Presence {
             })
             .await?;
         let mut out = Vec::new();
+        let mut refused = Vec::new();
         for source in rooms {
             let classification = self
                 .operation(background, async {
@@ -130,10 +144,13 @@ impl Presence {
                 })
                 .await?;
             match classification {
-                RoomClassification::Canonical(room) => {
-                    if room.room != source.name {
+                RoomClassification::Canonical(room) if room.room != source.name => {
+                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
                         return Err(RecoveryFailure::Unresolved);
                     }
+                    refused.push(source.name);
+                }
+                RoomClassification::Canonical(room) => {
                     let realm = room
                         .realm
                         .world()
@@ -158,23 +175,28 @@ impl Presence {
                     }
                 }
 
-                // Refused relevant names make even otherwise valid inventory
-                // incomplete. Never drop them via the lossy event projection.
+                // A refused name never counts, and never resolves through the
+                // lossy event projection; it keeps undetermined only the scope
+                // whose participants it could hold.
                 RoomClassification::RelevantRefused { .. } => {
-                    return Err(RecoveryFailure::Unresolved);
+                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
+                        return Err(RecoveryFailure::Unresolved);
+                    }
+                    refused.push(source.name);
                 }
                 RoomClassification::Unrelated => {}
             }
         }
         out.sort_by(|a, b| a.source.cmp(&b.source));
-        Ok(out)
+        refused.sort();
+        Ok((out, refused))
     }
 
     async fn candidate(
         &self,
         state: &CommsState,
         scope: Option<&Scope>,
-    ) -> Result<(Vec<RecoveredRoom>, Observation, u64, HashMap<String, u64>), RecoveryFailure> {
+    ) -> Result<Candidate, RecoveryFailure> {
         let mut budget = ScanBudget::default();
         // One disappearance permits one complete re-enumeration/re-read, never
         // a fabricated empty roster. Caller deadlines encompass both attempts;
@@ -192,14 +214,14 @@ impl Presence {
         state: &CommsState,
         scope: Option<&Scope>,
         budget: &mut ScanBudget,
-    ) -> Result<(Vec<RecoveredRoom>, Observation, u64, HashMap<String, u64>), RecoveryFailure> {
+    ) -> Result<Candidate, RecoveryFailure> {
         let background = scope.is_none();
         let source = state.room_service();
         // Capture the unseen-room epoch BEFORE enumeration. A webhook for a
         // previously untracked room during the read cannot be lost at commit.
         let unknown_generation = self.state.lock().unknown_generation;
         let started = Observation::now();
-        let before = self
+        let (before, refused) = self
             .inventory(&source, state.scenes.as_ref(), background, scope)
             .await?;
         let generations = {
@@ -275,7 +297,7 @@ impl Presence {
             rooms.push(room);
         }
         drop(reads);
-        let after = self
+        let (after, _) = self
             .inventory(&source, state.scenes.as_ref(), background, scope)
             .await?;
         if before.len() != after.len()
@@ -296,7 +318,13 @@ impl Presence {
             .min_by_key(|o| o.mono)
             .cloned()
             .unwrap_or(started);
-        Ok((rooms, observed, unknown_generation, generations))
+        Ok(Candidate {
+            rooms,
+            refused,
+            observed,
+            unknown: unknown_generation,
+            generations,
+        })
     }
 
     fn clean(current: &StateData, unknown: u64, generations: &HashMap<String, u64>) -> bool {
@@ -308,10 +336,23 @@ impl Presence {
 
     /// One complete pass. On error, retain membership AND original source time.
     pub async fn recover_complete(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
-        let (rooms, observed, unknown, generations) =
-            tokio::time::timeout(SCAN, self.candidate(state, None))
-                .await
-                .map_err(|_| RecoveryFailure::Deadline)??;
+        let Candidate {
+            rooms,
+            refused,
+            observed,
+            unknown,
+            generations,
+        } = tokio::time::timeout(SCAN, self.candidate(state, None))
+            .await
+            .map_err(|_| RecoveryFailure::Deadline)??;
+        metrics::gauge!("comms_presence_refused_rooms").set(refused.len() as f64);
+        if !refused.is_empty() {
+            tracing::warn!(
+                count = refused.len(),
+                rooms = ?refused.iter().take(5).collect::<Vec<_>>(),
+                "LiveKit rooms this node does not resolve are left out of the occupancy"
+            );
+        }
         let mut current = self.state.lock();
         if !Self::clean(&current, unknown, &generations) {
             return Err(RecoveryFailure::Changed);
@@ -328,6 +369,7 @@ impl Presence {
         current.admission.clear();
         current.complete = Arc::new(Complete {
             rooms,
+            refused,
             observed: Some(observed),
             unknown_generation: unknown,
         });
@@ -370,10 +412,10 @@ impl Presence {
         state: &CommsState,
         scope: Scope,
     ) -> Result<i64, RecoveryFailure> {
-        if !matches!(&scope, Scope::Room(_)) {
-            if let Some(count) = self.admission_count(&scope) {
-                return Ok(count);
-            }
+        if !matches!(&scope, Scope::Room(_))
+            && let Some(count) = self.admission_count(&scope)
+        {
+            return Ok(count);
         }
         let _waiter = self
             .waiters
@@ -402,8 +444,13 @@ impl Presence {
             if let Some(count) = self.admission_count(&scope) {
                 return Ok(count);
             }
-            let (rooms, observed, unknown, generations) =
-                self.candidate(state, Some(&scope)).await?;
+            let Candidate {
+                rooms,
+                observed,
+                unknown,
+                generations,
+                ..
+            } = self.candidate(state, Some(&scope)).await?;
             if !observed.fresh(ADMISSION_TTL) {
                 return Err(RecoveryFailure::Deadline);
             }
@@ -492,14 +539,15 @@ impl Presence {
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = presence.recover_complete(&state) => result,
                 };
                 let delay = match result {
-                    Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); Duration::from_secs(30) },
-                    Err(error) => { ctx.error(error.to_string()); Duration::from_millis(5000 + rand::random::<u64>() % 1001) },
+                    Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); retry = Duration::from_secs(1); Duration::from_secs(30) },
+                    Err(error) => { ctx.error(error.to_string()); let delay = retry + Duration::from_millis(rand::random::<u64>() % 1001); retry = retry.saturating_mul(2).min(Duration::from_secs(5)); delay },
                 };
                 ctx.pass_done();
                 // Coalesced hints never cause a tight loop. A pending hint can

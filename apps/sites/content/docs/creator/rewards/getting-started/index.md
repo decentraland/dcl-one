@@ -103,7 +103,7 @@ By default your campaign is inactive. This prevents the rewards service from ass
 > **📔 Note**: If an active campaign is set to inactive, any pending rewards will still be sent. However, new claims or claims that need to be retried for some reason will be prevented.
 
 
-**Now you are ready to start minting wearables/emotes using the** [**API**](/docs/apis/apis/rewards/)
+**Now you are ready to start minting wearables/emotes using the** [**API**](/docs/creator/rewards/integrations/)
 
 ### Manage funds
 

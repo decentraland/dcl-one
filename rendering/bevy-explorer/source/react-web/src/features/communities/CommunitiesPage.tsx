@@ -87,7 +87,7 @@ export function CommunitiesPage({
   }, [wantOpen])
 
   const matchesQuery = (c: Community): boolean => !query || c.name.toLowerCase().includes(query.toLowerCase())
-  const mine = communities.mine
+  const mine = useMemo(() => communities.list.filter((c) => isMember(c.role)), [communities.list])
   const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query])
   const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query])
   const showingMine = tab === 'mine'

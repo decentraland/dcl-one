@@ -1,4 +1,4 @@
-import { CatalystError, sendSignedJSON, serviceBase, type RequestOpts } from "./client";
+import { CatalystError, envelopeMessage, sendSignedJSON, serviceBase, type RequestOpts } from "./client";
 import { signedFetchHeaders } from "../auth/signedFetchLocal";
 
 export type { Community, CommunityMember } from "./communitiesSchema";
@@ -44,7 +44,7 @@ export async function createCommunity(input: {
   if (!res.ok) {
     let serverMsg = "";
     try {
-      serverMsg = (JSON.parse(text) as { message?: string } | null)?.message ?? "";
+      serverMsg = envelopeMessage(JSON.parse(text));
     } catch {
       serverMsg = text;
     }

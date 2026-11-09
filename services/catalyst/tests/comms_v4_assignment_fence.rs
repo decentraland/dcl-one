@@ -298,11 +298,10 @@ async fn an_owner_expiring_during_mint_cannot_commit_or_renew_the_row() {
         return;
     };
     seed_realm(&fixture.pool, WALLET, SESSION, 2, 3, 5, None).await;
-    set_realm_renewal(&fixture.pool, "clock_timestamp() - interval '89 seconds'").await;
     let fence = fixture.fence().await;
     let lease = fence.lock_realm(WALLET, SESSION).await.expect("live lease");
 
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    set_realm_renewal(&fixture.pool, "clock_timestamp() - interval '91 seconds'").await;
     assert_eq!(
         lease
             .commit(assignment(&fixture.pool, "island-too-late", None).await)
@@ -323,17 +322,25 @@ async fn an_owner_expiring_while_waiting_for_the_row_lock_gets_no_lease() {
         return;
     };
     seed_realm(&fixture.pool, WALLET, SESSION, 2, 3, 5, None).await;
-    set_realm_renewal(&fixture.pool, "clock_timestamp() - interval '89 seconds'").await;
     let mut blocker = fixture.pool.begin().await.expect("blocking transaction");
     sqlx::query("SELECT owner_session FROM social.archipelago_v4_assignments FOR UPDATE")
         .fetch_all(&mut *blocker)
         .await
         .expect("hold the authority row lock");
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
     let fence = fixture.fence().await;
     let waiter = tokio::spawn(async move { fence.lock_realm(WALLET, SESSION).await });
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(catalyst::shared::test_wait::until(async || {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))")
+            .bind(blocker_pid).fetch_one(&fixture.pool).await.unwrap()
+    }).await);
+    sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-interval '91 seconds'")
+        .execute(&mut *blocker).await.unwrap();
     assert!(!waiter.is_finished());
-    blocker.rollback().await.expect("release the row lock");
+    blocker.commit().await.expect("release the row lock");
     match waiter.await.expect("waiting task") {
         Ok(_) => panic!("a row that expired while waiting must not grant a lease"),
         Err(error) => assert_eq!(error, FenceError::Conflict),

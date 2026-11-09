@@ -167,7 +167,8 @@ mod tests {
 
         // Compare parsed wire types, exact label sets (including le), and every
         // cumulative bucket, count and sum. Label ordering and HELP text may differ.
-        fn parse(body: &str) -> (String, BTreeMap<(String, BTreeMap<String, String>), f64>) {
+        type Samples = BTreeMap<(String, BTreeMap<String, String>), f64>;
+        fn parse(body: &str) -> (String, Samples) {
             let mut kind = None;
             let mut samples = BTreeMap::new();
             for line in body.lines() {

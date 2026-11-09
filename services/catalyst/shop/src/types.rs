@@ -391,6 +391,23 @@ const USD_WEI_PER_CENT: u64 = 10_000_000_000_000_000;
 const BPS: u64 = 10_000;
 const PPM: u64 = 1_000_000;
 
+/// `answer / 10^decimals` as exact decimal text, trailing zeros dropped.
+pub fn decimal_text(answer: U256, decimals: u8) -> String {
+    let digits = answer.to_string();
+    let scale = usize::from(decimals);
+    if scale == 0 {
+        return digits;
+    }
+    let padded = format!("{digits:0>width$}", width = scale + 1);
+    let (whole, fraction) = padded.split_at(padded.len() - scale);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction}")
+    }
+}
+
 /// The MANA/USD reference rate, USD per MANA scaled by `10^decimals`, never
 /// taken from a client. The credits authorize path prices quotes in cents
 /// from the price module's polled snapshot ([`Self::parse_usd_per_mana`]);
@@ -417,6 +434,11 @@ impl ManaUsdRate {
 
     pub fn decimals(self) -> u8 {
         self.decimals
+    }
+
+    /// USD per MANA as exact decimal text ("0.26960836"), for a NUMERIC bind.
+    pub fn decimal_text(self) -> String {
+        decimal_text(self.rate, self.decimals)
     }
 
     /// The price module's USD-per-MANA decimal text (`"0.25"`) as an

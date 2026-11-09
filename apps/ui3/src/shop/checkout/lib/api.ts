@@ -14,6 +14,7 @@ import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "../../model/money";
 import type { SaleRecord } from "../../history/activity";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
+import { fetchPrimaryListingForItem } from "../../detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {
@@ -64,9 +65,12 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
   return pickItemListing(body?.data ?? []);
 }
 
-/** The live trade of an item (primary), or null when it is not on sale. */
+/**
+ * The live trade of an item's primary sale, or null when it is not on sale. Asked for primary listings only, and a
+ * row naming a token is never taken: an item line buys a mint from its creator, never a resale in its place.
+ */
 export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<SignedTrade | null> {
-  const listing = await fetchUnifiedListingForItem(contractAddress, itemId, client);
+  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client });
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 

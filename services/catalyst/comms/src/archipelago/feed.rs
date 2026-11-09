@@ -35,6 +35,8 @@ use parking_lot::{Mutex, RwLock};
 use prost::Message as _;
 use serde::Serialize;
 use std::sync::Arc;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -114,9 +116,23 @@ pub struct FeedCache {
     assignment_oversized: AtomicU64,
     socket_write_timeout: AtomicU64,
     socket_assignments_written: AtomicU64,
+    #[cfg(any(test, feature = "test-support"))]
+    restoration_complete: AtomicBool,
+    #[cfg(any(test, feature = "test-support"))]
+    link_observed: AtomicBool,
 }
 
 impl FeedCache {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn restoration_complete(&self) -> bool {
+        self.restoration_complete.load(Ordering::Acquire)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn link_observed(&self) -> bool {
+        self.link_observed.load(Ordering::Acquire)
+    }
+
     pub fn islands(&self) -> Vec<IslandReport> {
         self.islands.read().clone()
     }
@@ -463,6 +479,14 @@ async fn run(state: &AppState, mut rx: mpsc::Receiver<ControlPositionAnnouncemen
     let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            state
+                .feed
+                .restoration_complete
+                .store(linked && pending.restoration_complete(), Ordering::Release);
+            state.feed.link_observed.store(linked, Ordering::Release);
+        }
         tokio::select! {
             _ = readiness.tick() => {
                 sample(state, &mut linked, &mut pending);
@@ -949,7 +973,7 @@ mod tests {
         let state = state_on(Settings::for_tests(), bus.clone(), &jobs).await;
         let (_link, _events, permit) = realm_owner(&state.registry);
         assert!(state.outbox.publish_control_position(position(&permit, 1)));
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        settled(|| state.outbox.queued() == 0).await;
 
         let link = Arc::downgrade(&bus);
         let connector = Arc::downgrade(&state);
@@ -977,7 +1001,7 @@ mod tests {
         state.gatekeeper.announce_session(WALLET, SESSION);
         let (_owner, _owner_events, permit) = realm_owner(&state.registry);
         assert!(state.outbox.publish_control_position(position(&permit, 1)));
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        settled(|| state.outbox.queued() == 0).await;
 
         let subscriber = state.gatekeeper.island_subscriber();
         let gatekeeper = Arc::downgrade(&state.gatekeeper);

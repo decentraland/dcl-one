@@ -93,6 +93,7 @@ pub mod store;
 pub mod stripe;
 pub mod usage;
 pub mod wallet;
+pub mod wallet_flags;
 pub mod writes;
 
 #[cfg(test)]
@@ -203,6 +204,8 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `SHOP_BASE_URL`: the grant notification's link (the old `${DECENTRALAND_URL}/shop`).
+    pub shop_base_url: String,
 }
 
 impl Default for RawSettings {
@@ -245,6 +248,7 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
         }
     }
 }
@@ -282,6 +286,7 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    pub shop_base_url: String,
 }
 
 fn non_empty(v: Option<String>) -> Option<String> {
@@ -464,6 +469,10 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            shop_base_url: non_empty(Some(raw.shop_base_url))
+                .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
+                .trim_end_matches('/')
+                .to_string(),
         })
     }
 
@@ -559,7 +568,7 @@ impl State {
             market,
             settings.marketplace_markup_bps,
         ));
-        let mut credits = Credits::new(pool);
+        let mut credits = Credits::new(pool).with_shop_base_url(&settings.shop_base_url);
         if settings.usage.is_configured() {
             credits = credits.with_usage_index(settings.usage.chain_id);
         }
@@ -637,8 +646,9 @@ impl State {
         self
     }
 
-    /// The fulfilment worker (always: it idles without a broker) and the
-    /// escrow release worker (only with one), both under the shared lifecycle.
+    /// The fulfilment worker (always: it idles without a broker), the
+    /// escrow release worker (only with one), the settlement job and the
+    /// wallet flags listener, all under the shared lifecycle.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         checkout::OutboxWorker {
             credits: self.credits.clone(),
@@ -661,6 +671,7 @@ impl State {
             self.settings.writes_enabled,
             self.settings.checkout_worker_interval,
         );
+        wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
         if self.settings.writes_enabled {
             tracing::warn!(
                 "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, checkouts and authorizations"

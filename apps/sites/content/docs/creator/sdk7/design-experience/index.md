@@ -6,9 +6,9 @@ Learn best practices for designing engaging experiences and games in Decentralan
 
 ## What You'll Learn
 
-* Game design principles for Decentraland
-* Minimum Viable Product (MVP) guidelines
-* UX and UI best practices
-* Performance considerations for gameplay
+* [Design Games](/docs/creator/sdk7/design-experience/design-games/): game design principles for Decentraland
+* [MVP Guidelines](/docs/creator/sdk7/design-experience/mvp-guidelines/): how to scope and build your first playable version
+* [UX & UI Guide](/docs/creator/sdk7/design-experience/ux-ui-guide/): UX and UI best practices
+* [Playtests](/docs/creator/sdk7/design-experience/playtests/): how to playtest your game and act on player feedback
 
 Good design makes the difference between a scene that players visit once and one they return to again and again.

@@ -21,6 +21,8 @@ import Rail from "../components/Rail";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "../freshness";
+import { useMarketplace } from "../../market/access";
+import { listingTypeFor } from "../../market/access-rule";
 import { isIapMode, shopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "../intl";
@@ -79,10 +81,14 @@ export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
+  const listingType = listingTypeFor(useMarketplace());
 
   const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }));
+  // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
+  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }), {
+    keepPrevious: listingType === undefined,
+  });
   const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
     fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { signal }),
   );

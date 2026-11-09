@@ -23,7 +23,7 @@ import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
 import { IN_WORLD_SHOP } from './features/shop/entry'
-// `?shop=new`: the in-world Shop that will replace ShopPage, loaded only when it is asked for. lazy()
+// The in-world Shop, which replaces ShopPage (`?shop=old` keeps ShopPage while it is retired), loaded only when it is first opened. lazy()
 // keeps a failed load, so a crash swaps in a fresh one for the next open.
 const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
 let InWorldShop = /* @__PURE__ */ loadInWorldShop()
@@ -34,6 +34,7 @@ import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
+import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
@@ -210,7 +211,7 @@ function Hud(): React.JSX.Element {
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
-  // mounted for good once the Shop is first opened (`?shop=new`)
+  // mounted for good once the Shop is first opened (unless `?shop=old`)
   const [shopWanted, setShopWanted] = useState(false)
   if (IN_WORLD_SHOP && !shopWanted && session.shop.open) setShopWanted(true)
 
@@ -241,8 +242,9 @@ function Hud(): React.JSX.Element {
       : null
 
   // Scene permission prompts (e.g. ChangeRealm), one at a time, opened through the popup layer. Escape
-  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes.
-  const permFrontId = session.phase === 'world' ? session.permissions.pending[0]?.id : undefined
+  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes. Photo mode
+  // holds them: a popup would close it, and the prompt opens when it ends.
+  const permFrontId = session.phase === 'world' && !session.photoMode.active ? session.permissions.pending[0]?.id : undefined
   useEffect(() => {
     const front = session.permissions.pending[0]
     if (permFrontId == null || !front) return
@@ -325,7 +327,8 @@ function Hud(): React.JSX.Element {
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  const chrome = !pageOpen && editorMode === 'off'
+  // photo mode shows only its own overlay (and the reticle) over the world
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -380,6 +383,9 @@ function Hud(): React.JSX.Element {
           )}
           {/* The full-screen menu pages own the whole screen; hide the rail + chat so
               they don't show through (the map page's body is transparent). */}
+          {session.photoMode.active && !pageOpen && (
+            <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
+          )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
           {chrome && (
             <Minimap
@@ -481,6 +487,8 @@ function Hud(): React.JSX.Element {
                   focus={session.backpack.focus}
                   stage={session.backpack.stage}
                   emote={session.backpack.emote}
+                  rotate={session.backpack.rotate}
+                  zoom={session.backpack.zoom}
                   noEngine={MODE === 'mock'}
                 />
               </Suspense>
