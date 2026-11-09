@@ -63,6 +63,12 @@ function publish(next: Snapshot | null): void {
 
 const fetchFlags: FlagsTransport = async (url, { signal }) => {
   const res = await fetch(url, { signal });
+  if (!res.ok) {
+    // An error's body is never read: it is let go without waiting on it (it may fail, or never end), so the status
+    // refuses the answer at once.
+    void res.body?.cancel().catch(() => undefined);
+    return { status: res.status, body: "" };
+  }
   return { status: res.status, body: await res.text() };
 };
 
