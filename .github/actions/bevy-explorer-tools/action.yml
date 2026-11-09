@@ -1,11 +1,10 @@
 name: Install a tool package from the flake
 description: >-
-  A package of the flake (bevy-tools: protoc, taplo and wasm-pack; bevy-ffmpeg: the ffmpeg 6
-  libraries) as the pinned nixpkgs builds it, delivered from the Actions cache: a hit puts the
-  closure under /nix/store without installing Nix; a miss, after a pin change, installs Nix,
-  builds the package from the lock and, on main, saves the closure right away, before any build
-  step runs beside it. bevy-tools goes on PATH, bevy-ffmpeg into PKG_CONFIG_PATH, for the steps
-  that follow.
+  A package of the flake (bevy-tools: protoc, taplo and wasm-pack) as the pinned nixpkgs builds
+  it, delivered from the Actions cache: a hit puts the closure under /nix/store without installing
+  Nix; a miss, after a pin change, installs Nix, builds the package from the lock and, on main,
+  saves the closure right away, before any build step runs beside it. bevy-tools goes on PATH for
+  the steps that follow.
 inputs:
   package:
     description: The flake package to install

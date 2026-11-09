@@ -3,10 +3,10 @@ pub mod plugin;
 pub mod test;
 
 // util
-#[cfg(feature = "ffmpeg")]
+#[cfg(feature = "uuav")]
 pub mod audio_sink;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
-pub mod video_stream;
+#[cfg(any(feature = "uuav", feature = "html"))]
+pub mod sinks;
 
 // audio source (non-streaming audio)
 #[cfg(feature = "html")]
@@ -20,7 +20,7 @@ pub mod audio_source_wasm;
 mod debug_panel;
 
 // video
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 pub mod video_player;
 
 #[cfg(feature = "av_player_debug")]
@@ -28,21 +28,19 @@ pub mod av_player_debug;
 
 use std::{borrow::Borrow, marker::PhantomData, ops::Deref};
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use dcl_component::proto_components::sdk::components::VideoState;
 use dcl_component::proto_components::sdk::components::{PbAudioStream, PbVideoPlayer};
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use media::AVCommand;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use tokio::sync::watch;
 
-#[cfg(feature = "ffmpeg")]
-use crate::audio_sink::AudioSink;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
-use crate::video_stream::VideoSink;
+#[cfg(any(feature = "uuav", feature = "html"))]
+use crate::sinks::VideoSink;
 
 const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
 
@@ -67,24 +65,19 @@ pub trait AVPlayerConfig {
     fn r#loop(&self) -> bool;
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 pub trait AVPlayerSinks: Component<Mutability = Mutable> {
-    #[cfg(feature = "ffmpeg")]
-    fn audio_sink(&self) -> Option<&AudioSink>;
-    #[cfg(feature = "ffmpeg")]
-    fn audio_sink_mut(&mut self) -> Option<&mut AudioSink>;
     fn video_sink(&self) -> Option<&VideoSink>;
     fn video_sink_mut(&mut self) -> Option<&mut VideoSink>;
 }
 
-/// The av backend's ends of a player; the sinks share one command channel. Audio is mixed in
-/// kira on native and by the page element on the web, which has no audio sink.
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+/// The av backend's ends of a player. Audio is mixed by the backend: in kira on native, by the
+/// page element on the web.
+#[cfg(any(feature = "uuav", feature = "html"))]
 #[derive(Component)]
 pub struct AVSinks<T: AVPlayer> {
-    #[cfg(feature = "ffmpeg")]
-    pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
+    /// Sent through [`AVSinks::command`].
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
     /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,
@@ -96,18 +89,8 @@ pub struct AVSinks<T: AVPlayer> {
     pub _phantom: PhantomData<T>,
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 impl<T: AVPlayer> AVPlayerSinks for AVSinks<T> {
-    #[cfg(feature = "ffmpeg")]
-    fn audio_sink(&self) -> Option<&AudioSink> {
-        self.audio.as_ref()
-    }
-
-    #[cfg(feature = "ffmpeg")]
-    fn audio_sink_mut(&mut self) -> Option<&mut AudioSink> {
-        self.audio.as_mut()
-    }
-
     fn video_sink(&self) -> Option<&VideoSink> {
         self.video.as_ref()
     }

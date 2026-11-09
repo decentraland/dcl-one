@@ -2,8 +2,9 @@
 // from its virtual camera, matches the reference pixel for pixel within a budget.
 //
 // The Unity suite loaded each scene into one host parcel; here every scene is built, served by
-// one loopback realm at its own parcel (`12 * k, 0`), and the player is teleported to it with the
-// scene's own spawn point. The frame is `/screenshot`: the canvas, without the web HUD.
+// one loopback realm (`realm.ts`) at its own parcel (`12 * k, 0`), and the player is teleported
+// to it with the scene's own spawn point. The frame is `/screenshot`: the canvas, without the
+// web HUD.
 //
 // A scene is ready when it has created entities beyond the three reserved ones; what then still
 // moves (animations, glyph atlases, wearables, the trigger scene's retry window) has nothing to
@@ -12,10 +13,9 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { after } from 'node:test'
-import { buildScene, comparePng, readTarget, serveRealm, sleep, spec, until, type Comparison, type ScenarioOptions } from '../../driver/index.ts'
-import { REFERENCES_DIR, SCENES_DIR } from '../../driver/paths.ts'
-import type { BuiltScene } from '../../driver/realm.ts'
+import { comparePng, readTarget, sleep, spec, until, type Comparison, type ScenarioOptions } from '../../driver/index.ts'
+import { REFERENCES_DIR } from '../../driver/paths.ts'
+import { newOrCurrentVisualRealm } from './realm.ts'
 import { SCENES } from './scenes.ts'
 
 const scenario = spec(import.meta.url)
@@ -30,20 +30,7 @@ const SCENE_LIVE_TIMEOUT_MS = 60_000
 const SCENARIO_TIMEOUT_MS = 600_000
 const WINDOW_SIZE: [number, number] = [960, 540]
 
-async function build(id: string): Promise<BuiltScene> {
-  try {
-    return await buildScene(path.join(SCENES_DIR, id))
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (message.includes('build the scene first')) {
-      throw new Error(`the visual scene "${id}" is not built (${message}); run \`npm run build-scenes\` in apps/bevy-explorer/e2e`, { cause: error })
-    }
-    throw error
-  }
-}
-
-const server = await serveRealm({ scenes: await Promise.all(SCENES.map(({ id }) => build(id))), port: target.ports.realm })
-after(() => server.close())
+const server = await newOrCurrentVisualRealm()
 
 const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,0', signIn: 'guest', windowSize: WINDOW_SIZE }
 

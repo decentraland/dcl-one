@@ -60,7 +60,7 @@
     "client_manifest": {
       "kind": "file",
       "path": "library/uuav/uuav-client/Cargo.toml",
-      "sha256": "aecdfcf3eb8b976ee1c89149355eff0676ec080bee7d4f1e29f55d9e458f1ca9"
+      "sha256": "024b23f0e343bf25e80e39655f1e65f0dce4384cb6da0091c58a6edcc6b9d47b"
     },
     "server_manifest": {
       "kind": "file",
@@ -85,8 +85,8 @@
       "suffix": [
         ".rs"
       ],
-      "sha256": "ce4baedf94ed7613e4dffd69c3681df369dc50a8b4b40b888620376789c4eabd",
-      "entries": 12
+      "sha256": "cadd49c873c8fa6ac0fee3eddddaa77ed6fa64cee58e00892375f8aef48c9689",
+      "entries": 13
     },
     "server_source": {
       "comment": [
@@ -348,13 +348,13 @@
         ],
         "source_digest": "0c1354d3c20a4a28b92dd1ebab880b4f76907ebba7357b2b00f888e2aaba1d26",
         "source_files": 22,
-        "repo_commit": "633cb44657d94aaacb282d30ee7577315ba8c70e",
+        "repo_commit": "ca9f4fb72e82e813ac87734d896958ec8714227f",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
-          "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
-          "binutils": "GNU ld (GNU Binutils for Ubuntu) 2.42",
-          "glibc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39"
+          "gcc": "gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+          "binutils": "GNU ld (GNU Binutils for Ubuntu) 2.38",
+          "glibc": "ldd (Ubuntu GLIBC 2.35-0ubuntu3.15) 2.35"
         }
       },
       "ffmpeg": {
@@ -410,61 +410,61 @@
       "artifacts": [
         {
           "path": "library/uuav/dist/linux-x86_64/libavcodec.so.62",
-          "sha256": "aea5a609102cc18d396e722911363cab24f65ad66e3c006db85ebe3e95770de3",
-          "bytes": 18408265,
+          "sha256": "512ae997fdeb64a05ff723414bbd57f259f96f99b9e0a7540e6d006aabf7ea27",
+          "bytes": 14996304,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libavdevice.so.62",
-          "sha256": "91fd63856b509e2ade2269442061bc42d0178c67e79ec490a3f7f339f964562c",
-          "bytes": 77329,
+          "sha256": "aad6dc838d76d19100f368bd12558b51bbc0b8a98835b8f8070d69e0ed21f0fb",
+          "bytes": 77328,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libavfilter.so.11",
-          "sha256": "2badf343d612063e6383a1a78b76cb1d56535e1ab3788f268625da43203c2657",
-          "bytes": 5354945,
+          "sha256": "308ed54410705fe42f92a79b05de538519215db2f4d4db121af0c4d6dfb5370b",
+          "bytes": 4351416,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libavformat.so.62",
-          "sha256": "c0336a069659099f78f4e48063c2778d44306c24489cc9c9b455db2fe7d2739e",
-          "bytes": 3811705,
+          "sha256": "3b2478864d7621dc99ab522616c9fb8f47ae224bf99d5c35fa998a4f97e4e44f",
+          "bytes": 3770776,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libavutil.so.60",
-          "sha256": "bd944d1fe74729a89fe98eba84daeeef559fecce0d8aa4562748768975a1f1db",
-          "bytes": 1056297,
+          "sha256": "913db9b8f9486ad5d114a4415195e7de98bb5802d3c4914ac5b22fb22a1dad30",
+          "bytes": 1043992,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libswresample.so.6",
-          "sha256": "c47a9434999d83cc2cea0fd98efbea4dec75ddf7fb082694ff721dc531458322",
-          "bytes": 141417,
+          "sha256": "42014ff1e947fee336f8e2114909ed3950a61c47512fbba624ecc5eff5137ada",
+          "bytes": 125008,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libswscale.so.9",
-          "sha256": "9ea06c6a53c1324c6a840649b8408ee5a48f8e1ce229534d60b2f11c2218db24",
-          "bytes": 1952881,
+          "sha256": "f37f8aa8a5333af62b3aea4f43be09676326083e5813cc2bfbaed5105dddd4a2",
+          "bytes": 1043560,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libva.so.2",
-          "sha256": "cfc3238ccc60a2a7e29aed8fc70f8256bd56553eec3c91fadbbbb1374c870bd8",
-          "bytes": 234928,
+          "sha256": "108527d7bb7df94553d5fe410b75270b8e0c5938aa11975753a76ddc1415db82",
+          "bytes": 234888,
           "produced_by": "libva"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/libva-drm.so.2",
-          "sha256": "8ee36e035401373b662ec8e2ac2503f74aa9432716fb00b0e464b89dff87b992",
-          "bytes": 16640,
+          "sha256": "d04a2ff44f5aa3511639db62a135755ef97895bb1a9e6a26adef012e6d5c31a4",
+          "bytes": 16664,
           "produced_by": "libva"
         },
         {
           "path": "library/uuav/dist/linux-x86_64/uuav-helper",
-          "sha256": "4c739f9e5c202fc943fcd6649b0f1ba37093fd5fd6caeafb4734f0d93b1897fc",
+          "sha256": "833b5e5c5f49cc9606a91ece24dd03eceeadfcb943df5223e9c44565ecf4628d",
           "bytes": 939400,
           "produced_by": "cargo"
         },

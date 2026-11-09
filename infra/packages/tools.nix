@@ -1,14 +1,8 @@
-# Tool environments the Bevy Explorer workflow takes from the flake, on Linux and macOS alike
+# Tool environments the Bevy Explorer workflow takes from the flake on Linux
 # (.github/actions/bevy-explorer-tools delivers them from the Actions cache).
 { pkgs }: {
   bevy-tools = pkgs.buildEnv {
     name = "bevy-explorer-tools";
     paths = [ pkgs.protobuf pkgs.taplo pkgs.wasm-pack ];
-  };
-  # The ffmpeg 6 libraries the av crate links on macOS: headers and pkg-config files from the
-  # dev output, dylibs from lib.
-  bevy-ffmpeg = pkgs.buildEnv {
-    name = "bevy-explorer-ffmpeg";
-    paths = [ pkgs.ffmpeg_6-headless.dev pkgs.ffmpeg_6-headless.lib ];
   };
 }

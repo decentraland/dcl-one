@@ -8,7 +8,9 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
 libraries, Rust, protoc, Node 24, npm. Web also needs `nightly-2026-04-15` with `rust-src` and
 `wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
-desktop needs FFmpeg and the pinned CEF.
+desktop needs the pinned CEF and the UUAV video runtime set (`library/uuav/dist/<target>`, Git LFS:
+`git lfs pull --include 'library/uuav/dist/**'`), which `tooling/uuav/stage-dist.py` copies next to the
+binary that spawns it.
 
 ```sh
 make web          # engine WASM, scene WASM, sandbox guard, HUD tests, bridge scene -> dist/web

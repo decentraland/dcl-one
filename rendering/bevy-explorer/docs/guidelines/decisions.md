@@ -135,3 +135,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **The Windows renderer backend is not pinned for video.** Scene video frames import into the
+  DX12 and the Vulkan renderer alike (`crates/media/src/uuav/platform_windows/`), so the
+  backend stays the one wgpu picks: Vulkan on the hardware the packaged standalone was checked
+  on, DX12 where a driver has no Vulkan. Making DX12 the default would trade the video path for
+  the DX12 gaps under [GPU timestamps](platforms.md#gpu-timestamps). See the
+  [UUAV ADR](../../../docs/adr/2026-11-03-uuav-native-video.md).

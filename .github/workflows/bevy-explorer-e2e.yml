@@ -29,7 +29,10 @@
 # says what would have run. That image carries MinGit alone, so the job runs its steps in
 # PowerShell, puts a pinned git-lfs on PATH before the checkout (the scenes' assets), and drives
 # Chrome where the image has it, else a pinned Chrome for Testing build. The scenes' CLI is built on a
-# hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash.
+# hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash. So
+# is the Windows standalone (the Standalone (Windows) job, packaged as bevy-explorer-desktop.yml
+# packages it): the GPU runner plays the video scene on it after the web scenarios, the one run
+# of the Windows frame path on a GPU.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
 # the default branch: until this file is on main, only the pull request jobs run.
@@ -42,6 +45,8 @@ name: Bevy Explorer / E2E
       - 'apps/bevy-explorer/**'
       - 'rendering/bevy-explorer/**'
       - 'library/protocol/**'
+      - 'library/uuav/**'
+      - 'tooling/uuav/**'
       - '.cargo/**'
       - 'rust-toolchain*'
       - '.github/workflows/bevy-explorer-e2e.yml'
@@ -204,12 +209,109 @@ jobs:
           path: services/catalyst/target/release/dcl-scene-cli.exe
           if-no-files-found: error
           retention-days: 3
+  # The Windows standalone, built where the Rust toolchain, MSVC and bash are (a hosted Windows
+  # runner) the way bevy-explorer-desktop.yml packages it: the HUD bundle, CEF and the UUAV
+  # runtime set beside the executable. The GPU image gets the folder. A pull request's run
+  # restores the cache and saves none: only main's code writes it.
+  standalone-windows:
+    name: Standalone (Windows)
+    needs: inputs
+    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' && (github.event.inputs.group || 'both') != 'inworld'
+    runs-on: windows-2025
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    env:
+      # a build of a commit under test tags its analytics events `dev` (crates/analytics)
+      BEVY_ANALYTICS_DEV: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.inputs.outputs.sha }}
+          persist-credentials: false
+          lfs: false
+      - name: Restore this runner's UUAV runtime set
+        # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS); a miss
+        # pulls only this target and the hit skips LFS.
+        id: uuav-dist
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: library/uuav/dist/windows-x86_64
+          key: uuav-dist-windows-x86_64-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
+      - name: Fetch this runner's UUAV runtime set
+        if: steps.uuav-dist.outputs.cache-hit != 'true'
+        run: git lfs pull --include 'library/uuav/dist/windows-x86_64/**'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rendering/bevy-explorer/source -> target
+          key: e2e-standalone-windows
+          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
+      - name: Install protoc
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Generate TS bindings
+        run: ./scripts/gen-ts-bindings.sh
+      - name: Bundle react HUD (page + bridge scene -> assets/)
+        run: |-
+          cd react-web && npm ci
+          cd bridge-scene && npm ci && cd ..
+          npm run bundle:native
+      - name: Export CEF distribution
+        run: |-
+          cargo install export-cef-dir --version "139.8.0+139.0.40"
+          export-cef-dir --force "$HOME/.local/share/cef"
+          # GITHUB_ENV reaches native processes verbatim: the git-bash $HOME (/c/Users/...)
+          # would resolve as C:\c\Users\... — write a windows path there.
+          echo "CEF_PATH=$(cygpath -w "$HOME/.local/share/cef")" >> "$GITHUB_ENV"
+      - name: Build the standalone
+        run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
+      - name: Package the standalone
+        shell: pwsh
+        run: |-
+          mkdir package
+          cp target/release/decentra-bevy.exe package/decentra-bevy.exe
+          cp target/release/dcl_deno_ipc.exe package/dcl_deno_ipc.exe
+          cp target/release/decentra-bevy-cef.exe package/decentra-bevy-cef.exe
+          cp -r assets package/assets
+          # CEF runtime next to the exe; export-cef-dir flattens the distribution
+          $cef = "$env:USERPROFILE\.local\share\cef"
+          cp "$cef\*.dll" package/
+          cp "$cef\*.bin" package/
+          cp "$cef\*.pak" package/
+          cp "$cef\*.dat" package/
+          cp "$cef\*.json" package/
+          cp -r "$cef\locales" package/locales
+          # the video helper and its FFmpeg, beside the exe
+          python ../../../tooling/uuav/stage-dist.py windows-x86_64 package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Kept for a few days, so a re-run of the scenarios job alone still finds it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-standalone-windows-${{ needs.inputs.outputs.sha }}
+          path: rendering/bevy-explorer/source/package
+          if-no-files-found: error
+          retention-days: 3
   scenarios:
     name: Scenarios (Windows GPU)
-    needs: [inputs, scene-cli]
-    # scene-cli is skipped for the InWorld group alone, and may have failed: the InWorld
-    # scenarios run either way, the visual steps only with its executable, and the job fails at
-    # its end when the visual group could not run.
+    needs: [inputs, scene-cli, standalone-windows]
+    # scene-cli and standalone-windows are skipped for the InWorld group alone, and may have
+    # failed: the InWorld scenarios run either way, the visual steps only with its executable,
+    # the standalone steps only with its folder, and the job fails at its end when either could
+    # not run.
     if: ${{ !cancelled() && needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' }}
     runs-on: ${{ vars.BEVY_E2E_WINDOWS_RUNNER }}
     environment: e2e
@@ -352,6 +454,56 @@ jobs:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
           DCL_E2E_RECORD: ${{ github.event.inputs.record == 'true' && '1' || '' }}
         run: npm run e2e -- --visual
+      # Scene video through the Windows standalone: the folder the Standalone (Windows) job
+      # built, driven through its loopback console on this GPU (hardware decode, the frame import
+      # into the renderer wgpu picks here). It writes under report/standalone, so the web run's
+      # report keeps its files. A second run forces the DX12 renderer (with the shader compiler
+      # the packaged folder can start on); its result is informative, because DX12 has gaps of
+      # its own on the full world (rendering/bevy-explorer/docs/guidelines/platforms.md).
+      - name: Download the standalone
+        if: env.GROUP != 'inworld' && needs.standalone-windows.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bevy-explorer-standalone-windows-${{ needs.inputs.outputs.sha }}
+          path: standalone
+      - name: Video playback through the standalone
+        id: standalone
+        if: env.GROUP != 'inworld' && needs.standalone-windows.result == 'success'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          DCL_E2E_TRANSPORT: native
+          DCL_E2E_NATIVE_BIN: ${{ github.workspace }}\standalone\decentra-bevy.exe
+          DCL_E2E_REPORT_DIR: ${{ github.workspace }}\apps\bevy-explorer\e2e\report\standalone
+        run: npm run e2e -- --visual --filter 'video plays'
+      - name: Video playback through the standalone on DX12 (informative)
+        id: standalone-dx12
+        if: env.GROUP != 'inworld' && needs.standalone-windows.result == 'success'
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          DCL_E2E_TRANSPORT: native
+          DCL_E2E_NATIVE_BIN: ${{ github.workspace }}\standalone\decentra-bevy.exe
+          DCL_E2E_REPORT_DIR: ${{ github.workspace }}\apps\bevy-explorer\e2e\report\standalone-dx12
+          WGPU_BACKEND: dx12
+          WGPU_DX12_COMPILER: fxc
+        run: npm run e2e -- --visual --filter 'video plays'
+      - name: Record the standalone results
+        if: always() && steps.standalone.outcome != '' && steps.standalone.outcome != 'skipped'
+        env:
+          STANDALONE_OUTCOME: ${{ steps.standalone.outcome }}
+          DX12_OUTCOME: ${{ steps.standalone-dx12.outcome }}
+        run: |
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Scene video through the Windows standalone (hardware decode, the renderer's own backend): **$env:STANDALONE_OUTCOME**; on the DX12 renderer, informative: **$env:DX12_OUTCOME**. The frames are under report/standalone and report/standalone-dx12 in the report artifact."
+      # `--filter` is a name pattern and node's runner exits 0 when nothing matches, so the
+      # JUnit report must name a test that ran.
+      - name: Require the standalone to have played a test
+        if: always() && steps.standalone.outcome == 'success'
+        run: |
+          [xml]$report = Get-Content report\standalone\junit-visual.xml
+          $ran = @($report.SelectNodes('//testcase') | Where-Object { -not $_.SelectSingleNode('skipped') })
+          if ($ran.Count -eq 0) { throw 'the standalone run played no test' }
+          Write-Output "the standalone played: $(($ran | ForEach-Object { $_.name }) -join ', ')"
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -369,9 +521,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || (env.GROUP != 'inworld' && needs.scene-cli.result != 'success')
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || steps.standalone.outcome == 'failure' || (env.GROUP != 'inworld' && (needs.scene-cli.result != 'success' || needs.standalone-windows.result != 'success'))
         run: |
-          Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}"
+          Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; Standalone: ${{ steps.standalone.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}; standalone build: ${{ needs.standalone-windows.result }}"
           exit 1
   # The pull request's status comment, from the report the scenarios uploaded. This job holds no
   # secret; the report is data to it (the JUnit files `node --test` wrote).

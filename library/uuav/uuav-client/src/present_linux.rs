@@ -7,6 +7,7 @@
 //! change), so the host's poll-and-rewrap flow is identical. The host
 //! uploads the two buffers to its own textures.
 
+use crate::announced_size::check_announced_size;
 use crate::platform::UnityDevice;
 use anyhow::{Context as _, Result, anyhow, ensure};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -90,12 +91,6 @@ impl Drop for Mapping {
     }
 }
 
-/// Largest edge a generation may announce. The helper is the untrusted
-/// side of this channel: its dimensions size the presentation planes the
-/// host allocates inside the render event, so an absurd pair must be
-/// refused as a protocol error rather than reach `vec!`.
-const MAX_DIMENSION: u32 = 16_384;
-
 /// A generation being assembled: mappings arrive over the fd channel,
 /// dimensions over the control channel (`TextureSet`), in either order.
 struct PendingGen {
@@ -156,6 +151,7 @@ pub struct PlayerVideo {
     presented: Option<(u32, u8)>,
     /// Ack the render event owes the helper after mapping a generation.
     ack_due: Option<u32>,
+    frames_copied_into_presentation_planes: u64,
 }
 
 impl PlayerVideo {
@@ -272,7 +268,22 @@ impl PlayerVideo {
             .uv
             .copy_from_slice(sources[1].bytes(planes.uv.len())?);
         self.presented = Some((generation, slot));
+        self.frames_copied_into_presentation_planes =
+            self.frames_copied_into_presentation_planes.wrapping_add(1);
         Ok(ack)
+    }
+
+    /// The size the presentation planes were created for, once the first
+    /// frame was presented: the decoded frame's (even-rounded), which the
+    /// stream header behind the state update need not match.
+    pub fn presented_size(&self) -> Option<(u32, u32)> {
+        self.presentation
+            .as_ref()
+            .map(|planes| (planes.width, planes.height))
+    }
+
+    pub const fn frames_copied_into_presentation_planes(&self) -> u64 {
+        self.frames_copied_into_presentation_planes
     }
 
     fn ensure_presentation(&mut self, width: u32, height: u32) -> Result<()> {
@@ -305,10 +316,7 @@ fn activate(pending: PendingGen) -> Result<ActiveGen> {
     let (width, height) = pending
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
-    ensure!(
-        (1..=MAX_DIMENSION).contains(&width) && (1..=MAX_DIMENSION).contains(&height),
-        "helper announced an unpresentable size {width}x{height}"
-    );
+    check_announced_size(width, height)?;
     ensure!(
         width % 2 == 0 && height % 2 == 0,
         "helper announced odd NV12 dimensions {width}x{height}"

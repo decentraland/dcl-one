@@ -63,12 +63,21 @@ From then on the helper adapts IPC messages onto the core's C API:
   ignored, the host creates R8/RG8 views over it); two tightly packed CPU
   buffers (Y at w x h, UV at w/2 x h/2) on Linux that the host uploads to
   its own textures. The pointers are stable across frames and survive
-  resolution changes with a one-poll retire grace. The host converts
-  NV12 to RGB itself.
+  resolution changes with a one-poll retire grace. `uuav_player_get_presented_video`
+  returns the same pointers together with the size the planes were created
+  for (the decoded frame's, even-rounded, which the stream header of
+  `uuav_player_get_video_size` need not match) and a count of presented
+  frames, so a host reads the planes at their own size and skips its upload
+  while nothing new was presented. The host converts NV12 to RGB itself. A frame the client
+  cannot present (a generation past 4096x4096 pixels, a failed wrap or
+  copy) is reported once through the error callback and the player reads
+  `UUAV_ERROR` until a frame presents or new media is opened.
 - **Audio** crosses the boundary as messages: the helper pulls interleaved
   `f32` from the core every 10 ms and the client feeds a ~50 ms jitter ring
   that the host's audio callback drains with `uuav_player_read_audio`
-  (never blocks, pads silence). UUAV opens no audio device.
+  (never blocks, pads silence). A host that pulls from its own thread instead
+  can block on `uuav_player_wait_audio` until the ring has audio. UUAV opens
+  no audio device.
 
 ### Decoding: hardware first, software otherwise
 
@@ -101,7 +110,7 @@ playback, seek back to where the clock was. During the outage players read
 on the last presented frame (the presentation planes are client-owned and
 never die), and audio pads silence. Public player ids stay stable across
 helper generations. After three failed respawns the runtime parks
-(`UUAV_ERROR`) until the next open/play re-arms it. Every death still
+(`UUAV_ERROR`) until the next new player, open or play re-arms it. Every death still
 reports once through the error callback.
 
 The helper never outlives the host: it watches the parent pid and exits
@@ -226,8 +235,9 @@ ninja-build libxml2-dev libdrm-dev zlib1g-dev patchelf libclang-dev`.
 ```
 
 Everything shipped carries a `$ORIGIN` RUNPATH; the remaining shared
-dependencies are glibc, zlib, libxml2 and libdrm, present on every desktop
-distribution. libva is built from source and shipped so the package does not
+dependencies are glibc 2.35 or newer (Ubuntu 22.04, Debian 12), zlib,
+libxml2 and libdrm. `uuav-native.yml` builds the set on Ubuntu 22.04, and
+`tooling/uuav/glibc-floor.py` fails a set that names a newer glibc. libva is built from source and shipped so the package does not
 depend on the distribution's; the hardware driver (`iHD`, `i965`,
 `radeonsi`, ...) is the distribution's, dlopened from its DRI directory. On
 a machine without a usable driver (CI runners, containers) the core logs a

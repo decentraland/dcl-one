@@ -40,18 +40,12 @@ impl Plugin for AutomaticTestingPlugin {
     fn build(&self, app: &mut App) {
         let ready = SnapshotRenderReadiness::default();
         app.insert_resource(ready.clone());
-        app.init_resource::<SnapshotInProgress>();
         app.sub_app_mut(RenderApp)
             .insert_resource(ready)
             .add_systems(Render, record_ready_frame.in_set(RenderSet::Cleanup));
         app.add_systems(Update, automatic_testing.in_set(SceneSets::PostLoop));
     }
 }
-
-/// Hold native video textures while a requested snapshot waits for render readiness
-/// and GPU readback. The resource exists only when the scene test harness is enabled.
-#[derive(Resource, Default)]
-pub struct SnapshotInProgress(pub bool);
 
 // The render thread signals completed frames with no outstanding pipelines.
 // Three such frames account for pipelined rendering and allow UI layout to settle.
@@ -100,7 +94,7 @@ fn automatic_testing(
         Local<Option<tokio::sync::mpsc::Sender<SnapshotResult>>>,
         Local<Option<tokio::sync::mpsc::Receiver<SnapshotResult>>>,
         Local<Handle<LoadedFolder>>,
-        ResMut<SnapshotInProgress>,
+        Local<bool>,
     ),
     (mut wallet, folders, images, loading): (
         ResMut<Wallet>,
@@ -279,7 +273,7 @@ fn automatic_testing(
             }
         }
 
-        screenshot_in_progress.0 = false;
+        *screenshot_in_progress = false;
     }
 
     // process events
@@ -333,7 +327,7 @@ fn automatic_testing(
                 }
             }
             (RpcOrigin::Scene { entity: scene, .. }, RpcCall::TestSnapshot(snapshot)) => {
-                if screenshot_in_progress.0 {
+                if *screenshot_in_progress {
                     snapshot.response.send(CompareSnapshotResult {
                         error: Some("snapshot already in progress".to_owned()),
                         found: false,
@@ -341,7 +335,7 @@ fn automatic_testing(
                     });
                     continue;
                 }
-                screenshot_in_progress.0 = true;
+                *screenshot_in_progress = true;
                 let snapshot_window = commands
                     .spawn(Window {
                         title: "snapshot window".to_owned(),

@@ -16,8 +16,9 @@
 
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
 use std::time::Duration;
+
+use parking_lot::{Condvar, Mutex};
 
 const PRIME: Duration = Duration::from_millis(40);
 const HIGH_WATERMARK: Duration = Duration::from_millis(150);
@@ -48,6 +49,15 @@ struct Ring {
 }
 
 impl Ring {
+    /// Whether a read would return samples rather than silence.
+    fn readable(&self) -> bool {
+        if self.primed {
+            !self.samples.is_empty()
+        } else {
+            self.samples.len() >= duration_samples(self.samples_per_second, PRIME)
+        }
+    }
+
     fn count_removed_samples(&mut self, samples: usize) {
         let frames = (samples / self.channels) as u64;
         self.removed_frames = self.removed_frames.saturating_add(frames);
@@ -70,31 +80,36 @@ pub struct AudioRingStats {
     pub read: u64,
 }
 
-pub struct AudioRing(Mutex<Ring>);
+pub struct AudioRing {
+    ring: Mutex<Ring>,
+    /// Notified on every write.
+    arrived: Condvar,
+}
 
 impl AudioRing {
     pub fn new(sample_rate: i32, channels: i32) -> Self {
         let channels = sanitize_channels(channels);
         let samples_per_second = (sample_rate.max(1) as usize).saturating_mul(channels.get());
-        Self(Mutex::new(Ring {
-            samples: VecDeque::with_capacity(duration_samples(samples_per_second, CAPACITY)),
-            samples_per_second,
-            channels,
-            primed: false,
-            removed_frames: 0,
-            underruns: 0,
-            watermark_dropped: 0,
-            written: 0,
-            read: 0,
-        }))
+        Self {
+            ring: Mutex::new(Ring {
+                samples: VecDeque::with_capacity(duration_samples(samples_per_second, CAPACITY)),
+                samples_per_second,
+                channels,
+                primed: false,
+                removed_frames: 0,
+                underruns: 0,
+                watermark_dropped: 0,
+                written: 0,
+                read: 0,
+            }),
+            arrived: Condvar::new(),
+        }
     }
 
     /// IO-thread side: queue one packet, dropping the oldest samples above
     /// the high watermark.
     pub fn write(&self, samples: &[f32]) {
-        let Ok(mut ring) = self.0.lock() else {
-            return;
-        };
+        let mut ring = self.ring.lock();
         ring.samples.extend(samples.iter().copied());
         ring.written = ring.written.saturating_add(samples.len() as u64);
 
@@ -111,14 +126,21 @@ impl AudioRing {
             ring.watermark_dropped = ring.watermark_dropped.saturating_add(excess as u64);
             ring.count_removed_samples(excess);
         }
+        drop(ring);
+        self.arrived.notify_all();
+    }
+
+    /// Audio-thread side: blocks until a read would return samples, or for at most `timeout`.
+    pub fn wait_readable(&self, timeout: Duration) {
+        let mut ring = self.ring.lock();
+        self.arrived
+            .wait_while_for(&mut ring, |ring| !ring.readable(), timeout);
     }
 
     /// Audio-thread side: fills `dst` and returns the number of samples
     /// written (0 while priming); the caller pads the remainder as silence.
     pub fn read(&self, dst: &mut [f32]) -> usize {
-        let Ok(mut ring) = self.0.lock() else {
-            return 0;
-        };
+        let mut ring = self.ring.lock();
 
         if !ring.primed {
             if ring.samples.len() < duration_samples(ring.samples_per_second, PRIME) {
@@ -139,6 +161,7 @@ impl AudioRing {
             // resuming, one longer gap instead of machine-gun stutter
             ring.primed = false;
             ring.underruns = ring.underruns.saturating_add(1);
+            drop(ring);
             for slot in dst.iter_mut().skip(available) {
                 *slot = 0.0;
             }
@@ -151,47 +174,42 @@ impl AudioRing {
     /// removed so the pull pacing never re-sends them. Cumulative
     /// diagnostics survive.
     pub fn clear(&self) {
-        if let Ok(mut ring) = self.0.lock() {
-            let flushed = ring.samples.len();
-            ring.samples.clear();
-            ring.primed = false;
-            ring.count_removed_samples(flushed);
-        }
+        let mut ring = self.ring.lock();
+        let flushed = ring.samples.len();
+        ring.samples.clear();
+        ring.primed = false;
+        ring.count_removed_samples(flushed);
     }
 
     /// Drops everything and restarts the feedback ledger (output format
     /// changed / helper died); cumulative diagnostics survive.
     pub fn reset(&self, sample_rate: i32, channels: i32) {
-        if let Ok(mut ring) = self.0.lock() {
-            ring.samples.clear();
-            ring.primed = false;
-            ring.removed_frames = 0;
-            ring.channels = sanitize_channels(channels);
-            ring.samples_per_second =
-                (sample_rate.max(1) as usize).saturating_mul(ring.channels.get());
-        }
+        let mut ring = self.ring.lock();
+        ring.samples.clear();
+        ring.primed = false;
+        ring.removed_frames = 0;
+        ring.channels = sanitize_channels(channels);
+        ring.samples_per_second = (sample_rate.max(1) as usize).saturating_mul(ring.channels.get());
     }
 
     /// Frames removed since the last [`Self::reset`]; the pull-pacing
     /// feedback value.
     pub fn removed_frames(&self) -> u64 {
-        self.0.lock().map_or(0, |ring| ring.removed_frames)
+        self.ring.lock().removed_frames
     }
 
     /// Level and cumulative counters, as one consistent snapshot.
     pub fn stats(&self) -> AudioRingStats {
-        self.0.lock().map_or_else(
-            |_| AudioRingStats::default(),
-            |ring| AudioRingStats {
-                fill_samples: ring.samples.len() as u64,
-                samples_per_second: ring.samples_per_second as u64,
-                primed: ring.primed,
-                underruns: ring.underruns,
-                watermark_dropped: ring.watermark_dropped,
-                written: ring.written,
-                read: ring.read,
-            },
-        )
+        let ring = self.ring.lock();
+        AudioRingStats {
+            fill_samples: ring.samples.len() as u64,
+            samples_per_second: ring.samples_per_second as u64,
+            primed: ring.primed,
+            underruns: ring.underruns,
+            watermark_dropped: ring.watermark_dropped,
+            written: ring.written,
+            read: ring.read,
+        }
     }
 }
 
@@ -232,6 +250,33 @@ mod tests {
         assert!(dst.iter().all(|&s| s.to_bits() == 1.0_f32.to_bits()));
         assert_eq!(ring.stats().underruns, 0);
         assert!(!ring.stats().primed);
+    }
+
+    #[test]
+    fn wait_readable_returns_when_a_write_primes_the_ring() {
+        let ring = std::sync::Arc::new(AudioRing::new(RATE, CHANNELS));
+        let writer = {
+            let ring = ring.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                ring.write(&samples(prime_samples()));
+            })
+        };
+        let started = std::time::Instant::now();
+        ring.wait_readable(Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(ring.read(&mut [0.0_f32; 64]) > 0);
+        assert!(writer.join().is_ok());
+    }
+
+    #[test]
+    fn wait_readable_times_out_while_priming() {
+        let ring = AudioRing::new(RATE, CHANNELS);
+        ring.write(&samples(prime_samples() - 2));
+        let started = std::time::Instant::now();
+        ring.wait_readable(Duration::from_millis(30));
+        assert!(started.elapsed() >= Duration::from_millis(30));
+        assert_eq!(ring.read(&mut [0.0_f32; 64]), 0);
     }
 
     #[test]

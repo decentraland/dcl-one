@@ -20,7 +20,7 @@ use super::{
     AvSource, HOST, HostCommand, MediaEvent, MediaId, MediaTarget, NEW_SOURCES, TARGETS, send_host,
     send_target,
 };
-use crate::{AVCommand, VideoData, VideoFrame as AvFrame};
+use crate::{AVCommand, VideoData};
 
 pub struct HtmlMediaPlugin;
 
@@ -144,7 +144,7 @@ fn serve_av_sources(mut sources: ResMut<AvSources>, mut receiver: ResMut<MediaEv
                         source.size = Some((width, height));
                         source.send_info();
                     }
-                    source.send(VideoData::Frame(AvFrame {}, media_time));
+                    source.send(VideoData::Frame(media_time));
                 }
             }
         }

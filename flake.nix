@@ -23,10 +23,7 @@
           inherit pkgs;
           craneLib = (crane.mkLib pkgs).overrideToolchain rust;
           revision = self.rev or self.dirtyRev or "unversioned";
-        }) // {
-          # The tool environments alone: the macOS CI legs take ffmpeg from here.
-          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
-        };
+        });
 
       checks.x86_64-linux.dev-service = import ./infra/dev/service-test {
         pkgs = import nixpkgs { system = "x86_64-linux"; };

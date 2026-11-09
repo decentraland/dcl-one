@@ -11,23 +11,19 @@ use bevy::{
 use common::{
     debug_panic,
     structs::{AudioSettings, PrimaryUser},
-    util::ReportErr,
 };
 use ipfs::IpfsResource;
 use livestream_manager::{ReceiverImage, ReceiverVolume};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
-    automatic_testing::SnapshotInProgress,
     renderer_context::RendererSceneContext,
     update_world::material::{update_materials, VideoTextureOutput},
     ContainerEntity, ContainingScene, SceneEntity,
 };
 
 use crate::{
-    plugin::push_state_to_crdt,
-    video_stream::{av_sinks, noop_sinks},
-    AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
+    plugin::push_state_to_crdt, AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying,
+    Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
 };
 
 pub struct VideoPlayerPlugin;
@@ -79,6 +75,7 @@ fn new_audio_stream_source(
     )>,
     scenes: Query<&RendererSceneContext>,
     ipfs: Res<IpfsResource>,
+    #[cfg(feature = "uuav")] mut players: ResMut<media::UuavPlayers>,
 ) {
     let entity = trigger.target();
 
@@ -93,12 +90,14 @@ fn new_audio_stream_source(
     };
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 
     let sinks = match &(**source) {
-        "" => noop_sinks::<AudioStream>((**source).to_owned(), None),
-        other => av_sinks::<AudioStream>(
+        "" => AVSinks::<AudioStream>::for_empty_source(None),
+        other => AVSinks::<AudioStream>::new(
+            #[cfg(feature = "uuav")]
+            &mut players,
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -130,6 +129,7 @@ fn new_video_player_source(
     scenes: Query<&RendererSceneContext>,
     mut images: ResMut<Assets<Image>>,
     ipfs: Res<IpfsResource>,
+    #[cfg(feature = "uuav")] mut players: ResMut<media::UuavPlayers>,
 ) {
     let entity = trigger.target();
 
@@ -145,7 +145,7 @@ fn new_video_player_source(
     };
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 
     let livestream = &**source == LIVEKIT_VIDEO_STREAM;
@@ -190,8 +190,10 @@ fn new_video_player_source(
         _ => create_image_handle(),
     };
     let sinks = match &(**source) {
-        "" => noop_sinks::<VideoPlayer>((**source).to_owned(), Some(image.clone())),
-        other => av_sinks::<VideoPlayer>(
+        "" => AVSinks::<VideoPlayer>::for_empty_source(Some(image.clone())),
+        other => AVSinks::<VideoPlayer>::new(
+            #[cfg(feature = "uuav")]
+            &mut players,
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -232,7 +234,7 @@ fn player_source_replaced<T: AVPlayer>(
     commands.entity(entity).try_remove::<AVSinks<T>>();
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 }
 
@@ -269,16 +271,12 @@ fn player_config_added<T: AVPlayer>(
         return;
     };
 
-    let command_sender = &sinks.command_sender;
-
     if config.playing() && has_should_be_playing {
-        command_sender.send(AVCommand::Play).report();
+        sinks.command(AVCommand::Play);
     } else {
-        command_sender.send(AVCommand::Pause).report();
+        sinks.command(AVCommand::Pause);
     }
-    command_sender
-        .send(AVCommand::Repeat(config.r#loop()))
-        .report();
+    sinks.command(AVCommand::Repeat(config.r#loop()));
 }
 
 /// Where a player's volume is decided: its config, the user's scene-audio setting, and silence
@@ -296,27 +294,14 @@ fn update_av_volume<T: AVPlayer>(
         .unwrap_or_default();
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
-        let AVSinks {
-            #[cfg(feature = "ffmpeg")]
-                audio: _,
-            video: _,
-            command_sender,
-            rate: _,
-            state: _,
-            sent_event: _,
-            sent_volume,
-            sent_state: _,
-            _phantom,
-        } = sinks.as_mut();
-
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
         } else {
             0.0
         };
-        if sent_volume != &Some(volume) {
-            *sent_volume = Some(volume);
-            command_sender.send(AVCommand::Volume(volume)).report();
+        if sinks.sent_volume != Some(volume) {
+            sinks.sent_volume = Some(volume);
+            sinks.command(AVCommand::Volume(volume));
         }
     }
 }
@@ -348,10 +333,7 @@ fn player_position_added<T: AVPlayer>(
         disqualified::ShortName::of::<T::Source>(),
         (**position)
     );
-    sinks
-        .command_sender
-        .send(AVCommand::Seek((**position) as f64))
-        .report();
+    sinks.command(AVCommand::Seek((**position) as f64));
 }
 
 fn av_sinks_on_remove<T: AVPlayer>(trigger: Trigger<OnRemove, AVSinks<T>>, mut commands: Commands) {
@@ -368,7 +350,7 @@ fn av_player_should_be_playing_on_add<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Play).report();
+    sinks.command(AVCommand::Play);
 }
 
 /// Sends [`AVCommand::Pause`] to [`AVPlayer`]
@@ -382,24 +364,15 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Pause).report();
+    sinks.command(AVCommand::Pause);
 }
 
 fn play_videos(
     mut images: ResMut<Assets<Image>>,
     mut q: Query<(&mut AVSinks<VideoPlayer>, &mut VideoTextureOutput)>,
-    snapshot: Option<Res<SnapshotInProgress>>,
 ) {
-    // A software-rendered capture can take several video frames to become ready.
-    // Keep the requested frame until readback, then resume consuming the bounded queue.
-    if snapshot.is_some_and(|snapshot| snapshot.0) {
-        return;
-    }
-
     for (mut video_player_sinks, mut output) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
-                audio: _,
             video: Some(video),
             command_sender: _,
             rate: sink_rate,
@@ -413,7 +386,7 @@ fn play_videos(
             continue;
         };
 
-        let mut last_frame_received = None;
+        let mut frame_received = false;
         loop {
             match video.video_receiver.try_recv() {
                 Ok(VideoData::Info(VideoInfo {
@@ -439,35 +412,19 @@ fn play_videos(
                     video.length = Some(length);
                     *sink_rate = Some(rate);
                 }
-                Ok(VideoData::Frame(frame, time)) => {
-                    last_frame_received = Some(frame);
+                Ok(VideoData::Frame(time)) => {
+                    frame_received = true;
                     video.current_time = time;
                 }
                 Err(_) => break,
             }
         }
 
-        if let Some(frame) = last_frame_received {
-            trace!("set frame on {:?}", video.image);
-
-            // no pixels: the render world copied the frame into the gpu image itself
-            if let Some(pixels) = frame.data() {
-                let image = images.get_mut(&video.image).unwrap();
-
-                match &mut image.data {
-                    Some(data) => {
-                        data.copy_from_slice(pixels);
-                        image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
-                    }
-                    None => {
-                        image.data = Some(pixels.to_owned());
-                    }
-                }
-            }
-            if video.resized {
-                video.resized = false;
-                output.set_changed();
-            }
+        // the render world wrote the frame into the image; a resized image rebinds its materials
+        if frame_received && video.resized {
+            trace!("first frame at the new size on {:?}", video.image);
+            video.resized = false;
+            output.set_changed();
         }
     }
 }
@@ -482,8 +439,6 @@ fn publish_av_player_state<T: AVPlayer>(
 ) {
     for (mut video_player_sinks, container) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
-                audio: _,
             video,
             command_sender: _,
             rate: _,
@@ -539,7 +494,7 @@ fn publish_stream_state(
 }
 
 #[cfg(test)]
-mod snapshot_tests {
+mod tests {
     use super::*;
     use dcl_component::{proto_components::sdk::components::VideoState, SceneEntityId};
 
@@ -547,7 +502,7 @@ mod snapshot_tests {
     fn playback_config_preserves_the_frame_rate_from_video_metadata() {
         let mut app = App::new();
         app.add_observer(player_config_added::<VideoPlayer>);
-        let mut sinks = noop_sinks::<VideoPlayer>(String::new(), Some(Handle::default()));
+        let mut sinks = AVSinks::<VideoPlayer>::for_empty_source(Some(Handle::default()));
         sinks.rate = Some(24.0);
         let player = app.world_mut().spawn(sinks).id();
         app.world_mut()
@@ -565,92 +520,5 @@ mod snapshot_tests {
                 .rate,
             Some(24.0)
         );
-    }
-
-    #[test]
-    fn holds_video_updates_until_snapshot_readback_finishes() {
-        let mut app = App::new();
-        app.init_resource::<Assets<Image>>()
-            .init_resource::<FrameCount>()
-            .add_systems(Update, play_videos);
-        let image = app
-            .world_mut()
-            .resource_mut::<Assets<Image>>()
-            .add(Image::new_fill(
-                Extent3d {
-                    width: 16,
-                    height: 16,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                &[0, 0, 0, 255],
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::all(),
-            ));
-        let (sender, receiver) = tokio::sync::mpsc::channel(10);
-        let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
-        app.world_mut().spawn((
-            AVSinks::<VideoPlayer> {
-                #[cfg(feature = "ffmpeg")]
-                audio: None,
-                video: Some(crate::video_stream::VideoSink {
-                    source: "fixture.mp4".to_owned(),
-                    video_receiver: receiver,
-                    image: image.clone(),
-                    current_time: -1.0,
-                    length: None,
-                    resized: false,
-                }),
-                command_sender: commands,
-                rate: None,
-                state: state_receiver,
-                sent_event: 0.,
-                sent_state: VideoState::VsLoading,
-                sent_volume: None,
-                _phantom: Default::default(),
-            },
-            ContainerEntity {
-                container: Entity::PLACEHOLDER,
-                root: Entity::PLACEHOLDER,
-                container_id: SceneEntityId::ROOT,
-            },
-            VideoTextureOutput(image.clone()),
-        ));
-        let queue_size = |width| {
-            assert!(sender
-                .try_send(VideoData::Info(VideoInfo {
-                    width,
-                    height: 16,
-                    rate: 30.0,
-                    length: 4.0,
-                }))
-                .is_ok());
-        };
-        let width = |app: &App| {
-            app.world()
-                .resource::<Assets<Image>>()
-                .get(&image)
-                .unwrap()
-                .texture_descriptor
-                .size
-                .width
-        };
-
-        // Normal playback has no capture resource and consumes queued updates.
-        queue_size(32);
-        app.update();
-        assert_eq!(width(&app), 32);
-
-        app.insert_resource(SnapshotInProgress(true));
-        queue_size(64);
-        for _ in 0..4 {
-            app.update();
-            assert_eq!(width(&app), 32);
-        }
-
-        app.world_mut().resource_mut::<SnapshotInProgress>().0 = false;
-        app.update();
-        assert_eq!(width(&app), 64);
     }
 }
