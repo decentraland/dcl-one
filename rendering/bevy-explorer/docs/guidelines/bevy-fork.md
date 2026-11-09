@@ -141,7 +141,9 @@ across workers:
   fix.
 - `WorldId::new` takes `try_update` behind `target_has_atomic = "ptr"` with the `fetch_update`
   fallback (upstream #26020, **throwaway**); `try_update` needs Rust 1.95, so `bevy`, `bevy_ecs`
-  and `bevy_input_focus` declare `rust-version = "1.95.0"` (every build pins 1.99.1).
+  and `bevy_input_focus` declare `rust-version = "1.95.0"`. The native builds pin 1.99.1 and the
+  web build pins `nightly-2026-04-15` (`apps/bevy-explorer/build-web.py`, `source/justfile`); both
+  are above that floor.
 
 ## UI
 
