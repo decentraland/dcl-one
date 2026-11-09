@@ -320,6 +320,18 @@ describe('passport photos', () => {
     expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
   })
 
+  it('a failed private write puts the photo back in its place', async () => {
+    const a = actions()
+    a.setPublic = vi.fn(async () => ({ ok: false }))
+    await openPhotos(true, a)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[1])
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Set as Public' }))
+    expect(a.setPublic).toHaveBeenCalledWith('p1', false)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(3))
+    const srcs = screen.getAllByRole('button', { name: 'Open photo' }).map((b) => b.querySelector('img')?.getAttribute('src'))
+    expect(srcs).toEqual(['https://img/0_t.jpg', 'https://img/1_t.jpg', 'https://img/2_t.jpg'])
+  })
+
   it('a thumbnail opens the photo viewer', async () => {
     const a = await openPhotos(false)
     await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[1])

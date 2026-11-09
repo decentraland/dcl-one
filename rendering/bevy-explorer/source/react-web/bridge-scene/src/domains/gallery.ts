@@ -38,12 +38,14 @@ export function registerGallery(ctx: Ctx): void {
       ctx.send({ kind: 'gallery', requestId: msg.requestId, ok: false, photos: [], current: 0, max: 0 })
       return
     }
-    const r = await signed<CompactResponse>(
-      `${await base()}/users/${player.userId}/images?limit=${msg.limit}&offset=${msg.offset}&compact=true`
-    ).catch((e: unknown) => {
-      console.error('[gallery] page fetch failed', e)
-      return null
-    })
+    // Every failure, the service base included, still answers this request: the page waits on its
+    // requestId, and a bare throw would reach it only as a requestFailed it can't match.
+    const r = await base()
+      .then((b) => signed<CompactResponse>(`${b}/users/${player.userId}/images?limit=${msg.limit}&offset=${msg.offset}&compact=true`))
+      .catch((e: unknown) => {
+        console.error('[gallery] page fetch failed', e)
+        return null
+      })
     const photos: GalleryPhoto[] = (r?.images ?? [])
       .filter((i) => typeof i.url === 'string')
       .map((i) => ({
@@ -64,7 +66,9 @@ export function registerGallery(ctx: Ctx): void {
   })
 
   ctx.on('getGalleryPhoto', async (msg) => {
-    const r = await signed<MetadataResponse>(`${await base()}/images/${msg.id}/metadata`).catch(() => undefined)
+    const r = await base()
+      .then((b) => signed<MetadataResponse>(`${b}/images/${encodeURIComponent(msg.id)}/metadata`))
+      .catch(() => undefined)
     const m = r?.metadata
     if (m == null) {
       ctx.send({ kind: 'galleryPhoto', id: msg.id, meta: null })
@@ -86,7 +90,7 @@ export function registerGallery(ctx: Ctx): void {
 
   ctx.on('deleteGalleryPhoto', async (msg) => {
     try {
-      const r = await signed<{ currentImages?: number; maxImages?: number }>(`${await base()}/images/${msg.id}`, 'DELETE')
+      const r = await signed<{ currentImages?: number; maxImages?: number }>(`${await base()}/images/${encodeURIComponent(msg.id)}`, 'DELETE')
       ctx.send({ kind: 'galleryWrite', requestId: msg.requestId, ok: true, current: r?.currentImages, max: r?.maxImages })
     } catch (e) {
       console.error('[gallery] delete failed', e)
@@ -97,7 +101,7 @@ export function registerGallery(ctx: Ctx): void {
   ctx.on('setGalleryPhotoPublic', async (msg) => {
     try {
       // The service reads `is_public` (snake case), not the camelCase of its responses.
-      await signed(`${await base()}/images/${msg.id}/visibility`, 'PATCH', { is_public: msg.isPublic })
+      await signed(`${await base()}/images/${encodeURIComponent(msg.id)}/visibility`, 'PATCH', { is_public: msg.isPublic })
       ctx.send({ kind: 'galleryWrite', requestId: msg.requestId, ok: true })
     } catch (e) {
       console.error('[gallery] visibility update failed', e)

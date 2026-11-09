@@ -6,7 +6,8 @@
 // Portaled to <body> on the reference canvas: it re-applies --ui-scale, takes the anchor in viewport
 // px, and places itself as Unity's GetControlsPosition does — BottomRight of the anchor by (11, 18),
 // flipped to the other side on an edge it would cross, then clamped to the screen. A button row
-// closes the menu; the toggle row does not. A press outside it or the Cancel action closes it.
+// closes the menu; the toggle row does not. A press outside it or the Cancel action closes it, and
+// focus goes back to the element that opened it.
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
@@ -87,8 +88,17 @@ export function GenericContextMenu({
     }
   }, [])
 
+  // Focus moves into the menu on open and back to the opener on close, unless the press that closed
+  // it put focus somewhere else.
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
+    const node = ref.current
+    const opener = ignoreRef.current ?? document.activeElement
+    node?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
+    return () => {
+      const active = document.activeElement
+      const lost = active == null || active === document.body || node?.contains(active) === true
+      if (lost && opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
+    }
   }, [])
 
   const scale = getHudScale() || 1

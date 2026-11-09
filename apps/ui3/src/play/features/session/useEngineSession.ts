@@ -713,6 +713,8 @@ const AUTH_PROFILE_WAIT_MS = 30_000
 const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
+// how long a camera-reel request waits for the bridge's reply before it counts as failed
+export const GALLERY_CALL_TIMEOUT_MS = 30_000
 
 export type LoginStatus =
   | 'loading'
@@ -2523,14 +2525,29 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
   // Send a gallery request and resolve with the message that echoes its requestId. Without a bridge
-  // there is no reply to wait for, so it fails at once.
+  // there is no reply to wait for, so it fails at once. A reply that never comes (the bridge scene
+  // reloaded mid-request) fails it after GALLERY_CALL_TIMEOUT_MS, so a page never spins for good.
   const galleryCall = useCallback(<M extends GalleryMessage | GalleryWriteMessage>(build: (requestId: number) => PageToScene): Promise<M | null> => {
     const driver = driverRef.current
     if (driver == null) return Promise.resolve(null)
     const requestId = ++galleryRequestRef.current
     return new Promise((resolve) => {
-      galleryPendingRef.current.set(requestId, (msg) => resolve(msg as M))
-      driver.send(build(requestId))
+      const timer = setTimeout(() => {
+        galleryPendingRef.current.delete(requestId)
+        resolve(null)
+      }, GALLERY_CALL_TIMEOUT_MS)
+      galleryPendingRef.current.set(requestId, (msg) => {
+        clearTimeout(timer)
+        resolve(msg as M)
+      })
+      try {
+        driver.send(build(requestId))
+      } catch (e) {
+        console.error('[gallery] request could not be sent', e)
+        clearTimeout(timer)
+        galleryPendingRef.current.delete(requestId)
+        resolve(null)
+      }
     })
   }, [])
   const fetchGalleryPage = useCallback(

@@ -38,7 +38,8 @@ export interface ReelGridLayout {
 
 export interface ReelGridMenu {
   showDelete: boolean
-  onSetPublic: (photo: GalleryPhoto, isPublic: boolean) => void
+  /** Resolves whether the service took the change. */
+  onSetPublic: (photo: GalleryPhoto, isPublic: boolean) => Promise<boolean>
   onDelete?: (photo: GalleryPhoto) => void
 }
 
@@ -153,6 +154,9 @@ export function ReelGrid({
       onScroll={(e) => {
         const el = e.currentTarget
         setView((v) => (v.top === el.scrollTop ? v : { ...v, top: el.scrollTop }))
+        // The menu is placed once, at its ⋮: a scroll would leave it floating over another photo, or
+        // over none once the row unmounts. Unity closes it when the row is recycled.
+        if (menuFor != null) setMenuFor(null)
       }}
     >
       <div className={styles.canvas} style={{ height }}>
@@ -192,7 +196,7 @@ export function ReelGrid({
         })}
       </div>
       {menu != null && menuFor != null && openPhoto != null && (
-        <ReelMenu photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} menu={menu} onClose={() => setMenuFor(null)} />
+        <ReelMenu key={openPhoto.id} photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} menu={menu} onClose={() => setMenuFor(null)} />
       )}
     </div>
   )
@@ -268,7 +272,8 @@ function ReelMenu({
   menu: ReelGridMenu
   onClose: () => void
 }): React.JSX.Element {
-  // The switch flips at once, as Unity's toggle does; the photo follows when the service agrees.
+  // The switch flips at once, as Unity's toggle does; the photo follows when the service agrees, and
+  // the switch flips back when it doesn't.
   const [isPublic, setIsPublic] = useState(photo.isPublic === true)
   const items: GenericContextMenuItem[] = [
     {
@@ -277,7 +282,9 @@ function ReelMenu({
       checked: isPublic,
       onChange: (next) => {
         setIsPublic(next)
-        menu.onSetPublic(photo, next)
+        void menu.onSetPublic(photo, next).then((ok) => {
+          if (!ok) setIsPublic(!next)
+        })
       }
     },
     { kind: 'separator' },

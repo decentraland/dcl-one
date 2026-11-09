@@ -34,20 +34,20 @@ const GALLERY_LAYOUT: ReelGridLayout = {
 export function useOwnReelActions(
   gallery: GalleryState,
   list: { remove: (id: string) => void; setPublic: (id: string, isPublic: boolean) => void; setStorage: (total: number, max: number) => void }
-): { setPublic: (photo: GalleryPhoto, isPublic: boolean) => void; remove: (photo: GalleryPhoto) => Promise<boolean> } {
+): { setPublic: (photo: GalleryPhoto, isPublic: boolean) => Promise<boolean>; remove: (photo: GalleryPhoto) => Promise<boolean> } {
   const { setPublic: write, remove: del } = gallery
   const { remove: drop, setPublic: mark, setStorage } = list
   const setPublic = useCallback(
-    (photo: GalleryPhoto, isPublic: boolean) => {
-      void write(photo.id, isPublic).then((r) => {
+    (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> =>
+      write(photo.id, isPublic).then((r) => {
         if (!r.ok) {
           reelToast(REEL_MESSAGES.failure, 'error')
-          return
+          return false
         }
         mark(photo.id, isPublic)
         reelToast(REEL_MESSAGES.updated)
-      })
-    },
+        return true
+      }),
     [write, mark]
   )
   const remove = useCallback(
@@ -84,12 +84,16 @@ export function GalleryPage({
   onViewProfile?: (user: ChatUser) => void
 }): React.JSX.Element | null {
   const [index, setIndex] = useState<number | null>(null)
-  // Every open reads the reel again from the top, as Unity's gallery does when it is shown.
+  // Every open reads the reel again from the top, as Unity's gallery does when it is shown, with the
+  // viewer closed: the page stays mounted while the gallery is closed, so it would keep its index.
   const [opened, setOpened] = useState(0)
   const [wasOpen, setWasOpen] = useState(gallery.open)
   if (gallery.open !== wasOpen) {
     setWasOpen(gallery.open)
-    if (gallery.open) setOpened((n) => n + 1)
+    if (gallery.open) {
+      setOpened((n) => n + 1)
+      setIndex(null)
+    }
   }
   const list = useReelList(gallery.open ? `own:${opened}` : null, gallery.fetchPage)
   const actions = useOwnReelActions(gallery, list)
@@ -152,7 +156,10 @@ export function GalleryPage({
           index={index}
           meta={gallery.metas[selected.id]}
           isSelf
-          onIndex={setIndex}
+          onIndex={(i) => {
+            setIndex(i)
+            list.loadMore(i)
+          }}
           onLoadMeta={gallery.loadPhoto}
           onClose={() => setIndex(null)}
           onTeleport={(x, y) => {

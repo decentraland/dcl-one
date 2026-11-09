@@ -47,23 +47,25 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
   const list = useReelList(key, fetchPage)
   const [index, setIndex] = useState<number | null>(null)
-  const { remove: drop, setPublic: mark } = list
+  const { remove: drop, restore, setPublic: mark } = list
   const write = actions?.setPublic
 
   const onSetPublic = useCallback(
-    (photo: GalleryPhoto, isPublic: boolean) => {
-      if (write == null) return
-      if (!isPublic) drop(photo.id)
-      void write(photo.id, isPublic).then((r) => {
-        if (!r.ok) {
-          reelToast(REEL_MESSAGES.failure, 'error')
-          return
-        }
-        mark(photo.id, isPublic)
-        reelToast(REEL_MESSAGES.updated)
-      })
+    async (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> => {
+      if (write == null) return false
+      // Off the grid at once, as Unity's HideReelOnPrivateSet; back in its place if the write fails.
+      const at = isPublic ? -1 : drop(photo.id)
+      const r = await write(photo.id, isPublic)
+      if (!r.ok) {
+        if (at >= 0) restore(photo, at)
+        reelToast(REEL_MESSAGES.failure, 'error')
+        return false
+      }
+      mark(photo.id, isPublic)
+      reelToast(REEL_MESSAGES.updated)
+      return true
     },
-    [write, drop, mark]
+    [write, drop, restore, mark]
   )
   const menu: ReelGridMenu | null = isSelf && write != null ? { showDelete: false, onSetPublic } : null
 
@@ -90,7 +92,10 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
           index={index}
           meta={actions?.metas[selected.id]}
           isSelf={isSelf}
-          onIndex={setIndex}
+          onIndex={(i) => {
+            setIndex(i)
+            list.loadMore(i)
+          }}
           onLoadMeta={actions?.loadPhoto ?? noop}
           onClose={() => setIndex(null)}
           onTeleport={(x, y) => {

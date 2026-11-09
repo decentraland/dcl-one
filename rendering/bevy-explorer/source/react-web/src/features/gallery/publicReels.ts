@@ -10,7 +10,15 @@ import type { ReelPage } from '../session/useEngineSession'
 type CompactImage = { id: string; url?: string; thumbnailUrl?: string; isPublic?: boolean; dateTime?: string }
 type CompactResponse = { images?: CompactImage[]; currentImages?: number; maxImages?: number }
 
+// The address goes into the request path, and it can come from a photo's people, which the uploader
+// writes: only a wallet address is read.
+const ADDRESS = /^0x[0-9a-f]{40}$/i
+
 async function fetchFromService(address: string, offset: number, limit: number): Promise<ReelPage> {
+  if (!ADDRESS.test(address)) {
+    console.warn('[passport] camera reel not read: not a wallet address', address)
+    return { ok: false, photos: [], total: 0, max: 0 }
+  }
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset), compact: 'true' })
   try {
     const res = await fetch(`${serviceUrl('cameraReel')}/api/users/${address.toLowerCase()}/images?${params}`)

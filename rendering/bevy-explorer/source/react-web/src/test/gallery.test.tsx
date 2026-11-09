@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import type { GalleryPhoto } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
+import { GALLERY_CALL_TIMEOUT_MS } from '../features/session/useEngineSession'
 
 // DOMAIN: gallery (camera reel) — paged reads, lazy per-photo metadata, visibility and delete writes,
 // each answered by the requestId it was sent with.
@@ -61,5 +62,20 @@ describe('gallery domain', () => {
     expect(vis).toMatchObject({ kind: 'setGalleryPhotoPublic', id: 'b', isPublic: true })
     h.driver.emit({ kind: 'galleryWrite', requestId: vis.requestId, ok: false })
     await expect(updated).resolves.toMatchObject({ ok: false })
+  })
+
+  it('a request the bridge never answers fails after the timeout, and a late reply is ignored', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const page = h.session().gallery.fetchPage(0, 100)
+      const sent = h.driver.last('getGallery') as { requestId: number }
+      vi.advanceTimersByTime(GALLERY_CALL_TIMEOUT_MS)
+      await expect(page).resolves.toEqual({ ok: false, photos: [], total: 0, max: 0 })
+      h.driver.emit({ kind: 'gallery', requestId: sent.requestId, ok: true, photos: [photo('late', '1000')], current: 1, max: 500 })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -67,7 +67,11 @@ export function reelFileName(url: string): string {
 export async function downloadReel(url: string): Promise<void> {
   try {
     const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      // Release the unread error body rather than leave the connection holding it.
+      await res.body?.cancel()
+      throw new Error(`HTTP ${res.status}`)
+    }
     const href = URL.createObjectURL(await res.blob())
     const a = document.createElement('a')
     a.href = href

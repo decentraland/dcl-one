@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GalleryPage } from '../features/gallery/GalleryPage'
@@ -97,6 +97,81 @@ describe('GalleryPage', () => {
     expect(await screen.findAllByRole('button', { name: 'Open photo' })).toHaveLength(230)
   })
 
+  it('a first page that fails (even by rejecting) shows the empty state, not a spinner', async () => {
+    renderPage(gallery(photos, { fetchPage: vi.fn(async () => Promise.reject(new Error('bridge gone'))) }))
+    expect(await screen.findByText('There are no photos yet')).toBeInTheDocument()
+  })
+
+  it('a page that repeats a photo already held (the reel shifted) shows it once', async () => {
+    const reel = Array.from({ length: 150 }, (_, i): GalleryPhoto => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime: FEB }))
+    const fetchPage = vi.fn(
+      async (offset: number): Promise<ReelPage> =>
+        offset === 0 ? { ok: true, photos: reel.slice(0, 100), total: 150, max: 500 } : { ok: true, photos: reel.slice(99, 150), total: 150, max: 500 }
+    )
+    renderPage(gallery(reel, { fetchPage }))
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(150))
+  })
+
+  it('a delete while a page is on its way asks for that page again from the corrected offset', async () => {
+    const reel = Array.from({ length: 230 }, (_, i): GalleryPhoto => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime: FEB }))
+    const held: Array<(page: ReelPage) => void> = []
+    const fetchPage = vi.fn((offset: number, limit: number): Promise<ReelPage> => {
+      if (offset === 0) return Promise.resolve({ ok: true, photos: reel.slice(0, limit), total: 230, max: 500 })
+      return new Promise((resolve) => held.push(resolve))
+    })
+    renderPage(gallery(reel, { fetchPage }))
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2))
+    await loadThumbnails()
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Photo options' })).getByRole('menuitem', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'DELETE' }))
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(3))
+    expect(fetchPage.mock.calls.map(([offset]) => offset)).toEqual([0, 100, 99])
+    // The stale page is dropped; the re-asked one lands.
+    act(() => held[0]({ ok: true, photos: reel.slice(101, 201), total: 229, max: 500 }))
+    act(() => held[1]({ ok: true, photos: reel.slice(100, 200), total: 229, max: 500 }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(199))
+    expect(screen.getAllByRole('button', { name: 'Open photo' })[99].querySelector('img')).toHaveAttribute('src', 'https://img/100.jpg')
+  })
+
+  it('closing and reopening the gallery does not reopen the photo viewer', async () => {
+    const g = gallery(photos)
+    const view = renderPage(g)
+    const [first] = await loadThumbnails()
+    await userEvent.click(first)
+    expect(screen.getByRole('dialog', { name: 'Photo' })).toBeInTheDocument()
+    const rerender = (open: boolean): void =>
+      view.rerender(
+        <>
+          <GalleryPage gallery={{ ...g, open }} profile={profile} onNavigate={vi.fn()} onTeleport={vi.fn()} onViewProfile={vi.fn()} />
+          <PopupHost />
+        </>
+      )
+    rerender(false)
+    rerender(true)
+    await loadThumbnails()
+    expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
+  })
+
+  describe('with a viewport', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    it('the viewer reads the next page as it nears the loaded end', async () => {
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1900)
+      const reel = Array.from({ length: 230 }, (_, i): GalleryPhoto => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime: FEB }))
+      const g = gallery(reel)
+      renderPage(g)
+      const [first] = await loadThumbnails()
+      expect(g.fetchPage).toHaveBeenCalledTimes(1)
+      await userEvent.click(first)
+      // Photo 89 leaves 11 loaded past it, under the 12-photo threshold.
+      for (let i = 0; i < 89; i++) fireEvent.keyDown(window, { key: 'ArrowRight' })
+      await waitFor(() => expect(g.fetchPage).toHaveBeenCalledWith(100, 100))
+    })
+  })
+
   it('opening a photo shows the detail and requests its metadata', async () => {
     const g = gallery(photos)
     renderPage(g)
@@ -190,6 +265,41 @@ describe('GalleryPage', () => {
       expect(g.remove).toHaveBeenCalledWith('p-feb')
       await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(1))
       expect(screen.getByText('Storage 1/500 photos taken')).toBeInTheDocument()
+    })
+
+    it('a failed Set as Public flips the switch back', async () => {
+      renderPage(gallery(photos, { setPublic: vi.fn(async () => ({ ok: false })) }))
+      const menu = await openMenu()
+      const toggle = within(menu).getByRole('menuitemcheckbox', { name: 'Set as Public' })
+      await userEvent.click(toggle)
+      await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'))
+    })
+
+    it('opening another photo\'s menu without a press outside shows that photo\'s visibility', async () => {
+      renderPage(gallery(photos))
+      await openMenu(0)
+      expect(screen.getByRole('menuitemcheckbox', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'false')
+      // A keyboard activation is a click with no mousedown, so the open menu isn't closed first.
+      fireEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[1])
+      expect(screen.getByRole('menuitemcheckbox', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'true')
+    })
+
+    it('scrolling the grid closes the menu', async () => {
+      renderPage(gallery(photos))
+      await openMenu()
+      fireEvent.scroll(screen.getByLabelText('Photos'))
+      expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
+    })
+
+    it('closing the menu puts focus back on its ⋮', async () => {
+      renderPage(gallery(photos))
+      await openMenu()
+      const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
+      expect(trigger).not.toHaveFocus()
+      act(() => {
+        dispatchCancelLayer()
+      })
+      expect(trigger).toHaveFocus()
     })
 
     it('Cancel closes the menu', async () => {
