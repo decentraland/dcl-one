@@ -208,6 +208,12 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the manifest origin, `null`
+  when off) and `disabled` (why), `bc` (the GPU decodes BC textures), the manifests fetched per
+  scene (`manifestsLoaded` with the file count, `manifestsOther` with the miss reason),
+  `filesEligible`, `hitsByFormat`, `served` (`downloaded`, `fromCache`), `fallbacks` with
+  `fallbackReasons`, `variantBytesFetched` and `badVariants` (variants that failed to decode, so
+  the original was loaded instead).
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
