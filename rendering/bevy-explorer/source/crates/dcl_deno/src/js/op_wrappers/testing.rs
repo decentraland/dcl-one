@@ -4,6 +4,8 @@ use dcl_js::testing::{
 };
 use deno_core::{error::AnyError, op2, OpDecl, OpState};
 
+use crate::js::plain::Plain;
+
 #[derive(Default)]
 pub struct TestPlan {
     pub tests: Vec<String>,
@@ -25,13 +27,19 @@ fn op_testing_enabled(op_state: &mut OpState) -> bool {
 }
 
 #[op2]
-fn op_log_test_plan(state: &mut OpState, #[serde] body: SceneTestPlan) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_plan(state, body)
+fn op_log_test_plan(
+    state: &mut OpState,
+    #[from_v8] body: Plain<SceneTestPlan>,
+) -> Result<(), AnyError> {
+    dcl_js::testing::op_log_test_plan(state, body.0)
 }
 
 #[op2]
-fn op_log_test_result(state: &mut OpState, #[serde] body: SceneTestResult) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_result(state, body)
+fn op_log_test_result(
+    state: &mut OpState,
+    #[from_v8] body: Plain<SceneTestResult>,
+) -> Result<(), AnyError> {
+    dcl_js::testing::op_log_test_result(state, body.0)
 }
 
 #[op2]
@@ -39,17 +47,17 @@ fn op_log_test_result(state: &mut OpState, #[serde] body: SceneTestResult) -> Re
 fn op_take_and_compare_snapshot(
     state: &mut OpState,
     #[string] name: String,
-    #[serde] camera_position: (f32, f32, f32),
-    #[serde] camera_target: (f32, f32, f32),
-    #[serde] snapshot_size: (u32, u32),
-    #[serde] method: TestingScreenshotComparisonMethodRequest,
+    #[from_v8] camera_position: Plain<(f32, f32, f32)>,
+    #[from_v8] camera_target: Plain<(f32, f32, f32)>,
+    #[from_v8] snapshot_size: Plain<(u32, u32)>,
+    #[from_v8] method: Plain<TestingScreenshotComparisonMethodRequest>,
 ) -> Result<TakeAndCompareSnapshotResponse, AnyError> {
     dcl_js::testing::op_take_and_compare_snapshot(
         state,
         name,
-        camera_position,
-        camera_target,
-        snapshot_size,
-        method,
+        camera_position.0,
+        camera_target.0,
+        snapshot_size.0,
+        method.0,
     )
 }

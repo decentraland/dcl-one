@@ -39,10 +39,13 @@ use self::{
 };
 
 pub mod fetch;
+mod hardened_ops;
 #[cfg(feature = "inspect")]
 pub mod inspector;
 pub mod local_storage;
 pub mod op_wrappers;
+mod plain;
+mod stream_resource;
 pub mod websocket;
 
 pub fn create_runtime(
@@ -106,10 +109,12 @@ pub fn create_runtime(
         ops.extend(set);
     }
 
-    let override_sets: [Vec<deno_core::OpDecl>; 3] = [
+    let override_sets: [Vec<deno_core::OpDecl>; 5] = [
         fetch::override_ops(),
         websocket::override_ops(),
         local_storage::override_ops(),
+        hardened_ops::override_ops(),
+        stream_resource::override_ops(),
     ];
 
     for set in override_sets {
@@ -154,6 +159,12 @@ pub fn create_runtime(
     // callback below terminates just that isolate instead of aborting the process.
     const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
 
+    // deno's default exits the process when an op asks for a feature that is not enabled
+    let mut feature_checker = deno_core::FeatureChecker::default();
+    feature_checker.set_exit_cb(Box::new(|feature, api_name| {
+        error!("scene called `{api_name}`, which needs the disabled feature `{feature}`");
+    }));
+
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
@@ -164,6 +175,7 @@ pub fn create_runtime(
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
         ),
+        feature_checker: Some(std::sync::Arc::new(feature_checker)),
         ..Default::default()
     });
 
@@ -664,6 +676,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 mod tests {
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
+    }
+    mod invalid_op_input {
+        include!("invalid_op_input_tests.rs");
     }
     use std::sync::Arc;
 

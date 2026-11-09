@@ -3,6 +3,8 @@ use dcl_js::restricted_actions::UiFocusResult;
 use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 
+use crate::js::plain::Plain;
+
 // list of op declarations
 pub fn ops() -> Vec<OpDecl> {
     vec![
@@ -24,16 +26,16 @@ pub fn ops() -> Vec<OpDecl> {
 #[op2(async)]
 async fn op_move_player_to(
     state: Rc<RefCell<OpState>>,
-    #[serde] position: DclVector3,
-    #[serde] camera_target: Option<DclVector3>,
-    #[serde] avatar_target: Option<DclVector3>,
+    #[from_v8] position: Plain<DclVector3>,
+    #[from_v8] camera_target: Plain<Option<DclVector3>>,
+    #[from_v8] avatar_target: Plain<Option<DclVector3>>,
     duration: Option<f32>,
 ) -> Result<bool, anyhow::Error> {
     dcl_js::restricted_actions::op_move_player_to(
         state,
-        position,
-        camera_target,
-        avatar_target,
+        position.0,
+        camera_target.0,
+        avatar_target.0,
         duration,
     )
     .await
@@ -42,11 +44,11 @@ async fn op_move_player_to(
 #[op2(async)]
 async fn op_walk_player_to(
     state: Rc<RefCell<OpState>>,
-    #[serde] position: DclVector3,
+    #[from_v8] position: Plain<DclVector3>,
     stop_threshold: f32,
     timeout: Option<f32>,
 ) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_walk_player_to(state, position, stop_threshold, timeout).await
+    dcl_js::restricted_actions::op_walk_player_to(state, position.0, stop_threshold, timeout).await
 }
 
 #[op2(async)]

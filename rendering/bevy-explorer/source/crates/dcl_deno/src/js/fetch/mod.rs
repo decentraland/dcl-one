@@ -23,6 +23,7 @@ use http::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::plain::Plain;
 use fetch_response_body_resource::FetchResponseBodyResource;
 use request_budget::SceneRequestBudget;
 
@@ -118,7 +119,7 @@ pub fn op_fetch<FP>(
     state: &mut OpState,
     #[string] method: String,
     #[string] url: String,
-    #[serde] headers: Vec<(String, String)>,
+    #[from_v8] headers: Plain<Vec<(String, String)>>,
     #[smi] client_rid: Option<u32>,
     has_body: bool,
     #[buffer] data: Option<JsBuffer>,
@@ -198,7 +199,7 @@ where
     }
 
     let mut range_request = false;
-    for (key, value) in headers {
+    for (key, value) in headers.0 {
         let name =
             HeaderName::from_bytes(key.as_bytes()).map_err(|err| type_error(err.to_string()))?;
         let v =
@@ -616,9 +617,10 @@ fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), A
 #[serde]
 pub fn op_fetch_custom_client(
     state: &mut OpState,
-    #[serde] args: CreateHttpClientOptions,
+    #[from_v8] args: Plain<CreateHttpClientOptions>,
 ) -> Result<ResourceId, AnyError> {
     debug!("op_fetch_custom_client");
+    let args = args.0;
 
     // A custom client is scene-supplied transport configuration, and on the shared
     // authoritative server none of it may be honoured:

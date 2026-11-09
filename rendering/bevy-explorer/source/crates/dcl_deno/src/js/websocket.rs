@@ -4,10 +4,15 @@ use common::{
     rpc::{RpcCall, RpcResultSender},
     util::UrlLoopbackExt,
 };
-use deno_core::{anyhow, error::AnyError, op2, ByteString, JsBuffer, OpDecl, OpState, ResourceId};
-use deno_websocket::{CreateResponse, WebSocketPermissions};
+use deno_core::{
+    anyhow, error::AnyError, futures::FutureExt, op2, ByteString, JsBuffer, OpDecl, OpState,
+    ResourceId,
+};
+use deno_websocket::{CreateResponse, ServerWebSocket, WebSocketPermissions};
 
 use dcl_types::{RpcCalls, SceneResourceCounters};
+
+use super::plain::Plain;
 
 const MAX_OPEN_SOCKETS: usize = 32;
 const MAX_WS_BUFFERED_BYTES: usize = 8 * 1024 * 1024;
@@ -27,6 +32,7 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_ws_send_text_async(),
         op_ws_close(),
         op_ws_next_event(),
+        op_ws_get_buffered_amount(),
     ]
 }
 
@@ -94,11 +100,27 @@ pub async fn op_ws_create<WP>(
     #[string] url: String,
     #[string] protocols: String,
     #[smi] cancel_handle: Option<ResourceId>,
-    #[serde] headers: Option<Vec<(ByteString, ByteString)>>,
+    #[from_v8] headers: Plain<Option<Vec<(ByteString, ByteString)>>>,
 ) -> Result<CreateResponse, AnyError>
 where
     WP: WebSocketPermissions + 'static,
 {
+    // the wrapped op unwraps or `expect`s each of these
+    {
+        let parsed = deno_core::url::Url::parse(&url)?;
+        if !matches!(parsed.scheme(), "ws" | "wss") || parsed.host_str().is_none() {
+            anyhow::bail!("WebSocket URL must be ws:// or wss:// with a host");
+        }
+        state
+            .borrow_mut()
+            .borrow_mut::<WP>()
+            .check_net_url(&parsed, &api_name)?;
+        let uri: http::Uri = url.parse()?;
+        if uri.authority().is_none() || uri.host().is_none() || uri.path_and_query().is_none() {
+            anyhow::bail!("WebSocket URL must have a host and a path");
+        }
+    }
+
     // check permission
     let (sx, rx) = RpcResultSender::channel();
     state
@@ -121,7 +143,7 @@ where
     // `preview` widens the allowance to the local network there (never link-local / metadata).
 
     // set default headers
-    let mut headers = headers.unwrap_or_default();
+    let mut headers = headers.0.unwrap_or_default();
     if !headers
         .iter()
         .any(|(key, _)| key == &ByteString::from("user-agent"))
@@ -147,16 +169,19 @@ where
     }
 
     // Bound the handshake so a black-hole host cannot pin the connect (and its slot).
+    // The wrapped op unwraps server-supplied response headers; a panic there must not
+    // unwind into V8.
     let result = tokio::time::timeout(
         WS_HANDSHAKE_TIMEOUT,
-        deno_websocket::op_ws_create__raw_fn::<WP>(
+        std::panic::AssertUnwindSafe(deno_websocket::op_ws_create__raw_fn::<WP>(
             state.clone(),
             api_name,
             url,
             protocols,
             cancel_handle,
             Some(headers),
-        ),
+        ))
+        .catch_unwind(),
     )
     .await;
 
@@ -167,7 +192,8 @@ where
     }
 
     let response = match result {
-        Ok(result) => result?,
+        Ok(Ok(result)) => result?,
+        Ok(Err(_)) => anyhow::bail!("WebSocket handshake failed"),
         Err(_) => anyhow::bail!("WebSocket handshake timed out"),
     };
 
@@ -193,13 +219,30 @@ where
 // Refuse a send that would push still-pending outbound bytes past the buffered cap, so a scene
 // writing faster than the peer drains cannot grow the sidecar heap without bound.
 fn guard_ws_buffer(state: &mut OpState, rid: ResourceId, len: usize) -> Result<(), AnyError> {
-    let buffered = deno_websocket::op_ws_get_buffered_amount__raw_fn(state, rid) as usize;
+    let buffered = ws_buffered_amount(state, rid)? as usize;
     if buffered.saturating_add(len) > MAX_WS_BUFFERED_BYTES {
         anyhow::bail!(
             "WebSocket send refused: outbound buffer exceeds {MAX_WS_BUFFERED_BYTES} bytes"
         );
     }
     Ok(())
+}
+
+// The wrapped send and buffered-amount ops unwrap the resource lookup.
+fn ws_buffered_amount(state: &mut OpState, rid: ResourceId) -> Result<u32, AnyError> {
+    state.resource_table.get::<ServerWebSocket>(rid)?;
+    Ok(deno_websocket::op_ws_get_buffered_amount__raw_fn(
+        state, rid,
+    ))
+}
+
+#[op2(fast)]
+#[smi]
+pub fn op_ws_get_buffered_amount(
+    state: &mut OpState,
+    #[smi] rid: ResourceId,
+) -> Result<u32, AnyError> {
+    ws_buffered_amount(state, rid)
 }
 
 #[op2]

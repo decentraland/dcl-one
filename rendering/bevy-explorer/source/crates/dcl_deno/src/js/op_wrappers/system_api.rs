@@ -17,6 +17,8 @@ use system_bridge::{
     WorldAccessEvent,
 };
 
+use crate::js::plain::Plain;
+
 // list of op declarations
 pub fn ops(super_user: bool) -> Vec<OpDecl> {
     if super_user {
@@ -215,9 +217,9 @@ pub async fn op_kernel_fetch_headers(
 #[op2(async)]
 pub async fn op_set_avatar(
     state: Rc<RefCell<OpState>>,
-    #[serde] avatar: SetAvatarData,
+    #[from_v8] avatar: Plain<SetAvatarData>,
 ) -> Result<u32, anyhow::Error> {
-    dcl_js::system_api::op_set_avatar(state, avatar).await
+    dcl_js::system_api::op_set_avatar(state, avatar.0).await
 }
 
 #[op2(async)]
@@ -236,9 +238,9 @@ pub async fn op_get_bindings(state: Rc<RefCell<OpState>>) -> Result<JsBindingsDa
 #[serde]
 pub async fn op_set_bindings(
     state: Rc<RefCell<OpState>>,
-    #[serde] bindings: JsBindingsData,
+    #[from_v8] bindings: Plain<JsBindingsData>,
 ) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_set_bindings(state, bindings).await
+    dcl_js::system_api::op_set_bindings(state, bindings.0).await
 }
 
 #[op2]
@@ -248,9 +250,9 @@ pub fn op_set_ui_focus(
     text: bool,
     scroll: bool,
     covered: bool,
-    #[serde] menu: Option<HudPanel>,
+    #[from_v8] menu: Plain<Option<HudPanel>>,
 ) -> Result<(), AnyError> {
-    dcl_js::system_api::op_set_ui_focus(state, ui, text, scroll, covered, menu)
+    dcl_js::system_api::op_set_ui_focus(state, ui, text, scroll, covered, menu.0)
 }
 
 #[op2(async)]
@@ -258,9 +260,9 @@ pub fn op_set_ui_focus(
 pub async fn op_console_command(
     state: Rc<RefCell<OpState>>,
     #[string] cmd: String,
-    #[serde] args: Vec<String>,
+    #[from_v8] args: Plain<Vec<String>>,
 ) -> Result<String, anyhow::Error> {
-    dcl_js::system_api::op_console_command(state, cmd, args).await
+    dcl_js::system_api::op_console_command(state, cmd, args.0).await
 }
 
 #[op2(async)]
@@ -308,9 +310,9 @@ pub async fn op_get_satellite_view(
 pub fn op_set_home_scene(
     state: Rc<RefCell<OpState>>,
     #[string] realm: String,
-    #[serde] parcel: Vector2,
+    #[from_v8] parcel: Plain<Vector2>,
 ) {
-    dcl_js::system_api::op_set_home_scene(state, realm, parcel);
+    dcl_js::system_api::op_set_home_scene(state, realm, parcel.0);
 }
 
 #[op2(async)]
@@ -407,9 +409,9 @@ pub async fn op_get_user_profile(
 #[serde]
 pub async fn op_get_compact_profiles(
     state: Rc<RefCell<OpState>>,
-    #[serde] addresses: Vec<String>,
+    #[from_v8] addresses: Plain<Vec<String>>,
 ) -> Result<Vec<CompactProfile>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_get_compact_profiles(state, addresses).await
+    dcl_js::system_api::op_get_compact_profiles(state, addresses.0).await
 }
 
 #[op2(fast)]
@@ -456,10 +458,10 @@ pub fn op_set_permanent_permission(
     state: Rc<RefCell<OpState>>,
     #[string] level: &str,
     #[string] value: Option<String>,
-    #[serde] permission_type: PermissionType,
-    #[serde] allow: Option<PermissionValue>,
+    #[from_v8] permission_type: Plain<PermissionType>,
+    #[from_v8] allow: Plain<Option<PermissionValue>>,
 ) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_set_permanent_permission(state, level, value, permission_type, allow)
+    dcl_js::system_api::op_set_permanent_permission(state, level, value, permission_type.0, allow.0)
 }
 
 #[op2(async)]
@@ -829,8 +831,8 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[op2]
-pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state, ids)
+pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[from_v8] ids: Plain<Vec<String>>) {
+    dcl_js::system_api::op_set_community_channels(state, ids.0)
 }
 
 #[op2(async)]
