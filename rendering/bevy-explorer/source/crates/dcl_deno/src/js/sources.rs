@@ -127,7 +127,8 @@ mod tests {
 
     #[test]
     fn every_runtime_script_is_compiled_in() {
-        let extensions = super::super::web_extensions();
+        let store = std::sync::Arc::new(super::super::blob_store::CappedBlobStore::default());
+        let extensions = super::super::web_extensions(store);
         let own = own();
         let files = extensions.iter().flat_map(|extension| {
             extension

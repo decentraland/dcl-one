@@ -1,5 +1,5 @@
 use crate::js::errors::{generic_error, OpError};
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
 
 use bevy::log::{debug, error, info_span};
 use common::structs::GlobalCrdtStateUpdate;
@@ -28,6 +28,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
+mod blob_store;
 mod errors;
 pub mod fetch;
 mod hardened_ops;
@@ -47,7 +48,9 @@ pub fn create_runtime(
     #[cfg(test)]
     crate::test_platform();
 
-    let [webidl, web, fetch_ext] = web_extensions();
+    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
+    let blob_store = Arc::new(blob_store::CappedBlobStore::default());
+    let [webidl, web, fetch_ext] = web_extensions(blob_store.clone());
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
@@ -152,6 +155,8 @@ pub fn create_runtime(
         ..Default::default()
     });
 
+    runtime.op_state().borrow_mut().put(blob_store);
+
     {
         let mut problems = override_problems.take();
         problems.extend(
@@ -228,11 +233,10 @@ pub fn create_runtime(
 }
 
 /// deno_webidl, deno_web and the vendored fetch scripts, with every script compiled in.
-fn web_extensions() -> [Extension; 3] {
+fn web_extensions(blob_store: Arc<blob_store::CappedBlobStore>) -> [Extension; 3] {
     let mut webidl = deno_webidl::deno_webidl::init();
-    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
     let mut web = deno_web::deno_web::init(
-        deno_web::BlobStore::default_arc(),
+        blob_store,
         None,
         false,
         deno_web::InMemoryBroadcastChannel::default(),

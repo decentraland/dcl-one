@@ -10,10 +10,10 @@ use deno_core::{
     v8, JsBuffer, OpDecl, OpState,
 };
 use deno_web::{BlobStoreTrait, InMemoryBlobPart};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{errors::bail, plain::Plain};
+use super::{blob_store::CappedBlobStore, errors::bail, plain::Plain};
 use v8::{ValueDeserializerHelper, ValueSerializerHelper};
 
 // Replacements for registered ops that scene code can reach through the ops table. Each one
@@ -37,6 +37,8 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_url_stringify_search_params(),
         op_urlpattern_parse(),
         op_urlpattern_process_match_input(),
+        op_blob_create_part(),
+        op_blob_clone_part(),
         op_blob_slice_part(),
         op_blob_read_part(),
         op_blob_remove_part(),
@@ -440,6 +442,41 @@ struct SliceOptions {
     len: usize,
 }
 
+fn capped_store(state: &OpState) -> Result<Arc<CappedBlobStore>, AnyError> {
+    state
+        .try_borrow::<Arc<CappedBlobStore>>()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Blob storage is not available"))
+}
+
+#[op2]
+#[string]
+fn op_blob_create_part(state: &mut OpState, #[buffer] data: JsBuffer) -> Result<String, OpError> {
+    let store = capped_store(state)?;
+    let id = store.try_insert_with(data.len(), || {
+        Arc::new(InMemoryBlobPart::from(data.to_vec()))
+    })?;
+    Ok(id.to_string())
+}
+
+#[derive(Serialize)]
+struct ClonedPart {
+    uuid: String,
+    size: usize,
+}
+
+#[op2]
+#[serde]
+fn op_blob_clone_part(state: &mut OpState, #[string] id: &str) -> Result<ClonedPart, OpError> {
+    let store = capped_store(state)?;
+    let part = store
+        .get_part(&blob_part_id(id)?)
+        .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
+    let size = part.size();
+    let uuid = store.try_insert_with(size, || part)?.to_string();
+    Ok(ClonedPart { uuid, size })
+}
+
 #[op2]
 #[string]
 fn op_blob_slice_part(
@@ -448,8 +485,8 @@ fn op_blob_slice_part(
     #[scoped] options: Plain<SliceOptions>,
 ) -> Result<String, OpError> {
     let SliceOptions { start, len } = options.0;
-    let blob_store = state.borrow::<Arc<dyn BlobStoreTrait>>();
-    let part = blob_store
+    let store = capped_store(state)?;
+    let part = store
         .get_part(&blob_part_id(id)?)
         .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
     if start.checked_add(len).is_none_or(|end| end > part.size()) {
@@ -458,8 +495,9 @@ fn op_blob_slice_part(
     // every part in a scene runtime is in memory, so its read is ready at once
     let bytes = deno_core::futures::FutureExt::now_or_never(part.read())
         .ok_or_else(|| anyhow::anyhow!("Blob part is not in memory"))?;
-    let sliced = InMemoryBlobPart::from(bytes[start..start + len].to_vec());
-    Ok(blob_store.insert_part(Arc::new(sliced)).to_string())
+    let sliced = bytes[start..start + len].to_vec();
+    let id = store.try_insert_with(len, || Arc::new(InMemoryBlobPart::from(sliced)))?;
+    Ok(id.to_string())
 }
 
 #[op2]
