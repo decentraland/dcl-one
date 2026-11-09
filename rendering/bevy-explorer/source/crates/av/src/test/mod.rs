@@ -23,16 +23,13 @@ fn test_ffmpeg() {
         .unwrap();
 }
 
-/// The threads behind the players above outlive their app; once it is gone they must leave
-/// promptly, which is what the client's exit relies on.
+/// A player's threads outlive its app; once it is gone they must leave promptly, even while
+/// the source stalls, which is what the client's exit relies on.
 ///
 /// The join covers every av thread in the process, so this assumes the tests run one at a
 /// time (`--test-threads=1`, as CI does); alongside another test's live app it can time out.
 #[cfg(all(feature = "ffmpeg", not(target_arch = "wasm32")))]
 #[test]
 fn av_threads_leave_once_their_app_is_gone() {
-    ffmpeg_or_html::test_source_change();
-    assert!(crate::video_stream::join_av_threads(
-        std::time::Duration::from_secs(10)
-    ));
+    ffmpeg_or_html::test_stalled_source_shutdown();
 }

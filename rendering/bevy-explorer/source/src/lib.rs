@@ -1033,7 +1033,6 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
                 .launch
                 .content_server
                 .clone(),
-            assets_root: Default::default(),
             num_slots: decentraland_app_config.app_config.max_concurrent_remotes,
         })
         .add_before::<IpfsIoPlugin>(NftReaderPlugin)
@@ -1098,7 +1097,6 @@ fn wasm_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> Plug
                 .launch
                 .content_server
                 .clone(),
-            assets_root: Default::default(),
             num_slots: decentraland_app_config.app_config.max_concurrent_remotes,
         })
         .add_before::<IpfsIoPlugin>(NftReaderPlugin)

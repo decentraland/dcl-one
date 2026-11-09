@@ -43,7 +43,6 @@ clap = { workspace = true }
 bimap = { workspace = true }
 nalgebra = { version = "0.34.1", features = ["convert-glam029"] }
 futures-lite = { workspace = true }
-once_cell = { workspace = true }
 rapier3d-f64 = { workspace = true }
 urlencoding = { workspace = true }
 itertools = { workspace = true }
@@ -69,3 +68,6 @@ dcl_deno_ipc = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dcl_wasm = { workspace = true }
 getrandom = { workspace = true, features = ["wasm_js"] }
+
+[dev-dependencies]
+test_logging = { workspace = true }

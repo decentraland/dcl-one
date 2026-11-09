@@ -440,6 +440,7 @@ mod tests {
             Some(
                 world
                     .spawn((
+                        Visibility::default(),
                         ChildOf(*prev),
                         SceneEntity {
                             root: parent,
@@ -506,6 +507,7 @@ mod tests {
             Some(
                 world
                     .spawn((
+                        Visibility::default(),
                         ChildOf(*prev),
                         SceneEntity {
                             root: parent,
@@ -538,6 +540,7 @@ mod tests {
             Some(
                 world
                     .spawn((
+                        Visibility::default(),
                         ChildOf(*prev),
                         SceneEntity {
                             root: parent,
