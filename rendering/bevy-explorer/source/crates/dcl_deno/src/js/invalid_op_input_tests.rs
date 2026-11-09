@@ -292,7 +292,7 @@ fn shared_subtrees_cannot_multiply_a_struct_argument() {
 
 #[test]
 fn a_huge_stream_length_is_not_preallocated() {
-    let (mut runtime, _) = create_runtime(false, false, "test-size-hint", false, Default::default());
+    let (mut runtime, _) = create_runtime(false, false, "test-size-hint", Default::default());
     runtime.op_state().borrow_mut().put(context(false));
     runtime
         .execute_script(
@@ -319,7 +319,7 @@ fn a_huge_stream_length_is_not_preallocated() {
 #[test]
 fn every_override_replaces_an_op_of_the_same_shape() {
     for super_user in [false, true] {
-        let (mut runtime, _) = create_runtime(false, super_user, "test-overrides", false, Default::default());
+        let (mut runtime, _) = create_runtime(false, super_user, "test-overrides", Default::default());
         let state = runtime.op_state();
         let state = state.borrow();
         let problems = &state.borrow::<OpOverrideProblems>().0;
