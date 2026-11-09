@@ -14,24 +14,18 @@
 //   - "Buy Item" when the Credits cover it; a buyer holding MANA chooses how to pay first;
 //   - the approval a self-custody wallet grants, the progress, a purchase still being confirmed, "Purchase complete!"
 //     and the error.
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 
 import { cartLineId, createCartStore, type CartAddInput, type CartStorage, type CartStore } from "../../cart/store";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { friendlyError } from "../../checkout/lib/errors";
+import { DialogAsset, DialogHead, DialogShell, DialogTextButton, DialogWarning, ErrorBody, NoFundsBody, ProcessingBody, dialogStyles as styles, useDialog } from "../../checkout/components/CheckoutDialog";
 import { EnsureQueryClient, ShopServicesProvider, useShopServices } from "../../checkout/services";
 import { useCheckout, type Blocker, type BlockerKind, type PurchasedLine } from "../../checkout/useCheckout";
 import loaderLogo from "../../credits/assets/loader-logo.svg?url";
-import { useCreditPacks } from "../../credits/hooks";
 import { isIapMode } from "../../credits/iap";
-import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../../credits/payments";
 import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp, type BuyNowReturn } from "../../credits/returns";
-import CategoryFlap from "../../discovery/components/CategoryFlap";
-import Icon from "../../discovery/components/Icon";
-import { useCreatorName } from "../../discovery/hooks";
-import { rarityCardPalette } from "../../discovery/lib/rarity";
 import { myItemsRouteFor } from "../../discovery/lib/routes";
 import { invalidateShopQueries } from "../../discovery/query";
 import { Confetti, JumpInIcon } from "../../history/celebration";
@@ -40,9 +34,6 @@ import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { backpackDeepLink, jumpUrl } from "../lib/jump";
-import buyErrorArt from "../assets/buy-error.png?url";
-import packCoin from "../assets/pack-coin.webp?url";
-import styles from "./BuyModal.module.css";
 import { useCombinedBuy } from "./CombinedBuy";
 import PaymentMethodStep, { type StepRail, type StepRails } from "./PaymentMethodStep";
 
@@ -51,13 +42,7 @@ const TEXT = {
   titleNoFunds: "Buy Credits and Item",
   titleComplete: "Purchase complete!",
   titleError: "Oops! Something went wrong",
-  balance: "My Credits Balance:",
   close: "Close",
-  insufficient: "Insufficient Funds.",
-  needToBuy: "You will need to buy",
-  toPurchase: "to purchase this item.",
-  learnMore: "Learn More",
-  cancel: "Cancel",
   buy: "Buy",
   completing: "Completing your purchase…",
   completingResume: "Completing Purchase…",
@@ -71,11 +56,8 @@ const TEXT = {
   myItems: "My items",
   tryInWorld: "Try in world",
   goToBackpack: "Go to backpack",
-  errorHeadline: "We couldn't complete your purchase this time.",
-  errorBody: "Don't worry, your Credits are safe. Please try again in a moment.",
   outage: "Prices can't be checked right now. Try again in a moment.",
   gone: "This item is no longer available.",
-  tryAgain: "Try again",
   itemFallback: "Item",
   priceChanged: "The price for this item changed while you were here. Check the new amount and confirm to continue.",
 } as const;
@@ -290,53 +272,13 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
     }
     onClose();
   };
-  const closeRef = useRef(close);
-  closeRef.current = close;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeRef.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  // Leaving the page while the purchase is being sent would leave it unwatched: the browser asks first.
-  useEffect(() => {
-    if (!busy) return;
-    const hold = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      // Older Chromium and some web views prompt only when this is set.
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", hold);
-    return () => window.removeEventListener("beforeunload", hold);
-  }, [busy]);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  // Focus moves into the dialog, and back to what had it (Buy now) when the dialog goes.
-  useEffect(() => {
-    const before = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    dialogRef.current?.focus();
-    return () => before?.focus?.();
-  }, []);
+  // Focus in and back to Buy now, Tab kept inside, Escape, and the browser asking before leaving a purchase being sent.
+  const dialog = useDialog(busy, close);
   // After the approval step (drawn in the dialog's place), focus comes back in.
   const approving = !!co.approval || run.kind === "approve";
   useEffect(() => {
-    if (!approving) dialogRef.current?.focus();
-  }, [approving]);
-  // A modal dialog keeps Tab and Shift+Tab inside it.
-  const trapTab = (e: ReactKeyboardEvent) => {
-    if (e.key !== "Tab" || !dialogRef.current) return;
-    const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-    if (focusable.length === 0) return;
-    const first = focusable[0]!;
-    const last = focusable[focusable.length - 1]!;
-    if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+    if (!approving) dialog.focus();
+  }, [approving, dialog]);
 
   // Back from a top-up: the buyer already confirmed, so the purchase goes on as soon as it is priced, once, if it is the
   // same line at no more than the price they agreed to. Anything else waits for a press.
@@ -410,9 +352,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   const title = phase === "complete" ? TEXT.titleComplete : phase === "error" ? TEXT.titleError : phase === "nofunds" ? TEXT.titleNoFunds : TEXT.titleBuy;
   const balance = co.balanceError ? "—" : (co.balance?.credits ?? 0).toLocaleString("en-US");
   return (
-    <div className={styles.root} data-shop-tokens role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1} onKeyDown={trapTab}>
-      <div className={styles.scrim} onClick={busy ? undefined : close} aria-hidden="true" data-testid="buy-modal-scrim" />
-      <div className={styles.card} data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase} data-method={methodMode || undefined}>
+    <DialogShell dialog={dialog} label={`Buy ${display.name || TEXT.itemFallback}`} testId="buy-modal" busy={busy} onClose={close} tall={phase === "processing" || phase === "loading"} phase={phase} method={methodMode}>
         {methodMode ? (
           <PaymentMethodStep
             display={display}
@@ -439,23 +379,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             }
           />
         ) : (
-          <div className={styles.head}>
-            <div className={styles.headrow}>
-              <h2 className={styles.title}>{title}</h2>
-              {!busy ? (
-                <button type="button" className={styles.x} onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
-                  <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-                    <path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                </button>
-              ) : null}
-            </div>
-            <div className={styles.balance} data-testid="buy-modal-balance">
-              <span className={styles.balanceLabel}>{TEXT.balance}</span>
-              <Icon name="credits" className={styles.balanceIco} />
-              <span className={styles.balanceValue}>{balance}</span>
-            </div>
-          </div>
+          <DialogHead title={title} balance={balance} busy={busy} onClose={close} testId="buy-modal" />
         )}
 
         {phase === "loading" ? (
@@ -478,9 +402,10 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         ) : null}
 
         {phase === "nofunds" ? (
-          <NoFunds
-            display={display}
-            priceCredits={priceCredits}
+          <NoFundsBody
+            testId="buy-modal"
+            units={1}
+            items={<DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" />}
             shortfall={Math.max(1, creditsShort ?? (co.topUp ? creditsCeil(co.topUp.shortCents) : priceCredits - (co.balance?.credits ?? 0)))}
             onLeave={() => {
               if (!co.account || !cartLine) return null;
@@ -506,19 +431,15 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         {phase === "ready" && !methodMode ? (
           <div className={styles.body}>
             {priceChanged ? (
-              <div className={styles.warning} role="status" data-testid="price-changed">
-                <WarningIcon />
-                <p className={styles.warningText}>{TEXT.priceChanged}</p>
-              </div>
+              <DialogWarning status testId="price-changed">
+                {TEXT.priceChanged}
+              </DialogWarning>
             ) : null}
-            <AssetRow display={display} priceCredits={priceCredits} />
+            <DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" />
             {held ? (
-              <div className={styles.warning} role="status" data-testid="buy-modal-held">
-                <WarningIcon />
-                <p className={styles.warningText}>
-                  <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
-                </p>
-              </div>
+              <DialogWarning status testId="buy-modal-held">
+                <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
+              </DialogWarning>
             ) : null}
             <div className={styles.ctas}>
               <button
@@ -537,13 +458,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         ) : null}
 
         {phase === "processing" ? (
-          <div className={styles.body} data-processing>
-            <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
-            <div className={styles.processing}>{resume ? TEXT.completingResume : TEXT.completing}</div>
-            <div className={styles.progress} aria-hidden="true">
-              <span className={styles.progressFill} />
-            </div>
-          </div>
+          <ProcessingBody text={resume ? TEXT.completingResume : TEXT.completing} />
         ) : null}
 
         {phase === "pending" ? (
@@ -595,34 +510,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             </div>
           </div>
         ) : null}
-      </div>
-    </div>
-  );
-}
-
-/** The item: its artwork on its rarity's tile with the category flap, its name, its creator and its price. */
-function AssetRow({ display, priceCredits }: { display: CartLineDisplay; priceCredits: number }) {
-  const creator = useCreatorName(display.creator);
-  const tile = { "--buy-tile": rarityCardPalette(display.rarity).background } as CSSProperties;
-  return (
-    <div className={styles.asset} data-testid="buy-modal-asset">
-      <div className={styles.thumb} style={tile}>
-        <CategoryFlap item={{ category: display.category ?? "wearable", wearableCategory: display.wearableCategory, rarity: display.rarity ?? "" }} size="sm" testId="buy-modal-flap" />
-        {display.thumbnail ? <img src={display.thumbnail} alt="" /> : null}
-      </div>
-      <div className={styles.info}>
-        <div>
-          <div className={styles.name} title={display.name}>
-            {display.name || TEXT.itemFallback}
-          </div>
-          {display.creator ? <div className={styles.creator}>{creator ? `By ${creator}` : " "}</div> : null}
-        </div>
-        <div className={styles.price}>
-          <Icon name="credits" className={styles.priceIco} />
-          <span>{priceCredits.toLocaleString("en-US")}</span>
-        </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }
 
@@ -642,169 +530,9 @@ function HeldText({ block, wallet, web3 }: { block: Blocker; wallet: ReturnType<
       {action ? (
         <>
           {" "}
-          <button type="button" className={styles.warningLink} onClick={action.run}>
-            {action.label}
-          </button>
+          <DialogTextButton onClick={action.run}>{action.label}</DialogTextButton>
         </>
       ) : null}
     </>
-  );
-}
-
-const WarningIcon = () => (
-  <svg viewBox="0 0 20 20" width="24" height="24" aria-hidden="true">
-    <path
-      className={styles.warningMark}
-      d="M10 0a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm0-8a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Z"
-    />
-  </svg>
-);
-
-/**
- * Not enough Credits and no MANA that can pay: what the buyer is short, the item, and the packs that finish the purchase
- * (all of them when none does), the cheapest of those picked. Buy leaves for the pack checkout with the hand-off that
- * brings the buyer back to finish; a dialog closed while the checkout is being created never leaves.
- */
-function NoFunds(props: {
-  display: CartLineDisplay;
-  priceCredits: number;
-  shortfall: number;
-  /** Leaves the hand-off; returns its attempt, which a failure drops. */
-  onLeave(): string | null;
-  onFailed(attempt: string | null): void;
-  onCancel(): void;
-  onCheckout(session: { orderId: string; url?: string }): void;
-}) {
-  const { client } = useShopServices();
-  const { packs } = useCreditPacks();
-  const offer = useMemo(() => offerablePacks(packs.slice(0, MAX_OFFER_PACKS), props.shortfall), [packs, props.shortfall]);
-  const cover = offer.packs.find((p) => p.credits >= props.shortfall) ?? offer.packs[offer.packs.length - 1];
-  const [picked, setPicked] = useState<string | null>(null);
-  const selectedId = picked ?? cover?.id ?? null;
-  const selected = offer.packs.find((p) => p.id === selectedId) ?? null;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Back from Stripe through the browser's page cache, the page comes back as it was left: Buy pressed.
-  useEffect(() => {
-    const onShow = (e: PageTransitionEvent) => {
-      if (e.persisted) setBusy(false);
-    };
-    window.addEventListener("pageshow", onShow);
-    return () => window.removeEventListener("pageshow", onShow);
-  }, []);
-  const mounted = useRef(true);
-  useEffect(() => {
-    // Set here too: StrictMode runs this effect's cleanup and then the effect again.
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const iap = isIapMode();
-
-  async function buy() {
-    if (!selectedId) return;
-    setBusy(true);
-    setError(null);
-    const leaving = props.onLeave();
-    try {
-      const session = await createPackCheckout(selectedId, client);
-      if (!mounted.current) {
-        props.onFailed(leaving);
-        return;
-      }
-      props.onCheckout(session);
-    } catch (e) {
-      props.onFailed(leaving);
-      if (!mounted.current) return;
-      setError(friendlyError(e, "Couldn't start the Credits checkout — please try again."));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className={styles.body}>
-      <div className={styles.warning} data-testid="buy-modal-insufficient">
-        <WarningIcon />
-        <p className={styles.warningText}>
-          <b>{TEXT.insufficient}</b> {TEXT.needToBuy} <b>{`${props.shortfall.toLocaleString("en-US")} Credits`}</b> {TEXT.toPurchase}
-          {iap ? null : (
-            <>
-              {" "}
-              <a className={styles.warningLink} href={`${SHOP_BASE}/credits`} target="_blank" rel="noopener noreferrer">
-                {TEXT.learnMore}
-              </a>
-            </>
-          )}
-        </p>
-      </div>
-      <AssetRow display={props.display} priceCredits={props.priceCredits} />
-      {iap ? null : (
-        <>
-          <div className={styles.packs} data-testid="credit-packs">
-            {offer.packs.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={styles.pack}
-                data-testid="credit-pack"
-                data-on={p.id === selectedId || undefined}
-                aria-pressed={p.id === selectedId}
-                aria-label={`${p.credits.toLocaleString("en-US")} Credits for $${p.usd.toFixed(2)}`}
-                onClick={() => setPicked(p.id)}
-              >
-                <img className={styles.packIco} src={packCoin} alt="" />
-                <span className={styles.packAmount}>{p.credits.toLocaleString("en-US")}</span>
-                <span className={styles.packUsd}>(${p.usd.toFixed(2)})</span>
-              </button>
-            ))}
-          </div>
-          <div className={styles.total}>
-            <div className={styles.totalCredits}>
-              <Icon name="credits" className={styles.totalIco} />
-              <span data-testid="topup-total-credits">{(selected?.credits ?? 0).toLocaleString("en-US")}</span>
-            </div>
-            <span className={styles.totalUsd}>${(selected?.usd ?? 0).toFixed(2)}</span>
-          </div>
-        </>
-      )}
-      {error ? (
-        <p className={styles.warningText} role="alert">
-          {error}
-        </p>
-      ) : null}
-      <div className={styles.ctas}>
-        <button type="button" className={styles.btn} data-variant="outline" onClick={props.onCancel}>
-          {TEXT.cancel}
-        </button>
-        {iap ? null : (
-          <button type="button" className={styles.btn} data-variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid="buy-modal-topup">
-            {TEXT.buy}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** The cart's failure panel: the reason, that the Credits are safe, and a retry. */
-function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry(): void }) {
-  return (
-    <div className={styles.body}>
-      <div className={styles.error} data-testid="buy-error">
-        <img className={styles.errorArt} src={buyErrorArt} alt="" width={64} height={80} />
-        <p className={styles.errorText}>
-          <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
-        </p>
-      </div>
-      <div className={styles.ctas}>
-        <button type="button" className={styles.btn} data-variant="outline" onClick={onClose}>
-          {TEXT.cancel}
-        </button>
-        <button type="button" className={styles.btn} data-variant="ruby" onClick={onRetry}>
-          {TEXT.tryAgain}
-        </button>
-      </div>
-    </div>
   );
 }

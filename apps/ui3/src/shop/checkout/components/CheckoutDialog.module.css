@@ -1,11 +1,12 @@
 /* from: shop@3a322cf9:app/src/components/BuyModal/modal.styles.ts (Modal, Scrim, Card, Head, HeadRow, Title, X, Balance*,
          Body, Asset*, Warning*, Packs, Pack*, Total*, Ctas, Btn, Logo, BuyError*, ProcessingText, Progress*, Success*),
-         app/src/components/CreditPackPicker/CreditPackPicker.styles.ts (PackTile), app/src/styles/index.css (cart-pop-in,
-         .spinner), app/src/styles/theme.ts (the colours below).
-   The checkout modal's shell: a scrim over the whole viewport and a card holding a header (title, close, the
-   Credits balance) and one body per phase. Upstream's Buy now draws it on its dark surface, which is the only one
-   ported here. The dialog renders in a portal outside `.shop-chrome`; its root carries `data-shop-tokens`, which gives
-   it the same token scope (shoptheme.css). */
+         app/src/components/CreditPackPicker/CreditPackPicker.styles.ts (PackTile),
+         app/src/components/CartCheckoutModal/CartCheckoutModal.styles.ts (ProgressRow, Step, Scroll, QtyTag),
+         app/src/styles/index.css (cart-pop-in, .spinner), app/src/styles/theme.ts (the colours below).
+   The checkout dialogs' shell (CheckoutDialog.tsx), shared by Buy now's and the cart's as upstream's modal.styles is: a
+   scrim over the whole viewport and a card holding a header (title, close, the Credits balance) and one body per phase.
+   Upstream draws both on its dark surface, which is the only one ported here. The dialogs render in a portal outside
+   `.shop-chrome`; their root carries `data-shop-tokens`, which gives them the same token scope (shoptheme.css). */
 
 .root {
   --ckm-accent: var(--shop-accent, #691fa9);
@@ -444,6 +445,58 @@
   border-radius: 100px;
   background: var(--ckm-progress);
   animation: progress 1.1s ease-in-out infinite;
+}
+/* A counted step (the cart reserving its units): the fill stands at `--progress-step` instead of sliding. */
+.progressFill[data-step] {
+  width: var(--progress-step);
+  min-width: 12px;
+  animation: none;
+  transition: width 0.35s ease;
+}
+.progressRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+.step {
+  font-size: 16px;
+  line-height: 22px;
+  color: var(--shop-gray-5, #ecebed);
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+/* The cart's lines in the no-funds screen: the dialog's elastic region, giving up height first so the packs, the total
+   and the buttons below stay on screen; about one row at least, since a scroll box's automatic minimum is zero. */
+.scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 120px;
+  max-height: 360px;
+  overflow-y: auto;
+  width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ckm-glass-strong) transparent;
+}
+.scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: var(--shop-media, #ecebed);
+  border-radius: 10px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: #a2a2a2;
+  border-radius: var(--shop-radius-btn, 8px);
+}
+.qty {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ckm-gray4);
 }
 
 .error {

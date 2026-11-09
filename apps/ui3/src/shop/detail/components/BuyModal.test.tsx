@@ -102,6 +102,17 @@ describe("Buy now's dialog", () => {
     expect(authorizations(demo)).toHaveLength(0);
   });
 
+  it("focus stays where the buyer put it while the dialog re-renders: ticking MANA keeps it on that row", async () => {
+    renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
+    const dialog = await settledDialog();
+    const mana = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("pay-with-mana");
+    mana.focus();
+    fireEvent.click(mana);
+    // The pick re-prices the line: the dialog renders again, more than once.
+    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByTestId("confirm-payment")).toBeEnabled());
+    expect(document.activeElement).toBe(mana);
+  });
+
   it("under StrictMode the pack checkout still opens", async () => {
     const { opened } = renderBuy({ session: "web2", balanceCents: 30 }, { strict: true });
     const dialog = await settledDialog();
