@@ -59,7 +59,7 @@ function parseHeader(source: string): ParsedMapping['header'] {
 }
 
 // Mappings never carry the private Figma file key. Their url names the file through this
-// placeholder, which Code Connect resolves from FIGMA_FILE_KEY at publish time only
+// placeholder, which Code Connect resolves at publish time only, outside this tree's code
 // (documentUrlSubstitutions).
 const FIGMA_FILE_PLACEHOLDER = '<DCL_FIGMA_FILE>'
 const LITERAL_FIGMA_URL = 'literal-figma-url'

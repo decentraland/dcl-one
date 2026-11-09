@@ -5,7 +5,7 @@ import path from 'node:path'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
-import { redactFileKey } from './config.js'
+import { stripFileKeyText } from './capture/strip-file-key.js'
 import { checkMappings, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
@@ -201,7 +201,7 @@ main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
     process.stderr.write(
-      `${redactFileKey(error instanceof Error ? error.message : String(error))}\n`
+      `${stripFileKeyText(error instanceof Error ? error.message : String(error))}\n`
     )
     process.exit(1)
   }

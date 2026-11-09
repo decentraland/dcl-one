@@ -43,9 +43,9 @@ pnpm figma check-mappings    # every *.figma.ts matches the library and the capt
 
 The key of the Figma file never enters the repository, a generated file, a log or an artifact.
 
-- This tree never reads Figma: figma-design-system owns every capture and live read. `FIGMA_FILE_KEY` is read here only by the key guard's `key` check and to redact the key from output and from fetched files. `sync`, `diff`, `check-mappings` and the MCP server work from the fetched capture, and the Review needs no capture.
+- This tree never reads Figma: figma-design-system owns every capture and live read. The key guard (`key-guard.mjs`) is the only code here that reads `FIGMA_FILE_KEY`, for its `key` check; it never prints the value, and without it the `key` check reports SKIPPED while the URL checks still run. Fetched files and error text only have `fileKey` fields and Figma file URLs replaced, by pattern. `sync`, `diff`, `check-mappings` and the MCP server work from the fetched capture, and the Review needs no capture.
 - Snapshot ingest and `fetch-source` drop `fileKey` fields and Figma file URLs; API errors and reports redact the key.
-- Mappings name the file as `<DCL_FIGMA_FILE>`; Code Connect resolves it with `documentUrlSubstitutions` from `FIGMA_FILE_KEY` at publish time only.
+- Mappings name the file as `<DCL_FIGMA_FILE>`; Code Connect resolves it with `documentUrlSubstitutions` at publish time only, outside this tree's code.
 - `make figma-key-guard` (or `node library/ui/figma/key-guard.mjs`) fails when the key (`key` check, needs `FIGMA_FILE_KEY`) or any Figma file URL (`url` check) is in the working tree, in a blob of `origin/main..HEAD`, or in a directory passed with `--path`. It prints paths and check IDs only. Run it before every commit and push; CI runs it on every pull request and before every artifact upload. `figma/key-guard-allow.json` pins pre-existing public URLs by path and Figma file id, so any other URL added to those files still fails; the `key` check cannot be allowlisted.
 
 ## From Figma to the library

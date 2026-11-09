@@ -70,7 +70,6 @@ Figma variant names are inconsistent (`Property 1=Primary,Hover=No,Blocked=Yes`,
 13. Components used on a page but defined elsewhere are captured by id into a synthetic `External` page (category Shared).
 14. Per-variant icon aliases use the key `Set#Property=Value`.
 15. A rotated `LINE` takes the size of its exported SVG. A non-HUG text taller than one line wraps.
-16. Chunks that travel through the chat transcript must be validated with a checksum (PNG CRC, SVG shape) before ingest.
 
 ## needs-manual
 

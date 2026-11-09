@@ -8,9 +8,8 @@ import {
   type RawComponentPage,
   type RawNode
 } from '../ir/raw-components.js'
-import { checksum, pngProblem, validatePage } from './ingest-chunks.js'
-import { decodePng } from './png-decode.js'
 import {
+  checksum,
   NON_RENDERING,
   pageRasters,
   stripImageMetadata,
@@ -141,12 +140,6 @@ describe('stripPngMetadata', () => {
       expect(chunks(stripped).some((entry) => NON_RENDERING.has(entry.type))).toBe(false)
       expect(stripped.equals(original)).toBe(true)
       expect(chunks(stripped).map((entry) => entry.type)).toContain(colourChunk)
-      const before = decodePng(original)
-      const after = decodePng(stripped)
-      expect(before.problem).toBeUndefined()
-      expect(after.png!.pixels.equals(before.png!.pixels)).toBe(true)
-      expect({ ...after.png!, pixels: undefined }).toEqual({ ...before.png!, pixels: undefined })
-      expect(pngProblem(stripped.toString('base64'))).toBeUndefined()
     })
   })
 
@@ -179,7 +172,6 @@ describe('stripImageMetadata', () => {
       it('should give back the clean page exactly, with each transport checksum recomputed', async () => {
         const clean = await page(name)
         const planted = plantPage(clean)
-        expect(() => validatePage(planted)).not.toThrow()
         const rasters = pageRasters(planted)
         expect(rasters.length).toBeGreaterThan(0)
         expect(
@@ -192,7 +184,6 @@ describe('stripImageMetadata', () => {
         const stripped = stripImageMetadata(planted)
 
         expect(stripped).toEqual(clean)
-        expect(() => validatePage(stripped)).not.toThrow()
         expect(stripImageMetadata(stripped)).toEqual(stripped)
       })
     }
