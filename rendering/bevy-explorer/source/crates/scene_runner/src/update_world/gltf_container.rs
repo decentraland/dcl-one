@@ -664,7 +664,8 @@ fn update_ready_gltfs(
             continue;
         }
         let instance = *loaded.0.as_ref().unwrap();
-        if scene_spawner.instance_is_really_ready(instance) {
+        // a model in progress was ready when its processing started
+        if processing.is_some() || scene_spawner.instance_is_really_ready(instance) {
             let Some(gltf) = gltfs.get(h_gltf.0.id()) else {
                 commands
                     .entity(bevy_scene_entity)
@@ -1293,9 +1294,10 @@ fn update_ready_gltfs(
     }
 
     for (bevy_scene_entity, instance) in failed {
+        // without GltfLoaded, update_gltf spawns the model again
         commands
             .entity(bevy_scene_entity)
-            .try_remove::<GltfProcessing>();
+            .try_remove::<(GltfLoaded, GltfProcessing)>();
         scene_spawner.despawn_instance(instance);
     }
 

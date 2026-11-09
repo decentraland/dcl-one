@@ -4,6 +4,7 @@ use bevy::{
         collections::{HashMap, HashSet},
         time::Instant,
     },
+    render::mesh::PrimitiveTopology,
     scene::{scene_spawner_system, InstanceId, ScenePlugin, SceneSpawner},
     transform::components::TransformTreeChanged,
 };
@@ -148,6 +149,30 @@ fn node_visibility(app: &App, container: Entity) -> Option<Visibility> {
     app.world().get::<Visibility>(node).copied()
 }
 
+/// The spawned node named `name`.
+fn node(app: &mut App, name: &str) -> Entity {
+    app.world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .find(|(_, node)| node.as_str() == name)
+        .map(|(entity, _)| entity)
+        .expect("a node with that name")
+}
+
+/// The node paths processing recorded, sorted.
+fn processed_names(app: &App, container: Entity) -> Vec<String> {
+    let mut names: Vec<_> = app
+        .world()
+        .get::<GltfProcessed>(container)
+        .expect("a processed container")
+        .named_nodes
+        .keys()
+        .cloned()
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn a_processed_gltf_is_revealed() {
     let mut app = app();
@@ -216,16 +241,73 @@ fn a_gltf_processed_over_frames_names_every_node() {
         app.update();
     }
 
-    let mut names: Vec<_> = app
+    assert_eq!(processed_names(&app, container), ["top", "top/a", "top/b"]);
+}
+
+#[test]
+fn a_light_node_despawned_by_an_earlier_slice_does_not_stop_processing() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let (container, _) = spawn_container(&mut app, root, &["top", "sun", "moon", "a"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    // processing despawns directional lights; with two, whatever the node order, a later
+    // frame goes back to the model after one of them is gone
+    for name in ["sun", "moon"] {
+        let light = node(&mut app, name);
+        app.world_mut()
+            .entity_mut(light)
+            .insert(DirectionalLight::default());
+    }
+    give_context(&mut app, root);
+    one_node_per_frame(&mut app);
+
+    for _ in 0..4 {
+        app.update();
+    }
+
+    assert!(is_processed(&app, container));
+    assert_eq!(processed_names(&app, container), ["top", "top/a"]);
+    assert_eq!(
+        node_visibility(&app, container),
+        Some(Visibility::Inherited)
+    );
+}
+
+#[test]
+fn a_model_whose_material_is_gone_is_spawned_again() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let (container, instance) = spawn_container(&mut app, root, &["top", "painted"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    let triangle = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    );
+    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(triangle);
+    let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+    let material = materials.add(StandardMaterial::default());
+    materials.remove(&material);
+    let painted = node(&mut app, "painted");
+    app.world_mut()
+        .entity_mut(painted)
+        .insert((Mesh3d(mesh), MeshMaterial3d(material)));
+    give_context(&mut app, root);
+
+    app.update();
+    // update_gltf spawns a container again once it has no GltfLoaded
+    assert!(app.world().get::<GltfLoaded>(container).is_none());
+
+    app.update();
+    assert!(!app
         .world()
-        .get::<GltfProcessed>(container)
-        .unwrap()
-        .named_nodes
-        .keys()
-        .cloned()
-        .collect();
-    names.sort();
-    assert_eq!(names, ["top", "top/a", "top/b"]);
+        .resource::<SceneSpawner>()
+        .instance_is_ready(instance));
 }
 
 #[test]
