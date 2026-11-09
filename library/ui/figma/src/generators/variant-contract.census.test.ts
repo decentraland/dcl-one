@@ -65,73 +65,79 @@ describe('generated variant contracts', () => {
     expect(sparse).toEqual(['NavBar', 'NavMenuDropdown', 'NavProfileButton', 'PlaceCard'])
   })
 
-  it.each(sparse)('%s: compiles exactly the prop objects that default to a drawn view', (name) => {
-    const source = sources.get(name)!
-    const fn = source.slice(source.indexOf(`export const ${name} = ({`))
-    const defaults: Record<string, string | boolean> = {}
-    for (const m of fn.matchAll(/^ {2}(\w+) = (?:'((?:[^'\\]|\\.)*)'|(true|false))/gm))
-      defaults[m[1]!] = m[2] ?? m[3] === 'true'
-    const viewsBlock = source.slice(
-      source.indexOf('Views: Record<string, ViewNode> = {'),
-      source.indexOf('\nexport const ', source.indexOf('Views: Record<string, ViewNode> = {'))
-    )
-    const keys = new Set(
-      [...viewsBlock.matchAll(/^ {2}'((?:[^'\\]|\\.)*)': \{/gm)].map((m) => m[1]!)
-    )
-    const values = /values: \{ ([^}]*) \}/.exec(fn)![1]!.split(', ').filter(Boolean)
-    const booleans = (/booleans: \{ ([^}]*) \}/.exec(fn)?.[1] ?? '').split(', ').filter(Boolean)
-    const domain = (axis: string) =>
-      booleans.includes(axis)
-        ? [false, true]
-        : [
-            ...new Set(
-              [...keys].flatMap((key) =>
-                key
-                  .split('|')
-                  .filter((part) => part.startsWith(`${axis}:`))
-                  .map((part) => part.slice(axis.length + 1))
+  // Type-checking every prop object takes ~5 s for PlaceCard alone, past vitest's 5 s default under load.
+  it.each(sparse)(
+    '%s: compiles exactly the prop objects that default to a drawn view',
+    { timeout: 20_000 },
+    (name) => {
+      const source = sources.get(name)!
+      const fn = source.slice(source.indexOf(`export const ${name} = ({`))
+      const defaults: Record<string, string | boolean> = {}
+      for (const m of fn.matchAll(/^ {2}(\w+) = (?:'((?:[^'\\]|\\.)*)'|(true|false))/gm))
+        defaults[m[1]!] = m[2] ?? m[3] === 'true'
+      const viewsBlock = source.slice(
+        source.indexOf('Views: Record<string, ViewNode> = {'),
+        source.indexOf('\nexport const ', source.indexOf('Views: Record<string, ViewNode> = {'))
+      )
+      const keys = new Set(
+        [...viewsBlock.matchAll(/^ {2}'((?:[^'\\]|\\.)*)': \{/gm)].map((m) => m[1]!)
+      )
+      const values = /values: \{ ([^}]*) \}/.exec(fn)![1]!.split(', ').filter(Boolean)
+      const booleans = (/booleans: \{ ([^}]*) \}/.exec(fn)?.[1] ?? '').split(', ').filter(Boolean)
+      const domain = (axis: string) =>
+        booleans.includes(axis)
+          ? [false, true]
+          : [
+              ...new Set(
+                [...keys].flatMap((key) =>
+                  key
+                    .split('|')
+                    .filter((part) => part.startsWith(`${axis}:`))
+                    .map((part) => part.slice(axis.length + 1))
+                )
               )
-            )
-          ]
+            ]
 
-    // Each axis omitted, passed as explicit undefined, or set to each captured value (booleans false or true).
-    const UNDEFINED = Symbol('undefined')
-    let objects: Record<string, unknown>[] = [{}]
-    for (const axis of [...values, ...booleans])
-      objects = objects.flatMap((object) => [
-        object,
-        { ...object, [axis]: UNDEFINED },
-        ...domain(axis).map((value) => ({ ...object, [axis]: value }))
-      ])
-    const literal = (object: Record<string, unknown>) =>
-      `{ ${Object.entries(object)
-        .map(
-          ([key, value]) => `${key}: ${value === UNDEFINED ? 'undefined' : JSON.stringify(value)}`
-        )
-        .join(', ')} }`
-    const valueOf = (object: Record<string, unknown>, axis: string) =>
-      object[axis] === UNDEFINED || object[axis] === undefined ? defaults[axis] : object[axis]
+      // Each axis omitted, passed as explicit undefined, or set to each captured value (booleans false or true).
+      const UNDEFINED = Symbol('undefined')
+      let objects: Record<string, unknown>[] = [{}]
+      for (const axis of [...values, ...booleans])
+        objects = objects.flatMap((object) => [
+          object,
+          { ...object, [axis]: UNDEFINED },
+          ...domain(axis).map((value) => ({ ...object, [axis]: value }))
+        ])
+      const literal = (object: Record<string, unknown>) =>
+        `{ ${Object.entries(object)
+          .map(
+            ([key, value]) => `${key}: ${value === UNDEFINED ? 'undefined' : JSON.stringify(value)}`
+          )
+          .join(', ')} }`
+      const valueOf = (object: Record<string, unknown>, axis: string) =>
+        object[axis] === UNDEFINED || object[axis] === undefined ? defaults[axis] : object[axis]
 
-    const renderable = objects.map((object) => {
-      const selection = {
-        values: Object.fromEntries(values.map((axis) => [axis, valueOf(object, axis) as string])),
-        booleans: Object.fromEntries(
-          booleans.map((axis) => [axis, valueOf(object, axis) as boolean])
-        ),
-        flags: {}
-      }
-      return keys.has(viewKey(selection))
-    })
-    const failures = rejected(
-      source,
-      objects.map((object, index) => `const t${index}: ${name}Props = ${literal(object)};`)
-    )
-    const mismatches = objects.filter((_, index) => renderable[index] === failures.has(index))
-    expect(mismatches, `${name}: objects whose type check disagrees with the drawn views`).toEqual(
-      []
-    )
-    expect(renderable.some(Boolean) && renderable.some((value) => !value)).toBe(true)
-  })
+      const renderable = objects.map((object) => {
+        const selection = {
+          values: Object.fromEntries(values.map((axis) => [axis, valueOf(object, axis) as string])),
+          booleans: Object.fromEntries(
+            booleans.map((axis) => [axis, valueOf(object, axis) as boolean])
+          ),
+          flags: {}
+        }
+        return keys.has(viewKey(selection))
+      })
+      const failures = rejected(
+        source,
+        objects.map((object, index) => `const t${index}: ${name}Props = ${literal(object)};`)
+      )
+      const mismatches = objects.filter((_, index) => renderable[index] === failures.has(index))
+      expect(
+        mismatches,
+        `${name}: objects whose type check disagrees with the drawn views`
+      ).toEqual([])
+      expect(renderable.some(Boolean) && renderable.some((value) => !value)).toBe(true)
+    }
+  )
 
   it('should reject spreads and wider-typed objects that reach an undrawn NavBar selection', () => {
     const source = sources.get('NavBar')!
