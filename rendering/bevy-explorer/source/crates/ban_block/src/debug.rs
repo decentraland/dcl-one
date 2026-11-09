@@ -8,7 +8,10 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::{json, Map, Value};
 use wallet::Wallet;
 
-use crate::{BanBlock, BlockDirection, Blocks, PlatformBanState, SceneAdmission, SceneRoomView};
+use crate::{
+    AdmissionView, BanBlock, BlockDirection, Blocks, PlatformBanState, SceneAdmission,
+    SceneRoomView,
+};
 
 pub(crate) fn register(app: &mut App) {
     app.add_console_command::<BanBlockStateCommand, _>(ban_block_state)
@@ -206,19 +209,19 @@ fn platform_ban_json(
 }
 
 fn scene_admission_json(admission: &SceneAdmission, unavailable: &mut Map<String, Value>) -> Value {
-    match admission {
-        SceneAdmission::Unknown => {
+    match admission.view() {
+        AdmissionView::Unknown => {
             unavailable.insert(
                 "sceneAdmission.scope".into(),
                 json!("no scene admission yet"),
             );
             json!({ "state": "unknown", "scope": null, "message": null, "sceneId": null })
         }
-        SceneAdmission::Allowed { scene_id } => {
+        AdmissionView::Allowed { scene_id } => {
             unavailable.insert("sceneAdmission.scope".into(), json!("admitted"));
             json!({ "state": "allowed", "scope": null, "message": null, "sceneId": scene_id })
         }
-        SceneAdmission::Refused {
+        AdmissionView::Refused {
             scope,
             message,
             scene_id,

@@ -48,7 +48,7 @@ use prost::Message as _;
 use wallet::{sign_service_request, Wallet};
 
 use crate::global_crdt::ChannelControl;
-pub use moderation::{BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
+pub use moderation::{AdmissionView, BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -686,7 +686,7 @@ fn connect_scene_room(
             warn!("disconnected scene channel {ev:?}");
         }
         if admission.scene_id() != Some(ev.scene_id.as_str()) {
-            admission.set_if_neq(SceneAdmission::Unknown);
+            admission.set_if_neq(SceneAdmission::unknown());
         }
         if adapter_override.0.is_some() && !preview_mode.is_preview {
             warn_once!("DCL_SCENE_ROOM_ADAPTER is ignored outside preview mode");
@@ -715,9 +715,7 @@ fn connect_scene_room(
                 commands
                     .entity(ent)
                     .try_insert(SceneRoom(ev.scene_id.clone()));
-                admission.set_if_neq(SceneAdmission::Allowed {
-                    scene_id: ev.scene_id.clone(),
-                });
+                admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 current.0 = Some((ev, adapter, ent));
             }
         } else {
@@ -787,13 +785,11 @@ fn connect_scene_room(
                             &context.scene_id,
                         )
                     })
-                    .unwrap_or(SceneAdmission::Unknown);
+                    .unwrap_or_else(SceneAdmission::unknown);
                 admission.set_if_neq(refused);
             }
             Some(Ok((adapter, ev))) => {
-                admission.set_if_neq(SceneAdmission::Allowed {
-                    scene_id: ev.scene_id.clone(),
-                });
+                admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 // client-only (gatekeeper is disabled on servers): the client's scene
                 // rooms feed its single shared context, all scenes share one view
                 let Ok(context) = contexts.single() else {

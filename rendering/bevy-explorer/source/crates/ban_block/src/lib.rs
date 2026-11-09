@@ -22,7 +22,7 @@ use bevy::{
 use serde::Serialize;
 use social::SocialClient;
 
-pub use comms::{BanScope, SceneAdmission, SceneRoomModeration};
+pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
 pub use events::BanBlockEvent;
 pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 

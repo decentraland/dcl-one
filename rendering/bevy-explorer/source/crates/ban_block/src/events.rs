@@ -11,8 +11,8 @@ use bevy::{
 };
 
 use crate::{
-    BanBlock, BanScope, Blocks, PlatformBanInfo, PlatformBanSource, PlatformBanStatus,
-    SceneAdmission, SceneRoomView,
+    AdmissionView, BanBlock, BanScope, Blocks, PlatformBanInfo, PlatformBanSource,
+    PlatformBanStatus, SceneAdmission, SceneRoomView,
 };
 
 /// Emitted once per change, after the sources already hold the new state.
@@ -106,11 +106,11 @@ pub(crate) fn cross_feed_admission_refusal(
     if !admission.is_changed() {
         return;
     }
-    let SceneAdmission::Refused {
+    let AdmissionView::Refused {
         scope: BanScope::Platform,
         message,
         ..
-    } = &*admission
+    } = admission.view()
     else {
         return;
     };
