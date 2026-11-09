@@ -28,7 +28,7 @@ import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { useCreditPacks } from "../../credits/hooks";
 import { isIapMode } from "../../credits/iap";
 import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../../credits/payments";
-import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp } from "../../credits/returns";
+import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp, type BuyNowReturn } from "../../credits/returns";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
@@ -143,8 +143,10 @@ export type BuyModalProps = {
   line: CartAddInput;
   /** The detail page to come back to from a credits top-up, which then finishes the purchase. */
   returnPath: string;
-  /** Back from that top-up with its record: the line and the Credits price the buyer confirmed. */
-  resume?: { account: string; lineId: string; credits: number } | null;
+  /** Back from that top-up with its record: the account, the line and the Credits price the buyer confirmed. */
+  resume?: Pick<BuyNowReturn, "account" | "lineId" | "credits"> | null;
+  /** The dialog took the resume (paid with it, or set it aside for a press): the page drops it, so no remount reuses it. */
+  onResumeUsed?(): void;
   /**
    * The buyer's Credits first and MANA for the rest, in one transaction (CombinedBuy): the page's own flow, which the
    * dialog hands the split to until upstream's payment-method step (Credits + MANA ticked together) is ported.
@@ -162,15 +164,14 @@ export default function BuyModal(props: BuyModalProps) {
   lineRef.current = props.line;
   useEffect(() => holdLine(cart, lineRef.current), [cart]);
   const services = useMemo(() => ({ cart }), [cart]);
-  const onClose = () => {
-    releaseBuyNowCart(account, lineId);
-    props.onClose();
-  };
+  // However the dialog goes (closed, the split taken to the page, the page left), its cart is let go once nothing in it
+  // is settling.
+  useEffect(() => () => releaseBuyNowCart(account, lineId), [account, lineId]);
   if (typeof document === "undefined") return null;
   return createPortal(
     <EnsureQueryClient>
       <ShopServicesProvider value={services}>
-        <BuyDialog key={account ?? "anonymous"} {...props} onClose={onClose} />
+        <BuyDialog key={account ?? "anonymous"} {...props} />
       </ShopServicesProvider>
     </EnsureQueryClient>,
     document.body,
@@ -179,7 +180,7 @@ export default function BuyModal(props: BuyModalProps) {
 
 type Phase = "loading" | "nofunds" | "ready" | "processing" | "pending" | "complete" | "error";
 
-function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: BuyModalProps) {
+function BuyDialog({ line, returnPath, resume = null, onResumeUsed, onBuyMixed, onClose }: BuyModalProps) {
   const navigate = useNavigate();
   const services = useShopServices();
   const [purchased, setPurchased] = useState<PurchasedLine[] | null>(null);
@@ -235,8 +236,16 @@ function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: Buy
                   : "ready";
 
   const busy = phase === "processing";
-  // Closing drops this dialog's top-up hand-off: a top-up finished later must not come back and buy this item.
+  // Closing drops this dialog's top-up hand-off: a top-up finished later must not come back and buy this item. So does
+  // any other way the dialog goes, except leaving for the pack checkout it started.
   const attempt = useRef<string | null>(null);
+  const leaving = useRef(false);
+  useEffect(
+    () => () => {
+      if (attempt.current && !leaving.current) dropBuyNowTopUp(attempt.current);
+    },
+    [],
+  );
   const close = () => {
     if (busy) return;
     if (attempt.current) {
@@ -266,7 +275,12 @@ function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: Buy
     return () => window.removeEventListener("beforeunload", hold);
   }, [busy]);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => dialogRef.current?.focus(), []);
+  // Focus moves into the dialog, and back to what had it (Buy now) when the dialog goes.
+  useEffect(() => {
+    const before = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+    dialogRef.current?.focus();
+    return () => before?.focus?.();
+  }, []);
   // A modal dialog keeps Tab and Shift+Tab inside it.
   const trapTab = (e: ReactKeyboardEvent) => {
     if (e.key !== "Tab" || !dialogRef.current) return;
@@ -289,9 +303,10 @@ function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: Buy
   useEffect(() => {
     if (!resume || resumed.current || phase !== "ready" || !cartLine || !co.canConfirm) return;
     resumed.current = true;
+    onResumeUsed?.();
     if (resume.account !== co.account?.toLowerCase() || cartLine.id !== resume.lineId || priceChanged || cartLine.method) return;
     void co.confirm();
-  }, [resume, phase, cartLine, co, priceChanged]);
+  }, [resume, phase, cartLine, co, priceChanged, onResumeUsed]);
 
   const selected = cartLine?.method ?? view?.primary ?? "credits";
   const [useMixed, setUseMixed] = useState(false);
@@ -383,6 +398,7 @@ function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: Buy
             onCheckout={(session) => {
               // Only this order's grant may bring the buyer back to finish: an abandoned top-up never is.
               if (attempt.current) bindBuyNowTopUp(attempt.current, session.orderId);
+              leaving.current = true;
               if (session.url) services.openExternal(session.url);
               else navigate(`${SHOP_BASE}/credits?order=${encodeURIComponent(session.orderId)}`);
             }}

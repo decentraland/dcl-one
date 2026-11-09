@@ -79,7 +79,7 @@ import { useShopServices } from "../checkout/services";
 import { readManaBalanceWei } from "../checkout/lib/mana";
 import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
 import BuyModal from "./components/BuyModal";
-import { takeBuyNowReturn } from "../credits/returns";
+import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "../market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
 import "./itemdetail.css";
@@ -470,7 +470,7 @@ export default function ItemDetail() {
   const [buyingMixed, setBuyingMixed] = useState<{ line: CartAddInput; offer: PurchaseOffer; mixed: MixedPayment } | null>(null);
   // Buy now's dialog (upstream's BuyModal); `resume` when the page is back from the credits top-up it started. The query
   // alone opens nothing: only this tab's record of the purchase this account confirmed does (credits/returns.ts).
-  const [buyNow, setBuyNow] = useState<{ resume: { account: string; lineId: string; credits: number } | null } | null>(null);
+  const [buyNow, setBuyNow] = useState<{ resume: Pick<BuyNowReturn, "account" | "lineId" | "credits"> | null } | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     if (search.get("buy") !== "resume" || session.kind === "signedOut" || !account) return;
@@ -914,6 +914,7 @@ export default function ItemDetail() {
           line={{ ...cartInput, seen: offer ?? null }}
           returnPath={itemHref}
           resume={buyNow.resume}
+          onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
           onBuyMixed={(mixed) => {
             if (!offer) return;
             setBuyNow(null);

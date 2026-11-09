@@ -156,4 +156,20 @@ describe("the credits page", () => {
     // An older order resumed is not the cart's top-up: crediting it must not send the buyer to pay the basket.
     expect(takeTopUpReturn()).toBeNull();
   });
+
+  it("continuing the very order Buy now's top-up created keeps its way back to the item", async () => {
+    const attempt = stashBuyNowTopUp({ path: "/shop/item/0xc0/7", account: BOOK.buyer, lineId: "line-7", credits: 12 });
+    bindBuyNowTopUp(attempt, "o-1");
+    const { openExternal } = renderCredits({
+      handlers: {
+        userCreditOrders: () => ({ orders: [{ id: "o-1", credits: 100, usdCents: 1199, status: "initiated", createdAt: Date.now() }], total: 1 }),
+        resumePackOrder: () => ({ url: "https://checkout.stripe.com/c/pay/again" }),
+      },
+    });
+    const order = await screen.findByTestId("credit-order");
+    await act(async () => fireEvent.click(within(order).getByTestId("resume-order")));
+    await waitFor(() => expect(openExternal).toHaveBeenCalled());
+    expect(takeTopUpReturn(Date.now(), "o-1")?.path).toBe("/shop/item/0xc0/7?buy=resume");
+    expect(sessionStorage.getItem("dcl-shop-buynow-return:v1")).not.toBeNull();
+  });
 });

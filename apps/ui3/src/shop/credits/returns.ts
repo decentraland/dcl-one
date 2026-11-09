@@ -91,6 +91,24 @@ export function takeTopUpReturn(now: number = Date.now(), orderId?: string): Top
   }
 }
 
+/**
+ * Continuing an unpaid pack order: keep the hand-off that order's own top-up left (Buy now's, bound to it), drop any
+ * other, so crediting this order finishes only what it was bought for.
+ */
+export function keepHandoffsOf(orderId: string): void {
+  const s = store();
+  try {
+    const back = read<TopUpReturn>(KEY);
+    if (!back || back.orderId !== orderId) {
+      s?.removeItem(KEY);
+      s?.removeItem(RESUME_CART_KEY);
+    }
+    if (read<BuyNowReturn>(BUY_NOW_KEY)?.orderId !== orderId) s?.removeItem(BUY_NOW_KEY);
+  } catch {
+    // Nothing was stored.
+  }
+}
+
 /** Forget every pending resume: the top-up ended without one. */
 export function clearTopUpHandoffs(): void {
   const s = store();

@@ -24,7 +24,6 @@ export function stashNameResume(name: string): void {
   clearTopUpHandoffs();
   try {
     const s = store();
-    s?.removeItem(RESUME_CART_KEY);
     s?.removeItem(RESUME_BUY_KEY);
     s?.setItem(RESUME_NAME_KEY, name);
   } catch {

@@ -27,6 +27,7 @@ type Opts = {
   strict?: boolean;
   tweak?: (demo: ReturnType<typeof createDemo>) => void;
   onBuyMixed?: (mixed: unknown) => void;
+  onResumeUsed?: () => void;
 };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
@@ -42,11 +43,11 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
     <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
-      <BuyModal line={line} returnPath={PATH} resume={resume} onBuyMixed={opts.onBuyMixed} onClose={() => (closed += 1)} />
+      <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onBuyMixed={opts.onBuyMixed} onClose={() => (closed += 1)} />
     </DemoShell>
   );
-  render(opts.strict ? <StrictMode>{dialog}</StrictMode> : dialog);
-  return { demo, opened, closed: () => closed, lineId: first.id };
+  const view = render(opts.strict ? <StrictMode>{dialog}</StrictMode> : dialog);
+  return { demo, opened, closed: () => closed, lineId: first.id, unmount: view.unmount, line };
 }
 
 async function settledDialog(): Promise<HTMLElement> {
@@ -175,10 +176,42 @@ describe("Buy now's dialog", () => {
     expect(split).toEqual([expect.objectContaining({ credits: 3 })]);
   });
 
-  it("back from a top-up it finishes on its own, at the price the buyer confirmed", async () => {
-    const { demo } = renderBuy({ session: "web2" }, { resume: { credits: 12 } });
+  it("back from a top-up it finishes on its own, at the price the buyer confirmed, and hands the resume back", async () => {
+    let used = 0;
+    const { demo } = renderBuy({ session: "web2" }, { resume: { credits: 12 }, onResumeUsed: () => (used += 1) });
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
     expect(authorizations(demo)).toHaveLength(1);
+    // The page drops it on this call, so a dialog mounted again (an account switched back, a sign-in) never reuses it.
+    expect(used).toBe(1);
+  });
+
+  it("a purchase still settling survives the dialog and a reload: opened again it shows that one, and Buy is gone", async () => {
+    const first = renderBuy({ session: "web2", confirm: "none" });
+    const dialog = await settledDialog();
+    await pressBuy(dialog);
+    await within(dialog).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    first.unmount();
+    // A reload: the dialogs' carts are gone from memory, their session storage is not.
+    resetBuyNowCarts();
+    render(
+      <DemoShell demo={first.demo} path={PATH}>
+        <BuyModal line={first.line} returnPath={PATH} onClose={() => {}} />
+      </DemoShell>,
+    );
+    const again = await screen.findByTestId("buy-modal");
+    expect(await within(again).findByTestId("buy-modal-pending", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(within(again).queryByTestId("buy-modal-buy")).toBeNull();
+    expect(authorizations(first.demo)).toHaveLength(1);
+  });
+
+  it("gone any other way while the pack checkout is being created, it drops the hand-off too", async () => {
+    const { unmount } = renderBuy({ session: "web2", balanceCents: 30, handlers: { createPackOrder: () => new Promise(() => {}) } });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    expect(sessionStorage.getItem("dcl-shop-buynow-return:v1")).not.toBeNull();
+    unmount();
+    expect(sessionStorage.getItem("dcl-shop-buynow-return:v1")).toBeNull();
+    expect(takeTopUpReturn()).toBeNull();
   });
 
   it("back from a top-up at a higher price, it shows the new price and waits for a press", async () => {

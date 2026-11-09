@@ -514,3 +514,12 @@
     width: 100%;
   }
 }
+
+/* The pop-in, the spinner and the progress bar hold still for a reader who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .spinner,
+  .progressFill {
+    animation: none;
+  }
+}

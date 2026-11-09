@@ -15,7 +15,7 @@ import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCredit
 import { useCreditPacks } from "./hooks";
 import { isIapMode } from "./iap";
 import { createPackCheckout, packBonus, pollCreditGrant, type CreditPack } from "./payments";
-import { clearTopUpHandoffs, takeTopUpReturn } from "./returns";
+import { clearTopUpHandoffs, keepHandoffsOf, takeTopUpReturn } from "./returns";
 import packStack1 from "./assets/pack-stack1-512.webp?url";
 import packStack2 from "./assets/pack-stack2-512.webp?url";
 import packStack3 from "./assets/pack-stack3-512.webp?url";
@@ -232,8 +232,8 @@ function RecentOrders({ address }: { address: string }) {
   async function resume(order: CreditOrder) {
     setResuming(order.id);
     setNotice(null);
-    // An older order finishes nothing a later purchase left behind: only the top-up that left a hand-off may claim it.
-    clearTopUpHandoffs();
+    // An older order finishes nothing a later purchase left behind, only what its own top-up left (Buy now's, bound to it).
+    keepHandoffsOf(order.id);
     const result = await resumeCreditOrder(order.id, client);
     setResuming(null);
     if (result.kind === "url" && /^https:\/\/([a-z0-9-]+\.)*stripe\.com\//i.test(result.url)) {
