@@ -54,9 +54,11 @@ async function walk(dir: string, prefix: string): Promise<string[]> {
 /** The entity of a built SDK7 scene folder: `scene.json` as metadata, its `main` bundle and every
  *  other file in `main`'s folder (dcl-scene-cli's split bundle: `bin/sdk-runtime.js` and
  *  `bin/scene.js` beside `bin/index.js`), `main.crdt` when present, and everything under
- *  `assets/`. */
-export async function buildScene(sceneDir: string): Promise<BuiltScene> {
-  const metadata = JSON.parse(await readFile(path.join(sceneDir, 'scene.json'), 'utf8')) as Record<string, unknown>
+ *  `assets/`. `rewrite` replaces `scene.json` as read, to serve one project as another scene (a
+ *  host at other parcels, with other feature toggles). */
+export async function buildScene(sceneDir: string, rewrite?: (metadata: Record<string, unknown>) => Record<string, unknown>): Promise<BuiltScene> {
+  const read = JSON.parse(await readFile(path.join(sceneDir, 'scene.json'), 'utf8')) as Record<string, unknown>
+  const metadata = rewrite ? rewrite(read) : read
   const main = typeof metadata.main === 'string' ? metadata.main : 'bin/index.js'
   const scene = metadata.scene as { base?: string; parcels?: string[] } | undefined
   const pointers = scene?.parcels ?? (scene?.base ? [scene.base] : [])

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -368,9 +368,37 @@ describe('smart wearables and live scenes', () => {
         { urn: 'urn:b', state: 'failed', reason: 'no scene.json' }
       ]
     })
-    assert.deepEqual(parseSmartWearables('current scene allows: true\nurn:c awaitingAuthorization'), { currentSceneAllows: true, entries: [{ urn: 'urn:c', state: 'awaitingAuthorization' }] })
+    assert.deepEqual(parseSmartWearables('current scene allows: true\nurn:c stopped\nurn:d notSmart'), {
+      currentSceneAllows: true,
+      entries: [
+        { urn: 'urn:c', state: 'stopped' },
+        { urn: 'urn:d', state: 'notSmart' }
+      ]
+    })
     assert.throws(() => parseSmartWearables('urn:a running'), /unparseable smart_wearables header/)
-    assert.throws(() => parseSmartWearables('current scene allows: true\nurn:a sleeping'), /unparseable smart_wearables line/)
+    // the states of the up-front authorization are gone
+    assert.throws(() => parseSmartWearables('current scene allows: true\nurn:a awaitingAuthorization'), /unparseable smart_wearables line/)
+    assert.throws(() => parseSmartWearables('current scene allows: true\nurn:a killed'), /unparseable smart_wearables line/)
+  })
+
+  test('parsePortables reads the name, the hash or none, the kind and the state', () => {
+    assert.deepEqual(parsePortables('no portables'), [])
+    assert.deepEqual(parsePortables('Smart Wearable Fixture [e2e123-sw-male, smartWearable, running]\nRadio [bafyabc, scene, blocked]\nJetpack [-, smart wearable, stopped]'), [
+      { name: 'Smart Wearable Fixture', hash: 'e2e123-sw-male', kind: 'smartWearable', state: 'running' },
+      { name: 'Radio', hash: 'bafyabc', kind: 'scene', state: 'blocked' },
+      { name: 'Jetpack', hash: null, kind: 'smartWearable', state: 'stopped' }
+    ])
+    assert.throws(() => parsePortables('Radio [bafyabc, scene]'), /unparseable portables line/)
+    assert.throws(() => parsePortables('Radio [bafyabc, startup, running]'), /unparseable portables line/)
+    assert.throws(() => parsePortables('Radio [bafyabc, scene, killed]'), /unparseable portables line/)
+  })
+
+  test('stopPortable checks the reply', async () => {
+    const fake = new FakeConsole({ stop_portable: (line) => (line.endsWith(' gone') ? 'not a listed portable: gone' : `stopped ${line.split(' ')[1]}`) })
+    const explorer = new Explorer(fake)
+    await explorer.stopPortable('e2e123-sw-male')
+    assert.deepEqual(fake.sent('stop_portable'), ['/stop_portable e2e123-sw-male'])
+    await assert.rejects(explorer.stopPortable('gone'), /replied: not a listed portable: gone/)
   })
 
   test('smartWearableAction checks the reply and smartWearable finds the entry', async () => {

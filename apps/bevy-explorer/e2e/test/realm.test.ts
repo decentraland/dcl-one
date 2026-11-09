@@ -39,6 +39,14 @@ describe('realm', () => {
     assert.equal(scene.entity.metadata.main, 'bin/index.js')
   })
 
+  test('buildScene serves the project with a rewritten scene.json: its pointers, metadata and id follow', async () => {
+    const host = await buildScene(dir, (metadata) => ({ ...metadata, scene: { base: '0,0', parcels: ['0,0'] }, featureToggles: { portableExperiences: 'disabled' } }))
+    assert.deepEqual(host.entity.pointers, ['0,0'])
+    assert.deepEqual(host.entity.metadata.featureToggles, { portableExperiences: 'disabled' })
+    assert.deepEqual(host.entity.content, scene.entity.content)
+    assert.notEqual(host.entity.id, scene.entity.id)
+  })
+
   test('the hash is stable for the same bytes', () => {
     assert.equal(contentHash(Buffer.from('x')), contentHash(Buffer.from('x')))
     assert.notEqual(contentHash(Buffer.from('x')), contentHash(Buffer.from('y')))

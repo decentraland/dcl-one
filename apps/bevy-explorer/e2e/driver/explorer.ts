@@ -182,7 +182,7 @@ export interface LiveScene {
   broken: boolean
 }
 
-export type SmartWearableState = 'loading' | 'awaitingAuthorization' | 'running' | 'blocked' | 'killed' | 'denied' | 'notSmart' | 'failed'
+export type SmartWearableState = 'loading' | 'running' | 'blocked' | 'stopped' | 'notSmart' | 'failed'
 
 export interface SmartWearableEntry {
   urn: string
@@ -199,7 +199,22 @@ export interface SmartWearables {
 
 export type SmartWearableAction = 'run' | 'kill' | 'restart'
 
-const SMART_WEARABLE_STATES: readonly SmartWearableState[] = ['loading', 'awaitingAuthorization', 'running', 'blocked', 'killed', 'denied', 'notSmart', 'failed']
+const SMART_WEARABLE_STATES: readonly SmartWearableState[] = ['loading', 'running', 'blocked', 'stopped', 'notSmart', 'failed']
+
+export type PortableKind = 'scene' | 'smartWearable'
+export type PortableState = 'loading' | 'running' | 'failed' | 'blocked' | 'stopped'
+
+/** A portable experience the HUD lists: every portable but startup ones and the HUD's own scene,
+ *  and smart wearables that are stopped while still equipped. */
+export interface Portable {
+  name: string
+  /** The live scene hash `/stop_portable` takes; null for a smart wearable that is not loaded. */
+  hash: string | null
+  kind: PortableKind
+  state: PortableState
+}
+
+const PORTABLE_STATES: readonly PortableState[] = ['loading', 'running', 'failed', 'blocked', 'stopped']
 
 /** `/live_scenes`: `<title> [<hash>, portable, smart wearable, broken]` per line, the flags
  *  optional, or `no scenes loaded`. */
@@ -234,6 +249,22 @@ export function parseSmartWearables(reply: string): SmartWearables {
 }
 
 const SMART_WEARABLE_REPLIES: Record<SmartWearableAction, string> = { run: 'running', kill: 'killed', restart: 'restarted' }
+
+/** `/portables`: `<name> [<hash or ->, <kind>, <state>]` per line, or `no portables`. The kind is
+ *  `scene` or `smartWearable` (`smart wearable` reads the same). */
+export function parsePortables(reply: string): Portable[] {
+  if (reply.trim() === 'no portables') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line): Portable => {
+      const match = /^(.*) \[([^,\]]+), ([^,\]]+), ([^,\]]+)\]$/.exec(line.trim())
+      const kind = match?.[3]!.replace(/ (\w)/g, (_, c: string) => c.toUpperCase()) as PortableKind | undefined
+      const state = match?.[4] as PortableState | undefined
+      if (!match || (kind !== 'scene' && kind !== 'smartWearable') || !state || !PORTABLE_STATES.includes(state)) throw new Error(`unparseable portables line: ${line}`)
+      return { name: match[1]!, hash: match[2] === '-' ? null : match[2]!, kind, state }
+    })
+}
 
 /** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
  *  account, and the HUD's phase: `lobby`, `entering` (on its way to the destination), `picking`
@@ -693,6 +724,18 @@ export class Explorer {
   /** A smart wearable's entry, or undefined when the engine does not track it. */
   async smartWearable(urn: string): Promise<SmartWearableEntry | undefined> {
     return (await this.smartWearables()).entries.find((entry) => entry.urn === urn)
+  }
+
+  /** The portable experiences the HUD's rail lists. */
+  async portables(): Promise<Portable[]> {
+    return parsePortables(await this.run('/portables'))
+  }
+
+  /** `/stop_portable <hash>`: stop a listed portable as the HUD's `Stop` does; a reply other than
+   *  `stopped <hash>` is an error. */
+  async stopPortable(hash: string): Promise<void> {
+    const reply = (await this.run(`/stop_portable ${hash}`)).trim()
+    if (reply !== `stopped ${hash}`) throw new Error(`/stop_portable ${hash} replied: ${reply}`)
   }
 
   /** `/smart_wearable run|kill|restart <urn>`; a reply other than `<running|killed|restarted>
