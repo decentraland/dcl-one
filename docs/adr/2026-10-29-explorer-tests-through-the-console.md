@@ -19,8 +19,9 @@ page rendered offscreen and composited by the engine, and nothing outside the pr
 DOM. Both expose the same console: `engine_console_command` and `window.engine` in the app frame,
 the console window natively.
 
-A Playwright suite for the Bevy Explorer would reach the web shell only and find controls by
-DOM selectors that the standalone
+The end-to-end suite moving into dcl-one, `decentraland/explorer-automation`, drives the Unity
+client: a C# suite through AltTester, and a web suite in Playwright. A Playwright suite for the
+Bevy Explorer would reach the web shell only, find controls by DOM selectors that the standalone
 cannot answer, and need a second driver for the standalone, so every scenario would be written
 twice or tested on one shell. Playwright's one capability a console lacks, real (trusted) input,
 is the Chrome DevTools Protocol (CDP): `Runtime.addBinding`, `Input.dispatchMouseEvent`,

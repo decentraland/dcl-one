@@ -373,7 +373,7 @@ Both trees advertise
 
 ## Explorer and LiveKit expectations
 
-- **Explorers** (production desktop client, Godot, Bevy):
+- **Explorers** (unity, godot, bevy):
   - They read `/about` and POST the signed-login URL with
     `{signer:'dcl:explorer', intent:'dcl:explorer:comms-handshake', isGuest, origin, secret?}`,
     signed in the legacy or the 6.x format.

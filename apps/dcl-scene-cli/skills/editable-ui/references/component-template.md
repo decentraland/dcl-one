@@ -81,7 +81,7 @@ export function KitToast(props: {
 
 Points:
 
-- The message `Label` carries its own `240`×`24` box: an unset text dimension contributes ~0 to layout on the production desktop client, so a boxless label breaks the row on that engine (see `SKILL.md` → **Sizing and mobile**).
+- The message `Label` carries its own `240`×`24` box: an unset text dimension contributes ~0 to layout on the Unity explorer, so a boxless label breaks the row on that engine (see `SKILL.md` → **Sizing and mobile**).
 - The root's `width: 320, height: 56` is **mandatory shape, not decoration**: a component root must declare both dimensions explicitly. Here the 56 px height is stated even though the 16 px label would auto-size the box — an unset dimension renders as 0 on the editor canvas (collapsed instance, panel reads height 0) while still laying out correctly at runtime.
 - `State` may be empty — a component whose values all arrive as props still declares the pair.
 - `` value={`${props.message}`} `` not `value={props.message}`: the template form typechecks against an optional prop and is still a recognized binding.
@@ -235,7 +235,7 @@ export function GpTimerPanel(props: { hint?: string }) {
 
 Every dynamic value here is a bare reference: `margin: { top: state.panelTop }`, `width: state.panelWidth`, `uiBackground={{ color: state.panelColor }}`, `color={state.labelColor}`, `value={state.label}`, and one mixed-text label. Nothing is computed in the file.
 
-Note every box in this tree is explicit — the panel (`520`×`220`), the hint wrapper (`520`×`26`), the readout column (`state.panelWidth`×`96`, `flexDirection: 'column'`) and each of the four labels. Only the bound `panelWidth` varies. Nothing auto-sizes from text, because an unset text dimension lays out as ~0 on the production desktop client (labels overlap, parents collapse) even though Bevy measures it correctly.
+Note every box in this tree is explicit — the panel (`520`×`220`), the hint wrapper (`520`×`26`), the readout column (`state.panelWidth`×`96`, `flexDirection: 'column'`) and each of the four labels. Only the bound `panelWidth` varies. Nothing auto-sizes from text, because an unset text dimension lays out as ~0 on the Unity explorer (labels overlap, parents collapse) even though Bevy measures it correctly.
 
 Two structural points worth copying:
 
@@ -371,7 +371,7 @@ Points:
 
 - The full-screen wrapper does all the positioning (bottom-anchored, horizontally centered, 48 px off the bottom edge) with plain literals. It has no spread, no listener, no `pointerFilter` — so it is pointer-transparent and clicks pass through to the world and to other UI.
 - The panel carries both its own styling and the `active` display gate. Only its 720-px box captures clicks, and only while the dialog is open — once `state.visible` is false the panel is `display: 'none'` and captures nothing.
-- **The panel states `height: 210`, and every `Label` states a box** — `height: 30` for the one-line name, `height: 60` for the two-line wrapped body, `100%`/`100%` for the button's centered text. Do **not** let the panel auto-size to its text children: text intrinsic sizing is engine-dependent, and on the production desktop client an unset text dimension contributes ~0 to layout while the glyphs still draw, so the earlier version of this dialog (no panel height, labels with `width: '100%'` only) rendered correctly on Bevy and came out squashed on the production desktop client with both labels overlapping. See `SKILL.md` → **Sizing and mobile**.
+- **The panel states `height: 210`, and every `Label` states a box** — `height: 30` for the one-line name, `height: 60` for the two-line wrapped body, `100%`/`100%` for the button's centered text. Do **not** let the panel auto-size to its text children: text intrinsic sizing is engine-dependent, and on the Unity explorer an unset text dimension contributes ~0 to layout while the glyphs still draw, so the earlier version of this dialog (no panel height, labels with `width: '100%'` only) rendered correctly on Bevy and came out squashed on Unity with both labels overlapping. See `SKILL.md` → **Sizing and mobile**.
 - `textWrap="wrap"` plus an explicit `width` **and** `height` on each `Label` is what makes the body copy wrap inside the panel instead of running off in one line — the width gives it something to wrap against, the height reserves the two lines it wraps into.
 
 ## 5. Props-driven styling (a fill bar)

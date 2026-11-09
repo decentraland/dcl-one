@@ -225,16 +225,16 @@ AvatarLocomotionSettings.createOrReplace(engine.PlayerEntity, {
 })
 ```
 
-All fields are `float`; each is optional (omit to keep the client default). Production desktop-client default values:
+All fields are `float`; each is optional (omit to keep the client default). Default values (verified against unity-explorer `origin/main` `Explorer/Assets/DCL/Character/CharacterMotion/Settings/CharacterControllerSettings.asset`):
 
-| Field                 | Default |
-| --------------------- | ------- |
-| `walkSpeed`           | `1.5`   |
-| `jogSpeed`            | `8`     |
-| `runSpeed`            | `10`    |
-| `jumpHeight`          | `1`     |
-| `runJumpHeight`       | `1.5`   |
-| `doubleJumpHeight`    | `2`     |
-| `glidingSpeed`        | `6`     |
-| `glidingFallingSpeed` | `1`     |
-| `hardLandingCooldown` | `0.75`  |
+| Field                 | Default | Source field in .asset |
+| --------------------- | ------- | ---------------------- |
+| `walkSpeed`           | `1.5`   | `WalkSpeed`            |
+| `jogSpeed`            | `8`     | `JogSpeed`             |
+| `runSpeed`            | `10`    | `RunSpeed`             |
+| `jumpHeight`          | `1`     | `JogJumpHeight`        |
+| `runJumpHeight`       | `1.5`   | `RunJumpHeight`        |
+| `doubleJumpHeight`    | `2`     | `AirJumpHeight`        |
+| `glidingSpeed`        | `6`     | `GlideSpeed`           |
+| `glidingFallingSpeed` | `1`     | `GlideMaxGravity`      |
+| `hardLandingCooldown` | `0.75`  | `LongFallStunTime`     |

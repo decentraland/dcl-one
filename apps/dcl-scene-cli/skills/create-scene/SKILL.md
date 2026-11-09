@@ -192,7 +192,7 @@ Add to `requiredPermissions` when your scene uses these features. These are the 
 
 > **Grounded caveat (from the engine test scenes):** enforcement is uneven, so declare the correct permission for *intent* rather than relying on it being blocked. The `80,-4-restricted-actions` scene declares only `ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE` + `ALLOW_TO_TRIGGER_AVATAR_EMOTE`, yet successfully runs `openExternalUrl`, `openNftDialog`, `teleportTo`, and `changeRealm` without `OPEN_EXTERNAL_LINK`. The [`66,6-signed-fetch`](https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/66,6-signed-fetch) scene calls `signedFetch` with an empty `requiredPermissions`. `movePlayerTo` and emotes are the two whose permissions the engine team consistently declares. `teleportTo` (jump to other Genesis City coords) needs no permission.
 
-`[LEGACY]` `ALLOW_MEDIA_HOSTNAMES` and `allowedMediaHostnames` are **not required** — do not add them for new scenes. The permission string still exists in `@dcl/schemas`, but no current client enforces it: the production desktop client checks URL syntax without enforcing the hostname list, and Bevy has no hostname-list enforcement. Only the retired web client enforced it. Current clients play external media without it. If a legacy scene still declares it, whitelist the domains as follows:
+`[LEGACY]` `ALLOW_MEDIA_HOSTNAMES` and `allowedMediaHostnames` are **not required** — do not add them for new scenes. The permission string still exists in `@dcl/schemas`, but no current client enforces it: unity-explorer gates the hostname check behind the `CHECK_ALLOWED_MEDIA_HOSTNAMES` compile define, which is set in no build config (`SceneData.TryGetMediaUrl` falls through to a plain URL syntax check), and bevy-explorer has no enforcement at all. Only the retired web client enforced it. Current clients play external media without it. If a legacy scene still declares it, whitelist the domains as follows:
 
 ```json
 "requiredPermissions": ["ALLOW_MEDIA_HOSTNAMES"],
@@ -272,7 +272,7 @@ Where and how players enter the scene:
 
 **Creator Hub preview settings** (equivalent to the CLI flags above, accessed from the dropdown next to the Preview button):
 - **Preview with**: Desktop Client (default) or Bevy (Web) -- equivalent to `--web`.
-- **Enable MCP Server**: launches with the MCP automation server -- equivalent to `--mcp`. Only shown when the SDK version supports it. See the `unity-explorer-mcp` skill.
+- **Enable MCP Server**: launches with the MCP automation server -- equivalent to `--mcp`. Only shown when the SDK version supports it. See the **unity-explorer-mcp** skill.
 - **Optimize Assets**: converts scene assets to local asset bundles -- equivalent to `--local-ab`. First run may be slow; results are cached.
 - **Open Console Window During Preview**, **Skip Auth Screen**, **Landscape Terrain Enabled**, **Show QR Code for Mobile**: self-explanatory preview toggles.
 

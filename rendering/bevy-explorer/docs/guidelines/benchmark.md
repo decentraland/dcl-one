@@ -14,8 +14,8 @@ worst) and exceptions per run, with a verdict for each. It has three parts:
   each laptop and posts the report ([How a run starts](#how-a-run-starts),
   [The workflow](#the-workflow), [The fleet](#the-fleet)).
 
-For external benchmark comparisons, obtain the source and dated results through authorized
-task context. Record revisions, workload and hardware in the task's comparison evidence.
+For comparisons with unity-explorer, obtain its benchmark source and dated results through
+authorized task context; record the revisions, workload and hardware with the comparison.
 
 Read this before changing `--autopilot`, the benchmark CSV, the benchmark log format, the browser
 stream, the report or the workflows: the report parses the files byte for byte, and one runner
@@ -599,10 +599,10 @@ stopped by its own timeouts ([What a leg runs](#what-a-leg-runs)).
 **Admin steps**, once:
 
 1. Register one runner per laptop, under its runner label, in an organization runner group whose
-   repository access is limited to this repository and the approved external benchmark repository
-   ([Setting up a Windows laptop](#setting-up-a-windows-laptop),
+   repository access is limited to the repositories that use the fleet: this one and the one that
+   holds unity-explorer's benchmark ([Setting up a Windows laptop](#setting-up-a-windows-laptop),
    [Setting up a macOS laptop](#setting-up-a-macos-laptop)). One runner takes one job at a time,
-   so jobs from those repositories queue behind each other and never measure at once.
+   so jobs from both repositories queue behind each other and never measure at once.
 2. Verify the public repository's Actions approval policy and restrict self-hosted runner access to reviewed workflows and revisions. Do not enable untrusted fork jobs on the persistent fleet. Record the administrator's verification privately before enabling the benchmark.
 3. Set `BENCHMARK_ENABLED_RUNNERS`, and `BENCHMARK_RUNS` or `BENCHMARK_QUEUE_TIMEOUT_MINUTES` when
    the defaults do not fit.

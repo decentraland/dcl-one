@@ -60,7 +60,7 @@ Essential infrastructure for authentication, marketplace, assets, and notificati
 | --------------------- | --------------------- | -------------------------------------------------- |
 | Auth Server           | Authentication        | Wallet-based authentication and session management |
 | Marketplace Server    | NFT marketplace       | Wearables and emotes marketplace integration       |
-| Asset Bundle Registry | Asset optimization    | Prebuilt asset bundles for optimized loading       |
+| Asset Bundle Registry | Asset optimization    | Unity asset bundles for optimized loading          |
 | Events Notifier       | Event alerts          | Notifications for upcoming events                  |
 | Notifications Workers | User notifications    | Real-time and push notifications                   |
 | Social Service        | Friends & communities | Friendship management and private messaging        |

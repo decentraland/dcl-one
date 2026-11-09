@@ -406,7 +406,7 @@ AvatarLocomotionSettings.createOrReplace(engine.PlayerEntity, {
 })
 ```
 
-Fields (all `float`, optional) with production desktop-client defaults: `walkSpeed` (1.5), `jogSpeed` (8, the default movement speed), `runSpeed` (10), `jumpHeight` (1), `runJumpHeight` (1.5), `doubleJumpHeight` (2), `glidingSpeed` (6), `glidingFallingSpeed` (1), `hardLandingCooldown` (0.75s). See `references/avatar-apis.md`.
+Fields (all `float`, optional) with client defaults — verified against unity-explorer `origin/main` `CharacterControllerSettings.asset`: `walkSpeed` (1.5), `jogSpeed` (8, the default movement speed), `runSpeed` (10), `jumpHeight` (1), `runJumpHeight` (1.5), `doubleJumpHeight` (2), `glidingSpeed` (6), `glidingFallingSpeed` (1), `hardLandingCooldown` (0.75s). See `references/avatar-apis.md`.
 
 `glidingFallingSpeed` is a **max descent cap** — it limits how fast the player falls while gliding, but does not limit upward motion. While gliding, continuous scene forces are 1.5× stronger and can lift the player; see the `player-physics` skill ("Forces while gliding").
 

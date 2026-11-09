@@ -138,11 +138,11 @@ Always check the scene's existing folders before deciding where to put a new fil
 
 ## Audio-reactive scenes (visualizers, beat sync)
 
-For real-time amplitude + frequency-band data from any `AudioSource`, `AudioStream`, or `VideoPlayer`, use the dedicated `audio-analysis` skill. It covers the `AudioAnalysis` component (production desktop client only; unsupported in Bevy and the mobile Godot client) used for music visualizers, equalizer bars, and reactive lights/particles.
+For real-time amplitude + frequency-band data from any `AudioSource`, `AudioStream`, or `VideoPlayer`, use the dedicated `audio-analysis` skill. It covers the `AudioAnalysis` component (Unity-explorer only) used for music visualizers, equalizer bars, and reactive lights/particles.
 
 ## Permission for External Media
 
-`[LEGACY]` External audio/video URLs do **not** require the `ALLOW_MEDIA_HOSTNAMES` permission. The permission and its `allowedMediaHostnames` list still exist in `@dcl/schemas`, but no current client enforces them — the production desktop client checks URL syntax without enforcing the hostname list, and Bevy has no hostname-list enforcement. Only the retired web client enforced it. Do not add it for new scenes; current clients play external media without it.
+`[LEGACY]` External audio/video URLs do **not** require the `ALLOW_MEDIA_HOSTNAMES` permission. The permission and its `allowedMediaHostnames` list still exist in `@dcl/schemas`, but no current client enforces them — unity-explorer's hostname check is gated behind the `CHECK_ALLOWED_MEDIA_HOSTNAMES` compile define (set in no build config, so `SceneData.TryGetMediaUrl` just does a URL syntax check), and bevy-explorer has no enforcement. Only the retired web client enforced it. Do not add it for new scenes; current clients play external media without it.
 
 ## Video Limits & Tips
 

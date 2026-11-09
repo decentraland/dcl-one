@@ -76,7 +76,7 @@ fragment.
 
 The embedded LiveKit uses 7880-7882; `--no-livekit` and `--tunnel` use the ws-room (no audio). An
 external server takes the `--livekit-*` flags or `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
-`LIVEKIT_API_SECRET`. The production desktop client needs `--accept-untrusted-realm` and
+`LIVEKIT_API_SECRET`. Unity needs `--accept-untrusted-realm` and
 `--gatekeeper-url http://127.0.0.1:8000/get-scene-adapter`. macOS cargo builds embed no server.
 
 ```

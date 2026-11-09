@@ -142,7 +142,7 @@ Verified against protocol commit `0b3d285` (field 4 `bool scene_hidden` in `PBEn
 
 **HIGHER priority number = runs EARLIER in the frame.** Systems are sorted **descending** by priority (`sort((a, b) => b.priority - a.priority)` in `@dcl/ecs`).
 
-> **WARNING — counter-intuitive:** Some engines run lower numbers first; SDK7 reverses that ordering. In Decentraland SDK7, "make this run first" means giving it a **large** priority number, NOT `1`. A system with priority `1` runs almost LAST.
+> **WARNING — counter-intuitive:** This is the OPPOSITE of Unity/Godot/many engines where a lower number runs first. In Decentraland SDK7, "make this run first" means giving it a **large** priority number, NOT `1`. A system with priority `1` runs almost LAST.
 
 Key numbers:
 

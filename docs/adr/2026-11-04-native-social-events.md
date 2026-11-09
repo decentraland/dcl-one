@@ -78,7 +78,7 @@ requires the login receipt relation. Remove `AWS_SQS_ENDPOINT`,
 environments and secret/config templates; the runtime no longer reads them.
 This deployment supports the owned
 Explorer producer. It is not a drop-in referral replacement for unchanged
-third-party clients: their referral-progress operations remain a
+Unity, mobile or other clients: their referral-progress operations remain a
 known gap until those clients submit native signed login observations. Do not
 expand the rollout to those clients on the strength of HTTP route compatibility.
 

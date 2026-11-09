@@ -19,13 +19,15 @@ At the protocol level, each component field can be serialized or deduced. For pr
 
 ## Component behavior
 
-Component behavior is how the engine deserializes, interprets and applies the data. The
-Explorer reads the shared definitions in `library/protocol/proto` at build time. Implement
-the behavior in its owning crate under `rendering/bevy-explorer/source`, following the
-[SDK-component recipe](../../../rendering/bevy-explorer/docs/guidelines/recipes.md) and
-[feature guide](../../../rendering/bevy-explorer/docs/guidelines/implementing-features.md).
-Keep the protocol and SDK serialization tests paired with an engine test of the observable
-behavior.
+The component behavior refers to how the data of the component is deserialized, interpreted and used by systems.
+As an example, we are going to use the [unity renderer repository](https://github.com/decentraland/unity-renderer), that uses multiple components to manage the rendering of the world.
+
+In `unity-renderer` it is possible to update definitions from the `@dcl/protocol` package version `next`. This version corresponds to the latest commit merged into `main` of that repository. You can also choose the package from a specific PR, using the constant `FIXED_NPM_PACKAGE_LINK` (you can do a global search to find this constant definition). The source of what is supplied in the PR `npm install XXXXX` is copied, leaving `FIXED_NPM_PACKAGE_LINK = " xxxx"`.
+
+With the protocol definitions already acquired, the code is generated. Now you can use it in the local environment of `unity-renderer`. The building of a scene with this same local environment will be replicated in the next subsection.
+
+To get more information you can visit the [unity-renderer guide](https://github.com/decentraland/unity-renderer/blob/dev/docs/ecs7-component-creation.md), it's more focused on the unity side.
+
 
 
 ## Add the component to the SDK
@@ -45,4 +47,4 @@ If you are modifying an existing component, it's probable that the test doesn't 
 
 Once the PR has been created and the CI has been successfully run, the GitHub bot will post an installation command similar to that of `@dcl/protocol`. Use this new command to install the modified version of the SDK in a scene project, to test the usage of the component.
 
-Run the scene in the built Explorer to verify integration. Exercise the component's updates, removal and asynchronous transitions on every affected platform.
+If you want to run an integration test, it's necessary to run this new scene and also run it on the renderer with unity.

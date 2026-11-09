@@ -4,7 +4,7 @@ The 17 SDK7 scenes of explorer-automation's Visual suite (`explorer/scenes/packa
 `955b338`, 2026-10-22), copied once: each exercises one rendering path (primitives and
 transforms, glTF models, materials, lights, text, UI, tweens, raycasts, animations, the avatar)
 and ends in `setupVisualTest`, which hides avatars and locks a virtual camera, so a frame of it
-is deterministic. Every reference is recorded by
+is deterministic. Their Unity baselines were not copied: every reference is recorded anew by
 dcl-one's CI (`../references`).
 
 The scenes were authored for one host scene that swapped bundles. Here every scene is a member of

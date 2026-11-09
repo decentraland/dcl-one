@@ -3,7 +3,7 @@ name: unity-explorer-mcp
 description: Iterate on a local Decentraland SDK7 scene against a running Explorer build through its MCP automation server. Use when the user asks to see, test, verify, walk through, screenshot, or debug a scene in-world, when they name the Explorer or its MCP server, or whenever an `mcp__explorer__*` tool is available in the session.
 ---
 
-# Desktop Explorer MCP Scene Iteration
+# Unity Explorer MCP Scene Iteration
 
 The connected `mcp__explorer__*` tools are self-describing — each carries its name, arguments, and output shape — and are the authoritative tool catalog; the common ones (`get_scene_state`, `get_scene_logs`, `screenshot`, `teleport`, `move_to`, `walk`, `look_at`, `set_camera_pose`, `set_camera_mode`, `list_scene_entities`, `get_entity_details`, `get_player_state`, `click_entity`, `send_chat`, `trigger_emote`, `reload_scene`, `get_scene_content_stats`, `get_scene_content_breakdown`, `get_performance_stats`).
 
@@ -35,7 +35,7 @@ Declining either gate is fine — the scene can still be implemented, just less 
 
 ## Intent gate (pre-flight, do this first)
 
-This skill fires on its own — the mere presence of an `mcp__explorer__*` tool triggers it — so it is often loaded when the user never asked for it. Before probing for a server, launching the Explorer, or editing the scene, confirm they want to drive the scene through the desktop Explorer's MCP server: *"Do you want to build/test this scene against a running Decentraland Explorer via the desktop Explorer's MCP server? This will launch/connect to the Explorer and iterate in-world."*
+This skill fires on its own — the mere presence of an `mcp__explorer__*` tool triggers it — so it is often loaded when the user never asked for it. Before probing for a server, launching the Explorer, or editing the scene, confirm they want to drive the scene through the Unity Explorer MCP server: *"Do you want to build/test this scene against a running Decentraland Explorer via the Unity Explorer MCP server? This will launch/connect to the Explorer and iterate in-world."*
 
 - **YES** — continue to Setup below.
 - **NO** — run no setup, launch, or MCP step from this skill. Work on the scene without the Explorer (edit code, lean on the topic skills you just loaded), and let the user re-invoke this skill later if they change their mind.
@@ -149,7 +149,7 @@ Requires curl + python3; pass `-p <port>` when not on 8123. `Read` only the fram
 - After a hot reload the player can end up off-parcel (e.g. parcel `0,-1`); `get_scene_state` then reports a null scene and `reload_scene` fails with "no scene at the current parcel". Check `get_player_state` → `parcel`, `move_to` back inside, and the scene loads again.
 - **One file write per change.** Each save triggers a rebuild, so a multi-part edit split across saves breaks the scene in between — mildly, when usage and import land in separate saves (a transient `SceneError: X is not defined`), or terminally: two saves seconds apart can make the Explorer load a mid-write bundle → `SyntaxError: Invalid or unexpected token` at scene start → the scene drops out and `get_scene_state` reports `scene: null` while you're standing on the parcel. From that state nothing recovers in-session: `reload_scene` errors ("no scene at the current parcel"), `/reload` hangs, the minimap RELOAD SCENE button no-ops, and moving off-parcel and back does not bring it back — only exiting/re-entering play mode (editor) or relaunching the standalone build. So batch multi-part changes into ONE write, write new modules before wiring them in, and after any save landing seconds after a previous one verify `get_scene_state` still shows a scene before saving again.
 - The `teleport` tool silently no-ops in local-scene-development mode: `/goto` teleports are disallowed there (chat shows "Teleport is not allowed in local scene development mode") but the tool still answers "Arrived at (x,y)". Use `move_to` for repositioning in local-scene sessions.
-- The Explorer under test may be **the game editor in play mode**, not a standalone Decentraland.app — check `ps aux | grep -i unity` before considering a relaunch. Never kill the editor process; recovery from a wedged client is then a user action (exit/re-enter play mode).
+- The Explorer under test may be the **Unity Editor in play mode**, not a standalone Decentraland.app — check `ps aux | grep -i unity` before considering a relaunch. Never kill the editor process; recovery from a wedged client is then a user action (exit/re-enter play mode).
 
 ## Interaction testing
 

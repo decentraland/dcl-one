@@ -4,7 +4,7 @@
 
 
 > [!NOTE]
-> This page tracks the feature gap between the Decentraland production desktop client and the mobile app. It is sourced from the [godot-explorer feature parity tracker](https://github.com/decentraland/godot-explorer/issues/2402) and updated regularly. ETAs are estimates and subject to change.
+> This page tracks the feature gap between the Decentraland desktop (Unity) client and the mobile app. It is sourced from the [godot-explorer feature parity tracker](https://github.com/decentraland/godot-explorer/issues/2402) and updated regularly. ETAs are estimates and subject to change.
 >
 > Last reviewed: **October 2026** (mobile app v1.15.0).
 
@@ -16,7 +16,7 @@ These are no longer gaps as of mobile app **v1.15.0**, which is rolling out to t
 - [`stopEmote` restricted action](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#animate-only-the-upper-body). Upper-body emotes started by a scene also pause when the player leaves the scene, resume on return, and stop when the scene unloads — v1.15.0
 - [`Tween` `MoveRotateScale` mode](/docs/creator/sdk7/3d-essentials/move-entities/#simultaneous-tweens) — v1.15.0
 - Other players' positions are reported to scenes relative to the scene, like the local player's (`getPlayer({ userId }).position`, `onEnterScene`, items attached to other players) — v1.15.0
-- Player movement, first desktop-parity pass: capsule size, step height, jump arc and gravity, run speed and air control — v1.15.0
+- Player movement, first Unity-parity pass: capsule size, step height, jump arc and gravity, run speed and air control — v1.15.0
 - Downward raycasts from the player report the correct `hitDistance` on sloped geometry — v1.15.0
 - Upper-body emotes are seen as upper-body by other mobile players — v1.15.0
 
@@ -51,11 +51,11 @@ These are no longer gaps as of mobile app **v1.15.0**, which is rolling out to t
 
 ## Cross-Platform Inconsistencies
 
-- **Player movement and collisions compared with the production desktop client**
+- **Player movement and collisions vs Unity**
   - [Slopes, edges, walls, landing and moving platforms](https://github.com/decentraland/godot-explorer/issues/2852) and [glide behavior](https://github.com/decentraland/godot-explorer/issues/2854) — fix in review, No ETA
   - [Scene colliders thinner than 1 cm only collide from above, and invisible blockers and some SDK collision layers don't block the player](https://github.com/decentraland/godot-explorer/issues/2853) — No ETA
   - Spawn, landing and jump animations, movement blending ([#1553](https://github.com/decentraland/godot-explorer/issues/1553), [#1554](https://github.com/decentraland/godot-explorer/issues/1554), [#2855](https://github.com/decentraland/godot-explorer/issues/2855), [#2856](https://github.com/decentraland/godot-explorer/issues/2856)) — fix in review, No ETA
-- [Some emotes from other clients don't play on mobile: scene-triggered emotes from Bevy Web players, and production desktop players' emotes that arrive over LiveKit](https://github.com/decentraland/godot-explorer/issues/2986) — fix in review, No ETA
+- [Some emotes from other clients don't play on mobile: scene-triggered emotes from Bevy Web players, and Unity players' emotes that arrive over LiveKit](https://github.com/decentraland/godot-explorer/issues/2986) — fix in review, No ETA
 - [In a Creator Hub mobile preview, the mobile player's avatar is not visible to desktop testers](https://github.com/decentraland/godot-explorer/issues/2773) — fix in progress, No ETA
 - [Avatar teeth render dark/gray instead of white](https://github.com/decentraland/godot-explorer/issues/1994) — No ETA
 

@@ -49,13 +49,13 @@ Sources and their trust: **baseline** (default branches) is the contract; **upco
 
 | Client | Where | Versions in use |
 |---|---|---|
-| Production client (desktop, mobile) | `unity-explorer`; default `dev`; releases `v0.N.0-alpha` | latest release plus every older release still admitted |
+| unity-explorer (desktop, mobile) | `unity-explorer`; default `dev`; releases `v0.N.0-alpha` | latest release plus every older release still admitted |
 | Godot explorer | `decentraland/godot-explorer` remote | latest release and `main` |
 | Bevy explorers | `decentraland/bevy-explorer` remote; dcl-one fork `rendering/bevy-explorer/source/` | latest release and `main` |
 | SDK7 scenes | `js-sdk-toolchain` (runtime, `~system` APIs) | latest published SDK |
 | Server-side | `sdk-multiplayer-server`; `livekit-bots` | default branch |
 
-If the oldest admitted production-client release cannot be found, treat the last three as in use and ask under Open questions.
+If the oldest admitted unity-explorer release cannot be found, treat the last three as in use and ask under Open questions.
 
 **Users** (call an API with no client between; latest published tool and default branch): creator tools (`sdk-commands` in `js-sdk-toolchain`, `decentraland/creator-hub`), web apps (`decentraland/sites`, e.g. Cast 2.0), third parties on any public unauthenticated route.
 

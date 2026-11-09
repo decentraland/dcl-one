@@ -169,7 +169,7 @@ Material.setBasicMaterial(screen2, { texture: tex })
 
 ### Media Permissions in scene.json
 
-`[LEGACY]` External audio/video URLs do **not** require any permission on current clients — no current client enforces `ALLOW_MEDIA_HOSTNAMES` (the production desktop client checks URL syntax without enforcing the hostname list; Bevy has no hostname-list enforcement). Only the retired web client enforced it. For legacy scenes that still declare it, the syntax is:
+`[LEGACY]` External audio/video URLs do **not** require any permission on current clients — no current client enforces `ALLOW_MEDIA_HOSTNAMES` (unity-explorer gates it behind the unset `CHECK_ALLOWED_MEDIA_HOSTNAMES` compile define; bevy-explorer has no enforcement). Only the retired web client enforced it. For legacy scenes that still declare it, the syntax is:
 
 ```json
 {
@@ -180,7 +180,7 @@ Material.setBasicMaterial(screen2, { texture: tex })
 
 ## AudioAnalysis (Advanced)
 
-Real-time amplitude + 8-band frequency data from any `AudioSource`, `AudioStream`, or `VideoPlayer`. Used for music visualizers, reactive environments, and beat-synced animations. **Production desktop client only; unsupported in Bevy and the mobile Godot client.**
+Real-time amplitude + 8-band frequency data from any `AudioSource`, `AudioStream`, or `VideoPlayer`. Used for music visualizers, reactive environments, and beat-synced animations. **Unity explorer only.**
 
 ```typescript
 import { AudioAnalysis, AudioAnalysisView } from '@dcl/sdk/ecs'

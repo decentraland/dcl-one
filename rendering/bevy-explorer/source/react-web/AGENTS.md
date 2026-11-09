@@ -51,7 +51,7 @@ re-implementing a primitive.
 
 ## 4. DPI / HUD scaling (`--ui-scale`)
 
-The HUD is scaled to the viewport (`useHudScale` sets
+The HUD is scaled to the viewport like Unity's CanvasScaler (`useHudScale` sets
 `--ui-scale` on `:root`, 1080-reference). Every floating panel / overlay MUST honor it
 or it'll render too big on most displays:
 

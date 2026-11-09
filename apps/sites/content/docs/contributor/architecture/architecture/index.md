@@ -24,7 +24,7 @@ Decentraland is a decentralized virtual world platform built on a hybrid archite
 
 Players interact through various clients:
 
-* **Desktop Explorer** - Primary desktop client (Windows, Mac, Linux)
+* **Unity Explorer** - Primary desktop client (Windows, Mac, Linux)
 * **Web Explorer** - Browser-based client
 * **CLI** - Developer tooling for scene creation and deployment
 * **Community Clients** (mobile, VR, etc) - Alternative implementations for the reference client using different rendering technologies.
@@ -112,7 +112,7 @@ Smart contracts on Ethereum and Polygon manage:
 
 ### Optimization
 
-* **Asset bundles** - Platform-optimized asset bundles
+* **Asset bundles** - Platform-optimized assets (Unity bundles)
 * **CDN** - Static assets served via CDN
 * **Caching** - Aggressive caching at all layers
 * **Indexers** - Blockchain data cached in fast databases

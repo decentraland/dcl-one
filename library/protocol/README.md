@@ -61,15 +61,15 @@ protoc \
 
 Many repositories depend on this protocol definition and that sometimes implies some merge order. We don't have to worry much about compatibility because the checks are running with each PR, if you break something, the CI will warn you. But, in some cases, it's desirable to merge the implementation in a specific order to avoid unexpected behavior in the corner cases (multiple repositories are waiting for the build at the same time).
 
-> **Do not merge protocol changes before the production-client implementation is complete**
+> **Important Note: Avoid Merging Protocol PR Without Completed Unity Implementation**
 >
-> Do not merge a protocol PR into `main` until its corresponding production-client implementation is complete. In-repository Explorer checks alone do not establish that external production consumers are ready; coordinate their implementation PRs to avoid runtime or build failures.
+> Please don't merge a protocol PR into the main branch unless the corresponding implementation in Unity has been completed. This is important to avoid any potential issues or build failures in Unity.
 >
 > The ideal order for introducing breaking changes in the protocol is as follows:
 >
 > 1. Create a PR in the Protocol repository.
 > 2. Use the npm test link from the CI of the protocol PR in the protocol-dependent application for development.
-> 3. Once both the protocol PR and the protocol-dependent application PR are ready for merging, synchronize their merging as follows:
+> 3. Once both the protocol PR and the protocol-dependent application (e.g. unity-renderer) PR are ready for merging, synchronize their merging as follows:
 >    1. Merge the protocol PR.
 >    2. Modify protocol-dependent application PR to use the `@dcl/protocol@next` package to stop using the PR npm test link.
 >    3. Merge the protocol-dependent application PR.
@@ -78,31 +78,17 @@ Some dev-cases are described here:
 
 ## SDK: New component or component modification
 
-In this repository, component definitions live in `library/protocol/proto`, the SDK in
-`library/js-sdk-toolchain`, and the engine in `rendering/bevy-explorer/source`. Change the
-contract, SDK serialization and engine behavior together. The engine generates its protocol
-code at build time; do not add a second `.proto` copy. See the
-[protocol ADR](../../docs/adr/2026-10-25-protocol-in-dcl-one.md) and the
-[SDK-component recipe](../../rendering/bevy-explorer/docs/guidelines/recipes.md).
+Repositories: [unity-renderer](https://github.com/decentraland/unity-renderer/) and [js-sdk-toolchain](https://github.com/decentraland/js-sdk-toolchain/)
 
-Before merging, verify wire compatibility, component serialization/deserialization, and the
-engine behavior through a scene that exercises the component. Use the engine's documented
-native and web checks when both platforms are affected. External package consumers still
-need the coordinated package update described above.
+At the protocol level both operations shouldn't be a problem, but `js-sdk-toolchain` CI will fail if the component is not tested. This can happen if the PR **`A`** from the protocol is merged, and you update your PR **`B`** from `js-sdk-toolchain` with the changes before the PR **`A`** from `js-sdk-toolchain` is merged.
 
-For external package consumers, keep the protocol, renderer and SDK changes synchronized:
+Some guidelines and testing before merge:
 
-- A protocol PR's package is uploaded to S3; use its CI-provided installation link in the
-  consuming development branches instead of waiting for a published version.
-- The SDK's CI must include the component test. Updating it to a protocol definition before
-  the corresponding SDK implementation lands can fail that CI.
-- Test the renderer and SDK branches together in the playground:
-  `https://playground.decentraland.org/?renderer-branch=feat/my-new-component&sdk-branch=feat/new-component-approach`.
-- For a local scene, install the `@dcl/sdk` S3 package linked in the SDK PR's CI comment.
-- When testing an external renderer through its editor's WebSocket bridge, pass the `ws`
-  query parameter in the local or playground test.
-- Begin merging only when all three PRs are ready: merge the protocol first, update the
-  renderer and SDK PRs to `@dcl/protocol@next`, then merge those two together.
+- The protocol package is uploaded to S3 while developing in a PR. This can be used in the target repositories
+- Testing in the playground: Playground allows us to test by adding query parameters: `https://playground.decentraland.org/?&renderer-branch=**feat/my-new-component**&sdk-branch=**feat/new-component-approach**`
+- Testing locally: you can write an example scene and install the package `@dcl/sdk` uploaded to S3 commented in the PR comments.
+- Testing in the Unity Editor: if you need to test with the editor opened, write the `ws` query parameter in your local or playground test.
+- Start merging when the three PRs are already to merge: first merge the Protocol one, then update the other two with the version @next and merge them at the same time.
 
 ## SDK: New APIs or APIs modifications
 
@@ -210,8 +196,8 @@ protoc \
 
 > `plugin.js` carries a `#!/usr/bin/env node` shebang. On Windows, protoc
 > cannot exec a `.js` directly, so point `--plugin` at a small `.cmd` wrapper
-> that runs `node plugin.js`; on unix an equivalent shell script is used. The
-> Pulse and the external renderer's consumer build scripts generate this wrapper automatically.
+> that runs `node plugin.js`; on unix an equivalent shell script is used. Both
+> consumer repos (Pulse, unity-explorer) generate this wrapper automatically.
 
 The plugin emits one `*.Bitwise.cs` file (PascalCase, flat in the output
 directory) for each `.proto` file that contains at least one `[(quantized)]`

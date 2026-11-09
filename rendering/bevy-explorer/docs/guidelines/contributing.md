@@ -28,8 +28,11 @@ understand the change in one sitting.
 - When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
   comments that explain constraints still in force and rename tests that now prove a different
   contract.
-- Comments explain current invariants and constraints. Keep implementation provenance and
-  decision history out of them; apply the [public-prose rule](#public-prose).
+- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
+  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
+  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
+  code is clear. Unity sources go in the PR description; who decided goes there or in
+  [decisions](decisions.md).
 - Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
@@ -73,44 +76,9 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
-- Explain the chosen behavior, constants, alternatives and verification in this engine's own
-  terms. Follow [public prose](#public-prose) and [implementing features](implementing-features.md).
+- A port from Unity names the Unity files it follows, the constants carried over, and every
+  divergence with its reason. See [porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
-
-## Public prose
-
-Document current behavior, ownership, constraints and reasons directly. Throughout this
-repository, keep Unity names, repository or file references, source revisions, copied-constant
-provenance and comparisons used as implementation rationale out of prose in code comments,
-tracked documentation (including ADRs and agent instructions), and PR titles and descriptions. This rule supersedes
-older instructions to put that material in PRs. Keep source inventories and compatibility
-evidence in ignored task/review reports instead; retain required legal attribution in licenses
-and dependency manifests.
-
-Keep client support and compatibility requirements accurate without attributing implementation
-choices to another engine.
-
-Preserve exact operational literals when renaming them would break instructions or contracts:
-tool and skill identifiers, endpoint paths, process names, wire values, and external repository
-or download URLs needed to perform the documented task. Format those as code or link targets,
-use neutral prose around them, and record each remaining match and its purpose in the review
-report. This exception does not cover implementation provenance or incidental source citations.
-
-Removing provenance is a documentation edit, not a behavior or process change. Preserve
-technical values, rejected alternatives and their reasons, verification requirements, merge
-gates and useful source pins outside this prohibition. Do not turn a report about another
-implementation into a requirement or claimed behavior of this engine; retain such evidence
-in the ignored review report when it cannot stand alone here.
-
-For generated documentation, update its source or generation transform and regenerate derived
-views, including search indexes. Run the generator's consistency check; editing only the rendered
-document leaves the policy unenforced on the next generation.
-
-Before committing or updating a PR, search every changed documentation file and the complete
-PR text with `rg -ni '\bunity(?:\b|[-_])'` and check the diff for indirect provenance wording.
-Remove matches outside this prohibition and the operational literals above; explain each
-behavior using this implementation's requirements and tests. A source comparison is evidence
-for a decision, not public design rationale.
 
 ## Before pushing
 
