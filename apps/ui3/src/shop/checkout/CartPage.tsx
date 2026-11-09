@@ -34,9 +34,9 @@ import { useMarketplace } from "../market/access";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
+import { shopReads } from "../discovery/reads";
 import "./cartpage.css";
 import { listingTypeFor } from "@shop/market/access-rule";
-import { shopReads } from "../discovery/reads";
 
 export type CartNavState = { resumeCheckout?: boolean; creditsAdded?: number };
 

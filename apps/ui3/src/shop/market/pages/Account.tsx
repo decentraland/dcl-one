@@ -18,8 +18,8 @@ import AccountBanner from "./account/AccountBanner";
 import AccountSidebar from "./account/AccountSidebar";
 import NftCard from "./account/NftCard";
 import { fetchAccountNfts, isWearableSection, parseSection, sortOptions, wearableCategoriesOf, type AccountNft, type AssetType, type Section } from "./account/api";
-import "./account/account.css";
 import { shopReads } from "../../discovery/reads";
+import "./account/account.css";
 
 const PAGE_SIZE = 24;
 

@@ -233,7 +233,7 @@ export type WalletActivity = {
 };
 
 /** The connected wallet's activity. Signed with the marketplace signer metadata. */
-export async function fetchUserActivity(query: Record<string, string | number | undefined> = {}, client: ShopClient): Promise<{ items: WalletActivity[]; total: number }> {
+export async function fetchUserActivity(query: Record<string, string | number | undefined>, client: ShopClient): Promise<{ items: WalletActivity[]; total: number }> {
   const body = await client.market.activity<{ data?: WalletActivity[]; total?: number } | WalletActivity[]>(query);
   const items = Array.isArray(body) ? body : (body?.data ?? []);
   return { items, total: Array.isArray(body) ? items.length : (body?.total ?? items.length) };

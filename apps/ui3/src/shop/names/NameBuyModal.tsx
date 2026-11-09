@@ -36,8 +36,8 @@ import {
   type UseCreditsSubmitter,
 } from "./names";
 import { stashNameResume, clearNameResume } from "./resume";
-import "./names.css";
 import { shopClient } from "../api/host";
+import "./names.css";
 
 type Rail = "credits" | "mana" | "mixed";
 type Phase = "choose" | "confirm" | "completing" | "success" | "pending" | "error";

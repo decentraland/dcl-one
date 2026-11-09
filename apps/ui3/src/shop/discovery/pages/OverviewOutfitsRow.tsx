@@ -17,9 +17,9 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { railGeometry, railPageFromGeometry, scrollRailToPage } from "../lib/pagedRail";
 import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
+import { shopClient } from "../../api/host";
 import "../components/rail.css";
 import "./overviewoutfits.css";
-import { shopClient } from "../../api/host";
 import { shopReads } from "../reads";
 
 const MAX_DOTS = 6;

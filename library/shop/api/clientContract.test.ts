@@ -54,6 +54,12 @@ describe("the client's wire contract", () => {
     });
   }
 
+  it("drops one trailing slash from the base it is given", async () => {
+    const rec = recorder();
+    await createShopApi({ base: "https://node.test/", mode: "canonical", signer: null, transport: rec.transport }).request(ENDPOINTS.catalogShop);
+    expect(rec.log[0]!.url).toBe("https://node.test/shop-api/v3/catalog/shop");
+  });
+
   it("a public route never signs, even with a signer at hand", async () => {
     const rec = recorder();
     const signer = signerAs("0xabc");

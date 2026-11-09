@@ -249,7 +249,10 @@ difference not listed here is a gap, not a decision.
 - **Publish forms.** `POST /entities` reads only `multipart/form-data`
   (upstream's parser also reads `application/x-www-form-urlencoded`); a
   body cut short answers busboy's `Unexpected end of form`, any other
-  unreadable body the parser's own text. Its
+  unreadable body the parser's own text. A part name longer than 200 bytes
+  answers 400 `Form field name longer than 200 bytes` (upstream's busboy
+  applies no name limit to multipart parts, only 16 KiB to a part's
+  headers). Its
   uploads take a slot of `MAX_CONCURRENT_UPLOADS` (refused with upstream's
   byte-budget 503, `Server is buffering too many uploads, please retry
   shortly.`) and count files against `MAX_IN_FLIGHT_UPLOAD_FILES` instead of

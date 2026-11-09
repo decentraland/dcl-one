@@ -15,8 +15,8 @@ import { useShopQuery } from "../../discovery/query";
 import IndexNotice from "../../discovery/components/IndexNotice";
 import { useListingsFreshness } from "../../discovery/hooks";
 import { fetchResaleTokenInfos, type ClassicOrder } from "@shop/detail/api";
-import "./resaleoffers.css";
 import { shopReads } from "../../discovery/reads";
+import "./resaleoffers.css";
 
 const PAGE = 8;
 
