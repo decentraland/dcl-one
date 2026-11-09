@@ -321,7 +321,7 @@
     },
     {
       "id": "ui-provenance",
-      "description": "Provenance of the shared UI library: the port lock, the port verification record and the checks and workflow that enforce them; a change needs an approving code-owner review",
+      "description": "Provenance of the shared UI library: the port lock, the port verification record and the checks that enforce them; a change needs an approving code-owner review",
       "owners": [
         "@decentraland/web-applications"
       ],
@@ -329,7 +329,17 @@
         "/library/ui/upstream.lock.json",
         "/library/ui/port-verification.json",
         "/library/ui/figma/lock-digests.mjs",
-        "/library/ui/figma/port-verification.mjs",
+        "/library/ui/figma/port-verification.mjs"
+      ]
+    },
+    {
+      "id": "ui-library-workflow",
+      "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/infra"
+      ],
+      "paths": [
         "/.github/workflows/ui-library.yml"
       ]
     }
