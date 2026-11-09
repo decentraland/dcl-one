@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 
 import Button from "../../atoms/Button";
 import type { NftResult } from "@catalyst-api/market/NftResult";
-import { shortAddress } from "../model/address";
+import { shortAddress } from "@shop/model/address";
 import type { ShopClient } from "../api/shop";
 import { nodeMapImage } from "../../data/thumbnail";
 import { landData, landParcels } from "./api";

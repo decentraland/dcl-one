@@ -14,9 +14,9 @@
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
-import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '@shop/detail/lib/bodyShape'
 import { hostOr } from '../../../shop/discovery/flags'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'

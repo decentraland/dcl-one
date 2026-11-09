@@ -45,7 +45,7 @@ another browser calls the real services and is not what is compared.
   every request it makes off its origin is answered from the recording; dcl-one runs as the built
   `apps/sites` tree (`sites-preview.mts`) whose node is a replay of the same recording, so SSR and
   the browser read it too. `/shop-api` paths map to upstream routes through
-  `apps/ui3/src/shop/api/endpoints.ts`. Content pictures are deterministic placeholders of the
+  `library/shop/api/endpoints.ts`. Content pictures are deterministic placeholders of the
   recorded shape (at most 1024 px a side), telemetry is answered empty, WebSockets are closed, and
   nothing reaches the network. The sites preview may connect to loopback only: a server-side module
   that names a production host of its own is refused, and the host is listed with the page as one

@@ -6,7 +6,7 @@
 // gains; they differ on purpose (the Stripe fee). Nothing here exposes Stripe, cards or USDC.
 
 import { shopClient, type ShopClient } from "../api/shop";
-import type { PackOrderStatus } from "../api/types";
+import type { PackOrderStatus } from "@shop/api/types";
 import { createPackCheckoutReal, pollCreditGrantReal } from "./payments-stripe";
 
 export const USD_PER_CREDIT = 0.1;

@@ -9,7 +9,7 @@
 // of operations (events and shop.status alike) goes through parseOperationEvent, which refuses a mix of the
 // two. A HUD built before NAMEs reads `items: []` as no operation at all and drops it.
 
-import { MAX_CREDIT_LINES_PER_GROUP } from '../../shop/model/settlement'
+import { MAX_CREDIT_LINES_PER_GROUP } from '@shop/model/settlement'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '../../shop/names/names'
 import type { WalletKind } from '../../shop/wallet/session'
 

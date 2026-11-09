@@ -9,7 +9,7 @@
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { inShell, onShellMessage, shellRequest } from '../../lib/shell'
 import {
   parseOperationEvent,

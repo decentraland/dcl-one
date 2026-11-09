@@ -10,8 +10,8 @@ import { isShopApiError } from "../../api/client";
 import { shopClient, type ShopClient } from "../../api/shop";
 import type { ImportableListing } from "@catalyst-api/market/ImportableListing";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
-import { CENTS_PER_CREDIT } from "../../model/money";
+import type { ChainId } from "@shop/model/chain";
+import { CENTS_PER_CREDIT } from "@shop/model/money";
 import {
   cancelTrade,
   createPrimaryUsdPeggedListing,
