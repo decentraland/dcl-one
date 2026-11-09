@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
 use common::{
@@ -10,7 +10,6 @@ use dcl_types::{
     RendererResponse, SceneId, SceneResponse, SceneResponseSender, TaggedSceneResponseSender,
 };
 use interprocess::local_socket::{
-    tokio::{RecvHalf, SendHalf},
     traits::tokio::{Listener, Stream as _},
     GenericFilePath, ListenerOptions, ToFsName,
 };
@@ -25,7 +24,13 @@ use std::{
     },
 };
 use system_bridge::SystemApi;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+// A frame over this ends the scene host. It must stay above the largest frame a host builds:
+// a CRDT snapshot carries a scene's whole store, which the scene runtime caps at 512 MiB.
+const MAX_FRAME_BYTES: u64 = 1024 * 1024 * 1024;
+// a frame's buffer starts at most this large and grows only as its bytes arrive
+const FRAME_PREALLOCATION_BYTES: u64 = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub struct NewSceneInfo {
@@ -169,22 +174,13 @@ pub fn init_runtime() -> anyhow::Result<()> {
         let (ipc_inbound, ipc_outbound) = stream.split();
 
         let (new_scene_sx, new_scene_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
 
         *NEW_SCENE_SENDER.write().unwrap() = Some(new_scene_sx);
-        ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
-            ipc_channel_registry: Default::default(),
-            ipc_router: router_sx,
-            max_channels: None,
-            parent_token: None,
-        }));
-
-        let f_out = rt.spawn(renderer_ipc_out(ipc_outbound, new_scene_rx, router_rx));
-        let f_in = rt.spawn(renderer_ipc_in(ipc_inbound));
 
         let _ = init_sx.send(Ok(()));
 
-        let _ = rt.block_on(async move { tokio::join!(f_out, f_in) });
+        rt.block_on(run_host_connection(ipc_inbound, ipc_outbound, new_scene_rx));
+        let _ = child.kill();
         let _ = child.wait();
 
         // Orchestrated headless server only (EXIT_ON_SIDECAR_LOSS): the IPC loops ended,
@@ -200,6 +196,41 @@ pub fn init_runtime() -> anyhow::Result<()> {
     });
 
     init_rx.blocking_recv()?
+}
+
+// Serves one scene host until either direction ends. Runs on a current-thread runtime, since
+// the IPC context and the scene senders are thread-locals.
+async fn run_host_connection(
+    inbound: impl AsyncRead + Unpin + Send + 'static,
+    outbound: impl AsyncWrite + Unpin + Send + 'static,
+    new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
+) {
+    let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
+    ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
+        ipc_channel_registry: Default::default(),
+        ipc_router: router_sx,
+        max_channels: None,
+        parent_token: None,
+    }));
+
+    let mut f_out = tokio::spawn(renderer_ipc_out(outbound, new_scene, router_rx));
+    let mut f_in = tokio::spawn(renderer_ipc_in(inbound));
+
+    let ended = tokio::select! {
+        ended = &mut f_out => {
+            f_in.abort();
+            ended
+        }
+        ended = &mut f_in => {
+            f_out.abort();
+            ended
+        }
+    };
+    match ended {
+        Ok(Ok(())) => (),
+        Ok(Err(e)) => error!("scene host connection ended: {e:#}"),
+        Err(e) => error!("scene host connection task failed: {e}"),
+    }
 }
 
 #[cfg(test)]
@@ -224,10 +255,10 @@ mod endpoint_tests {
 
 #[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
-    mut stream: SendHalf,
+    mut stream: impl AsyncWrite + Unpin,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
     mut ipc_router: tokio::sync::mpsc::UnboundedReceiver<(u64, IpcMessage)>,
-) {
+) -> anyhow::Result<()> {
     let (renderer_sx, mut renderer_rx) = tokio::sync::mpsc::unbounded_channel();
 
     // one receiver per live presence context, drained into the pipe as tagged
@@ -248,7 +279,7 @@ pub async fn renderer_ipc_out(
             new_scene = new_scene.recv() => {
                 let Some(NewSceneCommand{id,info,mut renderer_channel, global_channel, response_channel, system_api_sender }) = new_scene else {
                     warn!("renderer_ipc_out exit on new scene closed");
-                    return;
+                    return Ok(());
                 };
 
                 RENDERER_SENDER.set(Some(response_channel.channel().clone()));
@@ -262,7 +293,7 @@ pub async fn renderer_ipc_out(
                     loop {
                         match old_rx.try_recv() {
                             Ok(data) => {
-                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                             }
                             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(count)) => {
                                 error!("global crdt state lagged, dropping {count} messages");
@@ -282,19 +313,19 @@ pub async fn renderer_ipc_out(
                     let _ = renderer_sender.send(EngineToScene::KillScene(id));
                 });
 
-                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await;
+                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await?;
             }
             renderer_update = renderer_rx.recv() => {
                 let Some(engine_to_scene) = renderer_update else {
                     warn!("renderer_ipc_out exit on inbound closed");
-                    return;
+                    return Ok(());
                 };
-                write_msg(&mut stream, &engine_to_scene).await;
+                write_msg(&mut stream, &engine_to_scene).await?;
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
                 match received {
                     Ok(data) => {
-                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         error!("global crdt state lagged, dropping {count} messages");
@@ -307,7 +338,7 @@ pub async fn renderer_ipc_out(
             ipc = ipc_router.recv() => {
                 let Some(ipc) = ipc else {
                     warn!("renderer_ipc_out exit on router closed");
-                    return;
+                    return Ok(());
                 };
                 debug!("ipc {} -> {}", ipc.0, !matches!(ipc.1, IpcMessage::Closed));
                 // the scene host doesn't echo our close back, so release the entry here
@@ -316,7 +347,7 @@ pub async fn renderer_ipc_out(
                         ctx.as_mut().unwrap().ipc_channel_registry.remove(&ipc.0)
                     });
                 }
-                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await;
+                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await?;
             }
         }
     }
@@ -347,30 +378,50 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
-pub async fn renderer_ipc_in(mut stream: RecvHalf) {
-    while let Ok(len) = stream.read_u64_le().await {
-        let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
+// The next frame's body, or `None` once the host has closed the connection.
+async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Option<Vec<u8>>> {
+    let len = match stream.read_u64_le().await {
+        Ok(len) => len,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    if len > MAX_FRAME_BYTES {
+        bail!("frame of {len} bytes is over the {MAX_FRAME_BYTES}-byte limit");
+    }
+    let mut buffer = Vec::with_capacity(len.min(FRAME_PREALLOCATION_BYTES) as usize);
+    stream.take(len).read_to_end(&mut buffer).await?;
+    if buffer.len() as u64 != len {
+        bail!("frame truncated at {} of {len} bytes", buffer.len());
+    }
+    Ok(Some(buffer))
+}
+
+pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Result<()> {
+    while let Some(buffer) = read_frame(&mut stream).await? {
+        let msg: SceneToEngine = rmp_serde::from_slice(&buffer)
+            .map_err(|e| anyhow!("undecodable frame of {} bytes: {e}", buffer.len()))?;
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
                 let mut sender = sender.borrow_mut();
-                let sender = sender.as_mut().unwrap();
+                let Some(sender) = sender.as_mut() else {
+                    warn!("dropping scene response: no scene started");
+                    return Ok(());
+                };
                 // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, a panic in this IPC task ends
-                // the loop and trips the process exit above — killing the whole engine and
-                // every co-tenant scene. So shed the response instead of panicking: a scene
-                // that outruns the bevy-side drain only stalls itself. Desktop and tests
-                // (flag unset) keep the original panic-on-failure behavior unchanged.
+                // where every scene shares one engine. There, ending this connection trips the
+                // process exit above — killing the whole engine and every co-tenant scene. So
+                // shed the response instead: a scene that outruns the bevy-side drain only
+                // stalls itself. Desktop and tests (flag unset) end the connection.
                 if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                     if let Err(e) = sender.try_send((id, scene_response)) {
                         warn!("dropping scene response: renderer channel unavailable ({e})");
                     }
-                } else {
-                    sender.try_send((id, scene_response)).unwrap();
+                } else if let Err(e) = sender.try_send((id, scene_response)) {
+                    bail!("renderer channel unavailable ({e})");
                 }
-            }),
+                Ok(())
+            })?,
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");
@@ -396,6 +447,7 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
             }
         }
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -450,11 +502,16 @@ pub fn spawn_scene(
     (main_sx, None)
 }
 
-pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
-    let bytes = rmp_encode(value).unwrap();
+pub async fn write_msg<T: Serialize>(
+    stream: &mut (impl AsyncWrite + Unpin),
+    value: &T,
+) -> std::io::Result<()> {
+    let bytes = rmp_encode(value).map_err(std::io::Error::other)?;
     stream
         .write_all(&(bytes.len() as u64).to_le_bytes())
-        .await
-        .unwrap();
-    stream.write_all(&bytes).await.unwrap();
+        .await?;
+    stream.write_all(&bytes).await
 }
+
+#[cfg(test)]
+mod engine_ipc_tests;

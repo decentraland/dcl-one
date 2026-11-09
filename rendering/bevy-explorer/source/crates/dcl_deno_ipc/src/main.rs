@@ -76,20 +76,20 @@ async fn scene_ipc_out(
     mut scene_rx: SceneResponseReceiver,
     mut close_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     mut system_api_rx: tokio::sync::mpsc::UnboundedReceiver<SystemApi>,
-) {
+) -> std::io::Result<()> {
     loop {
         tokio::select! {
             scene_rx = scene_rx.recv() => {
                 let Some((scene_id, response)) = scene_rx else {
                     warn!("scene_ipc_out exit on scene_rx closed");
-                    return;
+                    return Ok(());
                 };
-                write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, response)).await;
+                write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, response)).await?;
             }
             close_rx = close_rx.recv() => {
                 let Some(close_id) = close_rx else {
                     warn!("scene_ipc_out exit on close_rx closed");
-                    return;
+                    return Ok(());
                 };
 
                 let was_open = SCENE_IPC_CONTEXT.with(|ctx| {
@@ -99,15 +99,15 @@ async fn scene_ipc_out(
                 });
 
                 if was_open {
-                    write_msg(&mut stream, &SceneToEngine::IpcMessage(close_id, IpcMessage::Closed)).await;
+                    write_msg(&mut stream, &SceneToEngine::IpcMessage(close_id, IpcMessage::Closed)).await?;
                 }
             },
             system_api_rx = system_api_rx.recv() => {
                 let Some(system_api) = system_api_rx else {
                     warn!("scene_ipc_out exit on system_api_rx closed");
-                    return;
+                    return Ok(());
                 };
-                write_msg(&mut stream, &SceneToEngine::SystemApi(system_api)).await;
+                write_msg(&mut stream, &SceneToEngine::SystemApi(system_api)).await?;
             }
         }
     }
