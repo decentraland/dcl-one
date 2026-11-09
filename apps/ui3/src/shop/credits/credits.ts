@@ -127,7 +127,7 @@ export type CheckoutLine = CreditLineRequest;
  */
 export async function authorizeUsdCreditGroup(
   lines: CheckoutLine[],
-  source: "website" | "client" = "website",
+  source: "website" | "client",
   client: ShopClient,
 ): Promise<CreditBatchAuthorization> {
   return client.authorizations.authorizeGroup({ items: lines, source });

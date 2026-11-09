@@ -14,7 +14,7 @@ import { useShopQuery } from "../query";
 import { loadTopCreators } from "./TopCreators";
 import Icon from "./Icon";
 import styles from "./PickerFilters.module.css";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../reads";
 
 export const PICKER_DEBOUNCE_MS = 300;
 
@@ -28,7 +28,7 @@ export function useCreatorNames(addresses: string[]): Record<string, string> {
 
 /** The picked collection's name (the collection page's cache entry), the short address until it loads. */
 export function useCollectionName(contractAddress: string | null): string | null {
-  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
+  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, shopReads(signal)), { staleMs: 5 * 60_000 });
   if (!contractAddress) return null;
   return meta.data?.name || shortAddress(contractAddress);
 }
@@ -171,7 +171,7 @@ function Pills({ items, onRemove, testId }: { items: Option[]; onRemove: (value:
 }
 
 async function loadCreators(term: string, signal: AbortSignal): Promise<Option[]> {
-  if (term) return (await searchCreators(term, 10, { client: shopClient(), signal })).map((c) => ({ value: c.address, label: c.name }));
+  if (term) return (await searchCreators(term, 10, shopReads(signal))).map((c) => ({ value: c.address, label: c.name }));
   return (await loadTopCreators(signal)).map((c) => ({ value: c.address.toLowerCase(), label: c.name }));
 }
 
@@ -207,7 +207,7 @@ export function CollectionFilter({ collection, onSale, onChange }: { collection:
         label={t("picker.collection")}
         placeholder={t("picker.searchCollections")}
         queryKey={["picker-collections", onSale]}
-        load={async (term, signal) => (await searchCollections(term, { onSale }, { client: shopClient(), signal })).map((c) => ({ value: c.contractAddress.toLowerCase(), label: c.name }))}
+        load={async (term, signal) => (await searchCollections(term, { onSale }, shopReads(signal))).map((c) => ({ value: c.contractAddress.toLowerCase(), label: c.name }))}
         exclude={collection ? [collection] : []}
         onPick={(address) => onChange(address)}
         testId="collection-picker"

@@ -22,8 +22,8 @@ import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
 import { toFavoriteItem, type FavoriteItem } from "../../lib/catalog";
 import { LoadFailure, Loading } from "../../components/kit";
 import infoIcon from "./info.svg?url";
-import "./rankingstable.css";
 import { shopClient } from "../../../api/host";
+import "./rankingstable.css";
 
 const ENTITIES: RankingEntity[] = ["wearables", "emotes", "creators", "collectors"];
 const ENTITY_TITLE: Record<RankingEntity, string> = { wearables: "Wearables", emotes: "Emotes", creators: "Creators", collectors: "Collectors" };
