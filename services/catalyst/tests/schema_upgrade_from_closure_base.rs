@@ -322,7 +322,7 @@ async fn client_events_filenode(pool: &PgPool) -> i64 {
 /// `0037_social_badge_processor`: the table is not rewritten, the kept events
 /// keep a NULL `seq` (they precede every cursor), a new one takes the
 /// sequence's first number, and the object pass adds the sequence, the
-/// cursor table and both partial indexes.
+/// cursor tables and both partial indexes.
 async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
     assert_eq!(
         client_events_filenode(pool).await,
@@ -343,16 +343,18 @@ async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
     .await
     .unwrap();
     assert_eq!(next, 1);
-    let (cursors, seq_idx, moves_idx, owned): (bool, bool, bool, bool) = sqlx::query_as(
-        "SELECT to_regclass('social.badge_cursors') IS NOT NULL, \
+    let (cursors, gaps, seq_idx, moves_idx, owned): (bool, bool, bool, bool, bool) =
+        sqlx::query_as(
+            "SELECT to_regclass('social.badge_cursors') IS NOT NULL, \
+                to_regclass('social.badge_cursor_gaps') IS NOT NULL, \
                 to_regclass('social.client_events_seq_idx') IS NOT NULL, \
                 to_regclass('social.client_events_session_moves_idx') IS NOT NULL, \
                 pg_get_serial_sequence('social.client_events', 'seq') = 'social.client_events_seq'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    assert!(cursors && seq_idx && moves_idx && owned);
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert!(cursors && gaps && seq_idx && moves_idx && owned);
 }
 
 #[tokio::test]

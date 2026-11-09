@@ -910,6 +910,27 @@ CREATE TABLE social.badge_cursors (
     CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
 );
 
+-- Ids an id cursor (`client_events`, `deployments`) passed without seeing
+-- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- cursor read past it (sequence order is not commit order), or one that
+-- never commits (a rollback, an ON CONFLICT that burned it). Every batch
+-- re-reads them and processes a row that appeared; a gap is dropped once
+-- every transaction that held an id when it was found has ended (`horizon`,
+-- the id of the transaction that found it, taken after its scan, at or
+-- below a later snapshot's xmin) and it is older than the processor's
+-- grace. At most 5,000 per source: at the cap the cursor holds.
+CREATE TABLE social.badge_cursor_gaps (
+    source text NOT NULL,
+    lo bigint NOT NULL,
+    hi bigint NOT NULL,
+    horizon bigint NOT NULL,
+    seen_at timestamp without time zone NOT NULL,
+    CONSTRAINT badge_cursor_gaps_pkey PRIMARY KEY (source, lo),
+    CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
+    CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)
+        REFERENCES social.badge_cursors (source) ON DELETE CASCADE
+);
+
 -- Presence badges (upstream presence_badges, same columns): where a catalog
 -- badge counts (a scene by its base parcel, or a world), inside which UTC
 -- window, and the rule: a visit, or a stay of required_seconds. The badge's

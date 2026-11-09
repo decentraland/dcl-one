@@ -17,10 +17,18 @@ use serde_json::Value;
 use sqlx::PgConnection;
 
 use super::super::evaluators::{self as ev, Move};
-use super::{Pass, award, completed, horizon, init_cursor, lock_cursor, settled_sql};
+use super::{IdSource, Keyed, Pass, award, completed, read_ids};
 use crate::identity::Address;
 
 pub const SOURCE: &str = "client_events";
+
+const READ: IdSource = IdSource {
+    name: SOURCE,
+    select: "SELECT e.seq, e.source, e.sub_type, e.address, e.session_id, e.reported_at, e.metadata \
+             FROM social.client_events e",
+    key: "e.seq",
+    head: "SELECT coalesce(max(seq), 0) FROM social.client_events",
+};
 
 /// `traveler.ts` `CACHE_TTL_IN_SECONDS`.
 const SESSION_GAP_MS: i64 = 2 * 3_600_000;
@@ -36,10 +44,15 @@ struct Row {
     session_id: Option<String>,
     reported_at: NaiveDateTime,
     metadata: Value,
-    settled: bool,
 }
 
-/// Drains settled rows past the cursor; returns the rows passed.
+impl Keyed for Row {
+    fn key(&self) -> i64 {
+        self.seq
+    }
+}
+
+/// Drains the rows past the cursor and in its gaps; returns the rows passed.
 pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
     let mut passed = 0;
     for _ in 0..super::MAX_BATCHES_PER_TICK {
@@ -55,34 +68,15 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
 /// One transaction: (rows passed, a full batch was passed).
 pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
     let mut tx = pass.pool.begin().await?;
-    let horizon = horizon(&mut tx).await?;
-    let Some((cursor, _)) = lock_cursor(&mut tx, SOURCE).await? else {
-        let head: i64 =
-            sqlx::query_scalar("SELECT coalesce(max(seq), 0) FROM social.client_events")
-                .fetch_one(&mut *tx)
-                .await?;
-        init_cursor(&mut tx, SOURCE, head, 0).await?;
+    let Some(read) = read_ids::<Row>(&mut tx, pass, &READ).await? else {
         tx.commit().await?;
         return Ok((0, false));
     };
-    let limit = pass.batch();
-    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT e.seq, e.source, e.sub_type, e.address, e.session_id, e.reported_at, e.metadata, \
-                {settled} AS settled \
-         FROM social.client_events e WHERE e.seq > $1 ORDER BY e.seq LIMIT $3",
-        settled = settled_sql("e", "$2")
-    )))
-    .bind(cursor)
-    .bind(&horizon)
-    .bind(limit)
-    .fetch_all(&mut *tx)
-    .await?;
-    let fetched = rows.len();
-    let rows: Vec<Row> = rows.into_iter().take_while(|r| r.settled).collect();
-    let Some(last) = rows.last().map(|r| r.seq) else {
+    if read.is_idle() {
         tx.rollback().await?;
         return Ok((0, false));
-    };
+    }
+    let rows = &read.rows;
     let addresses: Vec<String> = rows
         .iter()
         .map(|r| r.address.clone())
@@ -92,7 +86,7 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
     let done = completed(&mut tx, &addresses).await?;
     let mut titles = Titles::default();
     let now = crate::shared::now_utc();
-    for row in &rows {
+    for row in rows {
         if row.source != "client" || pass.too_old(row.reported_at, now) {
             continue;
         }
@@ -180,12 +174,9 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
             _ => {}
         }
     }
-    super::advance(&mut tx, SOURCE, last, 0).await?;
+    read.finish(&mut tx).await?;
     tx.commit().await?;
-    Ok((
-        rows.len() as u64,
-        rows.len() == fetched && fetched as i64 == limit,
-    ))
+    Ok((rows.len() as u64, read.more))
 }
 
 /// A JSON number, or a numeric string (the explorer sends either).

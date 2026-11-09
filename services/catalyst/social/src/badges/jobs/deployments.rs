@@ -12,10 +12,20 @@ use chrono::NaiveDateTime;
 use serde_json::Value;
 
 use super::super::evaluators::{self as ev, BusinessStep};
-use super::{Pass, award, completed, horizon, init_cursor, lock_cursor, settled_sql};
+use super::{IdSource, Keyed, Pass, award, completed, read_ids};
 use crate::identity::Address;
 
 pub const SOURCE: &str = "deployments";
+
+const READ: IdSource = IdSource {
+    name: SOURCE,
+    select: "SELECT d.id, d.entity_type, lower(d.deployer_address) AS deployer, \
+                    d.entity_pointers AS pointers, d.entity_timestamp, d.local_timestamp, \
+                    CASE WHEN d.entity_type = 'profile' THEN d.entity_metadata::jsonb END AS metadata \
+             FROM content.deployments d",
+    key: "d.id",
+    head: "SELECT coalesce(max(id), 0)::bigint FROM content.deployments",
+};
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -26,7 +36,12 @@ struct Row {
     entity_timestamp: NaiveDateTime,
     local_timestamp: NaiveDateTime,
     metadata: Option<Value>,
-    settled: bool,
+}
+
+impl Keyed for Row {
+    fn key(&self) -> i64 {
+        i64::from(self.id)
+    }
 }
 
 /// The wallet a deployment counts for.
@@ -73,41 +88,20 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
 
 pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
     let mut tx = pass.pool.begin().await?;
-    let horizon = horizon(&mut tx).await?;
-    let Some((cursor, _)) = lock_cursor(&mut tx, SOURCE).await? else {
-        let head: i64 =
-            sqlx::query_scalar("SELECT coalesce(max(id), 0)::bigint FROM content.deployments")
-                .fetch_one(&mut *tx)
-                .await?;
-        init_cursor(&mut tx, SOURCE, head, 0).await?;
+    let Some(read) = read_ids::<Row>(&mut tx, pass, &READ).await? else {
         tx.commit().await?;
         return Ok((0, false));
     };
-    let limit = pass.batch();
-    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT d.id, d.entity_type, lower(d.deployer_address) AS deployer, \
-                d.entity_pointers AS pointers, d.entity_timestamp, d.local_timestamp, \
-                CASE WHEN d.entity_type = 'profile' THEN d.entity_metadata::jsonb END AS metadata, \
-                {settled} AS settled \
-         FROM content.deployments d WHERE d.id > $1 ORDER BY d.id LIMIT $3",
-        settled = settled_sql("d", "$2")
-    )))
-    .bind(cursor)
-    .bind(&horizon)
-    .bind(limit)
-    .fetch_all(&mut *tx)
-    .await?;
-    let fetched = rows.len();
+    if read.is_idle() {
+        tx.rollback().await?;
+        return Ok((0, false));
+    }
+    let rows = &read.rows;
     let now = crate::shared::now_utc();
     let lag = pass
         .settings
         .deployment_max_lag
         .and_then(|l| chrono::Duration::from_std(l).ok());
-    let rows: Vec<Row> = rows.into_iter().take_while(|r| r.settled).collect();
-    let Some(last) = rows.last().map(|r| r.id) else {
-        tx.rollback().await?;
-        return Ok((0, false));
-    };
     let live: Vec<(&Row, Address)> = rows
         .iter()
         .filter(|r| matches!(r.entity_type.as_str(), "profile" | "scene" | "store"))
@@ -206,12 +200,9 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
             _ => {}
         }
     }
-    super::advance(&mut tx, SOURCE, i64::from(last), 0).await?;
+    read.finish(&mut tx).await?;
     tx.commit().await?;
-    Ok((
-        rows.len() as u64,
-        rows.len() == fetched && fetched as i64 == limit,
-    ))
+    Ok((rows.len() as u64, read.more))
 }
 
 #[cfg(test)]

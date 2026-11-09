@@ -2468,6 +2468,7 @@ fn social_states(
                     .then(|| Duration::from_secs(config.social.badges_event_max_age_secs)),
                 deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
                     .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
+                ..badges::jobs::ProcessorSettings::default()
             },
         },
     ));

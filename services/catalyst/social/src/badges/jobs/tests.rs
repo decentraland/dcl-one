@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::recount::{self, Recount};
 use super::sales::{self, Log};
-use super::{Pass, ProcessorSettings, client_events, deployments};
+use super::{Gap, Pass, ProcessorSettings, client_events, deployments, missing, subtract};
 use crate::notifications::store::test_support::{fresh_address, private_pool};
 
 const BASE: &str = "https://cdn.example";
@@ -23,6 +23,7 @@ fn pass(pool: &PgPool) -> Pass {
             enabled: true,
             ..ProcessorSettings::default()
         },
+        pinned_xmin: None,
     }
 }
 
@@ -74,43 +75,42 @@ async fn granted(pool: &PgPool, address: &str) -> Vec<String> {
     .unwrap()
 }
 
-/// Batches until every row is passed: the settled rule waits out write
-/// transactions open anywhere on the shared test cluster.
+/// Batches until one reports nothing more: every committed row is visible to
+/// the next batch, whatever else runs on the cluster.
 async fn drain_client_events(p: &Pass) -> u64 {
     let mut passed = 0;
     for _ in 0..100 {
-        let tail: Option<i64> = sqlx::query_scalar("SELECT max(seq) FROM social.client_events")
-            .fetch_one(&p.pool)
-            .await
-            .unwrap();
-        if cursor(&p.pool, client_events::SOURCE).await.map(|c| c.0) >= tail {
+        let (n, more) = client_events::batch(p).await.unwrap();
+        passed += n;
+        if !more {
             return passed;
         }
-        passed += client_events::batch(p).await.unwrap().0;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    panic!("client events never settled");
+    panic!("client events never drained");
 }
 
 async fn drain_deployments(p: &Pass) -> u64 {
     let mut passed = 0;
     for _ in 0..100 {
-        let tail: Option<i64> =
-            sqlx::query_scalar("SELECT max(id)::bigint FROM content.deployments")
-                .fetch_one(&p.pool)
-                .await
-                .unwrap();
-        if cursor(&p.pool, deployments::SOURCE).await.map(|c| c.0) >= tail {
+        let (n, more) = deployments::batch(p).await.unwrap();
+        passed += n;
+        if !more {
             return passed;
         }
-        passed += deployments::batch(p).await.unwrap().0;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    panic!("deployments never settled");
+    panic!("deployments never drained");
+}
+
+async fn gaps(pool: &PgPool, source: &str) -> Vec<(i64, i64)> {
+    sqlx::query_as("SELECT lo, hi FROM social.badge_cursor_gaps WHERE source = $1 ORDER BY lo")
+        .bind(source)
+        .fetch_all(pool)
+        .await
+        .unwrap()
 }
 
 async fn client_event(
-    pool: &PgPool,
+    conn: impl sqlx::PgExecutor<'_>,
     address: &str,
     sub_type: &str,
     session: Option<&str>,
@@ -127,7 +127,7 @@ async fn client_event(
     .bind(session)
     .bind(at)
     .bind(metadata)
-    .execute(pool)
+    .execute(conn)
     .await
     .unwrap();
 }
@@ -373,15 +373,7 @@ async fn a_database_error_leaves_the_cursor_and_the_batch_retries() {
     .execute(&pool)
     .await
     .unwrap();
-    let mut failed = false;
-    for _ in 0..100 {
-        if client_events::batch(&p).await.is_err() {
-            failed = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert!(failed, "the write fails once the row is settled");
+    assert!(client_events::batch(&p).await.is_err(), "the write fails");
     assert_eq!(
         cursor(&pool, client_events::SOURCE).await,
         before,
@@ -399,36 +391,6 @@ async fn a_database_error_leaves_the_cursor_and_the_batch_retries() {
             .unwrap()
             .2
     );
-}
-
-#[tokio::test]
-async fn an_unsettled_row_holds_the_cursor_before_it() {
-    let Some(pool) = private_pool("badges_settle").await else {
-        return;
-    };
-    let p = pass(&pool);
-    client_events::batch(&p).await.unwrap();
-    let a = fresh_address();
-    // An open transaction holds an id older than every later insert.
-    let mut open = pool.begin().await.unwrap();
-    sqlx::query("SELECT txid_current()")
-        .execute(&mut *open)
-        .await
-        .unwrap();
-    client_event(
-        &pool,
-        a.as_str(),
-        "vertical-height-reached",
-        None,
-        now(),
-        json!({"height": 600}),
-    )
-    .await;
-    let before = cursor(&pool, client_events::SOURCE).await;
-    assert_eq!(client_events::batch(&p).await.unwrap(), (0, false));
-    assert_eq!(cursor(&pool, client_events::SOURCE).await, before);
-    open.rollback().await.unwrap();
-    assert_eq!(drain_client_events(&p).await, 1);
 }
 
 #[tokio::test]
@@ -494,7 +456,7 @@ async fn an_imported_document_resumes() {
 }
 
 async fn deploy(
-    pool: &PgPool,
+    conn: impl sqlx::PgExecutor<'_>,
     entity_type: &str,
     deployer: &str,
     pointers: &[&str],
@@ -509,7 +471,7 @@ async fn deploy(
     .bind(format!("bafy{}", Uuid::new_v4().simple()))
     .bind(metadata)
     .bind(pointers.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-    .execute(pool)
+    .execute(conn)
     .await
     .unwrap();
 }
@@ -635,6 +597,135 @@ async fn an_archived_badge_is_not_awarded() {
     assert_eq!(drain_deployments(&p).await, 1, "the row is passed");
     assert_eq!(progress(&pool, a.as_str(), "land_architect").await, None);
     assert!(granted(&pool, a.as_str()).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_younger_transaction_holding_a_lower_id_is_read_when_it_commits() {
+    let Some(pool) = private_pool("badges_gap_commit").await else {
+        return;
+    };
+    let mut p = pass(&pool);
+    // No grace: only the horizon keeps the gap while its writer is open.
+    p.settings.gap_grace = std::time::Duration::ZERO;
+    deployments::batch(&p).await.unwrap();
+    let (a, b) = (fresh_address(), fresh_address());
+    let mut older = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_current_xact_id()")
+        .execute(&mut *older)
+        .await
+        .unwrap();
+    // The younger transaction draws the lower id, the older one commits first.
+    let mut younger = pool.begin().await.unwrap();
+    deploy(&mut *younger, "scene", b.as_str(), &["4,4"], json!({})).await;
+    deploy(&mut *older, "scene", a.as_str(), &["5,5"], json!({})).await;
+    older.commit().await.unwrap();
+
+    assert_eq!(deployments::batch(&p).await.unwrap(), (1, false));
+    let (at, _) = cursor(&pool, deployments::SOURCE).await.unwrap();
+    assert_eq!(gaps(&pool, deployments::SOURCE).await, [(at - 1, at - 1)]);
+    assert!(
+        progress(&pool, a.as_str(), "land_architect")
+            .await
+            .unwrap()
+            .2
+    );
+    assert_eq!(
+        deployments::batch(&p).await.unwrap(),
+        (0, false),
+        "the writer is still open"
+    );
+    assert_eq!(gaps(&pool, deployments::SOURCE).await, [(at - 1, at - 1)]);
+
+    younger.commit().await.unwrap();
+    assert_eq!(deployments::batch(&p).await.unwrap(), (1, false));
+    assert!(
+        progress(&pool, b.as_str(), "land_architect")
+            .await
+            .unwrap()
+            .2
+    );
+    assert!(gaps(&pool, deployments::SOURCE).await.is_empty());
+    assert_eq!(cursor(&pool, deployments::SOURCE).await, Some((at, 0)));
+}
+
+#[tokio::test]
+async fn a_rolled_back_id_is_a_gap_until_no_transaction_can_hold_it() {
+    let Some(pool) = private_pool("badges_gap_expiry").await else {
+        return;
+    };
+    let mut p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let mut rolled = pool.begin().await.unwrap();
+    client_event(
+        &mut *rolled,
+        a.as_str(),
+        "vertical-height-reached",
+        None,
+        now(),
+        json!({"height": 600}),
+    )
+    .await;
+    client_event(&pool, a.as_str(), "used-emote", None, now(), json!({})).await;
+    rolled.rollback().await.unwrap();
+
+    assert_eq!(client_events::batch(&p).await.unwrap(), (1, false));
+    let (at, _) = cursor(&pool, client_events::SOURCE).await.unwrap();
+    let gap = [(at - 1, at - 1)];
+    assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
+    // Every transaction has ended, but the gap is younger than the grace.
+    p.pinned_xmin = Some(i64::MAX);
+    client_events::batch(&p).await.unwrap();
+    assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
+    // Past the grace, but a transaction that held it may still run.
+    p.settings.gap_grace = std::time::Duration::ZERO;
+    p.pinned_xmin = Some(0);
+    client_events::batch(&p).await.unwrap();
+    assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
+    // Both: dropped, the cursor where it was.
+    p.pinned_xmin = Some(i64::MAX);
+    assert_eq!(client_events::batch(&p).await.unwrap(), (0, false));
+    assert!(gaps(&pool, client_events::SOURCE).await.is_empty());
+    assert_eq!(cursor(&pool, client_events::SOURCE).await, Some((at, 0)));
+    assert_eq!(progress(&pool, a.as_str(), "vertical_voyager").await, None);
+}
+
+fn gap(lo: i64, hi: i64) -> Gap {
+    Gap {
+        lo,
+        hi,
+        horizon: 7,
+        seen_at: NaiveDateTime::default(),
+    }
+}
+
+#[test]
+fn found_ids_split_their_gaps() {
+    let gaps = [gap(1, 1), gap(3, 9), gap(20, 22)];
+    assert_eq!(
+        subtract(&gaps, &[1, 3, 5, 9, 21]),
+        [gap(4, 4), gap(6, 8), gap(20, 20), gap(22, 22)]
+    );
+    assert_eq!(subtract(&gaps, &[]), gaps);
+}
+
+#[test]
+fn missing_ids_become_ranges_within_the_room() {
+    assert_eq!(
+        missing(10, &[11, 12, 15, 20], 5),
+        (vec![(13, 14), (16, 19)], 4)
+    );
+    assert_eq!(
+        missing(10, &[13, 15, 20], 1),
+        (vec![(11, 12)], 1),
+        "holds at the cap"
+    );
+    assert_eq!(missing(10, &[13], 0), (vec![], 0));
+    assert_eq!(
+        missing(10, &[11], 0),
+        (vec![], 1),
+        "a contiguous row needs no room"
+    );
 }
 
 async fn chain_ready(pool: &PgPool, indexer: &str, block: i64) {

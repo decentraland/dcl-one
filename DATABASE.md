@@ -1315,16 +1315,49 @@ the cursor row `FOR UPDATE`, the batch's progress writes through
 back and the next tick reads the same rows; a row an evaluator cannot read is
 logged and passed. Invariants: a cursor never moves past a row it did not
 pass; its first pass records the source's head and replays no history; a
-recount's first pass writes no notification; `seq` and `id` are drawn before
-their transactions commit, so the id cursors pass a row only when its
-inserting transaction precedes the snapshot's `xmin` (every transaction older
-than it has ended) and stop at the first that does not, which a long write
-transaction anywhere on the cluster delays but never skips. The narrow
-remaining gap is a writer between drawing its sequence value and taking its
-transaction id, both inside the one inserting statement. A deployment stored
+recount's first pass writes no notification.
+
+The id cursors (`client_events` by `seq`, `deployments` by `id`) never skip a
+committed row. A sequence value is drawn before its transaction commits, so
+ids become visible out of order: the sync flushes insert concurrent batches,
+and a younger transaction can hold a lower id than rows an older one already
+committed. A batch therefore passes every visible row past the cursor and
+records each run of ids it passed without seeing in
+`social.badge_cursor_gaps` (`lo..=hi`, the `horizon` and `seen_at` of the scan
+that found it). The invariant: every id at or below a cursor's position is
+processed or inside a gap of that source. Each batch first re-reads the gaps
+and processes the rows that appeared (out of id order, as upstream's queue
+delivered them), then drops a gap only when both hold:
+
+- its `horizon` is at or below the `xmin` of a snapshot taken before the
+  re-read that still misses it. The horizon is the transaction id of the
+  batch that found the gap, which reads the cursor without a lock, scans,
+  and only then locks the cursor row, which assigns that id: every
+  transaction that had an id at the scan, so every one that could hold an id
+  of the gap, has a lower one. (A snapshot's `xmax` is one past the highest
+  completed id; a transaction still running can be above it.) Once `xmin`
+  reaches the horizon all of them have ended, and a committed row would have
+  been visible to the re-read. A batch that finds the cursor row changed when
+  it locks it (a second runner after a lease expiry) writes nothing;
+- it is older than the grace (600 s). A writer draws the value inside its
+  INSERT just before it takes its transaction id (the row's default is
+  evaluated before the heap insert assigns the id), so a writer between the
+  two at the scan is not under the horizon. Neither table has a BEFORE
+  INSERT trigger, so that window is one row's projection, microseconds; the
+  grace covers it by orders of magnitude.
+
+Values that never commit (a rolled-back flush, a value an `ON CONFLICT DO
+NOTHING` burned, as every redelivered Segment event does) are what expire. A long
+write transaction anywhere on the cluster delays expiry, never a row: rows
+are processed as soon as they are visible. A source holds at most 5,000 gap
+ranges; at the cap its cursor passes no row that would open another until
+gaps resolve (it holds, it does not skip). The first pass starts at the
+head, so a row still uncommitted below the head when a cursor is created is
+history and not read. A deployment stored
 more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
 timestamp is history a syncing node caught up on and is passed without
 effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
 `EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0037_social_badge_processor`
-adds `seq`; the object pass creates `social.badge_cursors` and both indexes.
+adds `seq`; the object pass creates `social.badge_cursors`,
+`social.badge_cursor_gaps` and both indexes.
 
