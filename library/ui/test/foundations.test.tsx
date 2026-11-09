@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -15,6 +15,50 @@ const fontPackageRoot = path.resolve(
 const layerOrder = '@layer dcl.reset, dcl.foundations, dcl.components;'
 
 describe('when a consumer loads shared foundations', () => {
+  describe('and the composition stylesheets are loaded', () => {
+    let entry: string
+    let inter: string
+
+    beforeEach(async () => {
+      entry = await readFile(path.join(foundationRoot, 'foundations.css'), 'utf8')
+      inter = await readFile(path.join(foundationRoot, 'typography/inter.css'), 'utf8')
+    })
+
+    it('should preserve all four imports after the cascade order statement', () => {
+      expect(entry.indexOf('@import')).toBeGreaterThan(entry.indexOf(layerOrder))
+      expect([...entry.matchAll(/@import/g)]).toHaveLength(4)
+      for (const file of [
+        'typography/inter.css',
+        'colors/colors.css',
+        'spacing/spacing.css',
+        'layout/layout.css'
+      ])
+        expect(entry).toContain(file)
+    })
+
+    it('should preserve all seven bundled font faces', () => {
+      expect([...inter.matchAll(/@font-face/g)]).toHaveLength(7)
+      for (const file of Object.keys(fontSource.files)) expect(inter).toContain(file)
+    })
+  })
+
+  describe('and shipped foundation code is inspected', () => {
+    let files: string[]
+
+    beforeEach(async () => {
+      files = (await readdir(foundationRoot, { recursive: true })).filter((file) =>
+        /\.(tsx?|css)$/.test(file)
+      )
+    })
+
+    it('should contain no excluded test token in public code', async () => {
+      for (const file of files)
+        expect(await readFile(path.join(foundationRoot, file), 'utf8')).not.toMatch(
+          /primaryBlueTest|primary-blue-test|Primary blue TEST/i
+        )
+    })
+  })
+
   describe.each([
     'foundations.css',
     'colors/colors.css',
