@@ -738,6 +738,24 @@ pub async fn authorize_group(
         ApiError::Internal("CREDITS_MANAGER_CONTRACT is not an address".to_string())
     })?;
 
+    // A purchase that names itself is recovered from what it reserved, before the
+    // index, the gate, the feed, the catalogue or the price is read: those decide
+    // whether to issue a new credit, never whether to hand back the one it has.
+    if let Some(digest) = request_digest {
+        if let Some(prior) = state
+            .credits
+            .authorization_for_key(idempotency_key, signer)
+            .await?
+        {
+            if prior.request_digest.as_deref() != Some(digest) {
+                return Err(AuthorizeError::OperationReused);
+            }
+            let (issued, lines) =
+                replayed(state, &prior.id, buyer, manager, chain_id, None, "").await?;
+            return credit_out(&wallet, issued, lines, single, signer, true);
+        }
+    }
+
     if state.usage.ready_at(chrono::Utc::now()).await.is_none() {
         return Err(AuthorizeError::Unavailable {
             source: usage::SOURCE,
