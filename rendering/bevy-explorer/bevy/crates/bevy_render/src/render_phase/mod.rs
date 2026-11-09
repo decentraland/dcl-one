@@ -67,7 +67,6 @@ use bevy_ecs::{
 };
 use core::{fmt::Debug, hash::Hash, iter, marker::PhantomData, ops::Range, slice::SliceIndex};
 use smallvec::SmallVec;
-use tracing::warn;
 
 /// Stores the rendering instructions for a single phase that uses bins in all
 /// views.
