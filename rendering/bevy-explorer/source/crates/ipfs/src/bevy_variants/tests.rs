@@ -130,18 +130,43 @@ fn selects_the_first_variant_this_client_takes() {
     )
     .is_some());
 
-    // model variants have no row yet: `glb` embeds KTX2 under KHR_texture_basisu, which the glTF
-    // loader rejects, and `glb-meshopt` waits for the loader's meshopt decoder
-    for format in ["glb", "glb-meshopt"] {
-        let models = [variant(VARIANT_CID, "model", format)];
-        assert!(supported_format(&models[0]).is_none());
-        assert!(select_variant(&models, "models/a.glb", true, none_bad).is_none());
-        assert!(select_variant(&models, "models/a.gltf", true, none_bad).is_none());
+    // `glb` embeds KTX2 under KHR_texture_basisu, which the glTF loader rejects: never taken
+    let glb = [variant(VARIANT_CID, "model", "glb")];
+    assert!(supported_format(&glb[0]).is_none());
+    assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_none());
+    // `glb-meshopt` only with the glTF loader's meshopt decoder
+    let meshopt = [variant(VARIANT_CID, "model", "glb-meshopt")];
+    #[cfg(not(feature = "meshopt-variants"))]
+    {
+        assert!(supported_format(&meshopt[0]).is_none());
+        assert!(select_variant(&meshopt, "models/a.glb", true, none_bad).is_none());
+        assert!(select_variant(&meshopt, "models/a.gltf", true, none_bad).is_none());
+        assert_eq!(
+            taken_formats(),
+            "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb, glb-meshopt"
+        );
+        assert!(!could_have_variant("a.glb"));
     }
-    assert_eq!(
-        taken_formats(),
-        "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb, glb-meshopt"
-    );
+    #[cfg(feature = "meshopt-variants")]
+    {
+        assert_eq!(
+            supported_format(&meshopt[0]).map(|row| row.decoded),
+            Some(Decoded::AsIs)
+        );
+        // a model needs no BC on the GPU, and is matched by its extension only
+        for (path, bc) in [("models/a.glb", true), ("models/A.GLTF", false)] {
+            assert!(select_variant(&meshopt, path, bc, none_bad).is_some());
+        }
+        assert!(select_variant(&meshopt, "noextension", true, none_bad).is_none());
+        assert!(select_variant(&meshopt, "models/a.png", true, none_bad).is_none());
+        // a model never replaces a texture: the texture list above still skips `.glb`
+        assert!(select_variant(&variants, "models/a.glb", true, none_bad).is_none());
+        assert_eq!(
+            taken_formats(),
+            "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS), glb-meshopt (meshopt streams decoded by the glTF loader); not glb"
+        );
+        assert!(could_have_variant("a.glb") && could_have_variant("a.GLTF"));
+    }
     // a kind/format pair the schema does not have
     assert!(select_variant(
         &[variant(VARIANT_CID, "model", "ktx2-bc7")],
@@ -151,7 +176,7 @@ fn selects_the_first_variant_this_client_takes() {
     )
     .is_none());
     assert!(could_have_variant("a.KTX2") && could_have_variant("a"));
-    assert!(!could_have_variant("main.crdt") && !could_have_variant("a.glb"));
+    assert!(!could_have_variant("main.crdt") && !could_have_variant("a.mp3"));
 }
 
 #[test]
@@ -294,6 +319,18 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>
 /// A scene with `tex.png` = [`ORIGINAL_CID`], whose manifest offers `variant_cid` as BC7 KTX2,
 /// served from `base` (which is also the realm's content server).
 async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str, variant_cid: &str) {
+    scene_with_variant_of(io, base, "tex.png", "texture", "ktx2-bc7", variant_cid).await
+}
+
+/// A scene with one content file whose original has one variant, with a loaded manifest.
+async fn scene_with_variant_of(
+    io: &Arc<IpfsIo>,
+    base: &str,
+    file: &str,
+    kind: &str,
+    format: &str,
+    variant_cid: &str,
+) {
     let about = ServerAbout {
         content: Some(EndpointConfig {
             healthy: true,
@@ -307,7 +344,7 @@ async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str, variant_cid: &str) {
         context.entities.insert(
             SCENE.to_owned(),
             IpfsEntity {
-                collection: ContentMap::new_single("tex.png".to_owned(), ORIGINAL_CID.to_owned()),
+                collection: ContentMap::new_single(file.to_owned(), ORIGINAL_CID.to_owned()),
                 metadata: None,
             },
         );
@@ -324,7 +361,7 @@ async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str, variant_cid: &str) {
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
         r#"{{"v": 2, "entity": "{SCENE}", "files": {{"{ORIGINAL_CID}": [
-            {{"path": "{}", "cid": "{variant_cid}", "kind": "texture", "format": "ktx2-bc7"}}
+            {{"path": "{}", "cid": "{variant_cid}", "kind": "{kind}", "format": "{format}"}}
         ]}}}}"#,
         served_path(variant_cid)
     );
@@ -386,6 +423,52 @@ async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
     assert_eq!(
         (session.downloaded, session.cached, session.fallbacks),
         (1, 2, 0)
+    );
+    drop(session);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `glb-meshopt` model variant is handed to the loader of the original `.glb` path as it is,
+/// and cached under the variant cid alone.
+#[cfg(feature = "meshopt-variants")]
+#[tokio::test]
+async fn a_verified_model_variant_is_served_as_is_and_cached_under_its_own_cid() {
+    let (io, dir) = io_with_cache("served-model");
+    let variant_route = format!("/{}", served_path(VARIANT_CID));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), variant_bytes()),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(
+        &io,
+        &base,
+        "models/a.glb",
+        "model",
+        "glb-meshopt",
+        VARIANT_CID,
+    )
+    .await;
+    let path = content_path("models/a.glb");
+
+    assert_eq!(read_all(&io, &path).await, variant_bytes());
+    assert!(io.served_bevy_variant(&path));
+    assert_eq!(
+        std::fs::read(dir.join(VARIANT_CID)).unwrap(),
+        variant_bytes()
+    );
+    assert!(!dir.join(format!("{VARIANT_CID}.dds")).exists());
+    assert!(!dir.join(ORIGINAL_CID).exists());
+
+    // a warm read is the cached variant
+    assert_eq!(read_all(&io, &path).await, variant_bytes());
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 0);
+    let session = io.bevy_variants.session.lock().unwrap();
+    assert_eq!(
+        (session.downloaded, session.cached, session.fallbacks),
+        (1, 1, 0)
     );
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();

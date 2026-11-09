@@ -127,11 +127,13 @@ Excluded from variants: source maps, audio, video and scene code.
 - The supported formats are one table in the manifest client
   (`crates/ipfs/src/bevy_variants`): the schema's `kind`/`format` pair, the file
   types it may replace, what the GPU must support and what the bytes decode as.
-  Today the table holds the three BC texture formats. `glb` is not taken
-  because the glTF loader rejects a file that requires `KHR_texture_basisu`;
-  `glb-meshopt` joins the table only behind the feature that compiles the glTF
-  loader's meshopt decoder in, so a build without the decoder keeps reading the
-  original GLB.
+  The table holds the three BC texture formats and, behind the `ipfs` crate's
+  `meshopt-variants` feature, `glb-meshopt`: its bytes are handed as they are to
+  the loader of the original `.glb`/`.gltf` path (the meshopt pre-pass glTF
+  loader), cached under the variant CID alone. The `decentra-bevy` crate, which
+  compiles that loader's decoder in, enables the feature; a build without it
+  keeps reading the original GLB. `glb` is not taken because the glTF loader
+  rejects a file that requires `KHR_texture_basisu`.
 
 ## Consequences
 

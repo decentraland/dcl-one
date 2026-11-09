@@ -390,7 +390,8 @@ system_api_types = { workspace = true }
 avatar = { workspace = true }
 comms = { workspace = true }
 input_manager = { workspace = true }
-ipfs = { workspace = true }
+# meshopt-variants: this crate's glTF loader decodes EXT_meshopt_compression (meshopt_ext)
+ipfs = { workspace = true, features = ["meshopt-variants"] }
 system_ui = { workspace = true }
 user_input = { workspace = true }
 visuals = { workspace = true }
