@@ -16,7 +16,13 @@ module.exports = {
   },
   // ESM-only dependencies that need transforming. The lookahead spans the whole path so it finds
   // them under pnpm's node_modules/.pnpm/<name>@<version>/node_modules/ as well.
-  transformIgnorePatterns: ['node_modules/(?!.*@dcl/(ecs-math|quests-client)/)'],
+  transformIgnorePatterns: ['node_modules/(?!.*@dcl/ecs-math/)'],
+  // @dcl/smart-items and its specs import @dcl/sdk modules, which the root node_modules does not hold:
+  // tests use this tree's sources
+  moduleNameMapper: {
+    '^@dcl/sdk$': '<rootDir>/packages/@dcl/sdk/src/index.ts',
+    '^@dcl/sdk/(?!package\\.json$)(.*)$': '<rootDir>/packages/@dcl/sdk/src/$1'
+  },
   coverageDirectory: 'coverage',
   coverageThreshold: {
     global: {
@@ -72,6 +78,7 @@ module.exports = {
     'test',
     '(.)\\.(js)$',
     'packages/@dcl/playground-assets',
+    'packages/@dcl/inspector-service',
     'packages/@dcl/ecs/src/components/generated/pb',
     'packages/@dcl/ecs/src/components/generated/AvatarBase.gen.ts',
 
@@ -90,7 +97,8 @@ module.exports = {
   testMatch: ['**/*.spec.(ts|tsx)'],
   // Keep the default node_modules ignore, and exclude Claude Code worktrees so a
   // nested `.claude/worktrees/*` checkout doesn't get crawled and double-run.
-  testPathIgnorePatterns: ['/node_modules/', '/\\.claude/'],
+  // The inspector's specs run on vitest (make test-inspector).
+  testPathIgnorePatterns: ['/node_modules/', '/\\.claude/', '/packages/@dcl/inspector-(service|ui|bevy)/'],
   modulePathIgnorePatterns: ['/\\.claude/'],
   testEnvironment: 'node',
   setupFilesAfterEnv: ['./test/ecs/setup.ts']

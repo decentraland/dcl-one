@@ -5,7 +5,7 @@ import { Lifecycle } from '@well-known-components/interfaces'
 import { Authenticator, AuthChain } from '@dcl/crypto'
 import { dirname, resolve } from 'path'
 import { Router } from '@well-known-components/http-server'
-import { validateStepsAndConnections } from '@dcl/quests-client/dist-cjs/utils'
+import { validateStepsAndConnections } from './validation'
 import prompts from '../../logic/prompts'
 
 import { CreateQuest, QuestLinkerActionType } from './types'

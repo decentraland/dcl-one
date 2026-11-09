@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "declaration": true,
+    "stripInternal": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "removeComments": false
+  },
+  "include": ["src"],
+  "exclude": ["dist"],
+  "extends": "@dcl/sdk/types/tsconfig.ecs7.strict.json"
+}

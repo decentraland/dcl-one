@@ -3,7 +3,7 @@ import {
   dumpEngineToCrdtCommands,
   generateEntityNamesType,
   FileSystemInterface
-} from '@dcl/inspector'
+} from '@dcl/inspector-service'
 import type { IEngine as IEngineInspector } from '@dcl/ecs'
 import { CliComponents } from '../../components'
 import { createFileSystemInterfaceFromFsComponent } from '../start/data-layer/fs'

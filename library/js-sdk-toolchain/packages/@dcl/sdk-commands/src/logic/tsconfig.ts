@@ -57,6 +57,11 @@ const MAX_CHAIN = 16
  * an `extends` target cannot be resolved the setting in force is unknown: the file is left alone
  * and a warning says so.
  *
+ * The Creator Hub's scene template maps `@dcl/asset-packs/*` under `paths` to the copy nested in
+ * `@dcl/inspector`, which the SDK no longer installs: `@dcl/smart-items` replaces that package and
+ * the bundler resolves its imports there, so `@dcl/asset-packs` entries are pointed at it (a bare
+ * `@dcl/asset-packs` entry is added beside a wildcard one) and a warning says so.
+ *
  * Returns the files that were rewritten.
  */
 export async function fixTsconfigForTypescript7(
@@ -73,9 +78,10 @@ export async function fixTsconfigForTypescript7(
       i18next.t('warnings.bundle.tsconfig_strict_unresolved', { tsconfig, target: strict.unresolved })
     )
   }
+  const smartItems = await smartItemsDir(components, projectDir)
   for (const config of chain) {
     if (config.external) continue
-    const result = rewriteConfig(config, config === chain[0] && strict === undefined)
+    const result = rewriteConfig(config, config === chain[0] && strict === undefined, smartItems)
     if (!result) continue
     try {
       await components.fs.writeFile(config.file, result.text)
@@ -105,8 +111,42 @@ export async function fixTsconfigForTypescript7(
         i18next.t('warnings.bundle.tsconfig_strict_default_kept', { tsconfig: config.file })
       )
     }
+    if (result.smartItemsPath) {
+      printWarning(
+        components.logger,
+        i18next.t('warnings.bundle.tsconfig_asset_packs_paths', {
+          tsconfig: config.file,
+          target: result.smartItemsPath
+        })
+      )
+    }
   }
   return rewritten
+}
+
+/**
+ * The `@dcl/smart-items` package a build of `projectDir` bundles, as the project reaches it: the copy
+ * under its own `node_modules` (a path the tsconfig can carry across machines), else the nearest copy
+ * up the tree, else the one installed beside this package.
+ */
+async function smartItemsDir(components: TsconfigComponents, projectDir: string): Promise<string | undefined> {
+  for (let dir = path.resolve(projectDir); ; dir = path.dirname(dir)) {
+    const candidate = path.join(dir, 'node_modules', '@dcl', 'smart-items')
+    if (await components.fs.directoryExists(candidate)) return candidate
+    if (path.dirname(dir) === dir) break
+  }
+  try {
+    return path.dirname(require.resolve('@dcl/smart-items/package.json', { paths: [__dirname] }))
+  } catch {
+    return undefined
+  }
+}
+
+/** the `@dcl/smart-items` target of an `@dcl/asset-packs` paths key: `dist/<module>` lives at the same place */
+function smartItemsTarget(key: string, smartItems: string): string | undefined {
+  const match = /^@dcl\/asset-packs(?:\/(.*))?$/.exec(key)
+  if (!match) return undefined
+  return match[1] === undefined ? `${smartItems}/dist/index` : `${smartItems}/${match[1]}`
 }
 
 async function readConfigChain(
@@ -347,9 +387,15 @@ function relativeToFile(dir: string, target: string): string {
   return relative.startsWith('../') || relative === '..' ? relative : `./${relative}`
 }
 
-type Rewrite = { text: string; pathsChanged: boolean; starPath?: string; strictKept: boolean }
+type Rewrite = {
+  text: string
+  pathsChanged: boolean
+  starPath?: string
+  strictKept: boolean
+  smartItemsPath?: string
+}
 
-function rewriteConfig(config: ConfigFile, keepStrictDefault: boolean): Rewrite | undefined {
+function rewriteConfig(config: ConfigFile, keepStrictDefault: boolean, smartItems?: string): Rewrite | undefined {
   const dir = path.dirname(config.file)
   const editor = new ConfigEditor(config.text)
 
@@ -391,6 +437,24 @@ function rewriteConfig(config: ConfigFile, keepStrictDefault: boolean): Rewrite 
   }
   const pathsChanged = editor.changed
 
+  let smartItemsPath: string | undefined
+  if (smartItems && paths?.type === 'object') {
+    const relative = relativeToFile(dir, smartItems)
+    const keys = paths.children!.map((property) => property.children![0].value as string)
+    for (const key of keys) {
+      const target = smartItemsTarget(key, relative)
+      const value = findNodeAtLocation(paths, [key])
+      if (!target || value?.type !== 'array') continue
+      const entries: unknown[] = getNodeValue(value)
+      if (entries.length === 1 && entries[0] === target) continue
+      editor.replace(['compilerOptions', 'paths', key], [target])
+      smartItemsPath = relative
+    }
+    if (smartItemsPath && !keys.includes('@dcl/asset-packs')) {
+      editor.insert(['compilerOptions', 'paths'], '@dcl/asset-packs', oneLine([`${relative}/dist/index`]))
+    }
+  }
+
   let strictKept = false
   if (keepStrictDefault) {
     const compilerOptions = findNodeAtLocation(config.root, ['compilerOptions'])
@@ -403,7 +467,7 @@ function rewriteConfig(config: ConfigFile, keepStrictDefault: boolean): Rewrite 
     }
   }
 
-  return editor.changed ? { text: editor.text, pathsChanged, starPath, strictKept } : undefined
+  return editor.changed ? { text: editor.text, pathsChanged, starPath, strictKept, smartItemsPath } : undefined
 }
 
 function oneLine(values: unknown[]): string {

@@ -98,10 +98,12 @@
     "bundle": {
       "tsconfig_base_url_removed": "TypeScript 7 removed the \"baseUrl\" option: it was deleted from {{tsconfig}} and the \"paths\" entries were made relative to that file. Keep this change.",
       "tsconfig_star_path_added": "{{tsconfig}} now maps \"*\" to \"{{target}}\" under \"paths\", so imports that resolved through \"baseUrl\" keep working; delete that entry if the scene has no such imports.",
+      "tsconfig_asset_packs_paths": "{{tsconfig}} mapped \"@dcl/asset-packs\" under \"paths\" to a copy the SDK no longer installs: the entries now point at \"{{target}}\" (@dcl/smart-items, the package that replaces it and that the bundle uses). Keep this change.",
       "tsconfig_strict_default_kept": "TypeScript 7 turns \"strict\" on by default: {{tsconfig}} now sets \"strict\": false, the setting this scene was type-checked with so far. Switch it to true when the scene is ready for the strict checks.",
       "tsconfig_not_writable": "{{tsconfig}} uses the \"baseUrl\" option, which TypeScript 7 removed, and could not be rewritten: {{error}}. Delete \"baseUrl\" and start each \"paths\" entry with ./",
       "tsconfig_strict_unresolved": "TypeScript 7 turns \"strict\" on by default and {{tsconfig}} does not set it. Whether a file it extends does is unknown, because \"{{target}}\" could not be resolved, so \"strict\" was left alone: set it in {{tsconfig}} to choose the checks the scene builds with.",
-      "tsconfig_strict_not_writable": "{{tsconfig}} does not set \"strict\", which TypeScript 7 turns on by default, and could not be rewritten: {{error}}. Set \"strict\": false in it to keep the checks the scene was type-checked with so far, or true to adopt the strict checks."
+      "tsconfig_strict_not_writable": "{{tsconfig}} does not set \"strict\", which TypeScript 7 turns on by default, and could not be rewritten: {{error}}. Set \"strict\": false in it to keep the checks the scene was type-checked with so far, or true to adopt the strict checks.",
+      "asset_packs_literal": "The files {{files}} name smart-item components with the \"asset-packs::\" prefix, which the scene runtime no longer defines (engine.getComponent throws at run time): use the \"smart-items::\" prefix, e.g. engine.getComponent('smart-items::Actions')."
     }
   }
 }

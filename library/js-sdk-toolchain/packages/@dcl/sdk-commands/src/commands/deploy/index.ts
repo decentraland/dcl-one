@@ -207,7 +207,8 @@ export async function main(options: Options): Promise<ProgrammaticDeployResult |
   if (!skipBuild) {
     await buildScene(
       { ...options, args: { '--dir': projectRoot, '--watch': false, '--production': true, _: [] } },
-      project
+      project,
+      false
     )
   }
 

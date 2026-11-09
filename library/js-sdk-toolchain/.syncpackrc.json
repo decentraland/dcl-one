@@ -4,11 +4,13 @@
       "packages": ["**"],
       "dependencies": [
         "@dcl/ecs",
+        "@dcl/inspector-service",
         "@dcl/js-runtime",
         "@dcl/playground-assets",
         "@dcl/sdk",
         "@dcl/sdk-commands",
-        "@dcl/react-ecs"
+        "@dcl/react-ecs",
+        "@dcl/smart-items"
       ],
       "isIgnored": true
     }

@@ -98,3 +98,55 @@ describe('FsInterface', () => {
     })
   })
 })
+
+describe('FsInterface confinement', () => {
+  const fs = createFsComponent()
+  const root = path.resolve('/project')
+  const fsInterface = createFileSystemInterfaceFromFsComponent({ fs }, root)
+
+  beforeEach(() => {
+    fs.readFile = jest.fn().mockResolvedValue(Buffer.from('x'))
+    fs.fileExists = jest.fn().mockResolvedValue(true)
+    fs.writeFile = jest.fn().mockResolvedValue(undefined)
+    fs.directoryExists = jest.fn().mockResolvedValue(true)
+    fs.rm = jest.fn().mockResolvedValue(undefined)
+    fs.stat = jest.fn().mockResolvedValue({ size: 1 })
+    fs.readdir = jest.fn().mockResolvedValue([])
+  })
+
+  test('resolves relative paths against the project directory', async () => {
+    await fsInterface.readFile('assets/scene/main.composite')
+    expect(fs.readFile).toHaveBeenCalledWith(path.join(root, 'assets/scene/main.composite'))
+    await fsInterface.writeFile('./assets/pack/../notes.txt', Buffer.from('n'))
+    expect(fs.writeFile).toHaveBeenCalledWith(path.join(root, 'assets/notes.txt'), expect.anything())
+  })
+
+  test('accepts an absolute path inside the project', async () => {
+    expect(await fsInterface.existFile(path.join(root, 'scene.json'))).toBe(true)
+    expect(fs.fileExists).toHaveBeenCalledWith(path.join(root, 'scene.json'))
+  })
+
+  test.each(['..', '../secret.txt', 'assets/../../secret.txt', '/etc/passwd', path.resolve('/project-other/x')])(
+    'rejects %s in every operation without touching the disk',
+    async (input) => {
+      for (const operation of [
+        () => fsInterface.readFile(input),
+        () => fsInterface.existFile(input),
+        () => fsInterface.writeFile(input, Buffer.from('x')),
+        () => fsInterface.rm(input),
+        () => fsInterface.rmdir(input),
+        () => fsInterface.readdir(input),
+        () => fsInterface.stat(input)
+      ]) {
+        await expect(operation()).rejects.toThrow('outside the project')
+      }
+      for (const mocked of [fs.readFile, fs.fileExists, fs.writeFile, fs.rm, fs.stat, fs.readdir]) {
+        expect(mocked).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  test('reports the project directory as the working directory', () => {
+    expect(fsInterface.cwd()).toBe(pathToPosix(root))
+  })
+})

@@ -98,10 +98,12 @@
     "bundle": {
       "tsconfig_base_url_removed": "TypeScript 7 eliminó la opción \"baseUrl\": se quitó de {{tsconfig}} y las entradas de \"paths\" ahora son relativas a ese archivo. Conserva este cambio.",
       "tsconfig_star_path_added": "{{tsconfig}} ahora asigna \"*\" a \"{{target}}\" en \"paths\" para que los imports que se resolvían mediante \"baseUrl\" sigan funcionando; elimina esa entrada si la escena no tiene imports así.",
+      "tsconfig_asset_packs_paths": "{{tsconfig}} asignaba \"@dcl/asset-packs\" en \"paths\" a una copia que el SDK ya no instala: las entradas ahora apuntan a \"{{target}}\" (@dcl/smart-items, el paquete que lo reemplaza y que usa el bundle). Mantén este cambio.",
       "tsconfig_strict_default_kept": "TypeScript 7 activa \"strict\" por defecto: {{tsconfig}} ahora fija \"strict\": false, la configuración con la que esta escena se verificaba hasta ahora. Cámbialo a true cuando la escena esté lista para las verificaciones estrictas.",
       "tsconfig_not_writable": "{{tsconfig}} usa la opción \"baseUrl\", que TypeScript 7 eliminó, y no se pudo reescribir: {{error}}. Elimina \"baseUrl\" y comienza cada entrada de \"paths\" con ./",
       "tsconfig_strict_unresolved": "TypeScript 7 activa \"strict\" por defecto y {{tsconfig}} no lo fija. No se sabe si lo fija algún archivo que extiende, porque \"{{target}}\" no se pudo resolver, así que \"strict\" se dejó como está: fíjalo en {{tsconfig}} para elegir las verificaciones con las que se compila la escena.",
-      "tsconfig_strict_not_writable": "{{tsconfig}} no fija \"strict\", que TypeScript 7 activa por defecto, y no se pudo reescribir: {{error}}. Fija \"strict\": false en él para conservar las verificaciones con las que la escena se verificaba hasta ahora, o true para adoptar las verificaciones estrictas."
+      "tsconfig_strict_not_writable": "{{tsconfig}} no fija \"strict\", que TypeScript 7 activa por defecto, y no se pudo reescribir: {{error}}. Fija \"strict\": false en él para conservar las verificaciones con las que la escena se verificaba hasta ahora, o true para adoptar las verificaciones estrictas.",
+      "asset_packs_literal": "Los archivos {{files}} nombran componentes de smart items con el prefijo \"asset-packs::\", que el runtime de la escena ya no define (engine.getComponent falla en ejecución): usa el prefijo \"smart-items::\", p. ej. engine.getComponent('smart-items::Actions')."
     }
   }
 }

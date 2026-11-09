@@ -13,6 +13,8 @@ export const PLAYGROUND_ASSETS_PATH = resolve(process.cwd(), './packages/@dcl/pl
 export const ECS7_PATH = resolve(process.cwd(), './packages/@dcl/ecs')
 export const JS_RUNTIME = resolve(process.cwd(), './packages/@dcl/js-runtime')
 export const REACT_ECS = resolve(process.cwd(), './packages/@dcl/react-ecs')
+export const SMART_ITEMS = resolve(process.cwd(), './packages/@dcl/smart-items')
+export const INSPECTOR_SERVICE_PATH = resolve(process.cwd(), './packages/@dcl/inspector-service')
 
 export function commonChecks() {
   test('tooling is installed', () => {

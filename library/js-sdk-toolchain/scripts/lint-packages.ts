@@ -12,7 +12,8 @@ const packages = [
   'packages/@dcl/ecs',
   'packages/@dcl/sdk',
   'packages/@dcl/sdk-commands',
-  'packages/@dcl/react-ecs'
+  'packages/@dcl/react-ecs',
+  'packages/@dcl/smart-items'
   // 'packages/@dcl/js-runtime' - This package is ignored by ESLint
 ]
 

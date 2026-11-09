@@ -63,7 +63,11 @@ export async function main(options: Options) {
   }
 }
 
-export async function buildScene(options: Options, project: SceneProject | WearableProject) {
+/**
+ * Bundles a project. `projectDefaults` writes the build-time defaults into the project's scene.json
+ * and package.json: a build or a preview does, a deploy or a packaging step leaves the project as it is.
+ */
+export async function buildScene(options: Options, project: SceneProject | WearableProject, projectDefaults = true) {
   const canInstall = !options.args['--skip-install']
 
   if (canInstall) {
@@ -85,7 +89,8 @@ export async function buildScene(options: Options, project: SceneProject | Weara
       production: !!options.args['--production'],
       emitDeclaration: !!options.args['--emitDeclaration'],
       ignoreComposite: !!options.args['--ignoreComposite'],
-      customEntryPoint: !!options.args['--customEntryPoint']
+      customEntryPoint: !!options.args['--customEntryPoint'],
+      projectDefaults
     },
     project.scene
   )

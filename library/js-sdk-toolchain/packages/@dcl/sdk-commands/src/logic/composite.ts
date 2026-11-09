@@ -7,10 +7,11 @@ import {
   EntityMappingMode,
   LastWriteWinElementSetComponentDefinition
 } from '@dcl/ecs/dist-cjs'
-import { EditorComponentNames, EditorComponentsTypes, dumpEngineToCrdtCommands } from '@dcl/inspector'
+import { EditorComponentsTypes, dumpEngineToCrdtCommands } from '@dcl/inspector-service'
 
 import { CliComponents } from '../components'
 import { printError } from './beautiful-logs'
+import { SCRIPT_COMPONENT, renameLegacyComposite } from './smart-items'
 
 type CompositeComponents = Pick<CliComponents, 'logger' | 'fs'>
 type ScriptComponent = LastWriteWinElementSetComponentDefinition<EditorComponentsTypes['Script']>
@@ -51,7 +52,7 @@ export async function getAllComposites(
           `Composite file '${file}' is ${fileBuffer.length} bytes (cap ${COMPOSITE_FILE_MAX_BYTES}); refusing to parse.`
         )
       }
-      const json = JSON.parse(textDecoder.decode(fileBuffer))
+      const json = renameLegacyComposite(JSON.parse(textDecoder.decode(fileBuffer)))
       composites[file] = Composite.fromJson(json)
     } catch (err: any) {
       printError(
@@ -85,7 +86,7 @@ export async function getAllComposites(
         }
       })
 
-      const ScriptComponent = engine.getComponentOrNull(EditorComponentNames.Script) as ScriptComponent | null
+      const ScriptComponent = engine.getComponentOrNull(SCRIPT_COMPONENT) as ScriptComponent | null
       if (ScriptComponent) {
         for (const [entity, { value }] of engine.getEntitiesWith(ScriptComponent)) {
           for (const script of value) {

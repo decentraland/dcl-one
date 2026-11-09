@@ -7,11 +7,19 @@ describe('It should dump the engine to a crdt buffer', () => {
     // const engine = Engine()
     const Component = engine.defineComponent('myComponent', { id: Schemas.String })
 
+    const LocalOnly = engine.defineComponent('localOnly', { id: Schemas.String })
+
     // Entity that should be added to the dump
     const entity = engine.addEntity()
     NetworkEntity.create(entity, { networkId: 1, entityId: entity })
     Component.create(entity, { id: 'boedo' })
-    SyncComponents.create(entity)
+    LocalOnly.create(entity, { id: 'stays home' })
+    SyncComponents.create(entity, { componentIds: [Component.componentId] })
+
+    // Networked, but the scene never said what to sync: nothing leaves
+    const silent = engine.addEntity()
+    NetworkEntity.create(silent, { networkId: 1, entityId: silent })
+    Component.create(silent, { id: 'silent' })
 
     // Ignore this entity
     const fakeEntity = 10 as Entity
@@ -21,6 +29,9 @@ describe('It should dump the engine to a crdt buffer', () => {
     await engine.update(1)
 
     const crdtBuffer = engineToCrdt(engine)
-    expect(Array.from(serializeCrdtMessages('test', crdtBuffer[0], engine))).toHaveLength(3)
+    const messages = Array.from(serializeCrdtMessages('test', crdtBuffer[0], engine))
+    expect(messages).toHaveLength(3)
+    expect(messages.join('\n')).not.toContain('localOnly')
+    expect(messages.join('\n')).not.toContain('silent')
   })
 })

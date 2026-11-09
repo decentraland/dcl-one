@@ -15,6 +15,7 @@ export default [
         'packages/@dcl/sdk/tsconfig.json',
         'packages/@dcl/playground-assets/tsconfig.json',
         'packages/@dcl/react-ecs/tsconfig.json',
+        'packages/@dcl/smart-items/tsconfig.json',
         'scripts/tsconfig.json',
         'test/tsconfig.json',
         'test/ecs/snippets/tsconfig.json'
@@ -37,7 +38,14 @@ export default [
     }
   },
   {
-    files: ['packages/@dcl/ecs/**/*.ts', 'packages/@dcl/sdk/**/*.ts', 'scripts/**/*.ts', 'test/**/*.ts'],
+    files: [
+      'packages/@dcl/ecs/**/*.ts',
+      'packages/@dcl/sdk/**/*.ts',
+      'packages/@dcl/smart-items/**/*.ts',
+      'packages/@dcl/smart-items/**/*.tsx',
+      'scripts/**/*.ts',
+      'test/**/*.ts'
+    ],
     rules: { 'no-console': 'off' }
   },
   {
@@ -49,6 +57,7 @@ export default [
       '**/*.js',
       'packages/@dcl/ecs/dist/**',
       'packages/@dcl/ecs/src/components/generated',
+      'packages/@dcl/inspector-service',
       'packages/@dcl/js-runtime',
       'packages/@dcl/playground-assets/dist',
       'packages/@dcl/sdk/dist/**',

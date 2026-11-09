@@ -82,6 +82,8 @@ jobs:
           # as upstream: the snapshot test rewrites a stale .crdt in place and still fails on it,
           # so the artifact below carries what to commit
           UPDATE_SNAPSHOTS: true
+      - name: Test the inspector packages (vitest)
+        run: make test-inspector
       - name: Upload the regenerated API report and snapshots
         # what a local `make update-snapshots` would commit, for a reviewer or an author without the toolchain
         if: always()

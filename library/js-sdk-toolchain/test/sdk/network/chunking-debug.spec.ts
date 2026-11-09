@@ -47,7 +47,7 @@ describe('Chunking Debug Tests', () => {
       description: 'This is a medium component for entity 1',
       values: [1, 2, 3, 4, 5]
     })
-    SyncComponents.create(entity1)
+    SyncComponents.create(entity1, { componentIds: [SmallComponent.componentId, MediumComponent.componentId] })
     entities.push(entity1)
 
     // Entity 2: Small + Large components
@@ -63,7 +63,7 @@ describe('Chunking Debug Tests', () => {
         { key: 'key3', value: 'value3'.repeat(100) }
       ]
     })
-    SyncComponents.create(entity2)
+    SyncComponents.create(entity2, { componentIds: [SmallComponent.componentId, LargeComponent.componentId] })
     entities.push(entity2)
 
     // Entity 3: All three components
@@ -85,14 +85,16 @@ describe('Chunking Debug Tests', () => {
         { key: 'meta4', value: 'data4'.repeat(80) }
       ]
     })
-    SyncComponents.create(entity3)
+    SyncComponents.create(entity3, {
+      componentIds: [SmallComponent.componentId, MediumComponent.componentId, LargeComponent.componentId]
+    })
     entities.push(entity3)
 
     // Entity 4: Only Small component (to test edge case)
     const entity4 = engine.addEntity()
     NetworkEntity.create(entity4, { networkId: 4, entityId: entity4 })
     SmallComponent.create(entity4, { id: 'entity4-small', value: 168 })
-    SyncComponents.create(entity4)
+    SyncComponents.create(entity4, { componentIds: [SmallComponent.componentId] })
     entities.push(entity4)
 
     // Entity 5: Large component only (to test single large message)
@@ -107,7 +109,7 @@ describe('Chunking Debug Tests', () => {
         { key: 'bigkey3', value: 'bigvalue3'.repeat(200) }
       ]
     })
-    SyncComponents.create(entity5)
+    SyncComponents.create(entity5, { componentIds: [LargeComponent.componentId] })
     entities.push(entity5)
 
     // Update engine to process all changes
@@ -293,12 +295,12 @@ describe('Chunking Debug Tests', () => {
     const entity1 = engine.addEntity()
     NetworkEntity.create(entity1, { networkId: 1, entityId: entity1 })
     SimpleComponent.create(entity1, { id: 'entity1', value: 100 })
-    SyncComponents.create(entity1)
+    SyncComponents.create(entity1, { componentIds: [SimpleComponent.componentId] })
 
     const entity2 = engine.addEntity()
     NetworkEntity.create(entity2, { networkId: 2, entityId: entity2 })
     SimpleComponent.create(entity2, { id: 'entity2', value: 200 })
-    SyncComponents.create(entity2)
+    SyncComponents.create(entity2, { componentIds: [SimpleComponent.componentId] })
 
     // Update engine to process all changes
     await engine.update(1)
@@ -354,7 +356,7 @@ describe('Chunking Debug Tests', () => {
       id: 'huge-test',
       massiveData: 'X'.repeat(20000) // 20KB string - should exceed LIVEKIT_MAX_SIZE
     })
-    SyncComponents.create(entity)
+    SyncComponents.create(entity, { componentIds: [HugeComponent.componentId] })
 
     await engine.update(1)
 

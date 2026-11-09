@@ -15,7 +15,9 @@ export interface dAppOptions {
   uri: string
 }
 
+/** The dApp is served from this machine and only pages on it may call its API. */
 export const LINKER_CORS_OPTIONS = {
+  origin: [/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
   methods: ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'],
   exposedHeaders: ['Location', 'Preference-Applied']
 }
@@ -32,7 +34,8 @@ export async function runDapp(
     async initComponents() {
       const config = createRecordConfigComponent({
         HTTP_SERVER_PORT: resolvedPort.toString(),
-        HTTP_SERVER_HOST: '0.0.0.0',
+        // the signing page carries the deployment's details: only the browser on this machine
+        HTTP_SERVER_HOST: '127.0.0.1',
         ...process.env
       })
       const logs = await createConsoleLogComponent({})

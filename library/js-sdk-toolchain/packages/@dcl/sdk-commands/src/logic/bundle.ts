@@ -10,6 +10,7 @@ import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import i18next from 'i18next'
+import { applyEdits, findNodeAtLocation, getNodeValue, modify, parseTree, ParseError } from 'jsonc-parser'
 
 import { CliComponents } from '../components'
 import { colors } from '../components/log'
@@ -43,6 +44,9 @@ export type CompileOptions = {
 
   ignoreComposite: boolean
   customEntryPoint: boolean
+
+  // write the project's build-time defaults (scene.json, package.json): `build` and `start`, never a deploy
+  projectDefaults: boolean
 }
 
 const MAX_STEP = 2
@@ -77,9 +81,9 @@ import { engine, NetworkEntity } from '@dcl/sdk/ecs'
 import * as sdk from '@dcl/sdk'
 import { compositeProvider } from '@dcl/sdk/composite-provider'
 import { compositeFromLoader } from '~sdk/all-composites'
-import { _initializeScripts, _initializeAssetPacks } from '~sdk/script-utils'
+import { _initializeScripts, _initializeSmartItems } from '~sdk/script-utils'
 
-_initializeAssetPacks()
+_initializeSmartItems()
 
 if ((entrypoint as any).main !== undefined) {
   function _INTERNAL_startup_system() {
@@ -104,6 +108,88 @@ export * from '@dcl/sdk'
 export * from ${safeEntrypointPath}
 export * from '~sdk/script-utils'
 `
+}
+
+/**
+ * Ensures a key exists in a JSON file. Supports dot-separated paths (e.g. "scripts.server-logs").
+ * Preserves existing values unless they match the supplied previous default, and keeps the file's
+ * formatting (indentation, line endings, comments) when it writes.
+ */
+async function ensureJsonKey(
+  components: BundleComponents,
+  filePath: string,
+  keyPath: string,
+  value: unknown,
+  previousDefault?: string
+): Promise<void> {
+  try {
+    const raw = await components.fs.readFile(filePath, 'utf-8')
+    const errors: ParseError[] = []
+    const tree = parseTree(raw, errors)
+    if (!tree || errors.length) return
+
+    const keys = keyPath.split('.')
+    const node = findNodeAtLocation(tree, keys)
+    const existing = node ? getNodeValue(node) : undefined
+    if (existing !== undefined && (previousDefault === undefined || existing !== previousDefault)) return
+
+    const indent = /\n([ \t]+)\S/.exec(raw)?.[1] ?? '  '
+    const formattingOptions = {
+      insertSpaces: indent[0] !== '\t',
+      tabSize: indent[0] === '\t' ? 1 : indent.length,
+      eol: raw.includes('\r\n') ? '\r\n' : '\n'
+    }
+    await components.fs.writeFile(filePath, applyEdits(raw, modify(raw, keys, value, { formattingOptions })))
+    printProgressInfo(
+      components.logger,
+      `${existing === undefined ? 'Added' : 'Updated'} ${colors.bold(`${keyPath}: ${JSON.stringify(value)}`)} in ${path.basename(filePath)}`
+    )
+  } catch (_) {
+    // read/write failed — skip silently
+  }
+}
+
+const SMART_ITEMS_SPECIFIER = '@dcl/smart-items'
+const SMART_ITEMS_IMPORT = /^@dcl\/(asset-packs|smart-items)(\/.*)?$/
+
+/**
+ * The `@dcl/smart-items` specifier an `@dcl/asset-packs` import resolves to: the package root and
+ * `dist/scene-entrypoint` map to the smart-items entry, `dist/<path>` (`.js` stripped) to the module
+ * at that path. Any other subpath returns undefined and resolves as written.
+ */
+export function smartItemsSpecifier(specifier: string): string | undefined {
+  if (specifier === '@dcl/asset-packs') return SMART_ITEMS_SPECIFIER
+  const match = /^@dcl\/asset-packs\/dist\/(.+?)(\.js)?$/.exec(specifier)
+  if (!match) return undefined
+  return match[1] === 'scene-entrypoint' ? SMART_ITEMS_SPECIFIER : `${SMART_ITEMS_SPECIFIER}/${match[1]}`
+}
+
+/**
+ * Resolves `@dcl/smart-items` imports, and the `@dcl/asset-packs` ones that map to it, from the first
+ * of `resolveDirs` that reaches the package: the scene, then this package (its dependency).
+ */
+export function smartItemsResolver(resolveDirs: string[]): esbuild.Plugin {
+  return {
+    name: 'smart-items-resolver',
+    setup(build) {
+      build.onResolve({ filter: SMART_ITEMS_IMPORT }, async (args) => {
+        if (args.pluginData === SMART_ITEMS_SPECIFIER) return undefined
+        const specifier = args.path.startsWith(SMART_ITEMS_SPECIFIER) ? args.path : smartItemsSpecifier(args.path)
+        if (!specifier) return undefined
+        let result: esbuild.ResolveResult | undefined
+        for (const resolveDir of resolveDirs) {
+          result = await build.resolve(specifier, {
+            kind: args.kind,
+            importer: args.importer,
+            resolveDir,
+            pluginData: SMART_ITEMS_SPECIFIER
+          })
+          if (!result.errors.length) break
+        }
+        return result
+      })
+    }
+  }
 }
 
 export async function bundleProject(components: BundleComponents, options: CompileOptions, sceneJson: Scene) {
@@ -143,9 +229,22 @@ export async function bundleProject(components: BundleComponents, options: Compi
     ? entrypoints.map((entrypoint) => ({ entrypoint, outputFile: entrypoint.replace(/\.ts$/, '.js') }))
     : [{ entrypoint: entrypoints[0], outputFile: sceneJson.main }]
 
+  // The project's build-time defaults: `build` and `start` write them, a deploy never edits the project
+  const projectDefaults = options.projectDefaults && !options.single
+  if (projectDefaults) {
+    await ensureJsonKey(
+      components,
+      path.join(options.workingDirectory, 'package.json'),
+      'scripts.server-logs',
+      'sdk-commands scene-insights tail',
+      'sdk-commands sdk-server-logs'
+    )
+  }
+
   for (const input of inputs) {
     await bundleSingleProject(components, {
       ...options,
+      projectDefaults,
       tsconfig,
       ...input
     })
@@ -158,6 +257,51 @@ type SingleProjectOptions = CompileOptions & {
   tsconfig: string
   entrypoint: string
   outputFile: string
+}
+
+/** A bundle input that belongs to `@dcl/sdk/server`: the scene uses the server APIs. */
+const SDK_SERVER_INPUT = /(^|\/)@dcl\/sdk\/server\//
+/** The component prefix the smart-items runtime dropped; `engine.getComponent` on it throws at run time. */
+const LEGACY_COMPONENT_LITERAL = 'asset-packs::'
+const SOURCE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/
+
+/**
+ * The scene's own source files among the bundle's inputs that still name components with the
+ * `asset-packs::` prefix, as `file:line`.
+ */
+async function legacyComponentLiterals(
+  components: BundleComponents,
+  options: SingleProjectOptions,
+  inputs: string[]
+): Promise<string[]> {
+  const found: string[] = []
+  for (const input of inputs) {
+    if (!SOURCE_FILE.test(input) || input.includes('node_modules/')) continue
+    const file = path.resolve(options.workingDirectory, input)
+    if (path.relative(options.workingDirectory, file).startsWith('..')) continue
+    if (!(await components.fs.fileExists(file))) continue
+    const text = await components.fs.readFile(file, 'utf-8')
+    const index = text.indexOf(LEGACY_COMPONENT_LITERAL)
+    if (index === -1) continue
+    found.push(`${input}:${text.slice(0, index).split('\n').length}`)
+  }
+  return found
+}
+
+/** What a successful build tells about the scene: the legacy component names it still uses and whether it has server code. */
+async function afterBuild(components: BundleComponents, options: SingleProjectOptions, result: esbuild.BuildResult) {
+  const inputs = Object.keys(result.metafile?.inputs ?? {})
+  try {
+    const literals = await legacyComponentLiterals(components, options, inputs)
+    if (literals.length) {
+      printWarning(components.logger, i18next.t('warnings.bundle.asset_packs_literal', { files: literals.join(', ') }))
+    }
+  } catch {
+    // a source file went away between the build and the scan: nothing to warn about
+  }
+  if (options.projectDefaults && inputs.some((input) => SDK_SERVER_INPUT.test(input))) {
+    await ensureJsonKey(components, path.join(options.workingDirectory, 'scene.json'), 'authoritativeMultiplayer', true)
+  }
 }
 
 export async function bundleSingleProject(components: BundleComponents, options: SingleProjectOptions) {
@@ -197,7 +341,11 @@ export async function bundleSingleProject(components: BundleComponents, options:
     metafile: true,
     absWorkingDir: options.workingDirectory,
     target: 'es2020',
-    external: ['~system/*', '@dcl/inspector', '@dcl/inspector/*' /* ban importing the inspector from the SDK */],
+    external: [
+      '~system/*',
+      '@dcl/inspector-service',
+      '@dcl/inspector-service/*' /* ban importing the inspector from the SDK */
+    ],
     alias: {
       // Ensure React is always resolved to the same module to prevent duplication
       react: (() => {
@@ -230,34 +378,6 @@ export async function bundleSingleProject(components: BundleComponents, options:
             return path.dirname(require.resolve('@dcl/ecs/package.json', { paths: [__dirname] }))
           }
         }
-      })(),
-      // Resolve asset-packs from the scene's own node_modules (if the user explicitly installed it),
-      // otherwise fall back to the version bundled inside @dcl/inspector.
-      // NOTE: We use a direct path check (fs.existsSync) instead of require.resolve here because
-      // require.resolve walks UP the directory tree from workingDirectory, which would incorrectly
-      // pick up @dcl/asset-packs installed next to the scene (e.g. at a monorepo root) rather
-      // than the one the user intentionally installed inside the scene.
-      '@dcl/asset-packs': (() => {
-        const sceneOwnAssetPacks = path.join(
-          options.workingDirectory,
-          'node_modules',
-          '@dcl',
-          'asset-packs',
-          'package.json'
-        )
-        if (fs.existsSync(sceneOwnAssetPacks)) {
-          return path.dirname(sceneOwnAssetPacks)
-        }
-        try {
-          // Fallback: resolve from @dcl/inspector's node_modules
-          const inspectorPath = require.resolve('@dcl/inspector/package.json', { paths: [__dirname] })
-          return path.dirname(
-            require.resolve('@dcl/asset-packs/package.json', { paths: [path.dirname(inspectorPath)] })
-          )
-        } catch {
-          // Last resort: try resolving from current directory
-          return path.dirname(require.resolve('@dcl/asset-packs/package.json', { paths: [__dirname] }))
-        }
       })()
     },
     // convert filesystem paths into file:// to enable VSCode debugger
@@ -280,7 +400,7 @@ export async function bundleSingleProject(components: BundleComponents, options:
     logOverride: {
       'import-is-undefined': 'silent'
     },
-    plugins: [compositeLoader(components, options)],
+    plugins: [smartItemsResolver([options.workingDirectory, __dirname]), compositeLoader(components, options)],
     stdin: {
       contents: getEntrypointCode(options.entrypoint, options.customEntryPoint),
       resolveDir: path.dirname(options.entrypoint),
@@ -299,8 +419,9 @@ export async function bundleSingleProject(components: BundleComponents, options:
 
     const debouncedRebuild = debounce(async () => {
       try {
-        await context.rebuild()
+        const result = await context.rebuild()
         printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
+        await afterBuild(components, options, result)
       } catch (err: any) {
         /* istanbul ignore next */
         components.logger.error(err.toString())
@@ -322,8 +443,9 @@ export async function bundleSingleProject(components: BundleComponents, options:
     // dead when a scene was opened with a pre-existing syntax error, with no
     // watcher alive to pick up the fix.
     try {
-      await context.rebuild()
+      const result = await context.rebuild()
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
+      await afterBuild(components, options, result)
     } catch (err: any) {
       /* istanbul ignore next */
       components.logger.error(err.toString())
@@ -331,8 +453,9 @@ export async function bundleSingleProject(components: BundleComponents, options:
     printProgressInfo(components.logger, `The compiler is watching for changes`)
   } else {
     try {
-      await context.rebuild()
+      const result = await context.rebuild()
       printProgressInfo(components.logger, `Bundle saved ${colors.bold(options.outputFile)}`)
+      await afterBuild(components, options, result)
     } catch (err: any) {
       /* istanbul ignore next */
       throw new CliError('BUNDLE_REBUILD_FAILED', i18next.t('errors.bundle.rebuild_failed', { error: err.toString() }))
@@ -591,14 +714,6 @@ function collectScriptData(
 }
 
 /**
- * Reads the runtime script TypeScript source for inlining as ESM
- */
-async function prepareRuntimeCode(fs: BundleComponents['fs']): Promise<string> {
-  const runtimeCodePath = path.join(__dirname, 'runtime-script.ts')
-  return fs.readFile(runtimeCodePath, 'utf-8')
-}
-
-/**
  * Generates the TypeScript declaration for the ~sdk/script-utils module
  */
 async function generateScriptModuleDeclaration(
@@ -645,11 +760,11 @@ async function updateSdkTypeDeclarations(
 /**
  * Minimal '~sdk/script-utils' for scenes with no scripts: same export surface,
  * empty-registry semantics, no embedded script runtime (skips the
- * @dcl/asset-packs payload and its glue).
+ * @dcl/smart-items payload and its glue).
  */
 function generateScriptStubModuleContent(): string {
   return `
-${ASSET_PACKS_NOOP}
+${SMART_ITEMS_NOOP}
 export function _initializeScripts(_engine) {}
 
 export function getScriptInstance(_entity, _scriptPath) {
@@ -671,32 +786,27 @@ export function callScriptMethod(entity, scriptPath, methodName, ..._args) {
 `
 }
 
-const ASSET_PACKS_BOOT = `
+const SMART_ITEMS_BOOT = `
 import { engine } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
 import players from '@dcl/sdk/players'
-import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'
-export function _initializeAssetPacks() {
-  initAssetPacks(engine, { syncEntity }, players)
+import { initSmartItems } from '@dcl/smart-items'
+export function _initializeSmartItems() {
+  initSmartItems(engine, { syncEntity }, players)
 }
 `
 
-const ASSET_PACKS_NOOP = 'export function _initializeAssetPacks() {}'
+const SMART_ITEMS_NOOP = 'export function _initializeSmartItems() {}'
 
 /**
  * Generates the virtual module content with script initialization and helper functions
  */
-function generateVirtualModuleContent(
-  runtimeImports: string,
-  runtimeCode: string,
-  scriptsArray: string,
-  editorScene: boolean
-): string {
+function generateVirtualModuleContent(runtimeImports: string, scriptsArray: string, editorScene: boolean): string {
   return `
-${editorScene ? ASSET_PACKS_BOOT : ASSET_PACKS_NOOP}
+${editorScene ? SMART_ITEMS_BOOT : SMART_ITEMS_NOOP}
+import { runScripts } from '@dcl/smart-items/scripts'
+export { getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod } from '@dcl/smart-items/scripts'
 ${runtimeImports}
-
-${runtimeCode}
 
 export function _initializeScripts(engine) {
   const scriptsArray = ${scriptsArray}
@@ -721,12 +831,10 @@ export async function generateInitializeScriptsModule(
     }
   }
 
-  const runtimeCode = await prepareRuntimeCode(components.fs)
-
   // default empty implementation if no scripts
   if (!hasScripts) {
     return {
-      contents: generateVirtualModuleContent('', runtimeCode, '[]', !!opts?.editorScene),
+      contents: generateVirtualModuleContent('', '[]', !!opts?.editorScene),
       watchFiles: []
     }
   }
@@ -744,12 +852,7 @@ export async function generateInitializeScriptsModule(
   )
 
   // Step 3: Generate virtual module content
-  const contents = generateVirtualModuleContent(
-    scriptData.runtimeImports,
-    runtimeCode,
-    scriptData.scriptsArray,
-    !!opts?.editorScene
-  )
+  const contents = generateVirtualModuleContent(scriptData.runtimeImports, scriptData.scriptsArray, !!opts?.editorScene)
 
   return { contents, watchFiles: scriptData.watchFiles }
 }

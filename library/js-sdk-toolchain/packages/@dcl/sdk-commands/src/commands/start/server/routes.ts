@@ -7,15 +7,25 @@ import { DataLayer } from '../data-layer/rpc'
 import { handleDataLayerWs } from '../data-layer/ws'
 import { PreviewComponents } from '../types'
 import { setupEcs6Endpoints } from './endpoints'
+import { setupStorageEndpoints } from './storage-service'
 import { setupRealmAndComms } from './realm'
+import { FORBIDDEN_RESPONSE, isLocalRequest } from './access'
 import { getLanUrl } from '../utils'
+import { lsdDeepLinkPulseParams } from '../dcl-env'
 
 export const sceneUpdateClients = new Set<WebSocket>()
-export async function wireRouter(components: PreviewComponents, workspace: Workspace, dataLayer?: DataLayer) {
+export async function wireRouter(
+  components: PreviewComponents,
+  workspace: Workspace,
+  dataLayer?: DataLayer,
+  dclenv: string = 'org'
+) {
   const router = new Router<PreviewComponents>()
 
   if (dataLayer) {
+    // the data layer reads and writes the project's files: only the editor on this machine
     router.get('/data-layer', async (ctx, next) => {
+      if (!isLocalRequest(ctx.request)) return FORBIDDEN_RESPONSE
       if (ctx.request.headers.get('upgrade') === 'websocket') {
         return upgradeWebSocketResponse((ws) => handleDataLayerWs(components, ws as any, dataLayer))
       }
@@ -51,7 +61,11 @@ export async function wireRouter(components: PreviewComponents, workspace: Works
     }
 
     const [x, y] = baseParcel.split(',')
-    const deepLink = `decentraland://open?preview=${lanUrl}&position=${x},${y}`
+    // same Pulse params as the terminal QR in start/index.ts
+    const deepLink = `decentraland://open?preview=${lanUrl}&position=${x},${y}${lsdDeepLinkPulseParams(
+      workspace.projects[0].workingDirectory,
+      dclenv
+    )}`
     const qrDataUrl = await QRCode.toDataURL(deepLink)
 
     return {
@@ -67,6 +81,7 @@ export async function wireRouter(components: PreviewComponents, workspace: Works
   })
 
   setupRealmAndComms(components, router, localSceneParcels)
+  setupStorageEndpoints(components, router, workspace)
   await setupEcs6Endpoints(components, router, workspace)
 
   components.server.setContext(components)

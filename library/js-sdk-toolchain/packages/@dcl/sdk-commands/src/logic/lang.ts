@@ -28,6 +28,6 @@ export function initLanguage(language: Language): Promise<unknown> {
     },
     backend: {
       loadPath: join(__dirname, '../locales/{{lng}}.json')
-    },
+    }
   })
 }

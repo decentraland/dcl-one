@@ -1,6 +1,6 @@
 import { Result } from 'arg'
 import { isAddress } from 'eth-connect'
-import { validateCreateQuest } from '@dcl/quests-client/dist-cjs/utils'
+import { validateCreateQuest } from './validation'
 import i18next from 'i18next'
 
 import { declareArgs } from '../../logic/args'

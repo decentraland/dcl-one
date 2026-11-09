@@ -1,6 +1,5 @@
 import { readdirSync, readFileSync } from 'fs'
 import { pathExistsSync } from 'fs-extra'
-import { readFile } from 'fs/promises'
 import { resolve } from 'path'
 import { flow, commonChecks } from './common'
 
@@ -77,9 +76,11 @@ function getMonorepoGraph(): Map<string, Set<string>> {
 
     const deps = new Set<string>()
 
-    const { dependencies, devDependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
+    // devDependencies are built in or build-time only, so they may close a cycle (the inspector
+    // builds against @dcl/sdk, which ships @dcl/sdk-commands, which embeds the inspector).
+    const { dependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
 
-    for (const [key] of Object.entries({ ...dependencies, ...devDependencies } as Record<string, string>)) {
+    for (const [key] of Object.entries({ ...dependencies } as Record<string, string>)) {
       if (key.startsWith('@dcl')) {
         const dependencyRootPath = resolve('packages', key)
         if (pathExistsSync(dependencyRootPath)) {
@@ -115,8 +116,10 @@ function detectCyclesTest(graph: Map<string, Set<string>>) {
 // fallback, since the folder's own version is not necessarily on npm.
 function pinProtocol(path: string) {
   const packageJson = resolve(path, 'package.json')
-  const { dependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
-  if (!dependencies || !('@dcl/protocol' in dependencies)) return
+  const { dependencies, devDependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
+  const field = [dependencies, devDependencies].findIndex((deps) => deps && '@dcl/protocol' in deps)
+  if (field < 0) return
+  const fieldName = field === 0 ? 'dependencies' : 'devDependencies'
   it(`pin @dcl/protocol in ${path}`, () => {
     const version = process.env.PROTOCOL_VERSION
     if (!version) {
@@ -128,7 +131,7 @@ function pinProtocol(path: string) {
     }
     patchJson('package.json', path, ($) => ({
       ...$,
-      dependencies: { ...$.dependencies, '@dcl/protocol': version }
+      [fieldName]: { ...$[fieldName], '@dcl/protocol': version }
     }))
   })
 }

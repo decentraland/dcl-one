@@ -24,6 +24,11 @@
     "strictFunctionTypes": true,
     "strictPropertyInitialization": true,
     "lib": ["ES2020"],
-    "types": ["@dcl/js-runtime"]
+    "types": ["@dcl/js-runtime"],
+    "paths": {
+      // hoisted beside @dcl/sdk (npm, yarn), else pnpm's virtual store seen from this file's real path
+      "@dcl/asset-packs": ["../../smart-items/dist/index", "../../../../../node_modules/@dcl/smart-items/dist/index"],
+      "@dcl/asset-packs/dist/*": ["../../smart-items/dist/*", "../../../../../node_modules/@dcl/smart-items/dist/*"]
+    }
   }
 }

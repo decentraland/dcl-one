@@ -32,10 +32,9 @@
 - **@dcl/protocol**: Decentraland RPC protocol buffer definitions — auto-compiled to TypeScript during build
 - **@dcl/ecs-math**: Vector, quaternion, and matrix math utilities
 - **@dcl/crypto**: Cryptographic signing for scene deployments
-- **@dcl/inspector**: In-world scene inspector tool (used by `start` command)
+- **@dcl/inspector-service**: the scene editor's data layer and component model, the Node side of Creator Hub's inspector (`start --data-layer`, `code-to-composite`)
 - **dcl-catalyst-client**: Publishes scene content to the Catalyst decentralized network
 - **@dcl/linker-dapp**: Wallet integration for signing deployment transactions
-- **@dcl/quests-client / @dcl/quests-manager**: Quest system integration in the CLI
 - **@dcl/gltf-validator-ts**: GLTF model validation during `build` and `deploy`
 - **@segment/analytics-node**: CLI usage analytics (opt-out supported)
 - **esbuild**: Scene code bundling in `build` and `start` commands
@@ -119,6 +118,7 @@ Uses esbuild with `platform: 'browser'`, `format: 'cjs'`, `target: 'es2020'`, an
 | `--explorer-alpha` | Use the new Alpha Explorer deeplink (default) |
 | `--web, --bevy-web` | Open the preview in Bevy Web (`https://decentraland.org/bevy-web/`) instead of the desktop Explorer. Chrome 142+ requires the Local Network Access permission ("Apps on device" in 145+) for the page to reach the localhost preview server; the CLI prints instructions |
 | `--mobile` | Print ASCII QR code for mobile preview |
+| `--no-server` | Don't spawn the Multiplayer Server. Use it when another preview of the same project already runs one, because two servers for one scene fight over the scene room |
 | `--position <x,y>` | Initial spawn position (default: from `scene.json`) |
 | `--skip-auth-screen` | Skip Explorer's authentication screen |
 | `--hub` | Enable Hub mode |

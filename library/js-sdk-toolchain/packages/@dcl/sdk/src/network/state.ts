@@ -8,6 +8,7 @@ import {
   PutNetworkComponentOperation,
   SyncComponents as _SyncComponents,
   NetworkEntity as _NetworkEntity,
+  NetworkParent as _NetworkParent,
   INetowrkEntity,
   VideoEvent,
   AudioEvent,
@@ -28,7 +29,7 @@ import {
   TriggerAreaResult,
   ComponentDefinition
 } from '@dcl/ecs'
-import { LIVEKIT_MAX_SIZE } from '@dcl/ecs/dist/systems/crdt'
+import { LIVEKIT_MAX_SIZE } from './server'
 
 export const NOT_SYNC_COMPONENTS: ComponentDefinition<unknown>[] = [
   VideoEvent,
@@ -52,7 +53,9 @@ export const NOT_SYNC_COMPONENTS: ComponentDefinition<unknown>[] = [
 
 export const NOT_SYNC_COMPONENTS_IDS = NOT_SYNC_COMPONENTS.map(($) => $.componentId)
 export const NOT_SYNC_COMPONENTS_NAMES: string[] = [
-  'asset-packs::Script', // ComponentName from: https://github.com/decentraland/asset-packs/blob/main/src/enums.ts
+  'smart-items::Script', // BaseComponentNames in @dcl/smart-items (src/constants.ts)
+  'smart-items::ActionTypes',
+  'asset-packs::Script', // the same components under the legacy prefix (@dcl/smart-items src/legacy.ts)
   'asset-packs::ActionTypes'
 ]
 
@@ -69,19 +72,31 @@ export function getDesyncedComponents(engine: IEngine): ComponentDefinition<unkn
   ) as ComponentDefinition<unknown>[]
 }
 
+/**
+ * The state a joining peer receives: for every networked entity, the components its
+ * SyncComponents lists plus the three that describe the network entity itself, the same
+ * selection the sync transport's filter makes for live changes. Components the scene
+ * never marked for sync stay where they are.
+ */
 export function engineToCrdt(engine: IEngine): Uint8Array[] {
   const crdtBuffer = new ReadWriteByteBuffer()
   const networkBuffer = new ReadWriteByteBuffer()
   const NetworkEntity = engine.getComponent(_NetworkEntity.componentId) as INetowrkEntity
+  const SyncComponents = engine.getComponent(_SyncComponents.componentId) as typeof _SyncComponents
+  const networkDescription = [NetworkEntity.componentId, SyncComponents.componentId, _NetworkParent.componentId]
   const chunks: Uint8Array[] = []
 
   for (const itComponentDefinition of engine.componentsIter()) {
     if (!shouldSyncComponent(itComponentDefinition)) {
       continue
     }
+
+    const describesNetworkEntity = networkDescription.includes(itComponentDefinition.componentId)
     itComponentDefinition.dumpCrdtStateToBuffer(crdtBuffer, (entity) => {
-      const isNetworkEntity = NetworkEntity.has(entity)
-      return isNetworkEntity
+      if (!NetworkEntity.has(entity)) return false
+      const sync = SyncComponents.getOrNull(entity)
+      if (!sync) return false
+      return describesNetworkEntity || sync.componentIds.includes(itComponentDefinition.componentId)
     })
   }
 
@@ -103,7 +118,6 @@ export function engineToCrdt(engine: IEngine): Uint8Array[] {
         }
 
         // If the message itself is larger than the limit, we need to handle it specially
-        // For now, we'll skip it to prevent infinite loops
         if (messageSize / 1024 > LIVEKIT_MAX_SIZE) {
           console.error(
             `Message too large (${messageSize} bytes), skipping component ${message.componentId} for entity ${message.entityId}`

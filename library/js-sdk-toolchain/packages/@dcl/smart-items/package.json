@@ -1,0 +1,78 @@
+{
+  "name": "@dcl/smart-items",
+  "description": "Decentraland smart-item runtime: actions, triggers, states, counters, scripts and the admin toolkit",
+  "version": "0.0.1",
+  "author": "DCL",
+  "bugs": "https://github.com/decentraland/js-sdk-toolchain/issues",
+  "dependencies": {
+    "@dcl/ecs": "workspace:*",
+    "@dcl/ecs-math": "2.1.0",
+    "@dcl/react-ecs": "workspace:*",
+    "mitt": "3.0.1"
+  },
+  "devDependencies": {
+    "@dcl/js-runtime": "workspace:*",
+    "typescript": "7.0.2"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./scene-entrypoint": {
+      "types": "./dist/scene-entrypoint.d.ts",
+      "default": "./dist/scene-entrypoint.js"
+    },
+    "./scripts": {
+      "types": "./dist/scripts.d.ts",
+      "default": "./dist/scripts.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
+    },
+    "./admin-toolkit-ui": {
+      "types": "./dist/admin-toolkit-ui/index.d.ts",
+      "default": "./dist/admin-toolkit-ui/index.js"
+    },
+    "./versioning": {
+      "types": "./dist/versioning/index.d.ts",
+      "default": "./dist/versioning/index.js"
+    },
+    "./package.json": "./package.json",
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "homepage": "https://github.com/decentraland/js-sdk-toolchain#readme",
+  "keywords": [
+    "@dcl/smart-items",
+    "dcl",
+    "ecs",
+    "smart-items"
+  ],
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "peerDependencies": {
+    "@dcl/sdk": "workspace:^"
+  },
+  "repository": {
+    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
+    "directory": "packages/@dcl/smart-items"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json --watch"
+  },
+  "typedoc": {
+    "entryPoint": "./src/index.ts",
+    "readmeFile": "./README.md",
+    "displayName": "Smart Items",
+    "tsconfig": "./tsconfig.json"
+  },
+  "types": "./dist/index.d.ts"
+}

@@ -6,6 +6,18 @@ import { fixTsconfigForTypescript7 } from '../../../packages/@dcl/sdk-commands/s
 import { typeCheckerBin } from '../../../packages/@dcl/sdk-commands/src/logic/bundle'
 import { initLanguage, Language } from '../../../packages/@dcl/sdk-commands/src/logic/lang'
 
+// the package the scene template's `@dcl/asset-packs` paths are pointed at, as the fixer finds it
+const smartItems = path.dirname(
+  require.resolve('@dcl/smart-items/package.json', {
+    paths: [path.resolve(__dirname, '../../../packages/@dcl/sdk-commands/src/logic')]
+  })
+)
+
+function smartItemsFrom(dir: string) {
+  const relative = path.relative(dir, smartItems).split(path.sep).join('/')
+  return relative.startsWith('../') ? relative : `./${relative}`
+}
+
 const TEMPLATE = `{
   // the scene template's config
   "compilerOptions": {
@@ -55,7 +67,7 @@ describe('fixTsconfigForTypescript7', () => {
     return fixTsconfigForTypescript7(components, path.join(dir, name), dir)
   }
 
-  it('rewrites the scene template: baseUrl dropped, paths re-rooted, "*" added, comments kept', async () => {
+  it('rewrites the scene template: baseUrl dropped, asset-packs paths pointed at @dcl/smart-items, "*" added, comments kept', async () => {
     const file = write('tsconfig.json', TEMPLATE)
 
     expect(await fix()).toEqual([file])
@@ -66,17 +78,19 @@ describe('fixTsconfigForTypescript7', () => {
     "allowJs": true,
     "strict": true,
     "paths": {
-      "@dcl/asset-packs/*": ["./node_modules/@dcl/inspector/node_modules/@dcl/asset-packs/*"],
-      "*": ["./*"]
+      "@dcl/asset-packs/*": ["${smartItemsFrom(dir)}/*"],
+      "*": ["./*"],
+      "@dcl/asset-packs": ["${smartItemsFrom(dir)}/dist/index"]
     }
   },
   "include": ["src/**/*.ts"],
   "extends": "@dcl/sdk/types/tsconfig.ecs7.json"
 }
 `)
-    expect(logger.log).toHaveBeenCalledTimes(2)
+    expect(logger.log).toHaveBeenCalledTimes(3)
     expect(logger.log.mock.calls[0][0]).toContain(file)
     expect(logger.log.mock.calls[1][0]).toContain('./*')
+    expect(logger.log.mock.calls[2][0]).toContain(smartItemsFrom(dir))
 
     // a second run finds nothing to do
     logger.log.mockClear()
@@ -153,6 +167,45 @@ describe('fixTsconfigForTypescript7', () => {
     write('other.json', `{ "compilerOptions": { "baseUrl": ".", "paths": [] } }\n`)
     await fix('other.json')
     expect(JSON.parse(read('other.json')).compilerOptions).toEqual({ paths: [], strict: false })
+  })
+
+  it('points the asset-packs paths at the copy under the scene\'s own node_modules when it has one', async () => {
+    write('node_modules/@dcl/smart-items/package.json', '{ "name": "@dcl/smart-items" }')
+    write('tsconfig.json', TEMPLATE)
+
+    await fix()
+
+    expect(read('tsconfig.json')).toContain('"@dcl/asset-packs/*": ["./node_modules/@dcl/smart-items/*"]')
+    expect(read('tsconfig.json')).toContain('"@dcl/asset-packs": ["./node_modules/@dcl/smart-items/dist/index"]')
+    expect(logger.log.mock.calls[2][0]).toContain('./node_modules/@dcl/smart-items')
+    expect(await fix()).toEqual([])
+  })
+
+  it('uses the copy of an enclosing workspace when the scene has none of its own', async () => {
+    write('node_modules/@dcl/smart-items/package.json', '{ "name": "@dcl/smart-items" }')
+    const scene = path.join(dir, 'scenes', 'one')
+    const file = write('scenes/one/tsconfig.json', TEMPLATE)
+
+    expect(await fixTsconfigForTypescript7(components, file, scene)).toEqual([file])
+
+    expect(read('scenes/one/tsconfig.json')).toContain('"@dcl/asset-packs/*": ["../../node_modules/@dcl/smart-items/*"]')
+  })
+
+  it('points asset-packs paths of a file without baseUrl at @dcl/smart-items and keeps the rest', async () => {
+    write(
+      'tsconfig.json',
+      `{ "compilerOptions": { "strict": true, "paths": { "@dcl/asset-packs": ["./x/dist"], "@dcl/asset-packs/dist/*": ["./x/dist/*"], "lib/*": ["./lib/*"] } } }\n`
+    )
+
+    await fix()
+
+    expect(JSON.parse(read('tsconfig.json')).compilerOptions.paths).toEqual({
+      '@dcl/asset-packs': [`${smartItemsFrom(dir)}/dist/index`],
+      '@dcl/asset-packs/dist/*': [`${smartItemsFrom(dir)}/dist/*`],
+      'lib/*': ['./lib/*']
+    })
+    expect(logger.log).toHaveBeenCalledTimes(1)
+    expect(await fix()).toEqual([])
   })
 
   it('leaves a file without baseUrl alone', async () => {

@@ -19,7 +19,7 @@ import {
   UiDropdownResult
 } from '@dcl/ecs/dist-cjs'
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist-cjs/serialization/ByteBuffer'
-import { createEngineContext } from '@dcl/inspector'
+import { createEngineContext } from '@dcl/inspector-service'
 
 import { CliComponents } from '../../components'
 import { SceneProject } from '../../logic/project-validations'
@@ -27,7 +27,7 @@ import { CliError } from '../../logic/error'
 import { bundleProject } from '../../logic/bundle'
 
 /**
- * Returns the set of component IDs that are used by the @dcl/inspector.
+ * Returns the set of component IDs that are used by @dcl/inspector-service.
  */
 function getInspectorComponentsIds() {
   const { components } = createEngineContext()
@@ -360,7 +360,7 @@ async function loadAndExecuteBundle(bundlePath: string): Promise<void> {
 }
 
 /**
- * Filters out components that are not supported by the @dcl/inspector.
+ * Filters out components that are not supported by @dcl/inspector-service.
  */
 function filterInspectorCompatibleComponents(engine: IEngine) {
   const validComponentIds = getInspectorComponentsIds()
@@ -434,7 +434,8 @@ async function bundle(components: Pick<CliComponents, 'fs' | 'logger'>, project:
         production: false, // keep source maps for better error messages
         emitDeclaration: false,
         ignoreComposite: true, // don't load existing composite files
-        customEntryPoint: false
+        customEntryPoint: false,
+        projectDefaults: false
       },
       project.scene
     )

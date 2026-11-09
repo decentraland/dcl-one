@@ -34,6 +34,9 @@ test/snapshots/bin
 
 test/build-ecs/fixtures/ecs7-scene/aCaseSensitiveReadme.md
 !packages/@dcl/sdk-commands/scripts/*.js
+!packages/@dcl/inspector-service/*.js
+packages/@dcl/inspector-service/src/lib/data-layer/proto/gen
+!packages/@dcl/inspector-service/src/lib/rpc/scene/
 
 .claude/
 .logs/

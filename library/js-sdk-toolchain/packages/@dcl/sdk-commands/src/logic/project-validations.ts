@@ -11,6 +11,7 @@ import { getInstalledPackageVersion, getSdkCommandsVersion, isCI, isEditor } fro
 import { readStringConfig } from '../components/config'
 import { getSmartWearableFile, getValidWearableJson } from './portable-experience-sw-validations'
 import { getPackageJson } from './project-files'
+import { SCRIPT_COMPONENT, isEditorComponent, renameLegacyComponentName } from './smart-items'
 
 export type BaseProject = { workingDirectory: string }
 export type SceneProject = { kind: 'scene'; scene: Scene } & BaseProject
@@ -321,13 +322,14 @@ export async function startValidations(components: Pick<CliComponents, 'spawner'
 }
 
 /**
- * Returns true if the scene is an "editor scene" that requires the asset-packs runtime.
+ * Returns true if the scene is an "editor scene" that requires the smart-item runtime.
  *
  * A scene is an editor scene when its main.composite file contains at least one
- * asset-packs component other than `asset-packs::Script`. The Script component is
- * a build-time-only construct (it defines JavaScript scripts bundled separately via
- * `generateInitializeScriptsModule`) and does not require the `initAssetPacks` runtime.
- * Only Action/Trigger/State and similar runtime components need `initAssetPacks`.
+ * smart-item component (under `smart-items::` or the legacy `asset-packs::` prefix)
+ * other than the Script component. The Script component is a build-time-only construct
+ * (it defines JavaScript scripts bundled separately via `generateInitializeScriptsModule`)
+ * and does not require the `initSmartItems` runtime.
+ * Only Action/Trigger/State and similar runtime components need `initSmartItems`.
  *
  * Evaluated on every (re)build when `~sdk/script-utils` is generated.
  */
@@ -338,16 +340,15 @@ export async function isEditorScene(components: Pick<CliComponents, 'fs'>, worki
   try {
     const fileBuffer = await components.fs.readFile(mainCompositePath)
     const json = JSON.parse(new TextDecoder().decode(fileBuffer))
-    // asset-packs::Script is a build-time component — it doesn't require the initAssetPacks runtime entrypoint.
-    const SCRIPT_COMPONENT = 'asset-packs::Script'
+    // the Script component is build-time only — it doesn't require the initSmartItems runtime entrypoint.
     return (
       Array.isArray(json.components) &&
-      json.components.some(
-        (c: unknown) =>
-          typeof (c as Record<string, unknown>).name === 'string' &&
-          ((c as Record<string, unknown>).name as string).startsWith('asset-packs::') &&
-          (c as Record<string, unknown>).name !== SCRIPT_COMPONENT
-      )
+      json.components.some((c: unknown) => {
+        const name = (c as Record<string, unknown>).name
+        return (
+          typeof name === 'string' && isEditorComponent(name) && renameLegacyComponentName(name) !== SCRIPT_COMPONENT
+        )
+      })
     )
   } catch {
     // Malformed composite — treat as non-editor scene to avoid bundling unnecessary code

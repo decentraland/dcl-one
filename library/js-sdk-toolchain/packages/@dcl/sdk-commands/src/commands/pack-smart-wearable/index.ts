@@ -59,7 +59,11 @@ export async function packSmartWearable(options: Options, project: WearableProje
   }
 
   if (shouldBuild) {
-    await buildScene({ ...options, args: { '--dir': project.workingDirectory, _: [], '--production': true } }, project)
+    await buildScene(
+      { ...options, args: { '--dir': project.workingDirectory, _: [], '--production': true } },
+      project,
+      false
+    )
   }
 
   const files = await getProjectPublishableFilesWithHashes(options.components, project.workingDirectory, async ($) => $)

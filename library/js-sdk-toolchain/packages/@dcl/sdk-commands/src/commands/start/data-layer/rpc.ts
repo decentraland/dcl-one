@@ -1,4 +1,4 @@
-import { createDataLayerHost, DataServiceDefinition, DataLayerContext } from '@dcl/inspector'
+import { createDataLayerHost, DataServiceDefinition, DataLayerContext } from '@dcl/inspector-service'
 import { createRpcServer, RpcServer, RpcServerPort } from '@dcl/rpc'
 import * as codegen from '@dcl/rpc/dist/codegen'
 

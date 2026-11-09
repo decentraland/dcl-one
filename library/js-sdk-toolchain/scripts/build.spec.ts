@@ -19,11 +19,13 @@ import {
   commonChecks,
   ECS7_PATH,
   flow,
+  INSPECTOR_SERVICE_PATH,
   JS_RUNTIME,
   PLAYGROUND_ASSETS_PATH,
   REACT_ECS,
   SDK_PATH,
-  SDK_COMMANDS_PATH
+  SDK_COMMANDS_PATH,
+  SMART_ITEMS
 } from './common'
 import {
   copyFile,
@@ -110,19 +112,6 @@ flow('build-all', () => {
     })
   })
 
-  flow('@dcl/sdk-commands build', () => {
-    itDeletesFolder('dist', SDK_COMMANDS_PATH)
-    itExecutes('pnpm run --silent build', SDK_COMMANDS_PATH)
-
-    it('check files exists', () => {
-      ensureFileExists('dist/index.js', SDK_COMMANDS_PATH)
-      ensureFileExists('dist/index.d.ts', SDK_COMMANDS_PATH)
-      ensureFileExists('dist/logic/runtime-script.ts', SDK_COMMANDS_PATH)
-    })
-
-    itExecutes(`chmod +x dist/index.js`, SDK_COMMANDS_PATH)
-  })
-
   flow('@dcl/sdk build', () => {
     itDeletesFolder('dist', SDK_PATH)
     itDeletesGlob('types/*.d.ts', SDK_PATH)
@@ -138,6 +127,56 @@ flow('build-all', () => {
       ensureFileExists('react-ecs.js', SDK_PATH)
       ensureFileExists('react-ecs.d.ts', SDK_PATH)
     })
+  })
+
+  flow('@dcl/smart-items build', () => {
+    itDeletesFolder('dist', SMART_ITEMS)
+    itExecutes('pnpm run --silent build', SMART_ITEMS)
+
+    it('check files exists', () => {
+      ensureFileExists('dist/index.js', SMART_ITEMS)
+      ensureFileExists('dist/index.d.ts', SMART_ITEMS)
+      ensureFileExists('dist/scene-entrypoint.js', SMART_ITEMS)
+      ensureFileExists('dist/scripts.js', SMART_ITEMS)
+      ensureFileExists('dist/events.js', SMART_ITEMS)
+      ensureFileExists('dist/admin-toolkit-ui/index.js', SMART_ITEMS)
+    })
+  })
+
+  // Bundles @dcl/ecs and @dcl/sdk; its node entry is what @dcl/sdk-commands' data layer loads.
+  flow('@dcl/inspector-service build', () => {
+    itDeletesFolder('dist', INSPECTOR_SERVICE_PATH)
+
+    const INSPECTOR_PROTO_PATH = path.resolve(INSPECTOR_SERVICE_PATH, 'src/lib/data-layer/proto')
+    it('compile the data-layer protocol buffer files', async () => {
+      await buildProtobuf(INSPECTOR_PROTO_PATH, INSPECTOR_PROTO_PATH, [
+        'esModuleInterop=true',
+        'returnObservable=false',
+        'outputServices=generic-definitions',
+        'fileSuffix=.gen',
+        'oneof=unions',
+        'useMapType=true'
+      ])
+    })
+
+    itExecutes('pnpm run --silent build', INSPECTOR_SERVICE_PATH)
+
+    it('check files exists', () => {
+      ensureFileExists('dist/index.js', INSPECTOR_SERVICE_PATH)
+      ensureFileExists('dist/index.d.ts', INSPECTOR_SERVICE_PATH)
+    })
+  })
+
+  flow('@dcl/sdk-commands build', () => {
+    itDeletesFolder('dist', SDK_COMMANDS_PATH)
+    itExecutes('pnpm run --silent build', SDK_COMMANDS_PATH)
+
+    it('check files exists', () => {
+      ensureFileExists('dist/index.js', SDK_COMMANDS_PATH)
+      ensureFileExists('dist/index.d.ts', SDK_COMMANDS_PATH)
+    })
+
+    itExecutes(`chmod +x dist/index.js`, SDK_COMMANDS_PATH)
   })
 
   flow('@dcl/playground-assets build', () => {
