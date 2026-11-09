@@ -3,8 +3,8 @@
          app/src/components/CreditPackPicker/CreditPackPicker.styles.ts (PackTile), app/src/styles/index.css (cart-pop-in,
          .spinner), app/src/styles/theme.ts (the colours below).
    The checkout modal's shell: a scrim over the whole viewport and a card holding a header (title, close, the
-   Credits balance) and one body per phase. Upstream's Buy now draws it on the dark surface
-   (`data-surface="dark"`), which is the only one ported here. The dialog renders in a portal outside the Shop's
+   Credits balance) and one body per phase. Upstream's Buy now draws it on its dark surface, which is the only one
+   ported here. The dialog renders in a portal outside the Shop's
    token scope (`.shop-chrome`), so each token carries its value as the fallback. */
 
 .root {
@@ -104,12 +104,10 @@
   flex-shrink: 0;
   border: 0;
   background: transparent;
+  color: #ffffff;
   cursor: pointer;
   padding: 2px;
   line-height: 0;
-}
-.x path {
-  stroke: #ffffff;
 }
 .balance {
   display: flex;

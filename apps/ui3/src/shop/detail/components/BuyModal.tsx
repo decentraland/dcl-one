@@ -14,7 +14,7 @@
 //   - "Buy Item" when the Credits cover it; a buyer holding MANA chooses how to pay first;
 //   - the approval a self-custody wallet grants, the progress, a purchase still being confirmed, "Purchase complete!"
 //     and the error.
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 
@@ -28,7 +28,7 @@ import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { useCreditPacks } from "../../credits/hooks";
 import { isIapMode } from "../../credits/iap";
 import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../../credits/payments";
-import { dropBuyNowTopUp, stashBuyNowTopUp } from "../../credits/returns";
+import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp } from "../../credits/returns";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
@@ -97,25 +97,38 @@ function sessionStorageFor(namespace: string): () => CartStorage | null {
 // same kind as the cart's own module-level store (cart/store.ts shopCart), which docs/web-app-standards.md allows.
 const stores = new Map<string, CartStore>();
 
+const storeKey = (account: string | null, lineId: string) => `${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
+const settlingIn = (cart: CartStore) =>
+  !!cart.getSnapshot().checkout?.groups.some((g) => g.status === "authorizing" || g.status === "submitted" || g.status === "pending");
+
 /**
- * The dialog's cart for this account and item: created once and kept, so a purchase in flight survives the dialog (and,
- * through session storage, a reload), and the line is added once however often the dialog renders or opens.
+ * The dialog's cart for this account and item: created once and kept while it holds a purchase in flight, so that one
+ * survives the dialog (and, through session storage, a reload).
  */
-function buyNowCart(account: string | null, line: CartAddInput): CartStore {
-  const id = cartLineId(line.asset, line.listing);
-  const key = `${account ?? "anonymous"}:${id}`;
+function buyNowCart(account: string | null, lineId: string): CartStore {
+  const key = storeKey(account, lineId);
   let cart = stores.get(key);
   if (!cart) {
-    cart = createCartStore({ storage: sessionStorageFor(`dcl-shop-buynow:v1:${id}:`) });
+    cart = createCartStore({ storage: sessionStorageFor(`dcl-shop-buynow:v1:${lineId}:`) });
     cart.scopeTo(account);
     stores.set(key, cart);
   }
-  const snap = cart.getSnapshot();
-  const held = snap.lines.find((l) => l.id === id);
-  const settling = !!snap.checkout?.groups.some((g) => g.status === "authorizing" || g.status === "submitted" || g.status === "pending");
-  if (!held) cart.add({ ...line, quantity: 1 });
-  else if (!settling && line.seen) cart.markSeen(id, line.seen);
   return cart;
+}
+
+/** The line goes in once however often the dialog renders or opens; a held one takes the offer the page now shows. */
+function holdLine(cart: CartStore, line: CartAddInput): void {
+  const id = cartLineId(line.asset, line.listing);
+  const held = cart.getSnapshot().lines.some((l) => l.id === id);
+  if (!held) cart.add({ ...line, quantity: 1 });
+  else if (!settlingIn(cart) && line.seen) cart.markSeen(id, line.seen);
+}
+
+/** A closed dialog's cart is let go unless a purchase in it is still settling (its storage keeps it either way). */
+function releaseBuyNowCart(account: string | null, lineId: string): void {
+  const key = storeKey(account, lineId);
+  const cart = stores.get(key);
+  if (cart && !settlingIn(cart)) stores.delete(key);
 }
 
 /** For tests: forget every dialog's cart. */
@@ -137,14 +150,20 @@ export default function BuyModal(props: BuyModalProps) {
   const { account } = useShopWallet();
   const lineId = cartLineId(props.line.asset, props.line.listing);
   // Per account and line, not per render: the page hands a fresh line object on every render.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const cart = useMemo(() => buyNowCart(account, props.line), [account, lineId]);
+  const cart = useMemo(() => buyNowCart(account, lineId), [account, lineId]);
+  const lineRef = useRef(props.line);
+  lineRef.current = props.line;
+  useEffect(() => holdLine(cart, lineRef.current), [cart]);
   const services = useMemo(() => ({ cart }), [cart]);
+  const onClose = () => {
+    releaseBuyNowCart(account, lineId);
+    props.onClose();
+  };
   if (typeof document === "undefined") return null;
   return createPortal(
     <EnsureQueryClient>
       <ShopServicesProvider value={services}>
-        <BuyDialog key={account ?? "anonymous"} {...props} />
+        <BuyDialog key={account ?? "anonymous"} {...props} onClose={onClose} />
       </ShopServicesProvider>
     </EnsureQueryClient>,
     document.body,
@@ -177,15 +196,19 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   // A price the review found changed since the page, or one above what the buyer confirmed before a top-up: shown, and
   // agreed to by pressing Buy.
   const resumeRepriced = !!resume && priceCredits > resume.credits;
-  const priceChanged = co.reviewChanges.some((c) => c.kind === "priceChanged") || resumeRepriced;
+  const reviewRepriced = co.reviewChanges.some((c) => c.kind === "priceChanged");
+  const priceChanged = reviewRepriced || resumeRepriced;
   const settling = !!co.summary && co.summary.submitted + co.summary.pending > 0;
   const confirmed = results.length > 0 && results.every((r) => r.status === "confirmed");
   // No price to charge: the whole check failed, or the Credits price is out and no MANA the buyer holds can pay instead.
   const outage = co.review.kind === "outage" || (credits?.state.kind === "unavailable" && !manaPays);
   // Loading is the first check only: a re-price after the buyer picks how to pay keeps the screen, with Buy held until
   // the new price is in (the checkout's own blocker).
-  const priced = useRef(false);
-  if (view && co.review.kind !== "checking") priced.current = true;
+  const [priced, setPriced] = useState(false);
+  const checked = !!view && co.review.kind !== "checking";
+  useEffect(() => {
+    if (checked) setPriced(true);
+  }, [checked]);
 
   const phase: Phase =
     purchased || confirmed
@@ -198,7 +221,7 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
             ? "error"
             : outage
               ? "error"
-              : !view || (!priced.current && co.review.kind === "checking") || (co.balance === undefined && !co.balanceError)
+              : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
                 ? "loading"
                 : (creditsShort !== null || co.topUp || result?.status === "failed") && !manaPays
                   ? "nofunds"
@@ -237,6 +260,21 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   }, [busy]);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => dialogRef.current?.focus(), []);
+  // A modal dialog keeps Tab and Shift+Tab inside it.
+  const trapTab = (e: ReactKeyboardEvent) => {
+    if (e.key !== "Tab" || !dialogRef.current) return;
+    const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   // Back from a top-up: the buyer already confirmed, so the purchase goes on as soon as it is priced, once, if it is the
   // same line at no more than the price they agreed to. Anything else waits for a press.
@@ -250,7 +288,7 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
 
   const selected = cartLine?.method ?? view?.primary ?? "credits";
   const pay = () => {
-    if (co.reviewChanges.some((c) => c.kind === "priceChanged")) {
+    if (reviewRepriced) {
       // The new price is on screen now; this press agrees to it, and the next one pays.
       co.acceptChanges();
       return;
@@ -275,16 +313,16 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   const title = phase === "complete" ? TEXT.titleComplete : phase === "error" ? TEXT.titleError : phase === "nofunds" ? TEXT.titleNoFunds : TEXT.titleBuy;
   const balance = co.balanceError ? "—" : (co.balance?.credits ?? 0).toLocaleString("en-US");
   return (
-    <div className={styles.root} role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1}>
+    <div className={styles.root} role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1} onKeyDown={trapTab}>
       <div className={styles.scrim} onClick={busy ? undefined : close} aria-hidden="true" data-testid="buy-modal-scrim" />
-      <div className={styles.card} data-surface="dark" data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
+      <div className={styles.card} data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
         <div className={styles.head}>
           <div className={styles.headrow}>
             <h2 className={styles.title}>{title}</h2>
             {!busy ? (
               <button type="button" className={styles.x} onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
                 <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-                  <path d="M4 4l10 10M14 4L4 14" stroke="#161518" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                 </svg>
               </button>
             ) : null}
@@ -329,7 +367,12 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
               if (attempt.current === failed) attempt.current = null;
             }}
             onCancel={close}
-            onCheckout={(session) => (session.url ? services.openExternal(session.url) : navigate(`${SHOP_BASE}/credits?order=${encodeURIComponent(session.orderId)}`))}
+            onCheckout={(session) => {
+              // Only this order's grant may bring the buyer back to finish: an abandoned top-up never is.
+              if (attempt.current) bindBuyNowTopUp(attempt.current, session.orderId);
+              if (session.url) services.openExternal(session.url);
+              else navigate(`${SHOP_BASE}/credits?order=${encodeURIComponent(session.orderId)}`);
+            }}
           />
         ) : null}
 
@@ -363,7 +406,7 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
                 data-variant="gradient"
                 data-full
                 onClick={pay}
-                disabled={!co.canConfirm && !co.reviewChanges.some((c) => c.kind === "priceChanged")}
+                disabled={!co.canConfirm && !reviewRepriced}
                 data-testid="buy-modal-buy"
               >
                 {TEXT.buy}
@@ -492,6 +535,14 @@ function NoFunds(props: {
   const selected = offer.packs.find((p) => p.id === selectedId) ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Back from Stripe through the browser's page cache, the page comes back as it was left: Buy pressed.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setBusy(false);
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
   const mounted = useRef(true);
   useEffect(() => {
     // Set here too: StrictMode runs this effect's cleanup and then the effect again.

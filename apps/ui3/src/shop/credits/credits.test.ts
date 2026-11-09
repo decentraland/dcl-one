@@ -17,7 +17,7 @@ import { nextBalancePoll } from "./hooks";
 import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, usdForCredits } from "./payments";
 import { pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
-import { clearTopUpHandoffs, dropBuyNowTopUp, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
+import { bindBuyNowTopUp, clearTopUpHandoffs, dropBuyNowTopUp, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
 
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
@@ -163,38 +163,56 @@ describe("hand-offs and the stream", () => {
     const PATH = "/shop/item/0xC0/7";
     const BUYER = "0xAbC0000000000000000000000000000000000001";
     const T0 = 1_700_000_000_000;
-    const stash = (at = T0) => stashBuyNowTopUp({ path: PATH, account: BUYER, lineId: "line-7", credits: 12 }, at);
+    /** Buy now leaving for the pack checkout, which created `order` (none when it never answered). */
+    const leave = (at = T0, order: string | null = "order-1") => {
+      const attempt = stashBuyNowTopUp({ path: PATH, account: BUYER, lineId: "line-7", credits: 12 }, at);
+      if (order) bindBuyNowTopUp(attempt, order);
+      return attempt;
+    };
 
-    it("comes back to the item page, for the same page and account, once", () => {
-      stash();
-      expect(takeTopUpReturn(T0)?.path).toBe(`${PATH}?buy=resume`);
-      expect(takeBuyNowReturn(PATH.toUpperCase().replace("/SHOP/ITEM", "/shop/item"), BUYER.toLowerCase(), T0 + 1000)).toMatchObject({ account: BUYER.toLowerCase(), lineId: "line-7", credits: 12 });
-      expect(takeBuyNowReturn(PATH, BUYER, T0 + 1000)).toBeNull();
+    it("comes back to the item page for that order's grant, for the same page and account, once", () => {
+      leave();
+      expect(takeTopUpReturn(T0, "order-1")?.path).toBe(`${PATH}?buy=resume`);
+      expect(takeBuyNowReturn(PATH.toUpperCase().replace("/SHOP/ITEM", "/shop/item"), BUYER.toLowerCase(), "order-1", T0 + 1000)).toMatchObject({ account: BUYER.toLowerCase(), lineId: "line-7", credits: 12 });
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0 + 1000)).toBeNull();
     });
 
-    it("is nothing for another page, another account, no account, or once two hours old or dated ahead", () => {
-      for (const [path, account, at] of [
-        ["/shop/item/0xC0/8", BUYER, T0],
-        [PATH, "0x0000000000000000000000000000000000000002", T0],
-        [PATH, null, T0],
-        [PATH, BUYER, T0 + 2 * 60 * 60 * 1000 + 1],
-        [PATH, BUYER, T0 - 1],
+    it("another order's grant (the buyer walked away from this top-up) takes nothing back, and drops both records", () => {
+      leave();
+      expect(takeTopUpReturn(T0, "order-2")).toBeNull();
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+    });
+
+    it("is nothing for another page, another account, no account, another or no order, unbound, or two hours old or dated ahead", () => {
+      for (const [path, account, order, at, bound] of [
+        ["/shop/item/0xC0/8", BUYER, "order-1", T0, "order-1"],
+        [PATH, "0x0000000000000000000000000000000000000002", "order-1", T0, "order-1"],
+        [PATH, null, "order-1", T0, "order-1"],
+        [PATH, BUYER, "order-2", T0, "order-1"],
+        [PATH, BUYER, null, T0, "order-1"],
+        [PATH, BUYER, null, T0, null],
+        [PATH, BUYER, "order-1", T0 + 2 * 60 * 60 * 1000 + 1, "order-1"],
+        [PATH, BUYER, "order-1", T0 - 1, "order-1"],
       ] as const) {
-        stash();
-        expect(takeBuyNowReturn(path, account, at)).toBeNull();
+        leave(T0, bound);
+        expect(takeBuyNowReturn(path, account, order, at)).toBeNull();
       }
     });
 
-    it("an attempt drops only what it wrote, and an ended top-up drops it too", () => {
-      const first = stash();
-      const second = stash(T0 + 10);
+    it("an attempt drops or binds only what it wrote; any other top-up, or an ended one, drops it", () => {
+      const first = leave(T0, null);
+      const second = leave(T0 + 10, null);
       dropBuyNowTopUp(first);
-      expect(takeBuyNowReturn(PATH, BUYER, T0 + 20)).toMatchObject({ attempt: second });
-      stash();
-      dropBuyNowTopUp(second);
+      bindBuyNowTopUp(first, "order-old");
+      bindBuyNowTopUp(second, "order-2");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-2", T0 + 20)).toMatchObject({ attempt: second });
+      leave();
+      stashTopUpReturn("/shop/cart");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+      leave();
       clearTopUpHandoffs();
-      expect(takeTopUpReturn(T0)).toBeNull();
-      expect(takeBuyNowReturn(PATH, BUYER, T0)).toBeNull();
+      expect(takeTopUpReturn(T0, "order-1")).toBeNull();
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
     });
   });
 

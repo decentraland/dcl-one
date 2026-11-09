@@ -319,9 +319,10 @@ function CreditsScreen() {
         if (result.status === "credited") {
           const credits = result.creditsGranted ?? 0;
           setGranted(credits > 0 ? credits : null);
-          const back = takeTopUpReturn();
+          // Only a hand-off this order's top-up left: the page it returns to learns which order it was.
+          const back = takeTopUpReturn(Date.now(), orderId);
           if (back) {
-            navigate(back.path, { state: { resumeCheckout: true, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
+            navigate(back.path, { state: { resumeCheckout: true, topUpOrder: orderId, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
             return;
           }
           setPhase("success");
@@ -377,6 +378,8 @@ function CreditsScreen() {
     }
     setError(null);
     setCanceledNote(false);
+    // A top-up started here finishes nothing elsewhere: one an earlier purchase left behind is not this one's.
+    clearTopUpHandoffs();
     setPhase("redirecting");
     try {
       const session = await createPackCheckout(pack.id, services.client);

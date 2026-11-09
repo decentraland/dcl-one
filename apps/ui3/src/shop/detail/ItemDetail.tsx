@@ -477,7 +477,9 @@ export default function ItemDetail() {
     search.delete("buy");
     const rest = search.toString();
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : "" }, { replace: true, state: location.state });
-    const handoff = takeBuyNowReturn(location.pathname, account);
+    // The credits page names the order it credited: only that order's top-up may finish the purchase.
+    const order = (location.state as { topUpOrder?: unknown } | null)?.topUpOrder;
+    const handoff = takeBuyNowReturn(location.pathname, account, typeof order === "string" ? order : null);
     if (handoff) setBuyNow({ resume: { account: handoff.account, lineId: handoff.lineId, credits: handoff.credits } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, session.kind, account]);

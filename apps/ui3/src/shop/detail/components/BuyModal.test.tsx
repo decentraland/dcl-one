@@ -77,10 +77,10 @@ describe("Buy now's dialog", () => {
     fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
     await waitFor(() => expect(opened).toEqual(["https://checkout.stripe.com/c/pay/demo"]));
     expect(demo.shop.log.find((r) => r.name === "createPackOrder")?.body).toMatchObject({ packId: "pack_10" });
-    // Back from Stripe the credits page sends the buyer to this item, where this tab's record of what they confirmed
-    // (this line, 12 Credits) lets the dialog finish.
-    expect(takeTopUpReturn()?.path).toBe(`${PATH}?buy=resume`);
-    expect(takeBuyNowReturn(PATH, BOOK.buyer)).toMatchObject({ lineId, credits: 12 });
+    // Back from Stripe, the credits page sends the buyer to this item for this order's grant, where this tab's record of
+    // what they confirmed (this line, 12 Credits, bound to the order) lets the dialog finish.
+    expect(takeTopUpReturn(Date.now(), "order-pack_10")?.path).toBe(`${PATH}?buy=resume`);
+    expect(takeBuyNowReturn(PATH, BOOK.buyer, "order-pack_10")).toMatchObject({ lineId, credits: 12, orderId: "order-pack_10" });
     expect(authorizations(demo)).toHaveLength(0);
   });
 
@@ -102,7 +102,7 @@ describe("Buy now's dialog", () => {
     fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(closed()).toBe(1);
-    expect(takeBuyNowReturn(PATH, BOOK.buyer)).toBeNull();
+    expect(sessionStorage.getItem("dcl-shop-buynow-return:v1")).toBeNull();
     expect(takeTopUpReturn()).toBeNull();
     await act(async () => answer());
     expect(opened).toEqual([]);
@@ -148,6 +148,8 @@ describe("Buy now's dialog", () => {
     const approve = await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    // Paid, and not with a Credit: the purchase went out (relayed or from the wallet) with none authorized.
+    expect(demo.relay.posts.length + demo.wallet.sent.length).toBeGreaterThan(0);
     expect(authorizations(demo)).toHaveLength(0);
   });
 
@@ -163,7 +165,24 @@ describe("Buy now's dialog", () => {
     expect(within(dialog).getByTestId("price-changed")).toBeTruthy();
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(authorizations(demo)).toHaveLength(0);
-    expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled();
+    // The press agrees to the price on screen, and that is what is charged.
+    await pressBuy(dialog);
+    await within(dialog).findByTestId("buy-modal-complete", undefined, { timeout: 5000 });
+    expect((authorizations(demo)[0]!.body as { items: { usdPriceCents: number }[] }).items).toEqual([expect.objectContaining({ usdPriceCents: 115 })]);
+  });
+
+  it("back from Stripe through the page cache, the pack checkout can be started again", async () => {
+    const { opened } = renderBuy({ session: "web2", balanceCents: 30 });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    await waitFor(() => expect(opened).toHaveLength(1));
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeDisabled();
+    act(() => {
+      const shown = new Event("pageshow") as PageTransitionEvent;
+      Object.defineProperty(shown, "persisted", { value: true });
+      window.dispatchEvent(shown);
+    });
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled();
   });
 
   it("back from a top-up at a lower price, it finishes on its own", async () => {
