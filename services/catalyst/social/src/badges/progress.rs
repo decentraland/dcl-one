@@ -32,6 +32,9 @@ pub struct Progress {
     /// `transactions_emotes_purchase`, `store_completed`, `intervals`, ...),
     /// without `steps`. Stored verbatim.
     pub state: Map<String, Value>,
+    /// The badge is already complete (read only: completion is never taken
+    /// back). Upstream's evaluators leave a completed badge untouched.
+    pub completed: bool,
 }
 
 impl Progress {
@@ -41,7 +44,11 @@ impl Progress {
             _ => Map::new(),
         };
         state.remove("steps");
-        Self { steps, state }
+        Self {
+            steps,
+            state,
+            completed: false,
+        }
     }
 
     /// Upstream's document: `state` plus `steps`.
@@ -180,7 +187,10 @@ where
 
     let (steps_before, document, completed_at) =
         stored.unwrap_or((0, Value::Object(Map::new()), None));
-    let before = Progress::from_document(steps_before, document);
+    let before = Progress {
+        completed: completed_at.is_some(),
+        ..Progress::from_document(steps_before, document)
+    };
     let mut progress = before.clone();
     update(&mut progress);
 
