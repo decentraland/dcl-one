@@ -36,7 +36,7 @@ type CommunityRaw = {
 }
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
-type MemberRaw = { memberAddress?: string; role?: string; friendshipStatus?: number }
+type MemberRaw = { memberAddress?: string; role?: string }
 type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number }
 type PlaceRaw = {
   id: string
@@ -52,9 +52,6 @@ type PlaceRaw = {
 }
 type EventRaw = { id: string; name?: string; image?: string; next_start_at?: string; start_at?: string }
 type PhotoRaw = { id: string; url?: string; thumbnailUrl?: string }
-
-// FriendshipStatus enum: request_sent=0 … friend=3 … none=7. Hide "Add Friend" once friends.
-const FRIEND = 3
 
 // Reads take the v2 endpoints, which answer with addresses instead of embedding a profile the
 // service had to resolve per row. Writes (and /places, which carries no profile) have no v2.
@@ -164,8 +161,7 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
     name,
     role: m.role ?? 'member',
     picture,
-    hasClaimedName,
-    isFriend: m.friendshipStatus === FRIEND
+    hasClaimedName
   }
 }
 
@@ -593,6 +589,44 @@ export function registerCommunities(ctx: Ctx): void {
     if (!removed) return
     const fresh = await detail(msg.id).catch(() => undefined)
     if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+  })
+  // The card's member menu, as unity-explorer's MembersListController: promote and demote set the
+  // member's role, a transfer sets it to owner (the service makes the old owner a moderator), a
+  // kick removes the member and a ban bans them. A failure is shown on the card; on success the
+  // card's members are read again, and after a transfer the community too, since the user's own
+  // role changed.
+  ctx.on('communityMemberAction', async (msg) => {
+    const member = `${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}`
+    const run = async (): Promise<unknown> => {
+      switch (msg.action) {
+        case 'promote':
+          return await signed(member, 'PATCH', { role: 'moderator' })
+        case 'demote':
+          return await signed(member, 'PATCH', { role: 'member' })
+        case 'transfer':
+          return await signed(member, 'PATCH', { role: 'owner' })
+        case 'kick':
+          return await signed(member, 'DELETE')
+        case 'ban':
+          return await signed(`${member}/bans`, 'POST')
+      }
+    }
+    const done = await run().then(
+      () => true,
+      (e: unknown) => {
+        console.error(`[communities] ${msg.action} failed`, e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: msg.action, message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    )
+    if (!done) return
+    const fresh = await detail(msg.id).catch(() => undefined)
+    if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+    if (msg.action !== 'transfer') return
+    const raw = await rawOne(msg.id).catch(() => undefined)
+    const [community] = raw != null ? await communities([raw]) : []
+    if (community != null) ctx.send({ kind: 'community', community })
+    await refreshLists()
   })
   ctx.on('getCommunityPlaceOptions', async (msg) => {
     const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {
