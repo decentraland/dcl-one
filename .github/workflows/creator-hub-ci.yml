@@ -2,6 +2,10 @@ name: Creator Hub / CI
 # The entry point for the Creator Hub workspace (apps/creator-hub): it calls every other
 # creator-hub-*.yml workflow. Reusable workflows can't widen the token, so this grants the
 # most any of them needs and each job narrows it.
+#
+# Pull requests run it whatever they change, so its one required check, `Creator Hub CI`, always
+# reports: `changes` skips every job when nothing Creator Hub changed, and a path filter would
+# leave the check pending forever on the pull requests it filtered out.
 on:
   workflow_dispatch:
   push:
@@ -11,10 +15,6 @@ on:
       - '.github/workflows/creator-hub-*'
       - '.github/actions/creator-hub-*/**'
   pull_request:
-    paths:
-      - 'apps/creator-hub/**'
-      - '.github/workflows/creator-hub-*'
-      - '.github/actions/creator-hub-*/**'
 
 permissions:
   contents: write
@@ -26,9 +26,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      creator-hub: ${{ steps.diff.outputs.creator-hub }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: .github
+      - name: Did this change touch the Creator Hub?
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE...$HEAD" \
+              | grep -qE '^(apps/creator-hub/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
+            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "creator-hub=false" >> "$GITHUB_OUTPUT"
+          fi
   build:
+    needs: [ changes ]
+    if: needs.changes.outputs.creator-hub == 'true'
     uses: ./.github/workflows/creator-hub-build.yml
   lint:
+    needs: [ changes ]
+    if: needs.changes.outputs.creator-hub == 'true'
     uses: ./.github/workflows/creator-hub-lint.yml
   typechecking:
     needs: [ build ]
@@ -70,3 +101,20 @@ jobs:
       inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
       inspector_version: ${{ needs.inspector.outputs.version }}
       inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}
+  # The one required check. It stands for lint, typecheck, unit tests, both e2e suites and the
+  # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
+  # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
+  # passed or `changes` skipped them all.
+  result:
+    name: Creator Hub CI
+    if: always()
+    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub ]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check every Creator Hub job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          ! echo "$RESULTS" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null
