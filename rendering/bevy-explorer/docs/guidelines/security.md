@@ -75,6 +75,13 @@ addresses selected after a redirect where the transport follows redirects. Keep 
 and metadata addresses blocked. State the scope for each transport and platform in the
 [running guide](running.md).
 
+On web, a scene's HTTP requests go through the sandbox's `createSceneFetch`
+(`deploy/web/engine/scene_fetch.js`). The sandbox removes the native `fetch` from the worker
+global's prototype chain, not only the own property. The service worker adds a
+`Content-Security-Policy` to the sandbox script's response, which the worker takes as its own:
+it allows `eval` and wasm but loads no script, module, worker or font. A sandbox started from a
+page the service worker does not control has no such policy.
+
 For signed service routing, verify the path the destination actually checks against the real
 proxy rewrite. Reject paths whose interpretation can shift the request to another service
 during URL normalisation or proxy decoding. Validate untrusted path parameters as single
