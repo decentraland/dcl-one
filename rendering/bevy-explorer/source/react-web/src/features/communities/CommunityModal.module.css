@@ -352,6 +352,10 @@
   color: var(--text);
   background: var(--panel);
 }
+.placeDelete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
 /* ADD PLACE: the grid's first tile for owners and moderators, opening the Edit Community form. */
 .addPlace {
   display: flex;

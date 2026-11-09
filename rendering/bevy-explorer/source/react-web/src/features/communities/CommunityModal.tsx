@@ -142,13 +142,13 @@ function MemberRow({ member, requested, onAdd }: { member: CommunityMember; requ
   )
 }
 
-function PlaceCard({ place, onDelete }: { place: CommunityPlace; onDelete?: () => void }): React.JSX.Element {
+function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
   return (
     <div className={styles.place}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
         {onDelete != null && (
-          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} onClick={onDelete}>
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={onDelete}>
             <Trash size={14} />
           </button>
         )}
@@ -232,6 +232,9 @@ export function CommunityModal({
   const [coverFailed, setCoverFailed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [requested, setRequested] = useState<ReadonlySet<string>>(new Set())
+  // the places being deleted: their delete waits for the card's places (or an error) to come back
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => setRemoving(new Set()), [detail, error])
   const member = isMemberRole(community.role)
   const isPrivate = community.privacy === 'private'
   const showCover = community.thumbnail != null && !coverFailed
@@ -262,7 +265,9 @@ export function CommunityModal({
       confirmLabel: 'DELETE',
       cancelLabel: 'CANCEL'
     }).then((yes) => {
-      if (yes) onRemovePlace?.(community.id, place.id)
+      if (!yes) return
+      setRemoving((prev) => new Set(prev).add(place.id))
+      onRemovePlace?.(community.id, place.id)
     })
   }
   const copyLink = (): void => {
@@ -353,6 +358,7 @@ export function CommunityModal({
                     key={p.id}
                     place={p}
                     onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
+                    deleting={removing.has(p.id)}
                   />
                 ))}
               </div>

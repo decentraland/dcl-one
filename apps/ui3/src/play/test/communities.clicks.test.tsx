@@ -197,6 +197,14 @@ describe('community card places', () => {
     await userEvent.click(screen.getByRole('button', { name: 'DELETE' }))
     expect(s.onRemovePlace).toHaveBeenCalledWith('c1', 'pl-mine')
   })
+
+  it('holds the delete while it is on its way, so it cannot be sent twice', async () => {
+    renderCard('owner', [mine])
+    await openPlaces()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete My Plaza' }))
+    await userEvent.click(screen.getByRole('button', { name: 'DELETE' }))
+    expect(screen.getByRole('button', { name: 'Delete My Plaza' })).toBeDisabled()
+  })
 })
 
 // The create form, as unity-explorer's: it holds typed details (the scrim refuses, the deliberate
@@ -367,6 +375,20 @@ describe('community create modal', () => {
     expect(screen.getByText('Content verification is temporarily unavailable. Please try again later.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
     expect(communities.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Builders', description: 'We build things' }))
+  })
+
+  it('reads no places behind the NAME gate', () => {
+    const session = fakeSession()
+    render(
+      <SessionProvider value={{ ...session }}>
+        <PopupHost />
+      </SessionProvider>
+    )
+    act(() => {
+      openCommunityCreateModal(false, vi.fn())
+    })
+    expect(screen.getByRole('dialog', { name: 'Get a NAME' })).toBeInTheDocument()
+    expect(session.communities.loadPlaceOptions).not.toHaveBeenCalled()
   })
 
   it('reads the places as it opens, and waits for them before it can be filled', () => {

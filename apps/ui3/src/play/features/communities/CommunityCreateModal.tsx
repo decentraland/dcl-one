@@ -485,12 +485,15 @@ function CommunityFormContainer({
   const { clearSave, loadPlaceOptions, clearPlaceOptions } = communities
   // a save's outcome belongs to this form only: forget it when the form goes away
   useEffect(() => clearSave, [clearSave])
-  // the places, read once as the form opens and forgotten when it closes
+  // the places, read once as the form opens and forgotten when it closes; not behind the NAME gate,
+  // which shows no places (a failed read would toast over it)
   const editingId = editing?.id
+  const gated = editingId == null && !canCreate
   useEffect(() => {
+    if (gated) return
     loadPlaceOptions(editingId)
     return clearPlaceOptions
-  }, [editingId, loadPlaceOptions, clearPlaceOptions])
+  }, [gated, editingId, loadPlaceOptions, clearPlaceOptions])
   return (
     <CommunityCreateModal
       canCreate={canCreate}
