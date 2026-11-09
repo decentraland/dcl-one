@@ -219,12 +219,7 @@ consumer, and verify a change to it in every app that imports it.
 
 ## Shared UI: `library/ui`
 
-The structure and integration below define the target for the shared UI. Its
-foundations, runtime components and consumer integration still need to be
-implemented; the component template is available now. Keep each surface's
-existing tokens and components until its integration has been reviewed. The
-decision is recorded in the
-[shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
+The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Runtime component and consumer integration are separate work. Keep each surface's existing tokens and components until its integration has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 
@@ -327,13 +322,11 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { Button } from '<shared-ui>'
+import { theme } from '@dcl/one-ui'
+import '@dcl/one-ui/foundations.css'
 ```
 
-`<shared-ui>` is a placeholder; the shared library's import name remains to be
-selected. Each consumer resolves it consistently in TypeScript and its build,
-allows access to shared sources and deduplicates React and React DOM. Assets
-must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles. Each consumer resolves it consistently in TypeScript and its build, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.

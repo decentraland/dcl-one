@@ -8,6 +8,16 @@ The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standard
 | `figma/`               | Node-only: CLI and MCP server (`dcl-figma`), Review gallery (`review/`), consumer skill kit (`agent-kit/`), `key-guard.mjs`, `lock-digests.mjs`, `port-verification.mjs`. Never imported by browser code. Maintenance notes: [`figma/MAINTENANCE.md`](figma/MAINTENANCE.md). |
 | `templates/component/` | Starting point for a new shared component.                                                                                                                                                                                                                                   |
 
+## Shared foundations
+
+The public `@dcl/one-ui` entry exports colors, icons, typography, responsive layouts and spacing, including semantic CSS references through `theme`. Load `@dcl/one-ui/foundations.css` once from the consumer's global stylesheet; it provides the shared CSS variables and bundled Inter fonts. Import typography classes from `@dcl/one-ui/text-styles.module.css` as a CSS Module. Components and the CLI remain separate from these browser exports.
+
+The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five source pages/families are Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
+
+Inter variable normal faces (weights 100–900) come from `@fontsource-variable/inter` 5.3.0 under the SIL Open Font License in `foundations/typography/fonts/OFL.txt`. `foundations/typography/font-source.json` pins their materialized payloads; Git LFS stores the WOFF2 assets. Font ownership is independent of the Figma capture. Do not remove the font faces or replace them with a network font dependency.
+
+Monochrome icons inherit `currentColor`, and active-state pairs expose `active`. Icons preserve their captured intrinsic dimensions unless `size` is supplied. Give informative icons an accessible name with SVG attributes such as `role="img"` and `aria-label`; mark decorative icons `aria-hidden="true"`. Skipped source records are listed in `skippedIcons` rather than silently substituted.
+
 ## Work on it
 
 Node 24 and pnpm (`corepack enable`). The Figma capture is not in this repository: it lives in [figma-design-system](https://github.com/decentraland/figma-design-system) (FDS). `upstream.lock.json` pins two FDS commits: `revision`, the code base every ported file is compared against, and `snapshot.revision`, the capture `fetch-source` reads, with its digest table.
