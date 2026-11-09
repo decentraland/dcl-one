@@ -105,8 +105,9 @@ const triggers = (workflow: Workflow) =>
       ? workflow.on
       : Object.keys(workflow.on)
 const SECRET = 'secrets.FIGMA_FILE_KEY'
-// Context names ignore case, so every spelling of the secret counts.
-const KEY_REFERENCE = /\bsecrets\s*\.\s*figma_file_key\b/i
+// Context names ignore case, so every spelling of a secret counts.
+const namesSecret = (name: string) => new RegExp(`\\bsecrets\\s*\\.\\s*${name}\\b`, 'i')
+const KEY_REFERENCE = namesSecret('FIGMA_FILE_KEY')
 // The whole secrets context (toJSON(secrets), secrets['…'], secrets[…]) reaches the key without naming it.
 const expressions = (value: unknown) =>
   [...JSON.stringify(value ?? null).matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((match) => match[1]!)
@@ -118,10 +119,11 @@ const environmentName = (job: Job) =>
   String(typeof job.environment === 'string' ? job.environment : (job.environment?.name ?? ''))
 // FIGMA_FILE_KEY is a repository secret, so a key reader is any job that references it in any form, including
 // a call that passes every secret (secrets: inherit) or names the key in its secrets map.
-const passesKey = (job: Job) =>
+const passesSecret = (job: Job, secret: string) =>
   typeof job.secrets === 'string'
     ? job.secrets.trim().toLowerCase() === 'inherit'
-    : Object.keys(job.secrets ?? {}).some((name) => /^figma_file_key$/i.test(name))
+    : Object.keys(job.secrets ?? {}).some((name) => name.toLowerCase() === secret.toLowerCase())
+const passesKey = (job: Job) => passesSecret(job, 'FIGMA_FILE_KEY')
 const isKeyReaderJob = (job: Job) => referencesKey(job) || passesKey(job)
 const isKeyReader = (workflow: Workflow) =>
   referencesKey(workflow) || Object.values(workflow.jobs ?? {}).some(isKeyReaderJob)
@@ -159,6 +161,22 @@ function triggerViolations(workflow: Workflow): string[] {
 // The only workflows that may read the key. web-previews-publish.yml is the CDN reviewer publisher; it is
 // allowed before it exists on main, and it must pass the same rules as the key scan once it does.
 const KEY_READERS = ['ui-library-key-scan.yml', 'web-previews-publish.yml']
+// Every guarded repository secret and the workflows that may read it, in any form: by name in any case, through
+// toJSON(secrets) or secrets[...], or passed on with secrets: inherit or a secrets map. No workflow reads the
+// Figma API token today, the CDN publisher included.
+const GUARDED_SECRETS: Record<string, string[]> = {
+  FIGMA_FILE_KEY: KEY_READERS,
+  FIGMA_TOKEN: []
+}
+const readsSecret = (workflow: Workflow, secret: string) =>
+  namesSecret(secret).test(JSON.stringify(workflow)) ||
+  readsWholeSecrets(workflow) ||
+  Object.values(workflow.jobs ?? {}).some((job) => passesSecret(job, secret))
+function guardedSecretViolations(file: string, workflow: Workflow): string[] {
+  return Object.entries(GUARDED_SECRETS).flatMap(([secret, readers]) =>
+    readsSecret(workflow, secret) && !readers.includes(file) ? [`${file} reads ${secret}`] : []
+  )
+}
 // github.workflow_sha is the commit of the running workflow file. It is trusted only because the trigger rule
 // admits only workflow_run and push to main, where that file is main's copy.
 const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ github.workflow_sha }}']
@@ -189,28 +207,185 @@ const THIS_REPOSITORY = '${{ github.repository }}'
 const DATA_PATH = /^(?:\$\{\{ runner\.temp \}\}\/|\.(?!git(?:hub)?(?:\/|$))[\w-]+(?:\/|$))/
 const PARENT_SEGMENT = /(?:^|[\s/"'=])\.\.(?:[/\s"']|$)/
 // Git commands that rewrite a working tree or the ref it is on, whatever ref they name.
+// replace refs, ref updates and config change what HEAD:<path> resolves to without touching the working tree.
 const REWRITES_CHECKOUT =
-  /\bgit\b[^\n;|&]*\s(?:checkout|switch|reset|restore|worktree|read-tree|checkout-index|update-index|pull|merge|rebase|cherry-pick|am|apply|stash|clean)\b|--update-head-ok/
+  /\bgit\b[^\n;|&]*\s(?:checkout|switch|reset|restore|worktree|read-tree|checkout-index|update-index|pull|merge|rebase|cherry-pick|am|apply|stash|clean|replace|update-ref|symbolic-ref|config)\b|\bgit\b[^\n;|&]*refs\/replace\b|--update-head-ok/
 // Variables that make the shell or node load code a step did not name.
 const LOADER_VARIABLES =
-  /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|SHELLOPTS)$/i
+  /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|SHELLOPTS|GIT_DIR|GIT_WORK_TREE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_REPLACE_REF_BASE|GIT_NAMESPACE|GIT_INDEX_FILE|GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT)$/i
 // Where a command starts in a shell line.
 const START = String.raw`(?:^|[;&|(]|\b(?:then|do|else)\b)\s*`
 // Pipes and redirects of the key step may only write into $RUNNER_TEMP.
-const TEMP_PATH = String.raw`"?\$\{?RUNNER_TEMP\}?/[^"\s]*"?`
+// Only plain path characters after $RUNNER_TEMP/: an escape, quote or expansion lets bash write a file the
+// policy text does not name (for example key\-guard.mjs is key-guard.mjs to bash).
+const TEMP_PATH = String.raw`"?\$\{?RUNNER_TEMP\}?/[A-Za-z0-9._/-]*"?`
+// The key step runs the guard blob of TRUSTED_SHA, written to a fresh file by this exact command. TRUSTED_SHA is
+// the commit the event names (github.sha or github.workflow_sha, a default branch commit under the trigger rule),
+// so it is read by object id: no earlier step can change what it names through HEAD, the index, the working
+// tree or a ref, and --no-replace-objects keeps refs/replace from swapping it. key-guard.mjs imports only
+// node: builtins, so that one file is the whole program.
+const GUARD_COPY = '$RUNNER_TEMP/key-guard.mjs'
+const FRESH_GUARD =
+  /^git (?:-C trusted )?--no-replace-objects cat-file blob "\$TRUSTED_SHA:library\/ui\/figma\/key-guard\.mjs" > "\$RUNNER_TEMP\/key-guard\.mjs"$/
+const TRUSTED_SHAS = ['${{ github.sha }}', '${{ github.workflow_sha }}']
+const FRESH_GUARD_NODE = /^node "\$RUNNER_TEMP\/key-guard\.mjs"(?: [^;&|]*)?$/
+// One shell command per entry: lines, lists and pipes split, with the keywords that only steer them removed.
+function shellCommands(run: string): string[] {
+  return run
+    .replace(/\\\n/g, ' ')
+    .split(/\n|&&|\|\||[;|]/)
+    .map((part) => {
+      let command = part.trim()
+      for (let previous = ''; previous !== command;) {
+        previous = command
+        command = command.replace(/^(?:if|then|else|elif|while|until|do|!)(?:\s+|$)/, '').trim()
+      }
+      return /^(?:fi|done)$/.test(command) ? '' : command
+    })
+    .filter(Boolean)
+}
+// A path as the shell sees it: quotes dropped, ${RUNNER_TEMP} spelled $RUNNER_TEMP, /./ and // collapsed.
+function normalizePath(token: string): string {
+  let path = token.replace(/["']/g, '').replace(/\$\{RUNNER_TEMP\}/g, '$RUNNER_TEMP')
+  for (let previous = ''; previous !== path;) {
+    previous = path
+    path = path.replace(/\/\.(?=\/|$)/g, '').replace(/\/{2,}/g, '/')
+  }
+  return path
+}
+// A redirect and its whole target word, quoted and unquoted parts together.
+const WORD = String.raw`((?:"[^"]*"|'[^']*'|[^\s;|&"'<>])+)`
+const REDIRECT = new RegExp(String.raw`(?<![<&\d])\d?>>?(?!&)\s*${WORD}|<\s*${WORD}`, 'g')
+function freshGuardViolations(commands: string[]): string[] {
+  const copy = commands.findIndex((command) => FRESH_GUARD.test(command))
+  const nodes = commands.flatMap((command, index) => (/^node\b/.test(command) ? [index] : []))
+  // Every write that lands on the copy, however the path is spelled; only the copy command may make one.
+  const writes = commands.flatMap((command, index) => {
+    const targets = [...command.matchAll(REDIRECT)].flatMap(([redirect, target]) =>
+      redirect.trimStart().startsWith('<') ? [] : [target!]
+    )
+    if (/^tee\b/.test(command))
+      targets.push(...(command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).slice(1))
+    return targets.some((target) => normalizePath(target) === GUARD_COPY) ? [index] : []
+  })
+  const reason =
+    copy < 0
+      ? 'no copy of the pinned guard'
+      : nodes.length === 0
+        ? 'node never runs the copy'
+        : nodes.some((index) => index < copy)
+          ? 'node runs before the copy'
+          : nodes.some((index) => !FRESH_GUARD_NODE.test(commands[index]!))
+            ? 'node runs another program'
+            : writes.length !== 1 || writes[0] !== copy
+              ? 'the copy is written again'
+              : undefined
+  return reason ? [`does not run a fresh copy of the committed key guard: ${reason}`] : []
+}
 const KEY_STEP_COMMANDS = [
   /^set -o pipefail$/,
-  /^node (?:trusted\/)?library\/ui\/figma\/key-guard\.mjs(?: .*)?$/,
+  /^git (?:-C trusted )?--no-replace-objects cat-file blob "\$TRUSTED_SHA:library\/ui\/figma\/key-guard\.mjs"$/,
+  FRESH_GUARD_NODE,
   new RegExp(`^tee(?: -a)? ${TEMP_PATH}$`),
   new RegExp(`^grep(?: -[A-Za-z]+)* (?:'[^']*'|"[^"$]*")(?: ${TEMP_PATH})?$`),
   new RegExp(`^head(?: -[cn] \\d+)?(?: ${TEMP_PATH})?$`),
   new RegExp(`^cat(?: ${TEMP_PATH})*$`),
   // Plain assignments and tests, which the scan needs to build its arguments; nothing they hold runs.
   /^[A-Za-z_]\w*=(?:\([^()]*\)|"[^"]*"|'[^']*'|[^\s"'()]*)$/,
-  /^\[ [^[\]]* \]$/,
-  /^fi$/
+  /^\[ [^[\]]* \]$/
 ]
+// Commands that write files, and where. A step before the key step may not write into a checkout (or, for a
+// checkout at the workspace root, anywhere in the workspace but a dot directory), because the checkout holds
+// the code the key step trusts. tar -x and unzip extract into the working directory unless told otherwise.
+const WRITERS = /^(?:cp|mv|install|rsync|ln|dd|tee|sed|tar|unzip)$/
+function protectsPath(token: string, checkouts: string[]): boolean {
+  const path = token
+    .replace(/^["']|["']$/g, '')
+    .replace(/^(?:of=|--?[\w-]+=)/, '')
+    .replace(/^\.\/+/, '')
+  if (path === '' || path.startsWith('-') || path.startsWith('&')) return false
+  // The workspace itself holds every checkout, so a recursive copy or an extraction there can reach them.
+  if (path === '.' || path === '*') return true
+  // A repository's metadata decides what HEAD:<path> is, and .github holds the workflows.
+  if (/(?:^|\/)\.git(?:hub)?(?:\/|$)/.test(path)) return true
+  if (/GITHUB_WORKSPACE|github\.workspace/.test(path)) return true
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(path)) return true
+  if (path.startsWith('/')) return !/^\/(?:dev|tmp)\//.test(path)
+  // $RUNNER_TEMP and $GITHUB_OUTPUT are the runner's scratch files. Any other variable or ~ can name a
+  // directory on PATH (~/.local/bin is on it on hosted runners), so node itself could be replaced.
+  if (path.startsWith('$')) return !/^\$\{?(?:RUNNER_TEMP|GITHUB_OUTPUT)\}?(?:\/|$)/.test(path)
+  if (path.startsWith('~')) return true
+  const root = checkouts.some((checkout) => checkout === '' || checkout === '.')
+  if (root) return path === '.' || !path.startsWith('.')
+  return ['trusted', 'library', ...checkouts].some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  )
+}
+function checkoutWrites(run: string, checkouts: string[]): string[] {
+  const problems: string[] = []
+  for (const segment of shellCommands(run)) {
+    for (const [redirect, target] of segment.matchAll(REDIRECT))
+      if (!redirect.trimStart().startsWith('<') && protectsPath(target!, checkouts))
+        problems.push(`writes the checkout before the key step: ${segment}`)
+    const command = segment
+      .replace(/^(?:[A-Za-z_]\w*=\S*\s+)*/, '')
+      .replace(/^(?:(?:sudo|command|exec|nohup|xargs)\s+(?:-\S+\s+)*)*/, '')
+    const [name = '', ...args] = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []
+    const tool = name.split('/').pop()!
+    if (!WRITERS.test(tool)) continue
+    if (tool === 'sed' && !args.some((arg) => /^-[A-Za-z]*i|^--in-place/.test(arg))) continue
+    // unzip only lists, tests or prints with -l, -t, -v, -p, -c or -Z.
+    // (-d takes a directory, so a bundle starting with d is a target, not a listing flag.)
+    if (tool === 'unzip' && args.some((arg) => /^-(?!d)[A-Za-z]*[ltvpcZ][A-Za-z]*$/.test(arg)))
+      continue
+    // tar extracts with x in its first argument (bundled, dash optional), in a short option bundle, or --extract.
+    if (
+      tool === 'tar' &&
+      !/^-?[A-Za-z]*x[A-Za-z]*$/.test(args[0] ?? '') &&
+      !args.some((arg) => /^-[A-Za-z]*x[A-Za-z]*$|^--(?:extract|get)$/.test(arg))
+    )
+      continue
+    let targets = args
+    if (tool === 'sed') targets = args.filter((arg) => !arg.startsWith('-')).slice(1)
+    // cp, install and rsync write their last operand, or the -t directory in any spelling. mv also removes its
+    // sources, and a link's target is where later writes through it land, so every operand of mv and ln counts.
+    if (['cp', 'install', 'rsync', 'ln', 'mv'].includes(tool)) {
+      const operands = args.filter((arg) => !arg.startsWith('-'))
+      const directories: string[] = []
+      if (tool !== 'rsync')
+        for (const [index, arg] of args.entries()) {
+          if (arg === '-t' || arg === '--target-directory') directories.push(args[index + 1] ?? '.')
+          else if (arg.startsWith('--target-directory=')) directories.push(arg.slice(19))
+          else if (/^-t./.test(arg)) directories.push(arg.slice(2))
+        }
+      targets =
+        tool === 'mv' || tool === 'ln'
+          ? [...operands, ...directories]
+          : directories.length > 0
+            ? directories
+            : operands.slice(-1)
+    }
+    if (tool === 'dd') targets = args.filter((arg) => arg.startsWith('of='))
+    if (tool === 'tar' || tool === 'unzip') {
+      // -C DIR, -CDIR, --directory DIR and --directory=DIR for tar; -d DIR and -dDIR for unzip.
+      const [short, long] = tool === 'tar' ? ['-C', '--directory'] : ['-d', '--no-long-form']
+      targets = []
+      for (const [index, arg] of args.entries()) {
+        if (arg === short || arg === long) targets.push(args[index + 1] ?? '.')
+        else if (arg.startsWith(`${long}=`)) targets.push(arg.slice(long.length + 1))
+        else if (arg.startsWith(short) && arg.length > short.length && !/^-[A-Za-z]*x/.test(arg))
+          targets.push(arg.slice(short.length))
+      }
+      if (targets.length === 0) targets.push('.')
+    }
+    if (targets.some((target) => protectsPath(target, checkouts)))
+      problems.push(`writes the checkout before the key step: ${segment}`)
+  }
+  return problems
+}
+
 // What the step that maps the key may run: the commands above, joined by pipes, lists and redirects only.
+// Every command is checked, node included, wherever it sits in a line.
 function keyStepViolations(run: string): string[] {
   const problems: string[] = []
   if (/\$\(|`|<\(|>\(|&(?!&)|\/proc\b|environ/.test(run.replace(/&&/g, '')))
@@ -218,25 +393,17 @@ function keyStepViolations(run: string): string[] {
   // An expression is expanded into the script before the shell parses it, so a branch name could inject code.
   if (run.includes('${{')) problems.push('interpolates an expression')
   if (PARENT_SEGMENT.test(run)) problems.push('uses a parent path')
-  const commands = run
-    .replace(/\\\n/g, ' ')
-    .split(/\n|&&|\|\||[;|]/)
-    .map((part) =>
-      part
-        .trim()
-        .replace(/^(?:if|then|else|elif)(?:\s+|$)/, '')
-        .trim()
-    )
-    .filter(Boolean)
+  const commands = shellCommands(run)
+  problems.push(...freshGuardViolations(commands))
   for (const command of commands) {
     let rest = command
     const assigned = /^([A-Za-z_]\w*)=/.exec(rest)?.[1]
     if (assigned && LOADER_VARIABLES.test(assigned)) problems.push(`sets ${assigned}`)
-    for (const [redirect, target] of command.matchAll(
-      /\d?>>?\s*("[^"]*"|\S+)|<\s*("[^"]*"|\S+)/g
-    )) {
-      if (!new RegExp(`^${TEMP_PATH}$`).test((target ?? '').trim()))
-        problems.push(`redirects outside $RUNNER_TEMP: ${redirect}`)
+    if (assigned === 'TRUSTED_SHA') problems.push('reassigns TRUSTED_SHA')
+    for (const [redirect, target, source] of command.matchAll(REDIRECT)) {
+      const path = target ?? source ?? ''
+      if (!new RegExp(`^${TEMP_PATH}$`).test(path.trim()) || /[*?[]/.test(path))
+        problems.push(`redirects outside $RUNNER_TEMP: ${redirect.trim()}`)
       rest = rest.replace(redirect, '').trim()
     }
     if (!KEY_STEP_COMMANDS.some((allowed) => allowed.test(rest))) problems.push(`runs ${rest}`)
@@ -269,7 +436,14 @@ function keyReaderViolations(workflow: Workflow): string[] {
     if (job.defaults !== undefined) problems.push(`${id}: sets job defaults`)
     for (const name of Object.keys(job.env ?? {}))
       if (LOADER_VARIABLES.test(name)) problems.push(`${id}: sets ${name}`)
-    for (const step of jobSteps) {
+    const keyIndex = jobSteps.findIndex((step) => referencesKey(step.env))
+    const checkouts = jobSteps
+      .filter((step) => step.uses?.startsWith('actions/checkout@'))
+      .map((step) => String(step.with?.path ?? '').replace(/\/+$/, ''))
+    for (const [index, step] of jobSteps.entries()) {
+      if (keyIndex < 0 || index < keyIndex)
+        for (const problem of checkoutWrites(step.run ?? '', checkouts))
+          problems.push(`${id}: ${problem}`)
       const { env, ...stepRest } = step
       if (referencesKey(stepRest)) problems.push(`${id}: key outside a step env`)
       for (const name of Object.keys(env ?? {}))
@@ -300,10 +474,16 @@ function keyReaderViolations(workflow: Workflow): string[] {
         }
       }
       const run = step.run ?? ''
+      // Relative paths are judged from the workspace, so no step may move away from it.
+      if (step['working-directory'] !== undefined)
+        problems.push(`${id}: step changes its working directory`)
+      if (shellCommands(run).some((command) => /^(?:cd|pushd|popd)\b/.test(command)))
+        problems.push(`${id}: changes directory`)
       if (referencesKey(env)) {
         if (step.shell !== undefined) problems.push(`${id}: key step sets its shell`)
-        if (step['working-directory'] !== undefined)
-          problems.push(`${id}: key step changes its working directory`)
+        const pinned = String(env?.TRUSTED_SHA ?? '')
+        if (!TRUSTED_SHAS.includes(pinned))
+          problems.push(`${id}: key step pins the guard to ${pinned || 'nothing'}`)
         for (const problem of keyStepViolations(run)) problems.push(`${id}: key step ${problem}`)
       }
       for (const tool of ['pnpm', 'npm', 'npx', 'yarn', 'corepack'])
@@ -320,8 +500,14 @@ function keyReaderViolations(workflow: Workflow): string[] {
         if (!/^["']?(trusted|tooling)\//.test(script!))
           problems.push(`${id}: runs python ${script}`)
       if (new RegExp(`${START}make\\b`, 'm').test(run)) problems.push(`${id}: runs make`)
+      // The key step's fresh guard copy is the one file node may run from $RUNNER_TEMP.
+      const ranFiles = referencesKey(env)
+        ? run.replace(/^node "\$RUNNER_TEMP\/key-guard\.mjs"/gm, '')
+        : run
       if (
-        /\b(node|python[\d.]*)\s+(?:-\S+\s+)*["']?(\$\{?RUNNER_TEMP|(\.\/)?\.preview\b)/.test(run)
+        /\b(node|python[\d.]*)\s+(?:-\S+\s+)*["']?(\$\{?RUNNER_TEMP|(\.\/)?\.preview\b)/.test(
+          ranFiles
+        )
       )
         problems.push(`${id}: runs a downloaded file`)
       if (REWRITES_CHECKOUT.test(run)) problems.push(`${id}: rewrites a checkout with git`)
@@ -385,6 +571,48 @@ describe('the Figma file key secret', () => {
     for (const file of holders) expect(KEY_READERS, file).toContain(file)
   })
 
+  it.each(workflowFiles)('should let %s read only the guarded secrets it is allowed', (file) => {
+    expect(guardedSecretViolations(file, load(file))).toEqual([])
+  })
+
+  it.each([
+    ['by name', { FIGMA_TOKEN: '${{ secrets.FIGMA_TOKEN }}' }],
+    ['in another case', { T: '${{ secrets.figma_token }}' }],
+    ['with spaces', { T: '${{ secrets . Figma_Token }}' }],
+    ['through toJSON(secrets)', { ALL: '${{ toJSON(secrets) }}' }],
+    ['by index', { T: "${{ secrets['FIGMA_TOKEN'] }}" }]
+  ])('should flag the key scan itself reading FIGMA_TOKEN %s', (_, env) => {
+    const scan = load('ui-library-key-scan.yml')
+    stepsOf(scan.jobs['key-scan']).push({ env, run: 'true' })
+    expect(guardedSecretViolations('ui-library-key-scan.yml', scan)).toContain(
+      'ui-library-key-scan.yml reads FIGMA_TOKEN'
+    )
+  })
+
+  it.each([
+    ['secrets: inherit', 'inherit'],
+    ['a secrets map that names the token', { figma_token: '${{ secrets.OTHER }}' }]
+  ] as [string, Job['secrets']][])(
+    'should flag a call passing FIGMA_TOKEN through %s',
+    (_, secrets) => {
+      const call: Workflow = {
+        on: { workflow_run: null },
+        jobs: { call: { uses: './.github/workflows/x.yml', secrets } }
+      }
+      expect(guardedSecretViolations('web-previews-publish.yml', call)).toContain(
+        'web-previews-publish.yml reads FIGMA_TOKEN'
+      )
+    }
+  )
+
+  it('should not flag a workflow that reads neither guarded secret', () => {
+    const other: Workflow = {
+      on: { push: { branches: ['main'] } },
+      jobs: { a: { steps: [{ env: { T: '${{ secrets.FIGMA_TOKEN_OLD }}' }, run: 'true' }] } }
+    }
+    expect(guardedSecretViolations('x.yml', other)).toEqual([])
+  })
+
   it.each(workflowFiles)(
     'should hold the key in %s only under the trusted reader rules',
     (file) => {
@@ -442,6 +670,8 @@ jobs:
   // A reader that passes every rule; each case below breaks exactly one.
   const PINNED = '3d3c42e5aac5ba805825da76410c181273ba90b1'
   type StepJob = Job & { steps: WorkflowStep[] }
+  const FRESH_COPY =
+    'git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"'
   const reader = (change: (job: StepJob, workflow: Workflow) => void = () => {}): Workflow => {
     const job: StepJob = {
       steps: [
@@ -451,10 +681,14 @@ jobs:
         },
         { run: 'git -C trusted fetch --no-tags origin "+$HEAD_SHA:refs/key-scan/head"' },
         {
-          env: { FIGMA_FILE_KEY: '${{ secrets.FIGMA_FILE_KEY }}' },
+          env: {
+            FIGMA_FILE_KEY: '${{ secrets.FIGMA_FILE_KEY }}',
+            TRUSTED_SHA: '${{ github.sha }}'
+          },
           run: [
             'set -o pipefail',
-            'node trusted/library/ui/figma/key-guard.mjs --root trusted | tee "$RUNNER_TEMP/out.txt"',
+            FRESH_COPY,
+            'node "$RUNNER_TEMP/key-guard.mjs" --root trusted | tee "$RUNNER_TEMP/out.txt"',
             `grep -qx 'check key: ran' "$RUNNER_TEMP/out.txt"`
           ].join('\n')
         }
@@ -468,12 +702,62 @@ jobs:
     return workflow
   }
   const otherStep = (run: string) => reader((job) => (job.steps[1] = { run }))
+  // The same reader with its checkout at the workspace root, as the CDN publisher has it.
+  const rootCheckout = (run: string) =>
+    reader((job) => {
+      delete job.steps[0]!.with!.path
+      job.steps[1] = { run }
+    })
   const keyStep = (run: string, extra: Partial<WorkflowStep> = {}) =>
     reader((job) => Object.assign(job.steps[2]!, { run }, extra))
+
+  it('should accept a key step that copies, runs and checks the guard on one line', () => {
+    const line = [
+      'node "$RUNNER_TEMP/key-guard.mjs" --root trusted | tee "$RUNNER_TEMP/o.txt"',
+      `grep -qx 'check key: ran' "$RUNNER_TEMP/o.txt"`
+    ].join(' && ')
+    expect(keyReaderViolations(keyStep([FRESH_COPY, line].join('\n')))).toEqual([])
+  })
+
+  it.each([
+    'tar -czf "$RUNNER_TEMP/a.tgz" index.html',
+    'tar cf "$RUNNER_TEMP/a.tar" xfiles',
+    'tar -xf "$RUNNER_TEMP/x.tar" --directory="$RUNNER_TEMP/out"',
+    'unzip -o "$RUNNER_TEMP/x.zip" -d "$RUNNER_TEMP/out"'
+  ])('should not flag %s, which writes only into $RUNNER_TEMP', (run) => {
+    expect(keyReaderViolations(otherStep(run))).toEqual([])
+    expect(keyReaderViolations(rootCheckout(run))).toEqual([])
+  })
+
+  it.each([
+    'unzip -l "$RUNNER_TEMP/x.zip"',
+    'unzip -p "$RUNNER_TEMP/x.zip" a > "$RUNNER_TEMP/a"',
+    'echo "a=b" >> "${GITHUB_OUTPUT}"'
+  ])('should not flag %s, which writes nothing into a checkout', (run) => {
+    expect(keyReaderViolations(otherStep(run))).toEqual([])
+  })
+
+  // Pinning makes HEAD, the index, the working tree and refs irrelevant to what runs: an earlier step may
+  // commit, add with another work tree or move HEAD, and the key step still reads the same blob. The real
+  // step is exercised against that in key-scan-workflow.test.ts.
+  it.each([
+    'git -C trusted --work-tree="$RUNNER_TEMP/pr-artifact" add library/ui/figma/key-guard.mjs',
+    'git -C trusted -c user.name=x -c user.email=x@example.com commit -m x'
+  ])('should leave %s to the pinned copy, which it cannot change', (run) => {
+    expect(keyReaderViolations(otherStep(run))).toEqual([])
+  })
 
   it('should accept a reader that follows every rule', () => {
     expect(keyReaderViolations(reader())).toEqual([])
     expect(keyReaderViolations(otherStep('python3 tooling/web-preview.py resolve'))).toEqual([])
+    // Writes into $RUNNER_TEMP, $GITHUB_OUTPUT or a dot directory leave the checkout alone.
+    for (const run of [
+      'cp trusted/x "$RUNNER_TEMP/x" && echo "a=b" >> "$GITHUB_OUTPUT"',
+      'tar -xf "$RUNNER_TEMP/x.tar" -C "$RUNNER_TEMP/out" 2> /dev/null',
+      'echo x >&2'
+    ])
+      expect(keyReaderViolations(otherStep(run))).toEqual([])
+    expect(keyReaderViolations(rootCheckout('mkdir -p .preview && cp x .preview/y'))).toEqual([])
   })
 
   it.each([
@@ -669,7 +953,7 @@ jobs:
     [
       'a key step that runs a downloaded script',
       keyStep('node "$RUNNER_TEMP/pr-artifact/x.mjs"'),
-      'scan: key step runs node "$RUNNER_TEMP/pr-artifact/x.mjs"'
+      'scan: key step does not run a fresh copy of the committed key guard: no copy of the pinned guard'
     ],
     [
       'a key step that runs python',
@@ -709,7 +993,7 @@ jobs:
     [
       'a key step in another directory',
       keyStep('node library/ui/figma/key-guard.mjs', { 'working-directory': '.preview/input' }),
-      'scan: key step changes its working directory'
+      'scan: step changes its working directory'
     ],
     ['a relative script', otherStep('./script.sh'), 'scan: runs a local script'],
     ['a sourced script', otherStep('true && . script'), 'scan: runs a local script'],
@@ -750,6 +1034,472 @@ jobs:
     ['indirect expansion', otherStep('v=FIGMA_FILE_KEY; echo "${!v}"'), 'scan: prints the key'],
     ['xtrace', otherStep('set -o xtrace'), 'scan: prints the key'],
     ['a lower-case key variable', otherStep('echo "$figma_file_key"'), 'scan: prints the key'],
+    [
+      'a cp into trusted/',
+      otherStep('cp "$RUNNER_TEMP/pr-artifact/x.mjs" trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/pr-artifact/x.mjs" trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'an mv into trusted/',
+      otherStep('mv "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: mv "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'an install into trusted/',
+      otherStep('install -m 644 "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: install -m 644 "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'an rsync into trusted/',
+      otherStep('rsync -a "$RUNNER_TEMP/pr-artifact/" trusted/'),
+      'scan: writes the checkout before the key step: rsync -a "$RUNNER_TEMP/pr-artifact/" trusted/'
+    ],
+    [
+      'an ln into trusted/',
+      otherStep('ln -sf "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: ln -sf "$RUNNER_TEMP/x" trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'a tar -x into trusted/',
+      otherStep('tar -xf "$RUNNER_TEMP/x.tar" -C trusted'),
+      'scan: writes the checkout before the key step: tar -xf "$RUNNER_TEMP/x.tar" -C trusted'
+    ],
+    [
+      'a tar x into the working directory',
+      otherStep('tar xf "$RUNNER_TEMP/x.tar"'),
+      'scan: writes the checkout before the key step: tar xf "$RUNNER_TEMP/x.tar"'
+    ],
+    [
+      'an unzip into the working directory',
+      otherStep('unzip -o "$RUNNER_TEMP/x.zip"'),
+      'scan: writes the checkout before the key step: unzip -o "$RUNNER_TEMP/x.zip"'
+    ],
+    [
+      'an unzip into library/',
+      otherStep('unzip -o "$RUNNER_TEMP/x.zip" -d library'),
+      'scan: writes the checkout before the key step: unzip -o "$RUNNER_TEMP/x.zip" -d library'
+    ],
+    [
+      'a dd into trusted/',
+      otherStep('dd if="$RUNNER_TEMP/x" of=trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: dd if="$RUNNER_TEMP/x" of=trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'a sed -i in trusted/',
+      otherStep("sed -i 's/a/b/' trusted/library/ui/figma/key-guard.mjs"),
+      "scan: writes the checkout before the key step: sed -i 's/a/b/' trusted/library/ui/figma/key-guard.mjs"
+    ],
+    [
+      'a tee into library/',
+      otherStep('tee library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: tee library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'a > redirect into trusted/',
+      otherStep('echo x > trusted/library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: echo x > trusted/library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'a >> redirect into trusted/',
+      otherStep('echo x >> "trusted/library/ui/figma/key-guard.mjs"'),
+      'scan: writes the checkout before the key step: echo x >> "trusted/library/ui/figma/key-guard.mjs"'
+    ],
+    [
+      'a write through GITHUB_WORKSPACE',
+      otherStep('cp x "$GITHUB_WORKSPACE/trusted/library/ui/figma/key-guard.mjs"'),
+      'scan: writes the checkout before the key step: cp x "$GITHUB_WORKSPACE/trusted/library/ui/figma/key-guard.mjs"'
+    ],
+    [
+      'a write through a parent path',
+      otherStep('cp x "$RUNNER_TEMP/../work/trusted/key-guard.mjs"'),
+      'scan: writes the checkout before the key step: cp x "$RUNNER_TEMP/../work/trusted/key-guard.mjs"'
+    ],
+    [
+      'a write to an absolute workspace path',
+      otherStep('cp x /home/runner/work/repo/repo/trusted/key-guard.mjs'),
+      'scan: writes the checkout before the key step: cp x /home/runner/work/repo/repo/trusted/key-guard.mjs'
+    ],
+    [
+      'a cp into a root checkout',
+      rootCheckout('cp "$RUNNER_TEMP/x" library/ui/figma/key-guard.mjs'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/x" library/ui/figma/key-guard.mjs'
+    ],
+    [
+      'a redirect into a root checkout',
+      rootCheckout('echo x > tooling/web-preview.py'),
+      'scan: writes the checkout before the key step: echo x > tooling/web-preview.py'
+    ],
+    [
+      'a sed -i in a root checkout',
+      rootCheckout("sed -i 's/a/b/' ./tooling/web-preview.py"),
+      "scan: writes the checkout before the key step: sed -i 's/a/b/' ./tooling/web-preview.py"
+    ],
+    [
+      'a recursive copy into the workspace',
+      otherStep('cp -r "$RUNNER_TEMP/pr-artifact/." .'),
+      'scan: writes the checkout before the key step: cp -r "$RUNNER_TEMP/pr-artifact/." .'
+    ],
+    [
+      'an mv out of trusted/',
+      otherStep('mv trusted/library/ui/figma/key-guard.mjs "$RUNNER_TEMP/x"'),
+      'scan: writes the checkout before the key step: mv trusted/library/ui/figma/key-guard.mjs "$RUNNER_TEMP/x"'
+    ],
+    [
+      'a same-line node after ;',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted ; node -e "x"'].join('\n')
+      ),
+      'scan: key step runs node -e "x"'
+    ],
+    [
+      'a same-line node after &&',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted && node -e "x"'].join('\n')
+      ),
+      'scan: key step runs node -e "x"'
+    ],
+    [
+      'a same-line node after ||',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted || node -e "x"'].join('\n')
+      ),
+      'scan: key step runs node -e "x"'
+    ],
+    [
+      'a same-line node after |',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted | node -e "x"'].join('\n')
+      ),
+      'scan: key step runs node -e "x"'
+    ],
+    [
+      'node inside an if',
+      keyStep(
+        [
+          FRESH_COPY,
+          'if node -e "x"; then grep -q \'a\' "$RUNNER_TEMP/o.txt"; fi',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step runs node -e "x"'
+    ],
+    [
+      'node in a subshell',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted', '( node -e "x" )'].join(
+          '\n'
+        )
+      ),
+      'scan: key step runs ( node -e "x" )'
+    ],
+    [
+      'python in the key step',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted', 'python3 -c "x"'].join(
+          '\n'
+        )
+      ),
+      'scan: key step runs python3 -c "x"'
+    ],
+    [
+      'sh in the key step',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted', 'sh -c "x"'].join('\n')
+      ),
+      'scan: key step runs sh -c "x"'
+    ],
+    [
+      'eval in the key step',
+      keyStep(
+        [FRESH_COPY, 'node "$RUNNER_TEMP/key-guard.mjs" --root trusted', 'eval "x"'].join('\n')
+      ),
+      'scan: key step runs eval "x"'
+    ],
+    [
+      'a dot-segment rewrite of the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'head -c 999999 "$RUNNER_TEMP/pr-artifact/x.mjs" > "$RUNNER_TEMP/./key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: the copy is written again'
+    ],
+    [
+      'a double-slash rewrite of the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'grep -h \'\' "$RUNNER_TEMP/pr-artifact/x.mjs" >> "$RUNNER_TEMP//key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: the copy is written again'
+    ],
+    [
+      'a braced rewrite of the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'cat "$RUNNER_TEMP/x" > "${RUNNER_TEMP}/key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: the copy is written again'
+    ],
+    [
+      'a tee into the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'cat "$RUNNER_TEMP/x" | tee -a "$RUNNER_TEMP/./key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: the copy is written again'
+    ],
+    [
+      'a glob onto the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'cat "$RUNNER_TEMP/x" > "$RUNNER_TEMP/key-guard.m"*',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step redirects outside $RUNNER_TEMP: > "$RUNNER_TEMP/key-guard.m"*'
+    ],
+    [
+      'an escaped spelling of the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          String.raw`cat "$RUNNER_TEMP/x.mjs" > $RUNNER_TEMP/key\-guard.mjs`,
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      String.raw`scan: key step redirects outside $RUNNER_TEMP: > $RUNNER_TEMP/key\-guard.mjs`
+    ],
+    [
+      'an expansion inside a temp path',
+      keyStep(
+        [
+          FRESH_COPY,
+          'cat "$RUNNER_TEMP/x.mjs" > "$RUNNER_TEMP/$NAME"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step redirects outside $RUNNER_TEMP: > "$RUNNER_TEMP/$NAME"'
+    ],
+    [
+      'a copy that honours replace refs',
+      keyStep(
+        [
+          'git -C trusted cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: no copy of the pinned guard'
+    ],
+    [
+      'a git directory override on the key step',
+      reader((job) => (job.steps[2]!.env!.GIT_DIR = '.preview/git')),
+      'scan: sets GIT_DIR'
+    ],
+    [
+      'git replace before the key step',
+      otherStep('git -C trusted replace abc def'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a fetch into refs/replace before the key step',
+      otherStep('git -C trusted fetch origin "+$HEAD_SHA:refs/replace/abc"'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'git update-ref before the key step',
+      otherStep('git -C trusted update-ref refs/heads/main "$HEAD_SHA"'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'git symbolic-ref before the key step',
+      otherStep('git -C trusted symbolic-ref HEAD refs/key-scan/head'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'git config before the key step',
+      otherStep('git -C trusted config core.hooksPath x'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a redirect into .git of a root checkout',
+      rootCheckout('echo x > .git/refs/replace/abc'),
+      'scan: writes the checkout before the key step: echo x > .git/refs/replace/abc'
+    ],
+    [
+      'a copy onto .git/HEAD of a root checkout',
+      rootCheckout('cp "$RUNNER_TEMP/h" .git/HEAD'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/h" .git/HEAD'
+    ],
+    [
+      'a write into .github of a root checkout',
+      rootCheckout('cp "$RUNNER_TEMP/x" ./.github/workflows/x.yml'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/x" ./.github/workflows/x.yml'
+    ],
+    [
+      'a copy into trusted/.git',
+      otherStep('cp "$RUNNER_TEMP/h" trusted/.git/HEAD'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/h" trusted/.git/HEAD'
+    ],
+    [
+      'a tar --extract --directory DIR',
+      otherStep('tar --extract -f "$RUNNER_TEMP/x.tar" --directory trusted'),
+      'scan: writes the checkout before the key step: tar --extract -f "$RUNNER_TEMP/x.tar" --directory trusted'
+    ],
+    [
+      'a tar --directory=DIR',
+      otherStep('tar -xf "$RUNNER_TEMP/x.tar" --directory=trusted'),
+      'scan: writes the checkout before the key step: tar -xf "$RUNNER_TEMP/x.tar" --directory=trusted'
+    ],
+    [
+      'a tar -CDIR',
+      otherStep('tar -xf "$RUNNER_TEMP/x.tar" -Ctrusted'),
+      'scan: writes the checkout before the key step: tar -xf "$RUNNER_TEMP/x.tar" -Ctrusted'
+    ],
+    [
+      'an unzip -dDIR',
+      otherStep('unzip -o "$RUNNER_TEMP/x.zip" -dtrusted'),
+      'scan: writes the checkout before the key step: unzip -o "$RUNNER_TEMP/x.zip" -dtrusted'
+    ],
+    [
+      'an ln whose target is the git directory',
+      otherStep('ln -s "$PWD/trusted/.git" "$RUNNER_TEMP/g"'),
+      'scan: writes the checkout before the key step: ln -s "$PWD/trusted/.git" "$RUNNER_TEMP/g"'
+    ],
+    [
+      'a cp --target-directory= into .git',
+      otherStep('cp --target-directory=trusted/.git "$RUNNER_TEMP/HEAD"'),
+      'scan: writes the checkout before the key step: cp --target-directory=trusted/.git "$RUNNER_TEMP/HEAD"'
+    ],
+    [
+      'a cp -tDIR into .git',
+      otherStep('cp -ttrusted/.git "$RUNNER_TEMP/HEAD"'),
+      'scan: writes the checkout before the key step: cp -ttrusted/.git "$RUNNER_TEMP/HEAD"'
+    ],
+    [
+      'an mv -t into trusted/',
+      otherStep('mv -t trusted "$RUNNER_TEMP/x"'),
+      'scan: writes the checkout before the key step: mv -t trusted "$RUNNER_TEMP/x"'
+    ],
+    [
+      'a write under $HOME',
+      otherStep('cp "$RUNNER_TEMP/x" "$HOME/.local/bin/node"'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/x" "$HOME/.local/bin/node"'
+    ],
+    [
+      'a write under ~',
+      otherStep('cp "$RUNNER_TEMP/x" ~/.local/bin/node'),
+      'scan: writes the checkout before the key step: cp "$RUNNER_TEMP/x" ~/.local/bin/node'
+    ],
+    [
+      'a write through another variable',
+      otherStep('echo x > "$TOOLS/node"'),
+      'scan: writes the checkout before the key step: echo x > "$TOOLS/node"'
+    ],
+    [
+      'a write to a PATH directory',
+      otherStep('sudo cp "$RUNNER_TEMP/x" /usr/local/bin/node'),
+      'scan: writes the checkout before the key step: sudo cp "$RUNNER_TEMP/x" /usr/local/bin/node'
+    ],
+    [
+      'cd before a relative write',
+      otherStep('cd trusted/.git && cp "$RUNNER_TEMP/x" HEAD'),
+      'scan: changes directory'
+    ],
+    ['pushd', otherStep('pushd trusted'), 'scan: changes directory'],
+    ['popd', otherStep('popd'), 'scan: changes directory'],
+    [
+      'a working directory on an earlier step',
+      reader(
+        (job) =>
+          (job.steps[1] = { run: 'cp "$RUNNER_TEMP/x" HEAD', 'working-directory': 'trusted/.git' })
+      ),
+      'scan: step changes its working directory'
+    ],
+    [
+      'a copy of the guard at HEAD',
+      keyStep(
+        [
+          'git -C trusted --no-replace-objects cat-file blob HEAD:library/ui/figma/key-guard.mjs > "$RUNNER_TEMP/key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: no copy of the pinned guard'
+    ],
+    [
+      'a key step with no pinned commit',
+      reader((job) => delete job.steps[2]!.env!.TRUSTED_SHA),
+      'scan: key step pins the guard to nothing'
+    ],
+    [
+      'a key step pinned to the scanned head',
+      reader((job) => (job.steps[2]!.env!.TRUSTED_SHA = '${{ steps.trigger.outputs.head }}')),
+      'scan: key step pins the guard to ${{ steps.trigger.outputs.head }}'
+    ],
+    [
+      'a key step that reassigns the pinned commit',
+      keyStep(
+        [
+          'TRUSTED_SHA="$HEAD_SHA"',
+          FRESH_COPY,
+          'node "$RUNNER_TEMP/key-guard.mjs" --root trusted'
+        ].join('\n')
+      ),
+      'scan: key step reassigns TRUSTED_SHA'
+    ],
+    [
+      'a key step that runs the working tree guard',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs --root trusted'),
+      'scan: key step does not run a fresh copy of the committed key guard: no copy of the pinned guard'
+    ],
+    [
+      'a key step that copies the guard after running node',
+      keyStep(['node "$RUNNER_TEMP/key-guard.mjs"', FRESH_COPY].join('\n')),
+      'scan: key step does not run a fresh copy of the committed key guard: node runs before the copy'
+    ],
+    [
+      'a key step that rewrites the copy',
+      keyStep(
+        [
+          FRESH_COPY,
+          'cat "$RUNNER_TEMP/x" > "$RUNNER_TEMP/key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs"'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: the copy is written again'
+    ],
+    [
+      'a key step that copies the guard from another revision',
+      keyStep(
+        [
+          'git -C trusted --no-replace-objects cat-file blob refs/key-scan/head:library/ui/figma/key-guard.mjs > "$RUNNER_TEMP/key-guard.mjs"',
+          'node "$RUNNER_TEMP/key-guard.mjs"'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: no copy of the pinned guard'
+    ],
+    [
+      'a key step that also runs another script',
+      keyStep(
+        [
+          FRESH_COPY,
+          'node "$RUNNER_TEMP/key-guard.mjs"',
+          'node "$RUNNER_TEMP/pr-artifact/x.mjs"'
+        ].join('\n')
+      ),
+      'scan: key step does not run a fresh copy of the committed key guard: node runs another program'
+    ],
     [
       'a reset to a fetched head',
       otherStep(
@@ -900,6 +1650,21 @@ jobs:
   })
 })
 
+// Every module a source loads: static imports, re-exports and literal dynamic imports, plus any load whose
+// target is not a literal (require, createRequire, import of an expression), which counts as external.
+function moduleLoads(source: string): string[] {
+  const literal =
+    /^\s*(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]|^\s*import\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gm
+  const loads = [...source.matchAll(literal)].map((match) => match[1] ?? match[2] ?? match[3]!)
+  for (const opaque of source.matchAll(
+    /\brequire\s*\(|\bcreateRequire\b|\bimport\s*\(\s*(?!['"][^'"]+['"]\s*\))/g
+  ))
+    loads.push(opaque[0])
+  return loads
+}
+const externalLoads = (source: string) =>
+  moduleLoads(source).filter((load) => !load.startsWith('node:'))
+
 describe('ui-library-key-scan.yml', () => {
   const workflow = load('ui-library-key-scan.yml')
   const allSteps = Object.values(workflow.jobs).flatMap(stepsOf)
@@ -936,8 +1701,12 @@ describe('ui-library-key-scan.yml', () => {
   it('should execute nothing but the trusted copy of the key guard', () => {
     for (const run of runs) {
       expect(run, run).not.toMatch(/\b(pnpm|npm|npx|yarn|corepack)\b/)
+      // Every script is main's: from trusted/, or the key guard blob committed there, written out fresh.
       for (const [, script] of run.matchAll(/\bnode\s+(\S+)/g))
-        expect(script!.startsWith('trusted/'), run).toBe(true)
+        expect(
+          script!.startsWith('trusted/') || script === '"$RUNNER_TEMP/key-guard.mjs"',
+          run
+        ).toBe(true)
       expect(run, run).not.toMatch(/\b(bash|sh|source)\s+\S/)
     }
   })
@@ -950,14 +1719,41 @@ describe('ui-library-key-scan.yml', () => {
     expect(holders).toHaveLength(1)
     expect(allSteps.indexOf(holders[0]!)).toBeGreaterThan(0)
     expect(Object.keys(holders[0]!.env ?? {})).toContain('FIGMA_FILE_KEY')
-    expect(holders[0]!.run).toMatch(/^node trusted\/library\/ui\/figma\/key-guard\.mjs /m)
+    expect(holders[0]!.run).toMatch(
+      /^git -C trusted --no-replace-objects cat-file blob "\$TRUSTED_SHA:library\/ui\/figma\/key-guard\.mjs" > "\$RUNNER_TEMP\/key-guard\.mjs"\nnode "\$RUNNER_TEMP\/key-guard\.mjs" /m
+    )
+    expect(holders[0]!.env).toMatchObject({
+      TRUSTED_SHA: '${{ github.sha }}',
+      GIT_NO_REPLACE_OBJECTS: '1'
+    })
+  })
+
+  it('should run a key guard that is one self-contained file, so its committed blob is the whole program', () => {
+    const source = readFileSync(path.join(repoRoot, 'library/ui/figma/key-guard.mjs'), 'utf8')
+    expect(moduleLoads(source).length).toBeGreaterThan(0)
+    expect(externalLoads(source)).toEqual([])
+  })
+
+  it.each([
+    "import { x } from './helper.mjs'",
+    "import './side-effect.mjs'",
+    "export { x } from './helper.mjs'",
+    'export * from "./helper.mjs"',
+    "export * as helper from './helper.mjs'",
+    "const helper = await import('./helper.mjs')",
+    'const helper = await import(name)',
+    "const helper = require('./helper.cjs')",
+    'const load = createRequire(import.meta.url)'
+  ])('should find that a guard with %s is not one self-contained file', (line) => {
+    expect(externalLoads(`import { readFileSync } from 'node:fs'\n${line}\n`)).not.toEqual([])
   })
 
   it('should read the url allowlist of the privileged scan from the default branch, never the scanned head', () => {
     const scan = allSteps.find((step) => step.id === 'scan')!
     expect(scan.run).toContain('--root trusted --no-worktree')
-    expect(scan.run).toContain('--allowlist-from HEAD ')
-    expect(scan.run).not.toMatch(/--allowlist-from "\$(HEAD_SHA|BASE)"/)
+    expect(scan.run).toContain('--allowlist-from "$TRUSTED_SHA" ')
+    expect(scan.env).toMatchObject({ TRUSTED_SHA: '${{ github.sha }}' })
+    expect(scan.run).not.toMatch(/--allowlist-from (HEAD|"\$(HEAD_SHA|BASE)")/)
   })
 
   it('should validate the triggering run before anything else, requiring a successful run', () => {
