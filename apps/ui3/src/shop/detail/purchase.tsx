@@ -44,7 +44,8 @@ export function cartLauncher(cart: CartStore = shopCart, drawer: CartDrawerStore
   };
 }
 
-const LauncherContext = createContext<PurchaseLauncher>(cartLauncher());
+const WEB_LAUNCHER = cartLauncher();
+const LauncherContext = createContext<PurchaseLauncher>(WEB_LAUNCHER);
 
 export function ShopPurchaseProvider({ launcher, children }: { launcher: PurchaseLauncher; children: ReactNode }) {
   return <LauncherContext.Provider value={launcher}>{children}</LauncherContext.Provider>;
@@ -52,4 +53,12 @@ export function ShopPurchaseProvider({ launcher, children }: { launcher: Purchas
 
 export function usePurchaseLauncher(): PurchaseLauncher {
   return useContext(LauncherContext);
+}
+
+/**
+ * Whether Buy now buys over the page (upstream's BuyModal): the web Shop, with no host launcher installed. A host that
+ * runs purchases its own way (the Explorer's native shop) keeps its launcher.
+ */
+export function useBuysInPlace(): boolean {
+  return useContext(LauncherContext) === WEB_LAUNCHER;
 }

@@ -11,6 +11,7 @@ import { createShopClient, type ShopClient } from "../api";
 import { BOOK } from "../payment/fixtures";
 import { fixtureOfferSource, type OfferScenario } from "./fixtures";
 import { ItemDetailRoute } from "./ItemDetail";
+import { stashBuyNowReturn, takeBuyNowReturn } from "./buyNowReturn";
 import { Route, Routes } from "react-router";
 import { decodeFunctionData, type Hex } from "viem";
 import { ERC20_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, manaToken } from "../market/lib/contracts";
@@ -29,11 +30,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function itemPage(opts: { session?: SessionKind; scenario?: CatalogScenario; overrides?: CatalogAnswers; offers?: OfferScenario; itemId?: string; host?: ReturnType<typeof fixtureHost>; remoteFlags?: Record<string, boolean> | null } = {}) {
+function itemPage(opts: { session?: SessionKind; scenario?: CatalogScenario; overrides?: CatalogAnswers; offers?: OfferScenario; itemId?: string; host?: ReturnType<typeof fixtureHost>; remoteFlags?: Record<string, boolean> | null; search?: string } = {}) {
   return render(
     <ShopHarness
       path="/shop/item/:contractAddress/:itemId"
-      entry={`/shop/item/${COLLECTION}/${opts.itemId ?? ITEM_ID}`}
+      entry={`/shop/item/${COLLECTION}/${opts.itemId ?? ITEM_ID}${opts.search ?? ""}`}
       session={opts.session ?? "web3"}
       scenario={opts.scenario}
       overrides={opts.overrides}
@@ -69,15 +70,23 @@ describe("the item route (a collection item, sold by its creator)", () => {
     expect(screen.getByLabelText("Loading preview").getAttribute("aria-busy")).toBe("true");
   });
 
-  it("web3: the item, its stock, credits first and MANA second from the server offer", async () => {
+  it("web3: the item, its stock and upstream's two CTAs; how to pay is Buy now's dialog, never a choice on the page", async () => {
     itemPage({ offers: { kind: "storeMint" } });
     expect(await screen.findByRole("heading", { level: 1, name: "Nacho Hat" })).toBeTruthy();
     expect(screen.getByTestId("detail-rarity-link").getAttribute("href")).toBe("/shop/items?rarities=epic");
     expect(await screen.findByTestId("detail-stock")).toHaveTextContent("Stock 10/1,000");
-    expect(await screen.findByTestId("pay-credits")).toBeChecked();
-    expect(screen.getByTestId("pay-mana")).not.toBeChecked();
-    expect(screen.getByTestId("price-mana")).toHaveTextContent("2.3");
     expect(screen.getByTestId("detail-utility")).toHaveTextContent("Glows at night");
+    expect(await screen.findByTestId("cta-buy-now")).toHaveTextContent("Buy now");
+    expect(screen.getByTestId("cta-add-to-cart")).toBeTruthy();
+    expect(screen.queryByTestId("pay-credits")).toBeNull();
+    expect(screen.queryByTestId("pay-mana")).toBeNull();
+    fireEvent.click(screen.getByTestId("cta-buy-now"));
+    const dialog = await screen.findByTestId("buy-modal");
+    expect(dialog).toHaveAttribute("aria-label", "Buy Nacho Hat");
+    await waitFor(() => expect(dialog.querySelector("[data-phase]")?.getAttribute("data-phase")).not.toBe("loading"));
+    expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("Nacho Hat");
+    fireEvent.click(within(dialog).getByTestId("buy-modal-close"));
+    expect(screen.queryByTestId("buy-modal")).toBeNull();
   });
 
   it("lists the item's resales as MANA-only offers, never with their feed credit figure", async () => {
@@ -167,25 +176,52 @@ describe("the item route (a collection item, sold by its creator)", () => {
     await waitFor(() => expect(asked).toContain(null));
   });
 
-  it("web2: credits only", async () => {
+  /** Opens Buy now's dialog and waits for it to settle on a screen. */
+  async function openBuyNow() {
+    fireEvent.click(await screen.findByTestId("cta-buy-now"));
+    const dialog = await screen.findByTestId("buy-modal");
+    await waitFor(() => expect(dialog.querySelector("[data-phase]")?.getAttribute("data-phase")).not.toBe("loading"));
+    return dialog;
+  }
+
+  it("web2: credits only, in Buy now's dialog too: no MANA to choose", async () => {
     itemPage({ session: "web2", offers: { kind: "storeMint" } });
-    expect(await screen.findByTestId("cta-buy")).toHaveTextContent("Buy with Credits");
-    expect(screen.queryByTestId("pay-mana")).toBeNull();
+    expect(await screen.findByTestId("cta-buy-now")).toHaveTextContent("Buy now");
+    const dialog = await openBuyNow();
+    expect(within(dialog).queryByTestId("buy-modal-methods")).toBeNull();
+    expect(within(dialog).queryByTestId("pay-mana")).toBeNull();
   });
 
-  it("no quote route yet: the listing's credit price and the rule's choices, unavailable, with a retry", async () => {
+  it("no quote route yet: the page keeps the listing's credit price, and Buy now says the price can't be checked, with a retry", async () => {
     itemPage();
-    const outage = await screen.findByTestId("payment-outage");
-    expect(outage).toHaveTextContent("Checkout prices can't be confirmed right now");
-    expect(screen.getByTestId("pay-credits")).toBeChecked();
-    expect(screen.getByTestId("price-credits")).toHaveTextContent("12");
-    expect(screen.getByTestId("cta-buy")).toBeDisabled();
+    expect(await screen.findByTestId("item-price")).toHaveTextContent("12");
+    const dialog = await openBuyNow();
+    expect(within(dialog).getByTestId("buy-error")).toHaveTextContent("Prices can't be checked right now");
+    expect(within(dialog).getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(within(dialog).queryByTestId("buy-modal-buy")).toBeNull();
   });
 
-  it("a credits outage keeps credits as the main choice, unavailable, never switched to MANA", async () => {
+  it("a credits outage never switches to MANA: Buy now says the price can't be checked", async () => {
     itemPage({ offers: { kind: "storeMint", outage: true } });
-    expect(await screen.findByTestId("payment-outage")).toHaveTextContent("The Credits price is unavailable right now");
-    expect(screen.getByTestId("pay-credits")).toBeChecked();
+    const dialog = await openBuyNow();
+    expect(within(dialog).getByTestId("buy-error")).toHaveTextContent("Prices can't be checked right now");
+    expect(within(dialog).queryByTestId("buy-modal-buy")).toBeNull();
+  });
+
+  it("?buy=resume alone, as any link can carry it, opens nothing", async () => {
+    sessionStorage.clear();
+    itemPage({ offers: { kind: "storeMint" }, search: "?buy=resume" });
+    expect(await screen.findByTestId("cta-buy-now")).toBeTruthy();
+    await act(async () => {});
+    expect(screen.queryByTestId("buy-modal")).toBeNull();
+  });
+
+  it("?buy=resume with this tab's record of the purchase the buyer confirmed reopens Buy now's dialog, once", async () => {
+    sessionStorage.clear();
+    stashBuyNowReturn({ path: `/shop/item/${COLLECTION}/${ITEM_ID}`, lineId: "the-line", credits: 12 });
+    itemPage({ offers: { kind: "storeMint" }, search: "?buy=resume" });
+    expect(await screen.findByTestId("buy-modal")).toBeTruthy();
+    expect(takeBuyNowReturn(`/shop/item/${COLLECTION}/${ITEM_ID}`)).toBeNull();
   });
 
   it("adding to the cart keeps the listing and the offer the buyer saw, and no chosen method", async () => {

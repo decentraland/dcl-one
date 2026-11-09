@@ -126,7 +126,14 @@ function inProgress(state: PurchaseState | null): boolean {
   return !!state && state.groups.some((g) => g.status !== "confirmed");
 }
 
-export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], results: Record<string, GroupResult>, groups: CartGroup[]): void; autoConfirm?: boolean } = {}): CheckoutView {
+export function useCheckout(
+  opts: {
+    onComplete?(purchased: PurchasedLine[], results: Record<string, GroupResult>, groups: CartGroup[]): void;
+    autoConfirm?: boolean;
+    /** False for a checkout that is not the cart's (Buy now's one-line one): it never takes the cart's resume hand-off. */
+    claimsCartResume?: boolean;
+  } = {},
+): CheckoutView {
   const services = useShopServices();
   const wallet = useShopWallet();
   const qc = useQueryClient();
@@ -449,8 +456,11 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   }, [checkout, deps, services.cart, qc]);
 
   const [autoConfirm, setAutoConfirm] = useState(!!opts.autoConfirm);
+  const claimsCartResume = opts.claimsCartResume !== false;
   useEffect(() => {
-    if (!account) return;
+    // The cart's hand-off (a sign-in or a top-up taken from the cart) belongs to the cart's checkout alone: a
+    // checkout of its own, as Buy now's, would otherwise consume it and pay a basket the cart never confirmed.
+    if (!account || !claimsCartResume) return;
     let flagged = false;
     try {
       flagged = sessionStorage.getItem(RESUME_CART_KEY) !== null;
@@ -459,7 +469,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       flagged = false;
     }
     if (takeResumeIntent("cart-checkout") || flagged) setAutoConfirm(true);
-  }, [account]);
+  }, [account, claimsCartResume]);
   useEffect(() => {
     if (autoConfirm && canConfirm && !running) {
       setAutoConfirm(false);

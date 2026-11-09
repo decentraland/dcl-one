@@ -56,6 +56,11 @@ export type PaymentPanelProps = {
   onRetry(): void;
   onBuy(method: PaymentMethod, offer: PurchaseOffer, mixed?: MixedPayment): void;
   onAddToCart(method: PaymentMethod | null): void;
+  /**
+   * Buy now opens the purchase over the page (upstream's BuyModal, signed in): the panel then shows the price, the stock
+   * and the two CTAs only, as upstream's detail page does; how to pay, a top-up and the wallet's state are the dialog's.
+   */
+  onBuyNow?(): void;
 };
 
 type OptionRow = { method: PaymentMethod; view: PaymentOptionView | null; state: OptionState };
@@ -129,6 +134,7 @@ export default function PaymentPanel(props: PaymentPanelProps) {
   const buyLabel = current.method === "credits" ? t("itemDetail.buyWithCredits") : splitting ? t("itemDetail.buyWithMixed") : t("itemDetail.buyWithMana");
 
   const stock = props.stock ?? null;
+  const inDialog = !!props.onBuyNow;
   return (
     <div className="shop-pay" data-testid="payment-panel" data-mana-only={manaOnly || undefined}>
       <div className="shop-pay__block">
@@ -148,7 +154,7 @@ export default function PaymentPanel(props: PaymentPanelProps) {
             </div>
           ) : null}
         </div>
-        {rows.length > 1 ? (
+        {rows.length > 1 && !inDialog ? (
           <fieldset className="shop-pay__options">
             <legend>{t("itemDetail.payWith")}</legend>
             {rows.map((row) => (
@@ -162,6 +168,8 @@ export default function PaymentPanel(props: PaymentPanelProps) {
         ) : null}
       </div>
 
+      {inDialog ? null : (
+        <>
       {current.method === "mana" && mixed ? (
         <label className="shop-pay__mixed" data-testid="mixed-payment">
           <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} data-testid="pay-mixed" />
@@ -231,9 +239,18 @@ export default function PaymentPanel(props: PaymentPanelProps) {
           revalidation={quoteFailed ? null : props.revalidation}
         />
       ) : null}
+        </>
+      )}
 
       <div className="shop-pay__ctas" data-dual>
-        {(current.state.kind === "signInRequired" || deferToSignIn) && wallet.onSignIn ? (
+        {inDialog ? (
+          <button type="button" className="shop-pay__buy" onClick={props.onBuyNow} data-testid="cta-buy-now">
+            <span>{pdpText("assetCard.buyNow")}</span>
+            <span className="shop-pay__ctaprice" aria-hidden>
+              <OptionPrice row={current} listing={listing} network={network} testId="" />
+            </span>
+          </button>
+        ) : (current.state.kind === "signInRequired" || deferToSignIn) && wallet.onSignIn ? (
           <button type="button" className="shop-pay__buy" onClick={wallet.onSignIn} data-testid="cta-sign-in">
             <span>{pdpText("assetCard.buyNow")}</span>
             <span className="shop-pay__ctaprice" aria-hidden>
