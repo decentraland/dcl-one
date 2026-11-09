@@ -1,7 +1,5 @@
-// The camera-reel photo actions shared by the gallery grid's options menu, the passport's Photos tab
-// and the photo viewer. Strings and behaviour follow unity-explorer's ReelCommonActions and its
-// CameraReelGalleryMessagesSettings; toasts last 3 s and replace the one before, as its
-// CameraReelToastMessage does.
+// Strings and behaviour follow unity-explorer's ReelCommonActions, CameraReelGalleryMessagesSettings
+// and CameraReelToastMessage.
 
 import { showConfirm, showToast } from '../../design'
 import { serviceUrl } from '../../lib/baseDomain'
@@ -23,17 +21,15 @@ export function reelToast(text: string, tone: 'default' | 'error' = 'default'): 
   showToast(text, { duration: TOAST_MS, tone, key: TOAST_KEY })
 }
 
-/** The page a reel is shared through. */
 export function reelLink(id: string): string {
   return `${serviceUrl('reels')}/${id}`
 }
 
-/** The X post intent for a reel, with unity-explorer's text. */
 export function shareToXUrl(id: string): string {
   return `https://x.com/intent/post?text=${encodeURIComponent(REEL_MESSAGES.shareToX)}&url=${encodeURIComponent(reelLink(id))}`
 }
 
-/** Open the X post intent. As unity-explorer does, the intent url is also copied, and no toast shows. */
+/** As unity-explorer does, the intent url is also copied, and no toast shows. */
 export function shareReelToX(id: string): void {
   const url = shareToXUrl(id)
   void navigator.clipboard?.writeText(url).catch(() => undefined)
@@ -52,7 +48,6 @@ export function copyReelLink(id: string): void {
   )
 }
 
-/** The file a reel downloads as: the last segment of its image url, as unity-explorer names it. */
 export function reelFileName(url: string): string {
   try {
     const name = new URL(url).pathname.split('/').pop()
@@ -62,8 +57,8 @@ export function reelFileName(url: string): string {
   }
 }
 
-/** Save the full-size image. It is fetched first: a cross-origin link's `download` is ignored, so the
- *  browser would open the image instead of saving it. */
+/** Fetched first: a cross-origin link's `download` is ignored, so the browser would open the image
+ *  instead of saving it. */
 export async function downloadReel(url: string): Promise<void> {
   try {
     const res = await fetch(url)
@@ -88,7 +83,6 @@ export async function downloadReel(url: string): Promise<void> {
   }
 }
 
-/** Ask unity-explorer's delete question; resolves true when the player confirms. */
 export function confirmReelDelete(): Promise<boolean> {
   return showConfirm({ title: REEL_MESSAGES.confirmDelete, cancelLabel: 'CANCEL', confirmLabel: 'DELETE' })
 }

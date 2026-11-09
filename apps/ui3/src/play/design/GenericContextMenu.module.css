@@ -1,5 +1,4 @@
-/* unity-explorer's GenericContextMenu, in canvas px: ControlsContainer (186 wide, padding 4/8/12/8,
-   1 between rows) and its ToggleWithText, Separator and ButtonWithTextAndIcon rows. */
+/* unity-explorer's GenericContextMenu prefabs, in canvas px. */
 .menu {
   position: fixed;
   z-index: calc(var(--z-popup) + 1);
@@ -14,7 +13,7 @@
   color: var(--text);
   isolation: isolate;
 }
-/* Container12Shadow4 (×2): a 12 radius panel whose bottom 5.5 px is the sprite's empty shadow band. */
+/* The bottom 5.5 px of Unity's panel sprite is an empty shadow band. */
 .menu::before {
   content: '';
   position: absolute;
@@ -34,7 +33,6 @@
   line-height: 1.2;
 }
 
-/* ToggleWithText: label, 30, then the 32x18 switch, left-aligned. */
 .toggleRow {
   height: 34px;
   display: flex;
@@ -80,7 +78,6 @@
   background: var(--white-5);
 }
 
-/* ButtonWithTextAndIcon: 22 icon, 10, label; colour tint 0.1 s from the panel to Pale Black. */
 .button {
   height: 36px;
   display: flex;

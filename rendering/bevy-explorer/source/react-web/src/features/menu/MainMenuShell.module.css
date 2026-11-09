@@ -168,7 +168,6 @@
   overflow: hidden;
   pointer-events: none;
 }
-/* A page that lays out its own gutters and scroller (the Gallery). */
 .bodyFlush {
   padding: 0;
   overflow: hidden;

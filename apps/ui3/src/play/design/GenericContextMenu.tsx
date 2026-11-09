@@ -1,13 +1,5 @@
-// GenericContextMenu — unity-explorer's GenericContextMenu (UI/GenericContextMenu): a 186-wide dark
-// list of toggle, separator and icon-button rows, opened next to an anchor point. Used where the HUD
-// ports a Unity context menu one to one (the camera-reel photo options); the HUD's own menus use
-// ContextMenu.
-//
-// Portaled to <body> on the reference canvas: it re-applies --ui-scale, takes the anchor in viewport
-// px, and places itself as Unity's GetControlsPosition does — BottomRight of the anchor by (11, 18),
-// flipped to the other side on an edge it would cross, then clamped to the screen. A button row
-// closes the menu; the toggle row does not. A press outside it or the Cancel action closes it, and
-// focus goes back to the element that opened it.
+// unity-explorer's GenericContextMenu, ported one to one for the menus that port a Unity one (the
+// camera-reel photo options); the HUD's own menus use ContextMenu.
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
@@ -30,15 +22,13 @@ const OFFSET_X = 11
 const OFFSET_Y = 18
 const ROW_HEIGHT: Record<GenericContextMenuItem['kind'], number> = { toggle: 34, separator: 8, button: 36 }
 
-/** The menu's height, as Unity's vertical layout lays its rows out. */
 export function genericContextMenuHeight(items: GenericContextMenuItem[]): number {
   const rows = items.reduce((sum, item) => sum + ROW_HEIGHT[item.kind], 0)
   return rows + PADDING_TOP + PADDING_BOTTOM + SPACING * Math.max(0, items.length - 1)
 }
 
-/** Where the menu's top-left corner goes, in canvas px, for an anchor in canvas px on a canvas of
- *  `bounds` (Unity's GetControlsPosition for the BottomRight direction, with its smart flip and its
- *  clamp). Unity's y axis points up, so its +18 lifts the menu: the top edge sits 18 above the anchor. */
+/** Unity's GetControlsPosition for BottomRight, with its flip and clamp. Unity's y axis points up,
+ *  so its +18 lifts the menu: the top edge sits 18 above the anchor. */
 export function genericContextMenuPosition(
   anchor: { x: number; y: number },
   size: { width: number; height: number },
@@ -88,8 +78,7 @@ export function GenericContextMenu({
     }
   }, [])
 
-  // Focus moves into the menu on open and back to the opener on close, unless the press that closed
-  // it put focus somewhere else.
+  // Focus returns to the opener only if the press that closed the menu didn't put it somewhere else.
   useEffect(() => {
     const node = ref.current
     const opener = ignoreRef.current ?? document.activeElement

@@ -1,11 +1,5 @@
-// The camera-reel thumbnail grid of the Gallery and the passport's Photos tab — unity-explorer's
-// CameraReelGalleryController on a LoopListView2. The reel is flattened into rows (top padding, a month
-// header per run of same-month photos, rows of `columns` thumbnails, bottom padding) with fixed
-// heights, and only the rows near the viewport are mounted, so a reel of any length stays a handful of
-// elements. The highest photo index on screen drives the paging (useReelList.loadMore).
-//
-// A loaded thumbnail shows the Accent outline on hover and, where the menu is enabled, the ⋮ button
-// that opens the photo's options (unity-explorer's CameraReelOptionButtonController).
+// unity-explorer's CameraReelGalleryController on a LoopListView2: rows have fixed heights, so only
+// the ones near the viewport are mounted and a reel of any length stays a handful of elements.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { GenericContextMenu, type GenericContextMenuItem } from '../../design'
@@ -26,13 +20,11 @@ export interface ReelGridLayout {
   tileWidth: number
   tileHeight: number
   fitWidth?: boolean
-  /** One section per run of same-month photos, each under a month header. */
   groupByMonth: boolean
   paddingTop: number
   paddingBottom: number
   paddingLeft: number
   monthSpacing: number
-  /** The ⋮ button's height (the gallery's instance is 41, the passport's 40). */
   optionButtonHeight: number
 }
 
@@ -103,7 +95,6 @@ export function ReelGrid({
   /** The photo options; null where the reel isn't yours. */
   menu: ReelGridMenu | null
   onOpen: (index: number) => void
-  /** The highest photo index on screen (for paging). */
   onVisibleIndex: (index: number) => void
   'aria-label'?: string
 }): React.JSX.Element {

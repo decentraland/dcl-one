@@ -1,8 +1,5 @@
-// The passport's Photos tab — unity-explorer's PassportController gallery: the same paged reel grid
-// as the Gallery, with the player's PUBLIC photos (read unsigned, so your own passport too), 4 columns
-// of 272x201 with no month headers. On your own passport each photo has the options menu without
-// Delete, and making a photo private takes it off the grid at once (HideReelOnPrivateSet). A
-// thumbnail opens the photo viewer over the passport.
+// The passport's Photos tab lists only PUBLIC photos, your own passport included: unity-explorer's
+// PassportController reads the reel unsigned.
 
 import { useCallback, useState } from 'react'
 import { EmptyState, Spinner } from '../../design'
@@ -16,9 +13,8 @@ import { useReelList } from './useReelList'
 import { REEL_MESSAGES, confirmReelDelete, reelToast } from './reelActions'
 import styles from './PassportPhotos.module.css'
 
-// Plugin Settings' passport gallery (4 x 272x201) and the Passport prefab's paddings (2 / 12 / 0).
-// The HUD's passport panel is narrower than Unity's full-screen one, so the tiles keep 272:201 and
-// share the width.
+// Unity's passport gallery (Plugin Settings, Passport prefab). The HUD's passport panel is narrower
+// than Unity's full-screen one, so the tiles keep 272:201 and share the width.
 const PASSPORT_LAYOUT: ReelGridLayout = {
   columns: 4,
   tileWidth: 272,
@@ -32,7 +28,6 @@ const PASSPORT_LAYOUT: ReelGridLayout = {
   optionButtonHeight: 40
 }
 
-/** What your own passport's photos can do: the signed writes and the viewer's metadata. */
 export interface PassportPhotoActions {
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
   remove: (id: string) => Promise<ReelWrite>

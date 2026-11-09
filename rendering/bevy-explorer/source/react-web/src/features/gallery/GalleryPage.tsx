@@ -1,8 +1,5 @@
-// React Gallery (camera reel) — a full-screen page inside the shared MainMenuShell, matching
-// unity-explorer's Camera Reel: the local player's photos, newest first, under month headers, read 100
-// at a time as the grid scrolls (useReelList + ReelGrid), with a storage indicator and the per-photo
-// options menu. A thumbnail opens the full-screen PhotoDetail lightbox. Data comes from the bridge's
-// signed relay of camera-reel-service (see bridge-scene/domains/gallery).
+// The camera-reel Gallery, unity-explorer's Camera Reel, read through the bridge's signed relay of
+// camera-reel-service (bridge-scene/domains/gallery).
 
 import { useCallback, useState } from 'react'
 import { EmptyState, Icon, Spinner } from '../../design'
@@ -16,8 +13,7 @@ import type { GalleryPhoto } from '../../engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 
-// The explore panel's CameraReelGallery: 6 columns of 306x230, 30 px padding (Plugin Settings,
-// CameraReelGallery.prefab), month headers, the 16x41 options button.
+// Unity's CameraReelGallery (Plugin Settings, CameraReelGallery.prefab).
 const GALLERY_LAYOUT: ReelGridLayout = {
   columns: 6,
   tileWidth: 306,
@@ -30,7 +26,6 @@ const GALLERY_LAYOUT: ReelGridLayout = {
   optionButtonHeight: 41
 }
 
-/** The gallery's photo actions that write to the service, shared with the lightbox. */
 export function useOwnReelActions(
   gallery: GalleryState,
   list: { remove: (id: string) => void; setPublic: (id: string, isPublic: boolean) => void; setStorage: (total: number, max: number) => void }
@@ -84,8 +79,8 @@ export function GalleryPage({
   onViewProfile?: (user: ChatUser) => void
 }): React.JSX.Element | null {
   const [index, setIndex] = useState<number | null>(null)
-  // Every open reads the reel again from the top, as Unity's gallery does when it is shown, with the
-  // viewer closed: the page stays mounted while the gallery is closed, so it would keep its index.
+  // The page stays mounted while closed, so each open resets it: Unity's gallery reads the reel again
+  // from the top whenever it is shown.
   const [opened, setOpened] = useState(0)
   const [wasOpen, setWasOpen] = useState(gallery.open)
   if (gallery.open !== wasOpen) {

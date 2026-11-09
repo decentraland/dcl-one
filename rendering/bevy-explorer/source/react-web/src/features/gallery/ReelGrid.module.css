@@ -1,5 +1,5 @@
-/* The camera-reel grid, in canvas px (unity-explorer CameraReelGallery + ThumbnailElement). Rows are
-   absolutely placed on a canvas as tall as the whole reel; only the ones near the viewport exist. */
+/* In canvas px (unity-explorer CameraReelGallery + ThumbnailElement). Rows are absolutely placed on
+   a canvas as tall as the whole reel; only the ones near the viewport exist. */
 .scroll {
   position: relative;
   flex: 1;
@@ -12,7 +12,6 @@
   width: 100%;
 }
 
-/* ReelGalleryMonthHeaderView: "MMMM yyyy", Inter SemiBold 18, Pearl. */
 .month {
   position: absolute;
   margin: 0;
@@ -45,8 +44,7 @@
 .open[aria-disabled='true'] {
   cursor: default;
 }
-/* RawImage cropped to the cell's height (ReelThumbnailView.ShowTexture), faded in over 0.3 s, tinted
-   by the button's colour transition: F5F5F5 highlighted, C8C8C8 pressed, 0.1 s. */
+/* The brightness follows Unity's button tint: F5F5F5 highlighted, C8C8C8 pressed. */
 .image {
   display: block;
   width: 100%;
@@ -66,7 +64,6 @@
   filter: brightness(0.78);
 }
 
-/* LoadingBright: a lilac wash with a white gradient band sweeping across once a second. */
 .loading {
   position: absolute;
   inset: 0;
@@ -95,7 +92,6 @@
   container-type: inline-size;
 }
 
-/* The hover outline: SquaredOutline (a 4 px square frame), Accent. */
 .outline {
   position: absolute;
   inset: 0;
@@ -109,8 +105,8 @@
   visibility: visible;
 }
 
-/* The ⋮ button: 16 wide, its centre 20 px in from the right and 33 px down (OptionButtonPosition at
-   (-10, -10) plus the button's (-10, -23)); Container12 at ×4.5, black 60/80/70 %. */
+/* Its centre sits 20 px in from the right and 33 px down: Unity's OptionButtonPosition (-10, -10)
+   plus the button's own (-10, -23). */
 .options {
   position: absolute;
   right: 12px;

@@ -1,11 +1,6 @@
-// A camera reel read page by page, as unity-explorer's PagedCameraReelManager and
-// CameraReelGalleryController do: 100 photos a page, the next page asked for when fewer than 12
-// loaded photos remain past the last one on screen, and paging over once the reel's total is loaded
-// or a page comes back short. The list keeps the service's order (newest first).
-//
-// `key` names the reel: a new key (opening the gallery, another passport) starts again from the top.
-// Unity's offset advances by the page size even after a delete, which skips a photo; here the next
-// page starts at the number of photos held.
+// Paging as unity-explorer's PagedCameraReelManager and CameraReelGalleryController do it, except the
+// offset: Unity's advances by the page size even after a delete, which skips a photo, so here the next
+// page starts at the number of photos held. A new `key` starts again from the top.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GalleryPhoto } from '../../engine/protocol'
@@ -19,16 +14,13 @@ export interface ReelList {
   /** Photos in the reel in all, and the owner's storage limit, as the last page reported them. */
   total: number
   max: number
-  /** The first page arrived (spinner until then). */
   loaded: boolean
-  /** Ask for the next page if `lastVisibleIndex` is within the threshold of the loaded end. */
   loadMore: (lastVisibleIndex: number) => void
   /** Drop a photo (deleted, or made private on a public reel); returns where it was, or -1. */
   remove: (id: string) => number
   /** Put a dropped photo back at `index` (a write that dropped it first failed). */
   restore: (photo: GalleryPhoto, index: number) => void
   setPublic: (id: string, isPublic: boolean) => void
-  /** Storage usage after a write that reports it. */
   setStorage: (total: number, max: number) => void
 }
 

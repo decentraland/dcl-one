@@ -374,9 +374,7 @@ export interface GalleryState {
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
-  /** Make one of the player's photos public or private. */
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
-  /** Delete one of the player's photos. */
   remove: (id: string) => Promise<ReelWrite>
 }
 
@@ -708,7 +706,6 @@ const AUTH_PROFILE_WAIT_MS = 30_000
 const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
-// how long a camera-reel request waits for the bridge's reply before it counts as failed
 export const GALLERY_CALL_TIMEOUT_MS = 30_000
 
 export type LoginStatus =
@@ -1232,7 +1229,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
-  // Camera-reel reads and writes answered by requestId (the reel itself lives in the page that shows it).
+  // The reel itself lives in the page that shows it; the session only matches replies to requests.
   const galleryRequestRef = useRef(0)
   const galleryPendingRef = useRef(new Map<number, (msg: GalleryMessage | GalleryWriteMessage) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
@@ -2516,9 +2513,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
-  // Send a gallery request and resolve with the message that echoes its requestId. Without a bridge
-  // there is no reply to wait for, so it fails at once. A reply that never comes (the bridge scene
-  // reloaded mid-request) fails it after GALLERY_CALL_TIMEOUT_MS, so a page never spins for good.
+  // A reply that never comes (the bridge scene reloaded mid-request) fails the call after
+  // GALLERY_CALL_TIMEOUT_MS, so a page never spins for good.
   const galleryCall = useCallback(<M extends GalleryMessage | GalleryWriteMessage>(build: (requestId: number) => PageToScene): Promise<M | null> => {
     const driver = driverRef.current
     if (driver == null) return Promise.resolve(null)

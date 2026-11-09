@@ -41,7 +41,6 @@ async function fetchFromService(address: string, offset: number, limit: number):
 type PublicReelFetcher = (address: string, offset: number, limit: number) => Promise<ReelPage>
 let fetcher: PublicReelFetcher = fetchFromService
 
-/** One page of a player's public reel. */
 export function fetchPublicReelPage(address: string, offset: number, limit: number): Promise<ReelPage> {
   return fetcher(address, offset, limit)
 }

@@ -326,11 +326,8 @@ const DEFAULTS: MockOptions = {
 
 let running: (() => void) | null = null
 
-// Idempotent: StrictMode runs the HUD's useMemo twice, and a second bridge would answer every message again.
-// The running mock's public reels by address (set by startMockBridge), read by mockPublicReelPage.
 let mockPublicReels: ((address: string) => GalleryPhoto[]) | null = null
 
-/** One page of a public reel from the running mock, in the shape the passport's reader returns. */
 export async function mockPublicReelPage(
   address: string,
   offset: number,
@@ -341,6 +338,7 @@ export async function mockPublicReelPage(
   return { ok: true, photos: all.slice(offset, offset + limit), total: all.length, max: 500 }
 }
 
+// Idempotent: StrictMode runs the HUD's useMemo twice, and a second bridge would answer every message again.
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
@@ -358,9 +356,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     { id: 'n5', type: 'community_post_added', read: false, timestamp: new Date(mockNow - 2400_000).toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
     { id: 'n6', type: 'credits_reminder_claim_credits', read: false, timestamp: new Date(mockNow - 5400_000).toISOString(), metadata: {} }
   ]
-  // Mock camera-reel gallery: 230 photos a day apart, so the grid pages (100 a page) across
-  // several month headers. dateTime is a unix-seconds string, like the real compact endpoint. Every
-  // third photo is private. Mutable (delete splices, visibility flips).
+  // 230 photos a day apart, so the grid pages across several month headers. dateTime is a
+  // unix-seconds string, like the real compact endpoint.
   const DAY = 86_400_000
   const mockGallery = Array.from({ length: 230 }, (_, i) => ({
     id: `g${i}`,
@@ -369,8 +366,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     isPublic: i % 3 !== 0,
     dateTime: String(Math.floor((mockNow - i * DAY) / 1000))
   }))
-  // The passport reads public reels without the bridge (features/gallery/publicReels): your own are the
-  // public ones above, anyone else's a fixed set of 40.
   mockPublicReels = (address) =>
     address.toLowerCase() === o.userId.toLowerCase()
       ? mockGallery.filter((p) => p.isPublic)
