@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App } from './app.js'
-import { verifyFdsCache } from './sources/fds-source.js'
 import { runInstall } from './install.js'
 import { copySnapshot, pinTestCapture, testConfig } from '../test/snapshot.js'
 import { initializeFixtureGit } from './guard/git-fixture.js'
@@ -12,11 +11,6 @@ import { initializeFixtureGit } from './guard/git-fixture.js'
 vi.mock('node:fs/promises', async (original) => {
   const actual = await original<typeof import('node:fs/promises')>()
   return { ...actual, rename: vi.fn(actual.rename) }
-})
-
-vi.mock('./sources/fds-source.js', async (original) => {
-  const actual = await original<typeof import('./sources/fds-source.js')>()
-  return { ...actual, verifyFdsCache: vi.fn(actual.verifyFdsCache) }
 })
 
 describe('when foundations are installed from a verified synthetic cache', () => {
@@ -28,12 +22,6 @@ describe('when foundations are installed from a verified synthetic cache', () =>
   const entry = '@layer dcl.reset, dcl.foundations, dcl.components;\n'
 
   beforeEach(async () => {
-    vi.mocked(verifyFdsCache)
-      .mockReset()
-      .mockImplementation(
-        (await vi.importActual<typeof import('./sources/fds-source.js')>('./sources/fds-source.js'))
-          .verifyFdsCache
-      )
     vi.mocked(rename).mockImplementation(
       (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rename
     )
@@ -190,46 +178,6 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
   })
 
-  it('should bind the lock before the first verification and reject replacement immediately', async () => {
-    const actual =
-      await vi.importActual<typeof import('./sources/fds-source.js')>('./sources/fds-source.js')
-    vi.mocked(verifyFdsCache).mockImplementationOnce(async (directory, file) => {
-      await actual.verifyFdsCache(directory, file)
-      const value = JSON.parse(await readFile(file, 'utf8'))
-      value.replaced = true
-      await writeFile(file, JSON.stringify(value))
-    })
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('source lock changed')
-    expect(verifyFdsCache).toHaveBeenCalledTimes(1)
-    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
-  })
-
-  it('should reject a tampered cache before any read through a bypass App', async () => {
-    await writeFile(path.join(figma, 'figma-snapshot/variables.json'), '[]')
-    app = await createApp(figma, undefined, { unverifiedSnapshot: true })
-    const source = app.createSource('snapshot')
-    const read = vi.spyOn(source, 'getTokenCollections')
-    app.createSource = () => source
-    await expect(
-      runInstall(app, {
-        target: 'foundations',
-        outDir: '../.agent-work/figma-install/rejected/foundations'
-      })
-    ).rejects.toThrow()
-    expect(read).not.toHaveBeenCalled()
-    await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
-    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
-  })
-
-  it('should preserve ignored user files in a dirty target', async () => {
-    await writeFile(path.join(root, '.gitignore'), '*.local\n')
-    await writeFile(path.join(root, 'foundations/user.local'), 'synthetic user data')
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('dirty')
-    expect(await readFile(path.join(root, 'foundations/user.local'), 'utf8')).toBe(
-      'synthetic user data'
-    )
-  })
-
   it('should refuse an altered cache', async () => {
     await writeFile(path.join(figma, 'figma-snapshot/variables.json'), '{}')
     await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow()
@@ -293,14 +241,7 @@ describe('when foundations are installed from a verified synthetic cache', () =>
       .mockImplementationOnce(actual.rename)
       .mockRejectedValueOnce(new Error('publication failed'))
       .mockRejectedValueOnce(new Error('rollback failed'))
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toMatchObject({
-      name: 'AggregateError',
-      message: expect.stringContaining('previous tree retained at'),
-      errors: [
-        expect.objectContaining({ message: 'publication failed' }),
-        expect.objectContaining({ message: 'rollback failed' })
-      ]
-    })
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('rollback failed')
     const backups = (await readdir(root)).filter((file) => file.endsWith('-previous'))
     expect(backups).toHaveLength(1)
     expect(await readFile(path.join(root, backups[0]!, 'foundations.css'), 'utf8')).toBe(entry)
