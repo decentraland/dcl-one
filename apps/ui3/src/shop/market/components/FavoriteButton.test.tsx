@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateShopQueries } from "../../discovery/query";
-import { BOOK } from "../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { StoryShell } from "../testHarness";
 import { fakeShop } from "../testing";
 import { marketplaceOn } from "../testing-flags";

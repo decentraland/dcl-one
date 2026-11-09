@@ -9,7 +9,7 @@ import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
 import { type ShopClient } from "../api/shop";
 import { readFreshness, type IndexFreshness } from "./freshness";
 import { catalogCategoryParams } from "./lib/categories";
-import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
+import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "@shop/discovery/lib/catalogItem";
 import type { QueryParams } from "../api/client";
 
 /**

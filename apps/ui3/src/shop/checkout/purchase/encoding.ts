@@ -8,7 +8,7 @@
 import { encodeAbiParameters, encodeFunctionData, getAbiItem, pad, stringToHex, toFunctionSelector, toHex, type Hex } from "viem";
 
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade, type TradeAssetWire, type TradeChecksWire } from "../lib/trade";
-import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from "../chain/abi";
+import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from "@shop/checkout/chain/abi";
 
 export { amoyGasOverrides } from "../chain/wallet";
 export { ASSET_TYPE, type ListingCoupon, type SignedTrade, type TradeAssetWire, type TradeChecksWire };

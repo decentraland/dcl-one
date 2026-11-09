@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
 import { createShopApi } from "./client";
-import { ENDPOINTS } from "./endpoints";
+import { ENDPOINTS } from "@shop/api/endpoints";
 import { hostApiOptions, identitySigner, shopApiMode, shopPeers } from "./host";
 import type { TransportRequest } from "./signer";
 

@@ -18,6 +18,12 @@ SOURCE = 'rendering/bevy-explorer/source/'
 BEVY = 'rendering/bevy-explorer/bevy/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
+# Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
+# matching tsconfig.json paths). They build into the HUD, never the engine. They are not part of the
+# Sites HUD review (`hud_inputs`) either: /play compiles these same files, so there is no adaptation of
+# them to review. tooling/bevy-ci.py reads them from here; infra/packages/play.nix lists them too, and a test
+# keeps it and the HUD's aliases together with this.
+HUD_SHARED = ('library/shop/', 'library/catalyst-api/')
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
 # Source is maintained here. Hash its tracked files directly, alongside the build tools and
@@ -66,11 +72,11 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
         # Native npm packaging is not consumed by the web builder or WASM.
         if path.startswith(SOURCE + 'deploy/headless/'):
             return False
-        if engine_only and (path.startswith(SOURCE + 'react-web/') or path in (
+        if engine_only and (path.startswith((SOURCE + 'react-web/', *HUD_SHARED)) or path in (
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
-        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or path in INPUTS or path in TOOLCHAINS)
+        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/', *HUD_SHARED)) or path in INPUTS or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
         entries = []
@@ -106,7 +112,7 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
-            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo')
+            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo', *HUD_SHARED)
                        for p in (root / base).rglob('*') if p.is_file()]
             tracked += list(INPUTS)
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]

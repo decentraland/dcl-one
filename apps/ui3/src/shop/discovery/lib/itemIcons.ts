@@ -1,6 +1,6 @@
 // from: shop@94584a5c:app/src/lib/itemIcons.ts
 import type { IconName } from "./iconName";
-import type { CatalogItem } from "./catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 const CATEGORY_ICON: Record<string, IconName> = {
   head: "cat-head",

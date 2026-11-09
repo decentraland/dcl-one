@@ -12,7 +12,7 @@ import { useCart } from "../../cart/store";
 import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchSuggestedItems, type SuggestedItem } from "../api";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { useRecentlyViewed } from "../lib/recently-viewed";
 import { REMOTE_FLAG, useRemoteFlag } from "../lib/remoteFlags";
 import { suggestedHiddenReason } from "../lib/suggestionEvents";
@@ -21,7 +21,7 @@ import { buildSuggestionSeeds, seedsKey } from "../lib/suggestionSeeds";
 import { useShopQuery } from "../query";
 import AssetCard from "./AssetCard";
 import Rail from "./Rail";
-import { isResale } from "../../market/access-rule";
+import { isResale } from "@shop/market/access-rule";
 import { shopReads } from "../reads";
 
 const RAIL_SIZE = 12;

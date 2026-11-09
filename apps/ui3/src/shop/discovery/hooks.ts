@@ -5,11 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
-import { shortAddress } from "../model/address";
+import { shortAddress } from "@shop/model/address";
 import { readMirrorFreshness, type IndexFreshness } from "./freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
-import { isSaleActive, saleTimeLeft, type SaleInfo } from "./lib/sale";
+import { isSaleActive, saleTimeLeft, type SaleInfo } from "@shop/discovery/lib/sale";
 import { useShopQuery } from "./query";
 import { cachedProfile, rememberProfiles } from "./lib/profileCache";
 import { shopClient } from "../api/host";

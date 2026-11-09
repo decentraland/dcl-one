@@ -8,8 +8,8 @@ import { useState } from "react";
 
 import ManaMark from "../../../atoms/ManaMark";
 import Modal from "../../../components/Modal";
-import { rarityMedia } from "../../discovery/lib/rarity";
-import { isPolygon } from "../../model/chain";
+import { rarityMedia } from "@shop/discovery/lib/rarity";
+import { isPolygon } from "@shop/model/chain";
 import SignInGate from "../../land/SignInGate";
 import { useShopWallet } from "../../wallet/context";
 import "./tokenactions.css";

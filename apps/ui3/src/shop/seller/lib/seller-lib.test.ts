@@ -6,9 +6,9 @@ import { concat, decodeFunctionData, encodeAbiParameters, keccak256, recoverType
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "../../../data/auth/identity";
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
-import { COUPON_MANAGER_ABI, COUPON_MANAGERS, MARKETPLACE_ABI, latestOffChainMarketplace } from "../../market/lib/contracts";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
+import { COUPON_MANAGER_ABI, COUPON_MANAGERS, MARKETPLACE_ABI, latestOffChainMarketplace } from "@shop/market/lib/contracts";
 import type { MyAsset } from "../../market/lib/api";
 import { createPrimaryUsdPeggedListing, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { fakeChain, fakeShop, fakeWallet, noWait } from "../../market/testing";
@@ -215,7 +215,7 @@ describe("listing import is restricted to eligible primary inventory", () => {
     restore = fakeChain({
       contracts: {
         [market.address]: { abi: MARKETPLACE_ABI, answer: () => 0n },
-        [BOOK.collection]: { abi: (await import("../../market/lib/contracts")).COLLECTION_V2_ABI, answer: (fn) => (fn === "globalMinters" ? true : 0n) },
+        [BOOK.collection]: { abi: (await import("@shop/market/lib/contracts")).COLLECTION_V2_ABI, answer: (fn) => (fn === "globalMinters" ? true : 0n) },
       },
     });
     const old = await createPrimaryUsdPeggedListing({ provider: wallet, item: { contractAddress: BOOK.collection, itemId: "7", chainId: CHAIN.POLYGON }, usdCents: 50, expiresAtMs: Date.now() + DAY });

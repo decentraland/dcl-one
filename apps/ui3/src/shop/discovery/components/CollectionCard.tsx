@@ -2,14 +2,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCollectionItems, type CollectionSummary } from "../api";
 import { useCreatorProfile } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
-import type { CatalogItem } from "../lib/catalogItem";
-import { rarityMedia } from "../lib/rarity";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { useShopQuery } from "../query";
 import "./collectioncard.css";
 import { shopReads } from "../reads";

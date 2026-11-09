@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createShopClient } from "../../api/shop";
 import { resetShopQueries } from "../query";
 import { catalogTransport, ShopHarness, type CatalogAnswers, type SessionKind } from "../fixtures";
-import type { CatalogItem } from "../lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import OutfitStudio from "./OutfitStudio";
 import { parseOutfitImport, toggleOutfitItem } from "./outfits";
 

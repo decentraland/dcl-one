@@ -6,16 +6,16 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { isShopApiError } from "../../api/client";
-import { BASE_FEMALE, BASE_MALE } from "../../detail/lib/bodyShape";
+import { BASE_FEMALE, BASE_MALE } from "@shop/detail/lib/bodyShape";
 import { itemUrn } from "../../detail/lib/urn";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchShopItems } from "../api";
-import { cardPrice } from "../cardPrice";
+import { cardPrice } from "@shop/discovery/cardPrice";
 import Icon from "../components/Icon";
 import PriceTag, { formatCreditsFull } from "../components/PriceTag";
 import { useSeo } from "../hooks";
-import type { CatalogItem } from "../lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { isWearable, playingEmote } from "../lib/outfit";
 import { invalidateShopQueries, primeShopQuery, useShopQuery } from "../query";
 import {

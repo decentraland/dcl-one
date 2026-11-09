@@ -5,11 +5,11 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import ManaMark from "../../../atoms/ManaMark";
-import { shortAddress } from "../../model/address";
-import { parseManaWei } from "../../model/money";
+import { shortAddress } from "@shop/model/address";
+import { parseManaWei } from "@shop/model/money";
 import type { UnifiedListing } from "../../discovery/api";
 import { ManaAmount } from "../../discovery/components/PriceTag";
-import { t } from "../../discovery/intl";
+import { t } from "@shop/discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import IndexNotice from "../../discovery/components/IndexNotice";

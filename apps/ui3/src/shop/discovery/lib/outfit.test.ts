@@ -10,7 +10,7 @@ import {
   outfitPreviewUrns,
   playingEmote
 } from "./outfit"
-import type { CatalogItem } from "./catalogItem"
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem"
 
 // itemUrn (via wornUrns) reads config.chainId — pin it so URNs are deterministic (amoy).
 vi.mock("~/config", () => ({ config: { chainId: 80002 } }))
