@@ -1,7 +1,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createShopClient } from "../api/shop";
+import { createShopClient } from "@shop/api/shop";
 import {
   fetchClassicItemOrders,
   fetchItemMeta,
@@ -10,7 +10,7 @@ import {
   fetchTokenById,
   fetchUnifiedListingForItem,
   pickItemListing,
-} from "../detail/api";
+} from "@shop/detail/api";
 import {
   compactEquipped,
   fetchCatalogByIds,
@@ -23,9 +23,9 @@ import {
   shopListingToItem,
   unifiedListingToItem,
   withoutSale,
-} from "./api";
+} from "@shop/discovery/api";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, RESELLER, saleWearable, STORE_EMOTE, TOKEN_ID } from "./fixtures";
-import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "./freshness";
+import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "@shop/discovery/freshness";
 
 /** Creator sales off, as a page has them until the switch says yes. */
 const OFF = () => false;

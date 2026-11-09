@@ -2,7 +2,7 @@
 // the client reads no configuration and reaches for no network or identity of its own. The browser host's wiring
 // (where the API is, fetch, who signs, the document's client) is api/host.ts.
 
-import { SHOP_API_PREFIX, templateParams, type Endpoint } from "@shop/api/endpoints";
+import { SHOP_API_PREFIX, templateParams, type Endpoint } from "./endpoints";
 import type { ShopSigner, ShopTransport, TransportRequest } from "./signer";
 
 export type ShopApiMode = "canonical" | "legacy";

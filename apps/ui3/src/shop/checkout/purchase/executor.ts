@@ -17,13 +17,13 @@
 
 import type { Hex } from "viem";
 
-import { insufficientCredits, isShopApiError, creditsDisabled, tooManyLiveCredits } from "../../api/client";
+import { insufficientCredits, isShopApiError, creditsDisabled, tooManyLiveCredits } from "@shop/api/client";
 import type { CreditBatchAuthorization } from "@shop/api/types";
 import { prepareResume, resumePlan, type GroupEvent } from "@shop/cart/machine";
 import type { CartGroup } from "@shop/cart/partition";
 import type { CartStore } from "../../cart/store";
 import type { GroupFailure, GroupProgress, PurchaseState } from "@shop/model/purchase";
-import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases } from "../../credits/credits";
+import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases } from "@shop/credits/credits";
 import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../chain/wallet";

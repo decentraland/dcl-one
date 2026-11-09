@@ -8,7 +8,7 @@ import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
 import { SHOP_BASE } from "../../routes";
-import { fetchShopItems, fetchTrendingItems } from "../api";
+import { fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
 import { useCampaignHero } from "../components/CampaignBanner";
 import heroDesktop from "../frames/assets/hero-credits-outfits.webp?url";
 import heroMobile from "../frames/assets/hero-credits-mobile.webp?url";
@@ -20,7 +20,7 @@ import LivePromo from "../components/LivePromo";
 import Rail from "../components/Rail";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
-import { indexUnavailable } from "../freshness";
+import { indexUnavailable } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { listingTypeFor } from "@shop/market/access-rule";
 import { isIapMode, shopFlags } from "../flags";

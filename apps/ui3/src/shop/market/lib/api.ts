@@ -15,9 +15,9 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
 import type { Owner } from "@catalyst-api/market/Owner";
 import type { Sale } from "@catalyst-api/market/Sale";
-import { isShopApiError } from "../../api/client";
-import { catalogCategoryParams } from "../../discovery/lib/categories";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { catalogCategoryParams } from "@shop/discovery/lib/categories";
+import { type ShopClient } from "@shop/api/shop";
 import { parseManaWei, type ManaWei } from "@shop/model/money";
 import { shopClient } from "../../api/host";
 

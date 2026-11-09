@@ -11,7 +11,7 @@ import { useSearchParams } from "react-router";
 
 import Button from "../../atoms/Button";
 import EmptyState from "../../components/EmptyState";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { reasonText } from "@shop/payment/copy";
 import { indexOutage } from "../land/api";
 import { useResource } from "../land/useResource";

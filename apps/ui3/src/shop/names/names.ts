@@ -19,8 +19,8 @@
 import { keccak256, parseAbi, stringToHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { isShopApiError } from "../api/client";
-import { type ShopClient } from "../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { AuthorizedCredit, CreditAuthorization } from "@shop/api/types";
 import { CHAIN, type ChainId } from "@shop/model/chain";
 import { manaUsdCentsCeil, type ManaUsdRate, type ManaWei, type UsdCents } from "@shop/model/money";

@@ -3,8 +3,8 @@
 // its own content, so the peer is the node (the host's base) unless the host names one per network
 // (the browser host reads `window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`: api/host.ts).
 
-import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
-import { CHAIN } from "@shop/model/chain";
+import type { CatalogItem } from "../../discovery/lib/catalogItem";
+import { CHAIN } from "../../model/chain";
 
 export type UrnNetwork = "matic" | "amoy";
 

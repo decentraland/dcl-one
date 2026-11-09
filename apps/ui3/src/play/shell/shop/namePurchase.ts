@@ -13,8 +13,8 @@
 // are still Amoy and Sepolia (namesModeFor). Registering a NAME for real (`live`) needs a guarded rail of
 // its own, and durable operations, and isn't here.
 
-import type { ShopClient } from '../../../shop/api/shop'
-import type { UsdBalance } from '../../../shop/credits/credits'
+import type { ShopClient } from '@shop/api/shop'
+import type { UsdBalance } from '@shop/credits/credits'
 import { CHAIN } from '@shop/model/chain'
 import { creditsCeil, type UsdCents } from '@shop/model/money'
 import {
