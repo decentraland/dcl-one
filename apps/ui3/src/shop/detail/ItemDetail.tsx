@@ -915,11 +915,6 @@ export default function ItemDetail() {
           returnPath={itemHref}
           resume={buyNow.resume}
           onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
-          onBuyMixed={(mixed) => {
-            if (!offer) return;
-            setBuyNow(null);
-            setBuyingMixed({ line: cartInput, offer, mixed });
-          }}
           onClose={() => setBuyNow(null)}
         />
       ) : null}

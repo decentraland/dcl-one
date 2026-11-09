@@ -20,7 +20,6 @@ import { useNavigate } from "react-router";
 
 import { cartLineId, createCartStore, type CartAddInput, type CartStorage, type CartStore } from "../../cart/store";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import PaymentChoice from "../../checkout/components/PaymentChoice";
 import { friendlyError } from "../../checkout/lib/errors";
 import { EnsureQueryClient, ShopServicesProvider, useShopServices } from "../../checkout/services";
 import { useCheckout, type Blocker, type BlockerKind, type PurchasedLine } from "../../checkout/useCheckout";
@@ -34,10 +33,9 @@ import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
 import { rarityCardPalette } from "../../discovery/lib/rarity";
 import { myItemsRouteFor } from "../../discovery/lib/routes";
+import { invalidateShopQueries } from "../../discovery/query";
 import { Confetti, JumpInIcon } from "../../history/celebration";
-import { creditsCeil, formatMana } from "../../model/money";
-import type { MixedPayment } from "../../payment/present";
-import { t } from "../../discovery/intl";
+import { creditsCeil, manaWei, ZERO_MANA } from "../../model/money";
 import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -45,6 +43,8 @@ import { backpackDeepLink, jumpUrl } from "../lib/jump";
 import buyErrorArt from "../assets/buy-error.png?url";
 import packCoin from "../assets/pack-coin.webp?url";
 import styles from "./BuyModal.module.css";
+import { useCombinedBuy } from "./CombinedBuy";
+import PaymentMethodStep, { type StepRail, type StepRails } from "./PaymentMethodStep";
 
 const TEXT = {
   titleBuy: "Buy Item",
@@ -59,7 +59,6 @@ const TEXT = {
   learnMore: "Learn More",
   cancel: "Cancel",
   buy: "Buy",
-  choosePayment: "Choose your payment method",
   completing: "Completing your purchase…",
   completingResume: "Completing Purchase…",
   stillConfirming: "Your purchase is still being confirmed. It can take a few minutes; nothing is charged twice.",
@@ -162,11 +161,6 @@ export type BuyModalProps = {
   resume?: Pick<BuyNowReturn, "account" | "lineId" | "credits"> | null;
   /** The dialog took the resume (paid with it, or set it aside for a press): the page drops it, so no remount reuses it. */
   onResumeUsed?(): void;
-  /**
-   * The buyer's Credits first and MANA for the rest, in one transaction (CombinedBuy): the page's own flow, which the
-   * dialog hands the split to until upstream's payment-method step (Credits + MANA ticked together) is ported.
-   */
-  onBuyMixed?(mixed: MixedPayment): void;
   onClose(): void;
 };
 
@@ -192,7 +186,7 @@ export default function BuyModal(props: BuyModalProps) {
 
 type Phase = "loading" | "nofunds" | "ready" | "processing" | "pending" | "complete" | "error";
 
-function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuyMixed, onClose }: BuyModalProps) {
+function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClose }: BuyModalProps) {
   // The resume this dialog opened with, kept for its life: the page drops its own copy once it is used (so a dialog
   // mounted again never reuses it), but this one still owes the buyer the price-change notice it implies.
   const [resume] = useState(given);
@@ -211,10 +205,18 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
   const result = results[0] ?? null;
   const creditsQuote = credits?.quote?.method === "credits" ? credits.quote : null;
   const priceCredits = creditsQuote ? creditsCeil(creditsQuote.quoted) : (display.priceCredits ?? 0);
-  // A buyer holding MANA chooses how to pay, as upstream's method step: MANA alone may cover what the Credits do not.
+  // A buyer holding MANA chooses how to pay, as upstream's method step: MANA alone, or the Credits first and MANA for
+  // the rest, may cover what the Credits do not.
   const holdsMana = co.session.kind === "web3" && (co.manaBalance ?? 0n) > 0n && !!mana;
   const manaPays = holdsMana && mana?.state.kind === "ready";
+  const mixed = holdsMana ? (mana?.mixed ?? null) : null;
+  const manaRail = manaPays || !!mixed;
+  const priceManaWei = mana?.quote?.method === "mana" ? mana.quote.amount : ZERO_MANA;
   const creditsShort = credits?.state.kind === "topUpRequired" ? creditsCeil(credits.state.short) : null;
+  // The split settles in one transaction of its own (CombinedBuy's), shown on this dialog's screens, on the offer the
+  // checkout has just priced.
+  const combined = useCombinedBuy({ line, offer: cartLine ? (co.offers[cartLine.id] ?? null) : null, mixed, onDone: () => invalidateShopQueries() });
+  const run = combined.phase;
 
   // A price the review found changed since the page, or one above what the buyer confirmed before a top-up: shown, and
   // agreed to by pressing Buy.
@@ -235,22 +237,34 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
     if (checked) setPriced(true);
   }, [checked]);
 
+  // The split's approval counts as its purchase running, as the checkout's own does: nothing closes the dialog under it.
   const phase: Phase =
-    purchased || confirmed
+    run.kind === "success"
       ? "complete"
-      : co.running
+      : run.kind === "working" || run.kind === "approve"
         ? "processing"
-        : settling || result?.status === "pending"
+        : run.kind === "pending"
           ? "pending"
-          : result?.status === "failed" && !result.topUp
+          : run.kind === "error"
             ? "error"
-            : outage || gone
-              ? "error"
-              : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
-                ? "loading"
-                : (creditsShort !== null || co.topUp || result?.status === "failed") && !manaPays
-                  ? "nofunds"
-                  : "ready";
+            : purchased || confirmed
+              ? "complete"
+              : co.running
+                ? "processing"
+                : settling || result?.status === "pending"
+                  ? "pending"
+                  : result?.status === "failed" && !result.topUp
+                    ? "error"
+                    : outage || gone
+                      ? "error"
+                      : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
+                        ? "loading"
+                        : (creditsShort !== null || co.topUp || result?.status === "failed") && !manaRail
+                          ? "nofunds"
+                          : "ready";
+  // Upstream's method step: for a buyer whose MANA pays (alone or with the Credits), or who holds MANA that does not, so
+  // the step says so instead of the option going missing.
+  const methodMode = phase === "ready" && (manaRail || (holdsMana && priceManaWei > 0n));
 
   const busy = phase === "processing";
   // Closing drops this dialog's top-up hand-off: a top-up finished later must not come back and buy this item. So does
@@ -304,7 +318,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
     return () => before?.focus?.();
   }, []);
   // After the approval step (drawn in the dialog's place), focus comes back in.
-  const approving = !!co.approval;
+  const approving = !!co.approval || run.kind === "approve";
   useEffect(() => {
     if (!approving) dialogRef.current?.focus();
   }, [approving]);
@@ -339,13 +353,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
   // Why Buy waits (HELD). Not while a new price is what Buy waits for: pressing it agrees to that price. A price that rose
   // since a top-up is only a notice, so a wallet gone in the meantime is still said.
   const held = !co.canConfirm && !reviewRepriced && checked && !co.running ? (co.blocks.find((b) => HELD[b.kind] !== undefined) ?? null) : null;
-  const [useMixed, setUseMixed] = useState(false);
-  const mixed = selected === "mana" && onBuyMixed ? (mana?.mixed ?? null) : null;
   const pay = () => {
-    if (mixed && useMixed) {
-      onBuyMixed!(mixed);
-      return;
-    }
     if (reviewRepriced) {
       // The new price is on screen now; this press agrees to it, and the next one pays.
       co.acceptChanges();
@@ -353,6 +361,37 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
     }
     void co.confirm();
   };
+
+  // The method step's pick. Credits or MANA alone is the line's own method, which the checkout prices and pays; the
+  // split is CombinedBuy's, and leaves the line as it is.
+  const [rail, setRail] = useState<StepRail | null>(null);
+  const pick = (next: StepRail | null) => {
+    setRail(next);
+    if (!cartLine || !view || (next !== "credits" && next !== "mana")) return;
+    const method = next === view.primary ? null : next;
+    if ((cartLine.method ?? null) !== method) co.setMethod(cartLine.id, method);
+  };
+  const rails: StepRails = {
+    credits: credits?.state.kind === "ready" ? { credits: priceCredits } : null,
+    mana: manaPays && mana?.quote?.method === "mana" ? { manaWei: mana.quote.amount } : null,
+    combined: mixed,
+  };
+  // Buy waits until the pick is the checkout's (and priced), or, for the split, until there is a wallet to send it.
+  const stepReady = rail === "combined" ? !combined.blocked && checked && !!mixed : rail !== null && selected === rail && (co.canConfirm || reviewRepriced);
+  const stepHeld: Blocker | null =
+    rail === "combined" ? (combined.blocked ? { kind: co.wallet.accountMismatch ? "accountMismatch" : "reconnect", text: combined.blocked } : null) : held;
+  const buyWith = (chosen: StepRail) => {
+    if (reviewRepriced) {
+      co.acceptChanges();
+      return;
+    }
+    if (chosen === "combined") void combined.start();
+    else if (chosen === selected) void co.confirm();
+  };
+
+  if (run.kind === "approve") {
+    return <AuthorizeStep auth={run.auth} requiredWei={combined.agreed?.manaWei} grant={combined.grant} onAuthorized={combined.approved} onCancel={combined.declined} portal={false} />;
+  }
 
   if (co.approval) {
     return (
@@ -373,24 +412,51 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
   return (
     <div className={styles.root} data-shop-tokens role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1} onKeyDown={trapTab}>
       <div className={styles.scrim} onClick={busy ? undefined : close} aria-hidden="true" data-testid="buy-modal-scrim" />
-      <div className={styles.card} data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
-        <div className={styles.head}>
-          <div className={styles.headrow}>
-            <h2 className={styles.title}>{title}</h2>
-            {!busy ? (
-              <button type="button" className={styles.x} onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
-                <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-                  <path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
-              </button>
-            ) : null}
+      <div className={styles.card} data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase} data-method={methodMode || undefined}>
+        {methodMode ? (
+          <PaymentMethodStep
+            display={display}
+            priceCredits={priceCredits}
+            rails={rails}
+            priceManaWei={priceManaWei}
+            balanceCredits={co.balance?.credits ?? 0}
+            manaBalanceWei={co.manaBalance === null ? ZERO_MANA : manaWei(co.manaBalance)}
+            onPick={pick}
+            ready={stepReady}
+            onBuy={buyWith}
+            onClose={close}
+            notice={
+              priceChanged || stepHeld ? (
+                <span className={styles.notes}>
+                  {priceChanged ? <span data-testid="price-changed">{TEXT.priceChanged}</span> : null}
+                  {stepHeld ? (
+                    <span data-testid="buy-modal-held">
+                      <HeldText block={stepHeld} wallet={co.wallet} web3={co.session.kind === "web3"} />
+                    </span>
+                  ) : null}
+                </span>
+              ) : null
+            }
+          />
+        ) : (
+          <div className={styles.head}>
+            <div className={styles.headrow}>
+              <h2 className={styles.title}>{title}</h2>
+              {!busy ? (
+                <button type="button" className={styles.x} onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
+                  <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+                    <path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
+            <div className={styles.balance} data-testid="buy-modal-balance">
+              <span className={styles.balanceLabel}>{TEXT.balance}</span>
+              <Icon name="credits" className={styles.balanceIco} />
+              <span className={styles.balanceValue}>{balance}</span>
+            </div>
           </div>
-          <div className={styles.balance} data-testid="buy-modal-balance">
-            <span className={styles.balanceLabel}>{TEXT.balance}</span>
-            <Icon name="credits" className={styles.balanceIco} />
-            <span className={styles.balanceValue}>{balance}</span>
-          </div>
-        </div>
+        )}
 
         {phase === "loading" ? (
           <div className={styles.body} data-processing>
@@ -400,10 +466,12 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
 
         {phase === "error" ? (
           <ErrorBody
-            message={outage ? TEXT.outage : gone ? TEXT.gone : result?.status === "failed" ? result.failure.message : null}
+            message={run.kind === "error" ? run.message : outage ? TEXT.outage : gone ? TEXT.gone : result?.status === "failed" ? result.failure.message : null}
             onClose={close}
             onRetry={() => {
-              if (outage || gone) co.revalidate();
+              // The split's failure goes back to the method step; the checkout's own retries in its place.
+              if (run.kind === "error") combined.reset();
+              else if (outage || gone) co.revalidate();
               else void co.discardCheckout();
             }}
           />
@@ -435,33 +503,13 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
           />
         ) : null}
 
-        {phase === "ready" ? (
+        {phase === "ready" && !methodMode ? (
           <div className={styles.body}>
             {priceChanged ? (
               <div className={styles.warning} role="status" data-testid="price-changed">
                 <WarningIcon />
                 <p className={styles.warningText}>{TEXT.priceChanged}</p>
               </div>
-            ) : null}
-            {holdsMana && view && cartLine ? (
-              <section aria-label={TEXT.choosePayment} data-testid="buy-modal-methods">
-                <PaymentChoice
-                  view={view}
-                  selected={selected}
-                  // The line's own method: the checkout prices, partitions and pays what is chosen here.
-                  onSelect={(m) => co.setMethod(cartLine.id, m === view.primary ? null : m)}
-                  quantity={1}
-                  manaChainId={cartLine.asset.chainId}
-                  label={display.name}
-                  mixedNote={false}
-                />
-                {mixed ? (
-                  <label className={styles.warningText} data-testid="buy-modal-mixed">
-                    <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} />{" "}
-                    {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
-                  </label>
-                ) : null}
-              </section>
             ) : null}
             <AssetRow display={display} priceCredits={priceCredits} />
             {held ? (
@@ -479,7 +527,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
                 data-variant="gradient"
                 data-full
                 onClick={pay}
-                disabled={!co.canConfirm && !reviewRepriced && !(mixed && useMixed)}
+                disabled={!co.canConfirm && !reviewRepriced}
                 data-testid="buy-modal-buy"
               >
                 {TEXT.buy}
@@ -508,9 +556,12 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
               <button type="button" className={styles.btn} data-variant="outline" onClick={close}>
                 {TEXT.close}
               </button>
-              <button type="button" className={styles.btn} data-variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
-                {TEXT.checkAgain}
-              </button>
+              {/* The split is watched by its own run, which has nothing to check again. */}
+              {run.kind === "pending" ? null : (
+                <button type="button" className={styles.btn} data-variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
+                  {TEXT.checkAgain}
+                </button>
+              )}
             </div>
           </div>
         ) : null}

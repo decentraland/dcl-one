@@ -9,7 +9,7 @@
 // relayed (or sent by the wallet when the relay cannot run). A credit is released only when nothing may
 // have consumed it; a broadcast that has not confirmed is pending, never re-sent.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
@@ -43,7 +43,7 @@ export type CombinedBuyProps = {
   portal?: boolean;
 };
 
-type Phase =
+type CombinedPhase =
   | { kind: "review" }
   | { kind: "approve"; auth: ShopAuthorization }
   | { kind: "working" }
@@ -53,17 +53,47 @@ type Phase =
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 
-export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
+/** What paying with Credits and MANA is doing, and what the screen drawing it can do next. */
+type CombinedBuyRun = {
+  phase: CombinedPhase;
+  busy: boolean;
+  /** The split the buyer confirmed with `start`, which the purchase pays: what an approval asks for, not a re-poll. */
+  agreed: MixedPayment | null;
+  /** Why it cannot start: no wallet to send it, or a wallet on another account than the session's. */
+  blocked: string | null;
+  start(): Promise<void>;
+  /** The MANA approval a self-custody wallet grants before the purchase. */
+  grant(): Promise<void>;
+  /** Granted: the purchase goes on, on the terms it started with, unless the screen that started it is gone. */
+  approved(): void;
+  declined(): void;
+  /** Back to the start after a failure, so the buyer can choose again. */
+  reset(): void;
+};
+
+type Terms = { offer: PurchaseOffer; mixed: MixedPayment };
+
+/**
+ * The credits+MANA purchase itself, for whichever screen draws it: this file's dialog, or Buy now's (BuyModal), which
+ * shows it on upstream's own screens. The terms are the ones `start` saw: an approval in between never changes them.
+ */
+export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddInput; offer: PurchaseOffer | null; mixed: MixedPayment | null; onDone?(txHash: string | null): void }): CombinedBuyRun {
   const wallet = useShopWallet();
   const services = useShopServices();
-  const [phase, setPhase] = useState<Phase>({ kind: "review" });
+  const [phase, setPhase] = useState<CombinedPhase>({ kind: "review" });
   const guard = useRef(createSpendGuard());
+  const terms = useRef<Terms | null>(null);
+  // An approval granted after its screen closed must not go on to buy: nothing would be left to show it.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
-  const title = `Buy ${line.display.name}`;
-  const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
-  const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
 
   function context(): RailContext | null {
     if (!provider || !wallet.account) return null;
@@ -80,7 +110,7 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
     };
   }
 
-  async function resolveTarget(ctx: RailContext): Promise<PurchaseTarget> {
+  async function resolveTarget(ctx: RailContext, offer: PurchaseOffer): Promise<PurchaseTarget> {
     const cartLine: CartLine = {
       id: "combined",
       asset: line.asset,
@@ -101,28 +131,30 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
 
   async function start() {
     const ctx = context();
-    if (!ctx || blocked) return;
+    if (!ctx || blocked || !offer || !mixed || busy) return;
+    const agreed: Terms = { offer, mixed };
+    terms.current = agreed;
     setPhase({ kind: "working" });
     try {
-      const target = await resolveTarget(ctx);
+      const target = await resolveTarget(ctx, agreed.offer);
       const { spender, chainId } = manaSpenderFor("combined", target);
       const auth: ShopAuthorization = { kind: AuthorizationKind.Allowance, contractAddress: requireContracts(chainId).mana.address, spenderAddress: spender, chainId };
-      const allowed = await getAuthorizationStatus(auth, ctx.buyer, mixed.manaWei, ctx.reader).catch(() => false);
+      const allowed = await getAuthorizationStatus(auth, ctx.buyer, agreed.mixed.manaWei, ctx.reader).catch(() => false);
       if (!allowed && needsApprovalStep(ctx.walletKind, false)) {
         setPhase({ kind: "approve", auth });
         return;
       }
-      await pay(ctx, target);
+      await pay(ctx, agreed, target);
     } catch (e) {
       setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
     }
   }
 
-  async function pay(ctx: RailContext, known?: PurchaseTarget) {
+  async function pay(ctx: RailContext, { offer, mixed }: Terms, known?: PurchaseTarget) {
     setPhase({ kind: "working" });
     let creditId: string | null = null;
     try {
-      const target = known ?? (await resolveTarget(ctx));
+      const target = known ?? (await resolveTarget(ctx, offer));
       const item = line.asset.token.kind === "item" ? { contractAddress: line.asset.contract, itemId: line.asset.token.itemId } : undefined;
       const authorized = await authorizeUsdCredit(
         mixed.creditsCents,
@@ -168,24 +200,37 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
     }
   }
 
+  return {
+    phase,
+    busy,
+    agreed: terms.current?.mixed ?? null,
+    blocked,
+    start,
+    grant: async () => {
+      const ctx = context();
+      if (phase.kind !== "approve") return;
+      if (!ctx) throw new Error("Connect your wallet again to approve.");
+      await setAuthorization({ auth: phase.auth, active: true, provider: ctx.provider, account: ctx.buyer, walletKind: ctx.walletKind, reader: ctx.reader, relayerUrl: ctx.relayerUrl, fetchImpl: ctx.fetchImpl });
+    },
+    approved: () => {
+      const ctx = context();
+      if (mounted.current && ctx && terms.current) void pay(ctx, terms.current);
+    },
+    declined: () => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." }),
+    reset: () => {
+      if (!busy) setPhase({ kind: "review" });
+    },
+  };
+}
+
+export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
+  const { phase, busy, agreed, blocked, start, grant, approved, declined } = useCombinedBuy({ line, offer, mixed, onDone });
+  const title = `Buy ${line.display.name}`;
+  const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
+  const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
+
   if (phase.kind === "approve") {
-    return (
-      <AuthorizeStep
-        auth={phase.auth}
-        requiredWei={mixed.manaWei}
-        portal={portal}
-        grant={async () => {
-          const ctx = context();
-          if (!ctx) throw new Error("Connect your wallet again to approve.");
-          await setAuthorization({ auth: phase.auth, active: true, provider: ctx.provider, account: ctx.buyer, walletKind: ctx.walletKind, reader: ctx.reader, relayerUrl: ctx.relayerUrl, fetchImpl: ctx.fetchImpl });
-        }}
-        onAuthorized={() => {
-          const ctx = context();
-          if (ctx) void pay(ctx);
-        }}
-        onCancel={() => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." })}
-      />
-    );
+    return <AuthorizeStep auth={phase.auth} requiredWei={(agreed ?? mixed).manaWei} portal={portal} grant={grant} onAuthorized={approved} onCancel={declined} />;
   }
 
   return (
