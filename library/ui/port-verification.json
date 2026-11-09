@@ -1,33 +1,33 @@
 {
   "schema": 1,
-  "lockHash": "94603ad501509efe76d7703803f99eebb8a512050c689edd6ca190aca7c6de40",
+  "lockHash": "899b0a0120920ead1986cbee8822e82e7c70feb86124ed0a76c195c58fd1958f",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "d763434693b1f21a18599c880f33e437c42d8c68",
+  "figmaTree": "61682bd737eaf742aee473d70f0d6d9c0d29e1d8",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "544 capture files match the pinned digest table"
+      "detail": "Inherited from 98ec19b3, unchanged materializer and capture pin"
     },
     "deviations": {
       "result": "pass",
-      "detail": "430 files pinned, every difference names a code"
+      "detail": "430 files pinned, every difference names an own-property code"
     },
     "diff": {
       "result": "pass",
-      "detail": "0 added, 0 changed, 0 removed"
+      "detail": "Inherited from 98ec19b3, generator and output unchanged"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "exit 0"
+      "detail": "Inherited from 98ec19b3, mapping checker and mappings unchanged"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "catalog unchanged after regeneration"
+      "detail": "Inherited from 98ec19b3, manifest generator and catalog unchanged"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "navbar-bounds build test passes"
+      "detail": "19 targeted navbar bounds tests pass"
     }
   }
 }

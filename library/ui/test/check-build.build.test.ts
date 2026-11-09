@@ -1,9 +1,10 @@
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { build } from 'vite'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { checkBuild } from '../figma/review/scripts/check-build.mjs'
 
 // The gallery's functional proof, run against a real relative-base build served under a nested prefix, and
@@ -85,6 +86,87 @@ describe('when checking a built gallery', () => {
 
     await expect(checkBuild({ dist: copy })).rejects.toThrow(/page error|boom/)
   }, 120_000)
+
+  describe('and a successful request escapes to a second controlled origin', () => {
+    let external: Server
+    let origin: string
+    let requests: string[]
+    let copy: string
+
+    beforeEach(async () => {
+      requests = []
+      external = createServer((request, response) => {
+        requests.push(request.url ?? '/')
+        response.setHeader('access-control-allow-origin', '*')
+        if (request.url === '/escape.js')
+          response.writeHead(200, { 'content-type': 'text/javascript' }).end('void 0')
+        else if (request.url === '/escape.svg')
+          response
+            .writeHead(200, { 'content-type': 'image/svg+xml' })
+            .end('<svg xmlns="http://www.w3.org/2000/svg"/>')
+        else
+          response
+            .writeHead(200, { 'content-type': 'text/html' })
+            .end('<!doctype html><title>External document</title>')
+      })
+      await new Promise<void>((resolve) => external.listen(0, '127.0.0.1', resolve))
+      origin = `http://127.0.0.1:${(external.address() as { port: number }).port}`
+    })
+
+    afterEach(async () => {
+      external.closeAllConnections()
+      await new Promise<void>((resolve, reject) =>
+        external.close((error) => (error ? reject(error) : resolve()))
+      )
+    })
+
+    describe.each([
+      ['worker', 'escape-worker', ''],
+      ['script', 'escape.js', '<script src="URL"></script>'],
+      ['image', 'escape.svg', '<img src="URL" alt="External fixture" />'],
+      ['document', 'escape.html', '<iframe src="URL" title="External fixture"></iframe>']
+    ])('and the escaped resource type is %s', (kind, file, markup) => {
+      beforeEach(async () => {
+        copy = await brokenCopy(`external-${kind}`, async (target) => {
+          const entry = path.join(target, 'index.html')
+          const html = await readFile(entry, 'utf8')
+          if (kind === 'worker') {
+            const module = /<script[^>]*type="module"[^>]*src="([^"]+)"[^>]*><\/script>/.exec(html)
+            if (!module) throw new Error('The fixture has no module entry')
+            await writeFile(
+              path.join(target, 'worker.js'),
+              `fetch(${JSON.stringify(`${origin}/${file}`)}).then((response) => response.text()).then(() => postMessage('done'))`
+            )
+            // Wait for the worker before mounting the gallery, so the request cannot race the proof window.
+            await writeFile(
+              entry,
+              html.replace(
+                module[0],
+                `<script type="module">
+              const worker = new Worker(new URL('./worker.js', location.href));
+              await new Promise((resolve, reject) => { worker.onmessage = resolve; worker.onerror = reject });
+              worker.terminate();
+              await import(${JSON.stringify(module[1])});
+            </script>`
+              )
+            )
+            return
+          }
+          await writeFile(
+            entry,
+            html.replace('</body>', `${markup.replace('URL', `${origin}/${file}`)}</body>`)
+          )
+        })
+      })
+
+      it('should reject the external URL even though it responds with HTTP 200', async () => {
+        await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+          /request left the.*(origin|prefix)/
+        )
+        expect(requests).toContain(`/${file}`)
+      }, 120_000)
+    })
+  })
 
   it('should reject a prefix that is not an absolute path', async () => {
     await expect(checkBuild({ dist, prefix: 'relative/' })).rejects.toThrow('absolute URL path')

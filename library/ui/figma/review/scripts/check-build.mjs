@@ -97,13 +97,14 @@ async function waitFor(session, expression, what) {
   }
 }
 
-async function navigate(session, url) {
+async function navigate(session, url, checkRequests) {
   await session.send('Page.navigate', { url })
   await waitFor(
     session,
     `document.readyState === 'complete' && location.href`,
     `the page at ${url}`
   )
+  checkRequests()
 }
 
 const componentLinks = `[...document.querySelectorAll('a[href*="component="]')].map((a) => ({ href: a.href, name: new URL(a.href).searchParams.get('component') })).filter((l) => l.name)`
@@ -120,7 +121,39 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
   try {
     session = await openSession(browser ?? (await findBrowser(BROWSERS)))
 
-    await navigate(session, `${server.origin}${base}`)
+    // Keep the existing exception only for Chromium's automatic favicon lookup, not page-initiated assets.
+    const automaticFavicon = (request) => {
+      const url = new URL(request.url)
+      return (
+        request.type === 'Other' &&
+        request.initiator === 'other' &&
+        url.origin === server.origin &&
+        url.pathname === '/favicon.ico'
+      )
+    }
+    const checkRequests = () => {
+      for (const request of session.requests) {
+        if (automaticFavicon(request)) continue
+        const url = new URL(request.url)
+        // Inline resources make no network request. A document must still stay under the served prefix.
+        if (
+          request.type !== 'Document' &&
+          (url.protocol === 'data:' || (url.protocol === 'blob:' && url.origin === server.origin))
+        )
+          continue
+        if (url.origin !== server.origin || !url.pathname.startsWith(base))
+          throw new Error(`a request left the expected origin or prefix: ${request.url}`)
+      }
+      const failed = session.requestFailures.find(
+        (request) => !request.url || !automaticFavicon(request)
+      )
+      if (failed)
+        throw new Error(
+          `browser requests failed, first: ${failed.url ?? 'unknown URL'} (${failed.error})`
+        )
+    }
+
+    await navigate(session, `${server.origin}${base}`, checkRequests)
     const links = await waitFor(
       session,
       `(${componentLinks}).length ? ${componentLinks} : null`,
@@ -128,7 +161,7 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
     )
     const first = links[0]
 
-    await navigate(session, first.href)
+    await navigate(session, first.href, checkRequests)
     await waitFor(
       session,
       `document.querySelector('main h1')?.textContent === ${JSON.stringify(first.name)}`,
@@ -154,7 +187,7 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
     const audit = new URL(first.href)
     audit.searchParams.set('audit', '1')
     audit.searchParams.set('variant', '0')
-    await navigate(session, audit.href)
+    await navigate(session, audit.href, checkRequests)
     const box = await waitFor(
       session,
       `(() => { const r = document.querySelector('#audit-render')?.firstElementChild?.getBoundingClientRect(); return r && r.width > 0 && r.height > 0 ? { width: r.width, height: r.height } : null })()`,
@@ -166,8 +199,7 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
       throw new Error(
         `${failed.length} requests failed, first ${failed[0].status} ${failed[0].path}`
       )
-    const outside = server.requests.filter((request) => !request.path.startsWith(base))
-    if (outside.length) throw new Error(`a request left the prefix: ${outside[0].path}`)
+    checkRequests()
     if (session.runtimeErrors.length) throw new Error(`page error: ${session.runtimeErrors[0]}`)
     if (session.consoleErrors.length) throw new Error(`console error: ${session.consoleErrors[0]}`)
     return {

@@ -166,6 +166,26 @@ describe('when the lock pins every tracked figma file', () => {
     expect(out).toContain('deviation code dcl-one-only links to no changes[] entry')
   })
 
+  describe.each(['constructor', 'toString', '__proto__'])(
+    'and a file names inherited deviation %s',
+    (code) => {
+      let value: Lock
+
+      beforeEach(async () => {
+        await annotate((lock) => {
+          lock.sources[0]!.files['library/ui/figma/a.ts']!.deviation = code
+        })
+        value = await lock()
+      })
+
+      it('should reject the code through the real pinned-file validator', () => {
+        expect(pinnedFiles(value).problems).toContain(
+          'library/ui/figma/a.ts names an unknown deviation code'
+        )
+      })
+    }
+  )
+
   it('should require a short plain note for the note code', async () => {
     await annotate((value) => {
       value.sources[0].files['library/ui/figma/a.ts'].deviation = 'note'

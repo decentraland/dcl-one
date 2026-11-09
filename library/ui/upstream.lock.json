@@ -61,7 +61,8 @@
         "Live Figma access and capture ingest are removed: figma-design-system owns every read of Figma. Gone are pull-live and its automation modules, the REST source and its mappers, the Figma REST client, probe, the figma_screenshot MCP tool, the --source rest option, the capture-ingest and capture-merge commands with merge-component-chunks and split-icon-frames, the figma/capture plugin scripts and ingest-text-metrics, and their tests. The MCP tools that read the fetch-source cache stay. ingest-chunks and png-decode go too: strip-image-metadata keeps its own copy of the transport checksum, and its test proves byte equality instead of decoding. The key guard is the only reader of FIGMA_FILE_KEY: stripFileKey, stripFileKeyText and the CLI and MCP error text replace fileKey fields and Figma file URLs by pattern and read no environment, which also makes fetch-source's keyless transform independent of the environment. image-metadata-scan and its gate (figma/test/image-metadata.test.ts) stay: they check that no raster under library/ui/figma or in the public component assets carries non-rendering metadata, which covers product assets.",
         "The gallery discloses what it does not provide: the catalog records, per component, how many image fills its generated stylesheet replaced with the neutral placeholder (counted from the generated CSS; a missing stylesheet fails the manifest), the component page states that those image fills are not provided and that the gallery makes no claim of visual parity, and the navigation says Figma image fills are not provided. review-notes.json, the per-component visual review statuses and findings the gallery displayed, is removed with the visual review it reported. Affected components: PlaceCard, SearchBar, NavBar, ProfilePic, NavNotificationsButton, NavProfileButton, NavNotificationItem, SearchResultItem, WebTheme, ShopModals, NavProfileMenu, WebThemeDarkMode, NavBarExplorer.",
         "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
-        "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts."
+        "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts.",
+        "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -716,14 +717,20 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/lock-digests.mjs": {
-          "sha256": "b54fa8411e9cf8cb3b78cb16f74304a641ab1fc72f16ed3f0f2b244d248d6be5",
+          "sha256": "9955dd38c663b86e9afa25c248314a8a7030cf2cece6d2072f36621b7c5a787c",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening"
+          ]
         },
         "library/ui/figma/lock-digests.test.ts": {
-          "sha256": "13f2b19366d15902eb864c8be2307865358e31ecf17443a3a2ad6122f7e60d23",
+          "sha256": "4a3ec0fe28f552ef84cd25f048aa3a2d9314fc00a19545257c65226e8977cbd0",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening"
+          ]
         },
         "library/ui/figma/port-verification.mjs": {
           "sha256": "c12a6ac824b71627a10c2f9996f75fa3a7fa4e15fd4cce561f12593b3bcdb475",
@@ -761,9 +768,12 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "1d03b4b7d1d575e55e576735ad150fb3e77caf39b82a2d99e6ad05ce1df9fbf1",
+          "sha256": "ca425c5e45da903f17b61127a8681bf7a7abf7391910ebcf8d1255ff05430c91",
           "fds": null,
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "request-scope-hardening"
+          ]
         },
         "library/ui/figma/review/scripts/capture-teardown.mjs": {
           "sha256": "b14e71427b3769a62499091b3ba52027adbac5a0363a3e8cb2aaff697166e2f8",
@@ -776,9 +786,12 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/review/scripts/check-build.mjs": {
-          "sha256": "5d9d300d3682dfb3c3e1080921baf94a7b2bd5a35bae1be22e6284a154de1df2",
+          "sha256": "866fb48c060b3637579cd15245375a9bdea1d54938f36514af71fc451dc5a511",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening"
+          ]
         },
         "library/ui/figma/review/src/components/StateMatrix.module.css": {
           "sha256": "b2eaf3fdbb753a4809bb4cc597b21c86abd9afb4b1c1c3c525bfa4e90e5adf96",
@@ -3741,7 +3754,8 @@
         "gallery-disclosure": 41,
         "note": null,
         "live-read-restored": 42,
-        "cache-hardening": 43
+        "cache-hardening": 43,
+        "request-scope-hardening": 44
       }
     }
   ]

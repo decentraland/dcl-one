@@ -102,7 +102,7 @@ export function pinnedFiles(lock) {
     if (!differs && deviation.length > 0)
       problems.push(`${file} matches figma-design-system but still names a deviation`)
     for (const code of deviation) {
-      if (typeof code !== 'string' || !(code in codes))
+      if (typeof code !== 'string' || !Object.hasOwn(codes, code))
         problems.push(`${file} names an unknown deviation code`)
       if (code === 'note' && !(typeof entry.note === 'string' && NOTE.test(entry.note)))
         problems.push(`${file} needs a short plain note for its deviation`)
