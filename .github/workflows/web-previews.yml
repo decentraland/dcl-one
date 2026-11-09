@@ -39,7 +39,19 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          lfs: false
           persist-credentials: false
+      - name: Fetch reviewer product fonts
+        env:
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${READ_TOKEN:-}"
+          header=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$header"
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $header" \
+          git lfs pull --include='library/ui/foundations/typography/fonts/inter-cyrillic-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-cyrillic-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-greek-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-greek-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-latin-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-vietnamese-wght-normal.woff2' --exclude=''
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
