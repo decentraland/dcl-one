@@ -68,8 +68,10 @@ old content again or reusing a version that another peer may already have observ
 - **Serving the node's own data from the registry routes instead of a lambdas route.**
   Registry routes serve Unity Explorer's boot reads of Decentraland's registry; the node's
   deployed profiles already live at `/lambdas/profiles`. The compact projection belongs beside them at
-  `/lambdas/profiles/metadata`. Unity Explorer constructs that compact-tier path for a
-  catalyst, but currently forces full-profile reads there.
+  `/lambdas/profiles/metadata`. Unity Explorer's `USE_CENTRALIZED_PROFILES` flag selects registry
+  `POST /profiles` and `/profiles/metadata`; otherwise it reads catalyst lambdas. Its
+  `RealmProfileRepository.PostUrl` constructs that compact-tier path for a catalyst, but it
+  currently forces full-profile reads there.
 - **A flag between a centralized service and a catalyst.** The catalyst is the centralized
   service.
 - **The catalyst a peer announces in its LiveKit metadata.** Another player could make every

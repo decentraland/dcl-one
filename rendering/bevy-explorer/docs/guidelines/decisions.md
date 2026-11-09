@@ -131,15 +131,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No camera-to-player dither in photo mode.** unity-explorer keeps fading what stands between the
   camera and the avatar; here the fade showed in the photos, so the dither depth is zero while the
   mode is on and the player camera's depth comes back when it closes.
-- **The photo camera looks through the player camera's input path.** The pointer delta uses
-  the player camera's sensitivity and smoothing settings, scaled by 0.17. The scale preserves
-  the selected camera response at the 60 fps calibration point while keeping sensitivity and
-  smoothing in the shared input path; it is not a frame-time multiplier.
+- **The photo camera looks through the player camera's input path.** unity-explorer turns it by a
+  rotation speed times the frame time, which depends on the frame rate and ignores the sensitivity
+  setting; here the pointer delta goes through the player camera's sensitivity and smoothing
+  settings, scaled by 0.17, which matches the Unity feel at 60 fps.
 - **The photo camera's wheel zoom is per line, and a held zoom button zooms per second.**
-  A wheel line is 16 pixels of trackpad scroll on every platform, including web. One line
-  applies `fov_change_speed * 50 / 60` degrees of FOV change: one 60 fps frame's zoom. A held
-  bumper applies `fov_change_speed * 50` degrees per second. The 60 fps calibration fixes the
-  wheel step without making either input depend on the actual frame rate.
+  unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
+  (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
+  would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
 
 ## Deliberate choices that look like mistakes
 

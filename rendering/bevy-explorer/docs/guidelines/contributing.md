@@ -91,6 +91,8 @@ consumer requirements, compatibility and rollout limitations, tooling instructio
 benchmark operations. Preserve the evidence and source pins supporting those facts. Do not
 remove a client, obscure its identity as a generic "external client", or imply that its
 implementation is complete merely to remove its name.
+Compatibility comparisons in [decisions](decisions.md) and [oddities](oddities.md) are
+permitted; classify each claim in context rather than treating a page's client names as violations.
 
 Preserve exact tool and skill identifiers, endpoint paths, process names, wire values, and
 repository or download URLs needed for the documented task. Keep required legal attribution
@@ -106,9 +108,10 @@ For generated documentation, update its source or generation transform and regen
 views, including search indexes. Run the generator's consistency check; editing only the rendered
 document leaves the policy unenforced on the next generation.
 
-Before committing or updating a PR, search every changed documentation file and the complete
-PR text with `rg -ni '\bunity(?:\b|[-_])'`. Review each match in context: remove implementation
-provenance, preserve client facts and operational references, and check the diff for lost
+Before committing or updating a PR, search every changed file and the complete PR text with
+`rg -ni '\bunity(?:\b|[-_])'`. This is a minimum check: also inspect the diff for source-file
+and type names that do not contain that word. Remove implementation provenance, preserve
+client facts and operational references, and check the diff for lost
 compatibility information. Record the classification in the ignored review report. Explain
 this engine's design using its requirements and tests.
 

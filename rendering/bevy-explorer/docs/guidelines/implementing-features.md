@@ -19,7 +19,8 @@ tracked documentation depend on a sibling checkout.
 3. **Preserve the required constants.** Durations, offsets, thresholds and colors are behavior;
    keep their specified values and names unless the task authorizes a change. Check material
    values as well as shader defaults. Record each intentional difference and its reason in the
-   task report rather than adjusting a value in passing.
+   PR, and durable choices in [decisions](decisions.md) or an ADR. Keep source comparisons in
+   the ignored task report rather than adjusting a value in passing.
 4. **Use the owning crate's integration points** (below). Entity state belongs on its entity;
    reuse the existing schedules and lifecycle. A feature that hides or clips spawned content
    runs after its producer with deferred commands applied before rendering.
