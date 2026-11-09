@@ -937,10 +937,6 @@ mod tests {
         assert!(!is_forbidden_ip(&pubip));
     }
 
-    /// End-to-end on the shared primitive both the fetch resolver and the WebSocket
-    /// `resolve_checked` hook depend on: literal private/loopback is refused normally and
-    /// allowed only under `allow_private` (preview), while cloud metadata stays refused even
-    /// under preview. Uses literal IPs so no network lookup happens.
     #[test]
     fn special_purpose_ranges_are_forbidden() {
         for address in [
@@ -987,6 +983,10 @@ mod tests {
         }
     }
 
+    /// End-to-end on the shared primitive both the fetch resolver and the WebSocket
+    /// `resolve_checked` hook depend on: literal private/loopback is refused normally and
+    /// allowed only under `allow_private` (preview), while cloud metadata stays refused even
+    /// under preview. Uses literal IPs so no network lookup happens.
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn resolve_public_addrs_enforces_egress_policy() {
