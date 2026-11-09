@@ -2,14 +2,20 @@
 //! `/badges/{id}`, `/badges/{id}/tiers`, `/categories`, `/status`,
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
 //! admin read, grant and revoke (the last two with an audit row), and badge
-//! art mirrored into `BADGES_ASSETS_DIR` at `/assets/{path}`. Tables:
+//! art mirrored into `BADGES_ASSETS_DIR` at `/assets/{path}`. Revoke answers
+//! 200 with a body in every environment; upstream registers it in dev and
+//! test only, with a bare 204. Tables:
 //! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
 //! the schema), `user_badge_progress`, `user_achieved_tiers`,
 //! `badge_admin_audit`, `presence_badges`. Every progress write goes through
 //! [`progress::apply_progress`]; the console grant is its only caller here.
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
-//! stripped that prefix).
+//! stripped that prefix), so `<node>/badges` is the base URL of upstream's
+//! paths, and so is the `badges.<domain>` host. At the node root the gateway
+//! aliases only `/users/0x…/{badges,preview}` (what the web profile reads);
+//! upstream's `/badges`, `/badges/{id}[/tiers]`, `/categories` and `/status`
+//! there would collide with this prefix and with places' `/categories`.
 
 pub mod assets;
 pub mod handlers;
@@ -86,7 +92,7 @@ impl AdminSecretSource for SharedState {
 }
 
 /// The routes, unprefixed: nest under `/badges`. CORS is permissive as the
-/// old service's was.
+/// old service's was, and a preflight answers 204 as upstream's does.
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/badges", get(handlers::get_badges))
@@ -104,7 +110,19 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/assets/{*path}", get(handlers::get_asset))
         .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(axum::middleware::map_response(preflight_no_content))
         .with_state(state)
+}
+
+/// tower-http answers a preflight 200; upstream's 204.
+async fn preflight_no_content(mut response: axum::response::Response) -> axum::response::Response {
+    let preflight = response
+        .headers()
+        .contains_key(axum::http::header::ACCESS_CONTROL_ALLOW_METHODS);
+    if preflight && response.status() == axum::http::StatusCode::OK {
+        *response.status_mut() = axum::http::StatusCode::NO_CONTENT;
+    }
+    response
 }
 
 #[cfg(test)]

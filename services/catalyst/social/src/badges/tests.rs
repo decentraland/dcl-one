@@ -135,7 +135,11 @@ async fn cors_headers_on_get_and_preflight() {
         .body(Body::empty())
         .unwrap();
     let (status, headers, _) = send(app(state), req).await;
-    assert!(status.is_success());
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "upstream's preflight status"
+    );
     assert_eq!(headers.get("access-control-allow-origin").unwrap(), "*");
     assert!(headers.get("access-control-allow-methods").is_some());
 }
