@@ -20,10 +20,25 @@ import { useNavigate } from "react-router";
 
 import { cartLineId, createCartStore, type CartAddInput, type CartStorage, type CartStore } from "../../cart/store";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { DialogAsset, DialogHead, DialogShell, DialogTextButton, DialogWarning, ErrorBody, NoFundsBody, ProcessingBody, dialogStyles as styles, useDialog } from "../../checkout/components/CheckoutDialog";
+import {
+  DialogAsset,
+  DialogBody,
+  DialogButton,
+  DialogCtas,
+  DialogHead,
+  DialogLinkButton,
+  DialogShell,
+  DialogTextButton,
+  DialogWarning,
+  ErrorBody,
+  LoadingBody,
+  NoFundsBody,
+  PendingBody,
+  ProcessingBody,
+  useDialog,
+} from "../../checkout/components/CheckoutDialog";
 import { EnsureQueryClient, ShopServicesProvider, useShopServices } from "../../checkout/services";
 import { useCheckout, type Blocker, type BlockerKind, type PurchasedLine } from "../../checkout/useCheckout";
-import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { isIapMode } from "../../credits/iap";
 import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp, type BuyNowReturn } from "../../credits/returns";
 import { myItemsRouteFor } from "../../discovery/lib/routes";
@@ -34,6 +49,7 @@ import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { backpackDeepLink, jumpUrl } from "../lib/jump";
+import styles from "./BuyModal.module.css";
 import { useCombinedBuy } from "./CombinedBuy";
 import PaymentMethodStep, { type StepRail, type StepRails } from "./PaymentMethodStep";
 
@@ -77,6 +93,18 @@ const HELD: Partial<Record<BlockerKind, { text?: string; action?: "signInWithWal
   refused: { text: TEXT.unbuyable },
   methodNotAllowed: { text: TEXT.unbuyable },
 };
+
+/** The checkout's reasons about the line itself, which hold for the split too. */
+const LINE_BLOCKERS: BlockerKind[] = ["offMarket", "itemsChanged", "refused", "methodNotAllowed", "quoteOutage"];
+
+/**
+ * Why the split cannot be bought now, or null. It settles outside the checkout (CombinedBuy), so the checkout's own
+ * readiness says nothing of its wallet, but the checkout's word on the line itself (gone, refused, not priced) holds.
+ */
+export function splitReason(walletBlocked: string | null, accountMismatch: boolean, blocks: readonly Blocker[]): Blocker | null {
+  if (walletBlocked) return { kind: accountMismatch ? "accountMismatch" : "reconnect", text: walletBlocked };
+  return blocks.find((b) => LINE_BLOCKERS.includes(b.kind)) ?? null;
+}
 
 /** One namespace per item in this tab's session storage, so each dialog's cart and checkout are its own. */
 function sessionStorageFor(namespace: string): () => CartStorage | null {
@@ -132,6 +160,32 @@ function holdLine(cart: CartStore, line: CartAddInput): void {
 /** For tests: forget every dialog's cart. */
 export function resetBuyNowCarts(): void {
   stores.clear();
+}
+
+// A Credits + MANA purchase sent and not confirmed yet, per account and item, in this tab: CombinedBuy watches nothing
+// once it says "pending", so the dialog opened again shows it as still confirming instead of offering a second one.
+const SPLIT_KEY = "dcl-shop-buynow-split:v1:";
+const SPLIT_HOLD_MS = 15 * 60 * 1000;
+
+function splitKey(account: string | null, lineId: string): string {
+  return `${SPLIT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
+}
+
+function splitPending(account: string | null, lineId: string, now: number = Date.now()): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(splitKey(account, lineId)));
+    return Number.isFinite(at) && at > 0 && now - at < SPLIT_HOLD_MS;
+  } catch {
+    return false;
+  }
+}
+
+function recordSplit(account: string | null, lineId: string, now: number = Date.now()): void {
+  try {
+    sessionStorage.setItem(splitKey(account, lineId), String(now));
+  } catch {
+    // Without storage the dialog still shows it while open.
+  }
 }
 
 export type BuyModalProps = {
@@ -199,6 +253,13 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   // checkout has just priced.
   const combined = useCombinedBuy({ line, offer: cartLine ? (co.offers[cartLine.id] ?? null) : null, mixed, onDone: () => invalidateShopQueries() });
   const run = combined.phase;
+  const lineId = cartLineId(line.asset, line.listing);
+  const [splitSent, setSplitSent] = useState(() => splitPending(co.account, lineId));
+  useEffect(() => {
+    if (run.kind !== "pending") return;
+    recordSplit(co.account, lineId);
+    setSplitSent(true);
+  }, [run.kind, co.account, lineId]);
 
   // A price the review found changed since the page, or one above what the buyer confirmed before a top-up: shown, and
   // agreed to by pressing Buy.
@@ -225,7 +286,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
       ? "complete"
       : run.kind === "working" || run.kind === "approve"
         ? "processing"
-        : run.kind === "pending"
+        : run.kind === "pending" || splitSent
           ? "pending"
           : run.kind === "error"
             ? "error"
@@ -319,9 +380,9 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
     combined: mixed,
   };
   // Buy waits until the pick is the checkout's (and priced), or, for the split, until there is a wallet to send it.
-  const stepReady = rail === "combined" ? !combined.blocked && checked && !!mixed : rail !== null && selected === rail && (co.canConfirm || reviewRepriced);
-  const stepHeld: Blocker | null =
-    rail === "combined" ? (combined.blocked ? { kind: co.wallet.accountMismatch ? "accountMismatch" : "reconnect", text: combined.blocked } : null) : held;
+  const splitHeld = rail === "combined" ? splitReason(combined.blocked, co.wallet.accountMismatch, co.blocks) : null;
+  const stepReady = rail === "combined" ? !splitHeld && checked && !!mixed : rail !== null && selected === rail && (co.canConfirm || reviewRepriced);
+  const stepHeld: Blocker | null = rail === "combined" ? splitHeld : held;
   const buyWith = (chosen: StepRail) => {
     if (reviewRepriced) {
       co.acceptChanges();
@@ -359,9 +420,10 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             priceCredits={priceCredits}
             rails={rails}
             priceManaWei={priceManaWei}
-            balanceCredits={co.balance?.credits ?? 0}
+            balanceCredits={co.balanceError ? null : (co.balance?.credits ?? 0)}
             manaBalanceWei={co.manaBalance === null ? ZERO_MANA : manaWei(co.manaBalance)}
             onPick={pick}
+            initial={rail}
             ready={stepReady}
             onBuy={buyWith}
             onClose={close}
@@ -382,11 +444,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
           <DialogHead title={title} balance={balance} busy={busy} onClose={close} testId="buy-modal" />
         )}
 
-        {phase === "loading" ? (
-          <div className={styles.body} data-processing>
-            <span className={styles.spinner} aria-hidden="true" />
-          </div>
-        ) : null}
+        {phase === "loading" ? <LoadingBody /> : null}
 
         {phase === "error" ? (
           <ErrorBody
@@ -405,7 +463,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
           <NoFundsBody
             testId="buy-modal"
             units={1}
-            items={<DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" />}
+            items={<DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" flapTestId="buy-modal-flap" />}
             shortfall={Math.max(1, creditsShort ?? (co.topUp ? creditsCeil(co.topUp.shortCents) : priceCredits - (co.balance?.credits ?? 0)))}
             onLeave={() => {
               if (!co.account || !cartLine) return null;
@@ -429,32 +487,24 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         ) : null}
 
         {phase === "ready" && !methodMode ? (
-          <div className={styles.body}>
+          <DialogBody>
             {priceChanged ? (
               <DialogWarning status testId="price-changed">
                 {TEXT.priceChanged}
               </DialogWarning>
             ) : null}
-            <DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" />
+            <DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" flapTestId="buy-modal-flap" />
             {held ? (
               <DialogWarning status testId="buy-modal-held">
                 <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
               </DialogWarning>
             ) : null}
-            <div className={styles.ctas}>
-              <button
-                type="button"
-                className={styles.btn}
-                data-variant="gradient"
-                data-full
-                onClick={pay}
-                disabled={!co.canConfirm && !reviewRepriced}
-                data-testid="buy-modal-buy"
-              >
+            <DialogCtas>
+              <DialogButton variant="gradient" full onClick={pay} disabled={!co.canConfirm && !reviewRepriced} data-testid="buy-modal-buy">
                 {TEXT.buy}
-              </button>
-            </div>
-          </div>
+              </DialogButton>
+            </DialogCtas>
+          </DialogBody>
         ) : null}
 
         {phase === "processing" ? (
@@ -462,53 +512,49 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         ) : null}
 
         {phase === "pending" ? (
-          <div className={styles.body} data-testid="buy-modal-pending">
-            <div className={styles.success}>
-              <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
-              <p className={styles.processing}>{TEXT.stillConfirming}</p>
-            </div>
-            <div className={styles.ctas}>
-              <button type="button" className={styles.btn} data-variant="outline" onClick={close}>
+          <PendingBody text={TEXT.stillConfirming} testId="buy-modal-pending">
+            <DialogCtas>
+              <DialogButton variant="outline" onClick={close}>
                 {TEXT.close}
-              </button>
+              </DialogButton>
               {/* The split is watched by its own run, which has nothing to check again. */}
-              {run.kind === "pending" ? null : (
-                <button type="button" className={styles.btn} data-variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
+              {run.kind === "pending" || splitSent ? null : (
+                <DialogButton variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
                   {TEXT.checkAgain}
-                </button>
+                </DialogButton>
               )}
-            </div>
-          </div>
+            </DialogCtas>
+          </PendingBody>
         ) : null}
 
         {phase === "complete" ? (
-          <div className={styles.body}>
+          <DialogBody>
             <Confetti className={styles.confetti} />
-            <div className={styles.success} data-testid="buy-modal-complete">
+            <div className={styles.complete} data-testid="buy-modal-complete">
               <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
-                <circle cx="32" cy="32" r="32" className={styles.successMark} />
+                <circle cx="32" cy="32" r="32" className={styles.completeMark} />
                 <path d="M20 33l8 8 16-18" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <p className={styles.successText}>
+              <p className={styles.completeText}>
                 <b>{TEXT.successTitle}</b> {TEXT.successBody}
               </p>
             </div>
-            <div className={styles.ctas} data-stack>
-              <button type="button" className={styles.btn} data-variant="outline" onClick={() => navigate(myItemsRouteFor([display.category]))}>
+            <DialogCtas stack>
+              <DialogButton variant="outline" onClick={() => navigate(myItemsRouteFor([display.category]))}>
                 {TEXT.myItems}
-              </button>
+              </DialogButton>
               {isIapMode() ? (
-                <a className={styles.btn} data-variant="ruby" href={backpackDeepLink(purchased ?? [{ urn: display.urn }])} onClick={onClose}>
+                <DialogLinkButton variant="ruby" href={backpackDeepLink(purchased ?? [{ urn: display.urn }])} onClick={onClose}>
                   {TEXT.goToBackpack}
-                </a>
+                </DialogLinkButton>
               ) : (
-                <a className={styles.btn} data-variant="ruby" href={jumpUrl()} target="_blank" rel="noreferrer" onClick={onClose}>
+                <DialogLinkButton variant="ruby" href={jumpUrl()} target="_blank" rel="noreferrer" onClick={onClose}>
                   {TEXT.tryInWorld}
                   <JumpInIcon />
-                </a>
+                </DialogLinkButton>
               )}
-            </div>
-          </div>
+            </DialogCtas>
+          </DialogBody>
         ) : null}
     </DialogShell>
   );

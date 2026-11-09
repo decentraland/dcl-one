@@ -9,6 +9,7 @@ import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { batchAuthorization, creatorTrade } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
+import { resetIapModeCache } from "../credits/iap";
 import { takeTopUpReturn } from "../credits/returns";
 import { RESUME_CART_KEY } from "./purchase/cart";
 
@@ -490,6 +491,40 @@ describe("the cart page", () => {
     expect(takeTopUpReturn()).toBeNull();
   });
 
+  it("the packs dialog lists the lines the Credits pay: a LAND paid in MANA is not short of Credits", async () => {
+    onTestFinished(marketplaceOn());
+    renderCart({
+      session: "web3",
+      lines: [
+        { offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 },
+        { offer: (s) => parcelResale(s), listing: { orderId: "order-1" }, name: "Parcel 12,-4" },
+      ],
+      balanceCents: 30,
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    const lines = within(dialog).getByTestId("dialog-lines");
+    expect(lines).toHaveTextContent("Rainbow Hat");
+    expect(lines).not.toHaveTextContent("Parcel 12,-4");
+    expect(within(dialog).getByTestId("cart-checkout-insufficient")).toHaveTextContent("to purchase these items.");
+  });
+
+  it("in the app's web view, where Credits are not sold here, the dialog says where to get them", async () => {
+    window.history.replaceState({}, "", "/?view=mobile-iap");
+    resetIapModeCache();
+    onTestFinished(() => {
+      window.history.replaceState({}, "", "/");
+      resetIapModeCache();
+    });
+    renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], balanceCents: 30 });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout");
+    expect(within(dialog).getByTestId("cart-checkout-insufficient")).toHaveTextContent("Get Credits in the Decentraland app, then come back to finish this purchase.");
+    expect(within(dialog).queryByTestId("credit-pack")).toBeNull();
+    expect(within(dialog).queryByRole("link", { name: "Learn More" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
   it("a balance a few cents short says the whole Credits the buyer must add, rounded up", async () => {
     renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], balanceCents: 115 });
     await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
@@ -527,6 +562,52 @@ describe("the cart page", () => {
     await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
     await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Try again" })));
     await screen.findByText("SUCCESS PAGE", undefined, { timeout: 5000 });
+  });
+
+  it("Try again on a run that half completed sends only what failed: the item already bought is not bought twice", async () => {
+    const { demo } = renderCart({
+      session: "web3",
+      lines: [
+        { offer: (s) => storeMint(s), name: "Rainbow Hat" },
+        { offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" },
+      ],
+    });
+    // One signature declined: one group fails, the other completes.
+    demo.wallet.next = "reject";
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
+    const sentBefore = demo.relay.posts.length + demo.wallet.sent.length;
+    expect(sentBefore).toBe(1);
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Try again" })));
+    await screen.findByText("SUCCESS PAGE", undefined, { timeout: 5000 });
+    // One more purchase sent, for the group that failed; the completed one was not sent again.
+    expect(demo.relay.posts.length + demo.wallet.sent.length).toBe(sentBefore + 1);
+  });
+
+  it("a failure while something else holds the cart offers no Try again that would do nothing", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }] });
+    demo.wallet.next = "reject";
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
+    // The wallet moves to another account: nothing can run again until that is sorted out.
+    act(() => demo.wallet.emit("accountsChanged", [BOOK.reseller]));
+    await waitFor(() => expect(within(screen.getByTestId("cart-checkout")).queryByRole("button", { name: "Try again" })).toBeNull());
+    expect(within(screen.getByTestId("cart-checkout")).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("closed, the cart's dialog gives focus back to the Checkout that opened it", async () => {
+    renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
+    const checkout = screen.getByTestId("pay-with-credits-topup");
+    checkout.focus();
+    fireEvent.click(checkout);
+    const dialog = await screen.findByTestId("cart-checkout");
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("cart-checkout")).toBeNull());
+    expect(document.activeElement).toBe(screen.getByTestId("pay-with-credits-topup"));
   });
 
   it("while the purchase runs the dialog says so and cannot be closed; it goes when the purchase ends", async () => {

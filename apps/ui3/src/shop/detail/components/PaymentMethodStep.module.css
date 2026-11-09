@@ -1,6 +1,6 @@
 /* from: shop@3a322cf9:app/src/components/PaymentMethodStep/PaymentMethodStep.styles.ts, app/src/styles/theme.ts (the
          colours below), app/src/components/Icon/Icon.css (.ico).
-   "Choose your payment method" inside Buy now's card (BuyModal.module.css), which is upstream's dark surface: only the
+   "Choose your payment method" inside Buy now's card (the checkout dialogs' shell, checkout/components/CheckoutDialog.module.css), which is upstream's dark surface: only the
    step's dark-surface (`onDark`) rules are ported, as the dialog's own. The step pads itself inside the card's own
    padding, as upstream's does. Icons are `.shop-ico` masks, sized here past their 20px default. */
 
@@ -16,12 +16,7 @@
     --shop-buy-btn,
     linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%)
   );
-  --pms-flare: linear-gradient(
-    157.44deg,
-    #ffbc5b 0%,
-    #ff2d55 50.52%,
-    #c640cd 100%
-  );
+  --pms-flare: var(--shop-flare, linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%));
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -58,10 +53,10 @@
   border: 0;
   background: none;
   cursor: pointer;
-  color: #ffffff;
+  color: var(--pms-white);
 }
 .close:focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid var(--pms-white);
   outline-offset: 2px;
 }
 .step .closeIco {
@@ -191,7 +186,7 @@
   opacity: 0.55;
 }
 .row:focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid var(--pms-white);
   outline-offset: 2px;
 }
 .left {
@@ -342,7 +337,7 @@
   align-items: flex-start;
   gap: 12px;
   margin: 0;
-  background: rgba(255, 162, 90, 0.3);
+  background: var(--shop-warning-wash, rgba(255, 162, 90, 0.3));
   border-radius: var(--shop-radius-btn, 8px);
   padding: 16px;
   font-size: 14px;
@@ -369,10 +364,23 @@
   background: var(--pms-red);
 }
 .buy:focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid var(--pms-white);
   outline-offset: 2px;
 }
 .buy:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* Read out, not drawn: a row's reason upstream does not show. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }

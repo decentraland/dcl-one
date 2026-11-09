@@ -7,7 +7,18 @@
 // cart's (CartCheckoutModal.tsx). It holds the dialog's behaviour (focus moves in and back, Tab stays inside, Escape
 // closes, the browser asks before leaving a purchase being sent) and the screens both draw: the head with the Credits
 // balance, an item, the packs that finish a purchase the Credits fall short of, the progress and the failure panel.
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { useCreditPacks } from "../../credits/hooks";
@@ -25,8 +36,6 @@ import { friendlyError } from "../lib/errors";
 import { useShopServices } from "../services";
 import styles from "./CheckoutDialog.module.css";
 
-/** The shell's classes, for the screens a dialog draws on its own (Buy now's ready, pending and complete). */
-export { styles as dialogStyles };
 
 const TEXT = {
   balance: "My Credits Balance:",
@@ -43,6 +52,7 @@ const TEXT = {
   tryAgain: "Try again",
   itemFallback: "Item",
   packsFailed: "Couldn't start the Credits checkout — please try again.",
+  inApp: "Get Credits in the Decentraland app, then come back to finish this purchase.",
 } as const;
 
 export type DialogHandle = { ref: RefObject<HTMLDivElement | null>; onKeyDown(e: KeyboardEvent): void; focus(): void };
@@ -145,7 +155,7 @@ export function DialogHead(props: { title: string; balance: string; busy: boolea
   );
 }
 
-export const WarningIcon = () => (
+const WarningIcon = () => (
   <svg viewBox="0 0 20 20" width="24" height="24" aria-hidden="true">
     <path
       className={styles.warningMark}
@@ -174,13 +184,26 @@ export function DialogTextButton({ onClick, children }: { onClick(): void; child
 }
 
 /** An item: its artwork on its rarity's tile with the category flap, its name (and units), its creator and its price. */
-export function DialogAsset({ display, priceCredits, quantity = 1, testId }: { display: CartLineDisplay; priceCredits: number; quantity?: number; testId?: string }) {
+export function DialogAsset({
+  display,
+  priceCredits,
+  quantity = 1,
+  testId,
+  flapTestId = "dialog-flap",
+}: {
+  display: CartLineDisplay;
+  priceCredits: number;
+  quantity?: number;
+  testId?: string;
+  /** The category flap's test id: each dialog names its own. */
+  flapTestId?: string;
+}) {
   const creator = useCreatorName(display.creator);
   const tile = { "--buy-tile": rarityCardPalette(display.rarity).background } as CSSProperties;
   return (
     <div className={styles.asset} data-testid={testId}>
       <div className={styles.thumb} style={tile}>
-        <CategoryFlap item={{ category: display.category ?? "wearable", wearableCategory: display.wearableCategory, rarity: display.rarity ?? "" }} size="sm" testId="buy-modal-flap" />
+        <CategoryFlap item={{ category: display.category ?? "wearable", wearableCategory: display.wearableCategory, rarity: display.rarity ?? "" }} size="sm" testId={flapTestId} />
         {display.thumbnail ? <img src={display.thumbnail} alt="" /> : null}
       </div>
       <div className={styles.info}>
@@ -284,7 +307,13 @@ export function NoFundsBody(props: {
         <WarningIcon />
         <p className={styles.warningText}>
           <b>{TEXT.insufficient}</b> {TEXT.needToBuy} <b>{`${props.shortfall.toLocaleString("en-US")} Credits`}</b> {props.units > 1 ? TEXT.toPurchaseMany : TEXT.toPurchaseOne}
-          {iap ? null : (
+          {iap ? (
+            // Credits are sold in the app there: the way forward, since this dialog offers no packs.
+            <>
+              {props.learnMoreBelow ? <br /> : " "}
+              {TEXT.inApp}
+            </>
+          ) : (
             <>
               {props.learnMoreBelow ? <br /> : " "}
               <a className={styles.warningLink} href={`${SHOP_BASE}/credits`} target="_blank" rel="noopener noreferrer">
@@ -343,36 +372,73 @@ export function NoFundsBody(props: {
   );
 }
 
-/**
- * A purchase on its way: the loader, what is happening, and the bar. With `step` the bar stands at that share (the cart
- * reserving its units, counted "n/N" when there are several); without it the bar slides, claiming no progress the
- * purchase has not made.
- */
-export function ProcessingBody({ text, step, total = 1 }: { text: string; step?: number; total?: number }) {
-  const counted = step !== undefined;
-  const pct = total > 0 && counted ? Math.min(100, Math.round((step / total) * 100)) : 0;
+/** A screen's body; `processing` centres it in the card's full height, as the loading and progress screens are. */
+export function DialogBody({ processing, testId, children }: { processing?: boolean; testId?: string; children: ReactNode }) {
   return (
-    <div className={styles.body} data-processing>
-      <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
-      <div className={styles.processing}>{text}</div>
-      {counted ? (
-        <div className={styles.progressRow}>
-          <div className={styles.progress} aria-hidden="true">
-            <span className={styles.progressFill} data-step style={{ "--progress-step": `${pct}%` } as CSSProperties} />
-          </div>
-          {total > 1 ? <span className={styles.step}>{`${step}/${total}`}</span> : null}
-        </div>
-      ) : (
-        <div className={styles.progress} aria-hidden="true">
-          <span className={styles.progressFill} />
-        </div>
-      )}
+    <div className={styles.body} data-processing={processing || undefined} data-testid={testId}>
+      {children}
     </div>
   );
 }
 
-/** The failure panel: the reason (or that the Credits are safe), and a retry. */
-export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry(): void }) {
+/** The screen's buttons, side by side, or stacked (`stack`). */
+export function DialogCtas({ stack, children }: { stack?: boolean; children: ReactNode }) {
+  return (
+    <div className={styles.ctas} data-stack={stack || undefined}>
+      {children}
+    </div>
+  );
+}
+
+type Variant = "gradient" | "outline" | "ruby";
+
+/** A dialog button: the gradient Buy, the outline Cancel, the ruby retry. `full` takes the row's width. */
+export function DialogButton({ variant, full, ...rest }: { variant: Variant; full?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button type="button" {...rest} className={styles.btn} data-variant={variant} data-full={full || undefined} />;
+}
+
+/** A link drawn as a dialog button (Try in world, Go to backpack). */
+export function DialogLinkButton({ variant, ...rest }: { variant: Variant } & AnchorHTMLAttributes<HTMLAnchorElement>) {
+  return <a {...rest} className={styles.btn} data-variant={variant} />;
+}
+
+/** The first price check: a spinner in the card's full height. */
+export function LoadingBody() {
+  return (
+    <div className={styles.body} data-processing>
+      <span className={styles.spinner} aria-hidden="true" />
+    </div>
+  );
+}
+
+/** A purchase sent and not confirmed yet: the loader, what to expect, and the screen's buttons. */
+export function PendingBody({ text, testId, children }: { text: string; testId?: string; children: ReactNode }) {
+  return (
+    <div className={styles.body} data-testid={testId}>
+      <div className={styles.success}>
+        <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
+        <p className={styles.processing}>{text}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A purchase on its way: the loader, what is happening, and a sliding bar that claims no progress it has not made. */
+export function ProcessingBody({ text }: { text: string }) {
+  return (
+    <div className={styles.body} data-processing>
+      <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
+      <div className={styles.processing}>{text}</div>
+      <div className={styles.progress} aria-hidden="true">
+        <span className={styles.progressFill} />
+      </div>
+    </div>
+  );
+}
+
+/** The failure panel: the reason (or that the Credits are safe), and a retry when there is one to make. */
+export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry?: () => void }) {
   return (
     <div className={styles.body}>
       <div className={styles.error} data-testid="buy-error">
@@ -382,12 +448,14 @@ export function ErrorBody({ message, onClose, onRetry }: { message: string | nul
         </p>
       </div>
       <div className={styles.ctas}>
-        <button type="button" className={styles.btn} data-variant="outline" onClick={onClose}>
+        <button type="button" className={styles.btn} data-variant="outline" data-full={onRetry ? undefined : true} onClick={onClose}>
           {TEXT.cancel}
         </button>
-        <button type="button" className={styles.btn} data-variant="ruby" onClick={onRetry}>
-          {TEXT.tryAgain}
-        </button>
+        {onRetry ? (
+          <button type="button" className={styles.btn} data-variant="ruby" onClick={onRetry}>
+            {TEXT.tryAgain}
+          </button>
+        ) : null}
       </div>
     </div>
   );
