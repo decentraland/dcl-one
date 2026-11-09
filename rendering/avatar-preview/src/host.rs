@@ -160,6 +160,12 @@ pub enum Command {
         /// the zoom range, as factors of the framed distance (closer is larger)
         zoom_min: Option<f32>,
         zoom_max: Option<f32>,
+        /// the zoom a reset starts at, within the range
+        zoom_start: Option<f32>,
+        /// bring the measured middle of a fitted subject onto the view axis (the default); off, the
+        /// avatar view keeps aiming at `target` and the item view at the item's origin, as the
+        /// Unity renderer aims at the subject's own origin
+        auto_center: Option<bool>,
         /// drop the zoom, pan and spin the controls left
         reset: Option<bool>,
         /// frame the avatar's measured bounds whatever their size, as the renderer's builder view
@@ -168,6 +174,11 @@ pub enum Command {
         /// stand where the command puts it and never fit the avatar, as the Unity renderer's
         /// profile, authentication and jesus cameras do
         fixed: Option<bool>,
+    },
+    /// A Babylon radius step, as `changeZoom` and `changeCameraPosition` send it: metres from the
+    /// Babylon preview's 3.5 m orbit, positive pulls back, within the zoom range.
+    ZoomBy {
+        radius: f32,
     },
     /// Background colour `#rrggbb`, or none for a transparent canvas.
     Background {
@@ -312,6 +323,10 @@ pub struct OrbitCamera {
     pub zoom: f32,
     pub zoom_min: f32,
     pub zoom_max: f32,
+    /// where a reset puts `zoom`
+    pub zoom_start: f32,
+    /// a fitted avatar's middle is brought onto the view axis
+    pub auto_center: bool,
     pub pan: Vec2,
     /// how much farther than `radius` the avatar's bounds need the camera, and where they move
     /// the target: set by `fit_to_bounds`, 1 and zero for an avatar of ordinary size
@@ -365,6 +380,8 @@ impl Default for OrbitCamera {
             zoom: 1.0,
             zoom_min: 1.0 / 1.5,
             zoom_max: 2.0,
+            zoom_start: 1.0,
+            auto_center: true,
             pan: Vec2::ZERO,
             fit: 1.0,
             fit_target: Vec3::ZERO,
@@ -414,7 +431,7 @@ impl OrbitCamera {
 
     /// The view as the camera command last set it, and the controls' drift dropped.
     pub fn reset_view(&mut self) {
-        self.zoom = 1.0;
+        self.zoom = self.zoom_start;
         self.pan = Vec2::ZERO;
         self.velocity = 0.0;
         self.tilt = 0.0;
@@ -726,10 +743,24 @@ fn apply_commands(
                 wheel_precision,
                 zoom_min,
                 zoom_max,
+                zoom_start,
+                auto_center,
                 reset,
                 fit_subject,
                 fixed,
             } => {
+                if let Some(v) = zoom_min {
+                    orbit.zoom_min = v.max(0.05);
+                }
+                if let Some(v) = zoom_max {
+                    orbit.zoom_max = v.max(orbit.zoom_min);
+                }
+                if let Some(v) = zoom_start {
+                    orbit.zoom_start = v;
+                }
+                if let Some(v) = auto_center {
+                    orbit.auto_center = v;
+                }
                 if reset == Some(true) {
                     orbit.reset_view();
                 }
@@ -756,12 +787,6 @@ fn apply_commands(
                 }
                 if let Some(v) = wheel_precision {
                     orbit.wheel_precision = v.max(1.0);
-                }
-                if let Some(v) = zoom_min {
-                    orbit.zoom_min = v.max(0.05);
-                }
-                if let Some(v) = zoom_max {
-                    orbit.zoom_max = v.max(orbit.zoom_min);
                 }
                 orbit.zoom = orbit.zoom.clamp(orbit.zoom_min, orbit.zoom_max);
                 if let Some(v) = alpha {
@@ -793,6 +818,12 @@ fn apply_commands(
                 }
                 for (_, _, mut projection) in cameras.iter_mut() {
                     *projection = projection_for(&orbit);
+                }
+            }
+            Command::ZoomBy { radius } => {
+                if !orbit.lock_radius {
+                    orbit.zoom =
+                        babylon_radius_step(orbit.zoom, radius, orbit.zoom_min, orbit.zoom_max);
                 }
             }
             Command::Background { color } => {
@@ -1194,6 +1225,18 @@ fn orbit_input(
     }
 }
 
+/// The Unity renderer's `ZoomRange.StepByRadius`: the Babylon preview's orbit stands 3.5 m from its
+/// target, so a host's radius delta is in those metres; the zoom is that radius over the current
+/// one, clamped to the range (positive pulls back).
+fn babylon_radius_step(zoom: f32, radius_delta: f32, zoom_min: f32, zoom_max: f32) -> f32 {
+    const BABYLON_ORBIT_RADIUS: f32 = 3.5;
+    let radius = (BABYLON_ORBIT_RADIUS / zoom + radius_delta).clamp(
+        BABYLON_ORBIT_RADIUS / zoom_max,
+        BABYLON_ORBIT_RADIUS / zoom_min,
+    );
+    BABYLON_ORBIT_RADIUS / radius
+}
+
 /// What the default view is set for, measured as `fit_to_bounds` measures: an ordinary avatar
 /// through the walk a wearable is shown in, from the floor to the top of its head, reaching this
 /// far from its turn axis. An avatar inside it keeps the default framing.
@@ -1371,17 +1414,27 @@ fn fit_to_bounds(
         let middle = (min.y + max.y) / 2.0;
         let distance = ((max.y - min.y) / 2.0 / tan_v).max(radius / tan_h) * MARGIN;
         orbit.fit = distance / orbit.radius.max(0.01);
-        orbit.fit_target = Vec3::Y * (middle - orbit.target.y);
+        orbit.fit_target = centre_on(&orbit, middle);
     } else if needs(min.y, max.y, reach, orbit.target.y) > ordinary {
         // too big for the default view: look at its middle, from as far as that needs, with a
         // little room around it as the Unity renderer's fit keeps
         const MARGIN: f32 = 1.1;
         let middle = (min.y + max.y) / 2.0;
         orbit.fit = (needs(min.y, max.y, reach, middle) * MARGIN / ordinary).max(1.0);
-        orbit.fit_target = Vec3::Y * (middle - orbit.target.y);
+        orbit.fit_target = centre_on(&orbit, middle);
     } else {
         orbit.fit = 1.0;
         orbit.fit_target = Vec3::ZERO;
+    }
+}
+
+/// Where a fit moves the view's target: onto the measured middle's height, unless the host turned
+/// auto-centre off (`disableAutoCenter`), when the view keeps aiming where the page put it.
+fn centre_on(orbit: &OrbitCamera, middle: f32) -> Vec3 {
+    if orbit.auto_center {
+        Vec3::Y * (middle - orbit.target.y)
+    } else {
+        Vec3::ZERO
     }
 }
 
@@ -1588,7 +1641,12 @@ fn fit_item(
     const MARGIN: f32 = 1.05;
     let size = max - min;
     let radius = 0.5 * size.xz().length();
-    orbit.item_target = (min + max) / 2.0;
+    // centred on its middle, or without auto-centre on its own origin, as the renderer aims
+    orbit.item_target = if orbit.auto_center {
+        (min + max) / 2.0
+    } else {
+        ITEM_OFFSET
+    };
     orbit.item_floor = min.y;
     orbit.item_ready = true;
     orbit.item_distance = ((size.y / 2.0) / tan_v).max(radius / tan_h).max(0.1) * MARGIN;

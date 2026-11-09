@@ -75,7 +75,8 @@ Commands, as JSON objects with an `op`:
 | `item` | `urn` (or null), `bodyShape`, `skin`, `hair`, `eyes`, `keepHead` | the wearable shown on its own: a second avatar wearing only it, its body hidden (but the head, for a facial feature), framed once before `load` |
 | `boundaries` | `shown` | the scene boundaries: a cylinder 1 m round and 3 m tall on a grid floor, framed with the avatar |
 | `view` | `item` | the item on its own, or the avatar wearing it; a switch glides the camera across and starts the view over |
-| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius`, `fitSubject` (fit the avatar whatever its size, the builder view) | the orbit camera; unset fields keep their value |
+| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius`, `zoomMin`, `zoomMax`, `zoomStart` (factors over the framed view, closer is larger; a reset starts at `zoomStart`), `autoCenter` (bring a fitted subject's middle onto the view axis), `fitSubject` (fit the avatar whatever its size, the builder view) | the orbit camera; unset fields keep their value |
+| `zoomBy` | `radius` (m) | a step in the Babylon preview's metres (its orbit stands 3.5 m off), positive pulls back, within the zoom range |
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
@@ -141,6 +142,12 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   after the last drag, in marketplace mode only and not while an emote item plays; right drag
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;
+- its zoom options, by its rule (`ZoomRange`) after the Babylon preview's: `zoom` (0..100) is the
+  closest view, `wheelZoom` how far the wheel pulls back from it, `wheelStart` (100 the closest,
+  50 by default) where the view starts, `zoomScale` extra zoom over the rest; `changeZoom` and
+  `changeCameraPosition`'s radius step in Babylon's metres within that range;
+  `disableAutoCenter` aims at the subject's own origin (an avatar's feet) instead of its middle,
+  the offsets acting from there;
 - its floor: the shadow catcher and, under it, the glow around the feet (the light rig's `glow`, 0 by
   default for now);
 - its framing of avatars too big for the default view, set once before the avatar is seen: after the
@@ -188,8 +195,12 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: social emotes, spring bones, and
-configurator mode.
+Still to come: configurator mode.
+
+Waiting on the Explorer: the preview renders what the Explorer's crates render, so a feature the
+Explorer lacks waits for it there. Social emotes (the Explorer reads no `startAnimation` or
+`outcomes` and plays no second avatar; its comms protocol reserves the fields) and spring bones (it
+keeps a wearable's extra bones on the skeleton but simulates none) come once the Explorer has them.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.

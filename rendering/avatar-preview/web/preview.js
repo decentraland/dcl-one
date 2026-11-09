@@ -480,23 +480,37 @@ async function baseEmote(id, loop, peer) {
   } catch { return id; }
 }
 
-// wearable-preview's zoom: 1..100 to a factor of 1..2.8 on the camera distance
-function zoomFactor(zoom) {
-  if (zoom === null || Number.isNaN(zoom)) return 1;
-  const z = Math.max(1, Math.min(100, zoom));
-  return 1 + ((z - 1) / 99) * 1.8;
+// The Unity renderer's zoom range (its `ZoomRange.FromOptions`), as factors over the framed view
+// (closer is larger). With neither `zoom` nor `wheelZoom`, its own range about the framed view.
+// Otherwise the Babylon preview's rule: `zoom` (0..100, onto Babylon's radius divisor 1..2.8, over
+// the 1.75 its default view uses) is the closest view, the wheel pulls back from it by `wheelZoom`,
+// and `wheelStart` (0..100, 100 the closest, 50 by default) is where the view starts.
+const num0 = (v) => (v === null || v === undefined || Number.isNaN(v) ? null : v);
+export function zoomRange(o) {
+  const zoom = num0(o.zoom), wheelZoom = num0(o.wheelZoom);
+  if (zoom === null && wheelZoom === null) return { min: 1 / 1.5, max: 2, start: 1 };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const closest = zoom === null ? 1 : (1 + (1.8 * clamp(zoom, 0, 100)) / 100) / 1.75;
+  const pullBack = clamp(wheelZoom ?? 1, 1, 100);
+  const startFraction = (100 - clamp(num0(o.wheelStart) ?? 50, 0, 100)) / 100;
+  return { min: closest / pullBack, max: closest, start: closest / (1 + (pullBack - 1) * startFraction) };
 }
 
 function cameraFrom(o) {
   const c = state.camera;
-  c.target = [o.offsetX || 0, DEFAULT_TARGET_Y + (o.offsetY || 0), o.offsetZ || 0];
+  // without auto-centre the view aims at the avatar's own origin, its feet, as the Unity renderer
+  // aims at the subject's pivot; the offsets act from there
+  const aimY = o.disableAutoCenter ? 0 : DEFAULT_TARGET_Y;
+  c.target = [o.offsetX || 0, aimY + (o.offsetY || 0), o.offsetZ || 0];
   if (o.cameraX !== null || o.cameraY !== null || o.cameraZ !== null) {
     const dx = (o.cameraX || 0) - c.target[0], dy = (o.cameraY || 0) - c.target[1], dz = (o.cameraZ || 0) - c.target[2];
     c.radius = Math.max(0.5, Math.hypot(dx, dy, dz));
     c.alpha = Math.atan2(dx, dz);
     c.beta = Math.asin(dy / c.radius);
   } else {
-    c.radius = (DEFAULT_RADIUS / zoomFactor(o.zoom)) * (o.zoomScale || 1);
+    // `zoomScale` is extra zoom over the rest, as the Unity renderer takes it: 2 shows the subject
+    // twice as large
+    c.radius = DEFAULT_RADIUS / (o.zoomScale > 0 ? o.zoomScale : 1);
   }
   const mode = modeOf(o);
   if (PROFILE_MODES.includes(mode)) {
@@ -523,6 +537,7 @@ function cameraFrom(o) {
   // the Unity renderer: input in marketplace and builder only; auto-rotation in marketplace, and
   // there only when no emote item plays; a builder avatar turns four times faster under the drag
   const interactive = o.camera !== 'static' && (mode === 'marketplace' || mode === 'builder');
+  const zoom = zoomRange(o);
   return {
     op: 'camera',
     alpha: c.alpha, beta: c.beta, radius: c.radius, target: c.target,
@@ -536,6 +551,10 @@ function cameraFrom(o) {
     lockRadius: !!o.lockRadius,
     panning: o.panning !== false,
     wheelPrecision: o.wheelPrecision ?? 100,
+    zoomMin: zoom.min,
+    zoomMax: zoom.max,
+    zoomStart: zoom.start,
+    autoCenter: !o.disableAutoCenter,
     // the builder view fits the avatar whatever its size, as the renderer's builder camera does
     fitSubject: mode === 'builder',
     fixed: false,
@@ -643,9 +662,18 @@ const controller = {
       return `data:image/png;base64,${reply.png}`;
     },
     getMetrics: async () => { const m = await request('metrics'); return { triangles: m.triangles, materials: m.materials, textures: m.textures, meshes: m.meshes, bodies: m.bodies, entities: m.entities }; },
-    changeZoom: async (delta) => { state.camera.radius = Math.max(0.5, state.camera.radius - (delta || 0)); sendCamera(); },
+    // Babylon's zoom buttons: the delta feeds an inertial offset that decays by 0.9 a frame, so the
+    // radius moves ten times it (positive pulls closer), as the Unity renderer steps it
+    changeZoom: async (delta) => { command({ op: 'zoomBy', radius: -10 * (Number(delta) || 0) }); },
     panCamera: async ({ x = 0, y = 0, z = 0 } = {}) => { const t = state.camera.target; state.camera.target = [t[0] + x, t[1] + y, t[2] + z]; sendCamera(); },
-    changeCameraPosition: async ({ alpha = 0, beta = 0, radius = 0 } = {}) => { const c = state.camera; c.alpha += alpha; c.beta += beta; c.radius = Math.max(0.5, c.radius + radius); sendCamera(); },
+    changeCameraPosition: async ({ alpha = 0, beta = 0, radius = 0 } = {}) => {
+      const c = state.camera;
+      c.alpha += Number(alpha) || 0;
+      c.beta += Number(beta) || 0;
+      sendCamera();
+      // the radius in Babylon's metres, within the zoom range
+      if (radius) command({ op: 'zoomBy', radius: Number(radius) || 0 });
+    },
     setUsername: async () => {},
     cleanup: async () => { command({ op: 'stopEmote' }); },
   },
