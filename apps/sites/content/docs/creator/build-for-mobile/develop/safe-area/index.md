@@ -23,7 +23,7 @@ ReactEcsRenderer.setUiRenderer(uiComponent, { screenInset: 'interactable' })
 
 > [!WARNING]
 > **Client support**: `'interactable'` needs mobile client `1.12.1` or newer. On older clients the area is reported as zero and the UI falls back to covering the whole screen. That same release normalizes the `'device'` area between Android and iOS.
-> 
+>
 > **It is not a no-op on desktop** — the desktop client reserves roughly the left 25% of the screen for its own UI, so `'interactable'` changes your desktop layout too. Branch with [`isMobile()`](/docs/creator/build-for-mobile/develop/detect-platform/) if you only want the inset on phones.
 
 
@@ -33,7 +33,7 @@ See [Screen inset area](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-inset-area)
 
 `'interactable'` gives you the area **each explorer designates for scene UI** — that is deliberately not a promise that every client control is outside it. On the mobile client it is the device safe area minus the left-hand column (chat, profile, joystick, emotes); the action buttons on the bottom right are drawn over the area **by design**.
 
-<figure><img src="/docs/.gitbook/assets/screeninset-interactable.webp" alt="Scene UI inset to the area the mobile client reports as free of its own HUD"><figcaption><p><code>screenInset: 'interactable'</code> on mobile client <code>1.12.1</code>. The magenta rectangle is the scene UI, green outlines the interactable area. The left-hand column is excluded; the action buttons on the bottom right sit over the area.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/screeninset-interactable.webp" alt="Scene UI inset to the area the mobile client reports as free of its own HUD"><figcaption><p><code>screenInset: 'interactable'</code> on mobile client <code>1.12.1</code>. The magenta rectangle is the scene UI, green outlines the interactable area. The left-hand column is excluded; the action buttons on the bottom right sit over the area.</p></figcaption></figure>
 
 So even with `'interactable'`, treat these as crowded:
 

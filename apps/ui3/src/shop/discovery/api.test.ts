@@ -27,10 +27,8 @@ import {
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, RESELLER, saleWearable, STORE_EMOTE, TOKEN_ID } from "./fixtures";
 import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "./freshness";
 
-type FlagWindow = Window & { __SHOP_FLAGS__?: { creatorSales?: boolean; secondarySales?: boolean } };
-
 afterEach(() => {
-  delete (window as FlagWindow).__SHOP_FLAGS__;
+  delete window.__SHOP_FLAGS__;
 });
 
 describe("the browse feed", () => {
@@ -70,7 +68,7 @@ describe("the browse feed", () => {
   });
 
   it("maps a unified row: seconds to ms, a store mint keeps its MANA, a resale its token", () => {
-    (window as FlagWindow).__SHOP_FLAGS__ = { creatorSales: true };
+    window.__SHOP_FLAGS__ = { creatorSales: true };
     const sale = unifiedListingToItem(saleWearable(1_000_000_000_000));
     expect(sale.saleEndsAt).toBe((1_000_000_000 + 86_400) * 1000);
     expect(sale.compareAtCredits).toBe(20);

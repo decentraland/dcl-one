@@ -1,0 +1,16 @@
+{
+    "version": 1,
+    "components": [
+        {
+            "name": "core::InexistentComponent",
+            "data": {
+                "512": {
+                    "$case": "json",
+                    "json": {
+                        "randomData": 324
+                    }
+                }
+            }
+        }
+    ]
+}

@@ -339,14 +339,13 @@ fn baseline_occupied_schema_is_unchanged() {
     let m = manifest();
     let field =
         regex::Regex::new(r"(?m)^\s*(?:(optional|repeated)\s+)?(\w+)\s+(\w+)\s*=\s*(\d+)").unwrap();
+    let comments = regex::Regex::new(r"//[^\n]*").unwrap();
     for (name, schema) in m["occupied_schema"].as_object().unwrap() {
         let path = std::path::Path::new(env!("DCL_ONE_ROOT"))
             .join("library/protocol/proto/decentraland/pulse")
             .join(schema["file"].as_str().unwrap());
         let source = std::fs::read_to_string(path).unwrap();
-        let source = regex::Regex::new(r"//[^\n]*")
-            .unwrap()
-            .replace_all(&source, "");
+        let source = comments.replace_all(&source, "");
         let start = source.find(&format!("message {name} {{")).unwrap();
         let body_start = start + source[start..].find('{').unwrap() + 1;
         let mut depth = 1;

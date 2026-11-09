@@ -8,7 +8,8 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy};
 use alloy_eips::eip2718::Encodable2718;
@@ -158,14 +159,15 @@ impl DirectSigner {
     ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>), ApiError> {
         let hash = parse_tx_hash(tx_hash_hex)?;
         let deadline = Instant::now() + self.receipt_timeout;
+        let mut delay = self.receipt_poll_interval;
         loop {
-            match self.receipt(hash).await {
-                Ok(Some((outcome, logs))) => {
+            match tokio::time::timeout_at(deadline, self.receipt(hash)).await {
+                Ok(Ok(Some((outcome, logs)))) => {
                     tracing::info!(tx_hash = %tx_hash_hex, ?outcome, "broker tx receipt observed");
                     return Ok((outcome, logs));
                 }
-                Ok(None) => {}
-                Err(e) => {
+                Ok(Ok(None)) | Err(_) => {}
+                Ok(Err(e)) => {
                     tracing::warn!(tx_hash = %tx_hash_hex, error = %e, "receipt poll RPC error; retrying")
                 }
             }
@@ -177,7 +179,10 @@ impl DirectSigner {
                 );
                 return Ok((ReceiptOutcome::Pending, Vec::new()));
             }
-            tokio::time::sleep(self.receipt_poll_interval).await;
+            tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+            delay = delay
+                .saturating_mul(2)
+                .min(self.receipt_poll_interval.max(Duration::from_secs(15)));
         }
     }
 

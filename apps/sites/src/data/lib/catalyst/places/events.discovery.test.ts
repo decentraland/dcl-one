@@ -29,6 +29,7 @@ describe("when discovery reads an event page", () => {
 
   it("should send pagination, recurrence and presence filters to the service", async () => {
     await fetchEvents({ list: "active", offset: 120, limit: 25, recurrent: false, with_connected_users: true, from: "2099-06-01T00:00:00Z", to: "2099-06-02T00:00:00Z" }, { base: "https://node.example", fetchImpl });
+    expect(requested!.pathname).toBe("/events/v1/events");
     expect(Object.fromEntries(requested!.searchParams)).toMatchObject({ offset: "120", limit: "25", recurrent: "false", with_connected_users: "true", from: "2099-06-01T00:00:00Z", to: "2099-06-02T00:00:00Z" });
   });
 

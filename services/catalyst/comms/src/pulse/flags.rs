@@ -562,13 +562,9 @@ mod tests {
         );
     }
 
-    async fn http(
-        body: Vec<u8>,
-    ) -> (
-        String,
-        std::sync::Arc<std::sync::Mutex<(u16, Vec<u8>)>>,
-        tokio::task::JoinHandle<()>,
-    ) {
+    type StubResponse = std::sync::Arc<std::sync::Mutex<(u16, Vec<u8>)>>;
+
+    async fn http(body: Vec<u8>) -> (String, StubResponse, tokio::task::JoinHandle<()>) {
         use axum::{
             Router,
             extract::State,
@@ -580,8 +576,7 @@ mod tests {
             .route(
                 "/pulse.json",
                 get(
-                    |State(state): State<std::sync::Arc<std::sync::Mutex<(u16, Vec<u8>)>>>,
-                     headers: HeaderMap| async move {
+                    |State(state): State<StubResponse>, headers: HeaderMap| async move {
                         assert_eq!(headers.get("x-debug").unwrap(), "false");
                         assert!(headers.get("referer").is_none());
                         let (status, body) = state.lock().unwrap().clone();

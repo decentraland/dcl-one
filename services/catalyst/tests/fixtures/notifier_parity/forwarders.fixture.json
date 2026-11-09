@@ -1,0 +1,510 @@
+[
+  {
+    "id": "forward.unsigned", "request": {"path": "/forward", "body": "$logged_in"},
+    "harness": {"sign": "none"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["utils.ts:47-58", "forward-explorer-events.ts:149-166"]}
+  },
+  {
+    "id": "forward.bad_signature", "request": {"path": "/forward", "body": "$logged_in"},
+    "harness": {"sign": "wrong"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["utils.ts:47-58", "forward-explorer-events.ts:149-166"]}
+  },
+  {
+    "id": "forward.respaced_body", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {"identity": "fresh", "body_form": "pretty"},
+    "expected": {"status": 200, "body": {"ok": true}}, "effect": {"rows": 1},
+    "source": {
+      "kind": "source", "refs": ["utils.ts:56"],
+      "note": "Segment signs JSON.stringify(parsedBody); the compact text of a re-spaced delivery verifies"
+    }
+  },
+  {
+    "id": "forward.otp.reached",
+    "request": {
+      "path": "/forward",
+      "body": {
+        "event": "otp_verification_success", "properties": {"email": "user@example.com"},
+        "context": {"session_id": "s-1", "launcher_anonymous_id": "anon-1"}
+      }
+    },
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"rows": 0, "checkpoint": {"user": "$identity", "checkpoint": 7, "recorded": false}},
+    "source": {
+      "kind": "accepted",
+      "refs": ["forward-explorer-events.ts:79-105,166-169", "forward-explorer-checkpoint.spec.ts:89-128"],
+      "note": "the notifier recorded CP7 reached by the email the event carried, with the session and launcher id as metadata; dcl-one records it by the chain owner once the chain verified, without the event's email (the client's word) or metadata, and only once an earlier checkpoint bound that wallet to an email (forward.otp.reached_bound): a wallet-only row could never nudge and would only evict a user's pending row"
+    }
+  },
+  {
+    "id": "forward.otp.reached_bound",
+    "request": {
+      "path": "/forward",
+      "body": {
+        "event": "otp_verification_success", "properties": {"email": "attacker@example.com"},
+        "context": {"session_id": "s-1", "launcher_anonymous_id": "anon-1"}
+      }
+    },
+    "harness": {
+      "identity": "fresh",
+      "seed_checkpoint": {
+        "checkpointId": 1, "action": "reached", "userIdentifier": "bound@example.com", "identifierType": "email",
+        "email": "bound@example.com", "wallet": "$identity"
+      }
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {
+      "rows": 0,
+      "checkpoint": {
+        "user": "bound@example.com", "checkpoint": 7, "completed": false, "email": "bound@example.com",
+        "wallet": "$identity", "metadata": null
+      }
+    },
+    "source": {
+      "kind": "accepted",
+      "refs": ["forward-explorer-events.ts:79-105", "forward-explorer-checkpoint.spec.ts:89-128"],
+      "note": "the notifier recorded CP7 for whatever email the event carried; dcl-one records it for the user the auth server bound to the chain owner, so the event's email reaches no one"
+    }
+  },
+  {
+    "id": "forward.otp.unverified",
+    "request": {
+      "path": "/forward",
+      "body": {
+        "event": "otp_verification_success", "properties": {"email": "user@example.com"},
+        "context": {"session_id": "s-1", "launcher_anonymous_id": "anon-1"}
+      }
+    },
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid AuthChain"}},
+    "effect": {"rows": 0, "checkpoint": {"user": "user@example.com", "checkpoint": 7, "recorded": false}},
+    "source": {
+      "kind": "accepted",
+      "refs": ["forward-explorer-events.ts:79-105"],
+      "note": "the notifier recorded the checkpoint before any check; without a verified chain dcl-one records nothing and answers as for every unverified explorer event"
+    }
+  },
+  {
+    "id": "forward.otp.no_email",
+    "request": {"path": "/forward", "body": {"event": "otp_verification_success", "properties": {}, "context": {}}},
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"rows": 0, "checkpoint": {"user": "$identity", "checkpoint": 7, "recorded": false}},
+    "source": {
+      "kind": "source",
+      "refs": ["forward-explorer-events.ts:82-86", "forward-explorer-checkpoint.spec.ts:130-146"]
+    }
+  },
+  {
+    "id": "forward.logged_in.completed", "request": {"path": "/forward", "body": "$logged_in"},
+    "harness": {
+      "identity": "fresh",
+      "seed_checkpoint": {
+        "checkpointId": 7, "action": "reached", "userIdentifier": "bound@example.com", "identifierType": "email",
+        "email": "bound@example.com", "wallet": "$identity"
+      }
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {
+      "rows": 1,
+      "row": {
+        "source": "client", "sub_type": "logged-in", "address": "$identity",
+        "anonymous_id": "79ce4e4c-73b7-4aa2-8dec-a0264a4ea8b2", "realm": "main",
+        "metadata": {"contextRuntime": "release"}
+      },
+      "checkpoint": {
+        "user": "bound@example.com", "checkpoint": 7, "completed": true, "email": "bound@example.com",
+        "wallet": "$identity"
+      }
+    },
+    "source": {
+      "kind": "source",
+      "refs": [
+        "forward-explorer-events.ts:107-135", "event-parser.ts:420-446",
+        "forward-explorer-checkpoint.spec.ts:148-185"
+      ],
+      "note": "the seed binds the wallet to an email as the auth server does; a wallet no email is bound to records nothing (forward.otp.reached)"
+    }
+  },
+  {
+    "id": "forward.logged_in_cached", "request": {"path": "/forward", "body": "$logged_in_cached"},
+    "harness": {"identity": "fresh"}, "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {
+      "rows": 1,
+      "row": {"sub_type": "logged-in-cached", "address": "$identity", "metadata": {"contextRuntime": "release"}}
+    },
+    "source": {"kind": "source", "refs": ["event-parser.ts:422-446", "forward-explorer-checkpoint.spec.ts:187-212"]}
+  },
+  {
+    "id": "forward.move_to_parcel", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {"identity": "fresh"}, "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {
+      "rows": 1,
+      "row": {
+        "source": "client", "sub_type": "move-to-parcel", "address": "$identity",
+        "session_id": "c***-a***-4***-a***-8***", "anonymous_id": "698919c1-55bc-4b7e-9322-b9e13e9add2f",
+        "realm": "main", "ip": "9***.7***.4***.5***",
+        "metadata": {
+          "parcel": {
+            "newParcel": "(1, 1)", "oldParcel": "(1, 0)",
+            "sceneHash": "bafkreih6en5u2yyn6pzdqp7z6op7elpq4zelvsplyyzisdhpg7xti2765y"
+          }
+        }
+      },
+      "checkpoint": {"user": "$identity", "checkpoint": 7, "recorded": false}
+    },
+    "source": {
+      "kind": "source", "refs": ["event-parser.ts:348-364", "forward-explorer-checkpoint.spec.ts:214-231"],
+      "note": "the body carries is_empty_scene, so isEmptyParcel is absent as upstream"
+    }
+  },
+  {
+    "id": "forward.case_insensitive",
+    "request": {"path": "/forward", "body": "$logged_in", "patch": {"event": "LOGGED_IN"}},
+    "harness": {"identity": "fresh"}, "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"rows": 1, "row": {"sub_type": "logged-in"}},
+    "source": {
+      "kind": "source",
+      "refs": [
+        "forward-explorer-events.ts:77", "event-parser.ts:422-428",
+        "forward-explorer-checkpoint.spec.ts:233-246"
+      ]
+    }
+  },
+  {
+    "id": "forward.no_event", "request": {"path": "/forward", "body": {}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:335", "forward-explorer-events.ts:181-199"]}
+  },
+  {
+    "id": "forward.not_configured_address",
+    "request": {"path": "/forward", "body": "$logged_in", "patch": {"context.dcl_eth_address": "NOT CONFIGURED"}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:92-94,336-339"]}
+  },
+  {
+    "id": "forward.unknown_event",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"event": "on_moveto"}},
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:446"]}
+  },
+  {
+    "id": "forward.missing_properties",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"properties": "$delete"}},
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "source", "refs": ["event-parser.ts:348-364,447-450"],
+      "note": "properties.new_parcel throws inside the parser's try, so the event is undefined"
+    }
+  },
+  {
+    "id": "forward.bad_auth_chain", "request": {"path": "/forward", "body": "$logged_in"},
+    "harness": {"identity": "foreign"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid AuthChain"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["forward-explorer-events.ts:24-31,201-218"]}
+  },
+  {
+    "id": "forward.expired_chain", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid AuthChain"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "accepted",
+      "refs": ["forward-explorer-events.ts:24-31", "@dcl/crypto Authenticator.isValidAuthChain"],
+      "note": "the notifier checks the chain's shape and owner only, so this fixture body's own chain, expired on 2025-05-26, is published; dcl-one verifies the signatures and the expiry (dcl_auth::verify_auth_chain) and refuses it"
+    }
+  },
+  {
+    "id": "forward.soft_context.renderer",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"context.dcl_renderer_type": "Web"}},
+    "harness": {"identity": "fresh"}, "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"rows": 1},
+    "source": {"kind": "source", "refs": ["event-parser.ts:229-232", "event-parser.spec.ts:1280-1314"]}
+  },
+  {
+    "id": "forward.forced_context.renderer",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"context.dcl_renderer_type": "Web"}},
+    "harness": {"identity": "fresh", "force_context_validation": true},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:229-232", "event-parser.spec.ts:1316-1370"]}
+  },
+  {
+    "id": "forward.forced_context.passes", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {
+      "identity": "fresh", "force_context_validation": true, "expected_realm": "main",
+      "expected_realm_url": "https://realm-provider-ea.decentraland.org/main"
+    },
+    "expected": {"status": 200, "body": {"ok": true}}, "effect": {"rows": 1},
+    "source": {"kind": "source", "refs": ["event-parser.ts:229-294"]}
+  },
+  {
+    "id": "forward.forced_context.realm",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"context.realm": "worlds"}},
+    "harness": {
+      "identity": "fresh", "force_context_validation": true, "expected_realm": "main",
+      "expected_realm_url": "https://realm-provider-ea.decentraland.org/main"
+    },
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:285-292"]}
+  },
+  {
+    "id": "forward.duplicate_delivery", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {"identity": "fresh", "repeat": 2}, "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"rows": 1},
+    "source": {
+      "kind": "source", "refs": ["forward-explorer-events.ts:220"],
+      "note": "the key invariant of social.client_events (DATABASE.md)"
+    }
+  },
+  {
+    "id": "forward.no_received_at",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"receivedAt": "$delete"}},
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "accepted", "refs": ["event-parser.ts:308-309", "forward-explorer-events.ts:226-231"],
+      "note": "new Date(undefined).getTime() is NaN: the notifier publishes the event with NaN timestamps and skips the delay metrics; dcl-one needs the times for the row and refuses the event"
+    }
+  },
+  {
+    "id": "forward.no_message_id",
+    "request": {"path": "/forward", "body": "$move_to_parcel", "patch": {"messageId": "$delete"}},
+    "harness": {"identity": "fresh"},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid event"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "accepted", "refs": ["event-parser.ts:352"],
+      "note": "the notifier publishes the event with an undefined key; dcl-one needs the key for the row and refuses the event"
+    }
+  },
+  {
+    "id": "forward-web.unsigned", "request": {"path": "/forward-web", "body": "$web_event"},
+    "harness": {"sign": "none"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "source",
+      "refs": ["utils.ts:47-58", "forward-web-events.ts:73-89", "forward-web-events.spec.ts:78-118"]
+    }
+  },
+  {
+    "id": "forward-web.bad_signature", "request": {"path": "/forward-web", "body": "$web_event"},
+    "harness": {"sign": "wrong"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["utils.ts:47-58", "forward-web-events.ts:73-89"]}
+  },
+  {
+    "id": "forward-web.not_object", "request": {"path": "/forward-web", "body": "x"},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event structure"}},
+    "effect": {"rows": 0}, "source": {"kind": "source", "refs": ["forward-web-events.ts:92-103"]}
+  },
+  {
+    "id": "forward-web.array", "request": {"path": "/forward-web", "body": []},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event"}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "source", "refs": ["forward-web-events.ts:92-121", "event-parser.ts:453"],
+      "note": "typeof [] is 'object', so an array passes the structure check and fails the parser"
+    }
+  },
+  {
+    "id": "forward-web.no_event",
+    "request": {"path": "/forward-web", "body": "$web_event", "patch": {"event": "$delete"}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:453", "forward-web-events.spec.ts:125-147"]}
+  },
+  {
+    "id": "forward-web.wrong_project",
+    "request": {"path": "/forward-web", "body": "$web_event", "patch": {"projectId": "other"}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:68-70,455"]}
+  },
+  {
+    "id": "forward-web.not_identify",
+    "request": {"path": "/forward-web", "body": "$web_event", "patch": {"type": "track"}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event"}}, "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["event-parser.ts:455"]}
+  },
+  {
+    "id": "forward-web.identify", "request": {"path": "/forward-web", "body": "$web_event"},
+    "expected": {"status": 200, "body": {"ok": true, "validationPassed": 1}},
+    "effect": {
+      "rows": 1,
+      "row": {
+        "source": "web", "sub_type": "auth-identify", "address": "0x78a707a166da251c098e6e695efa5b130344a39b",
+        "anonymous_id": "be6cd5e7-ba35-4a05-bcd0-eb2cb050f1d1", "ip": "1***.5***.1***.2***",
+        "metadata": {
+          "pagePath": "/auth/requests/497c3b52-a630-4022-987f-5e377747a92f",
+          "pageUrl": "https://decentraland.org/auth/requests/497c3b52-a630-4022-987f-5e377747a92f",
+          "locale": "en-GB", "userId": null
+        }
+      }
+    },
+    "source": {
+      "kind": "source",
+      "refs": [
+        "event-parser.ts:316-330,455-467", "forward-web-events.ts:126-173",
+        "forward-web-events.spec.ts:219-248"
+      ]
+    }
+  },
+  {
+    "id": "forward-web.no_eth_address", "request": {"path": "/forward-web", "body": "$web_event_invalid"},
+    "expected": {"status": 200, "body": {"ok": true, "validationPassed": 0}}, "effect": {"rows": 0},
+    "source": {
+      "kind": "source", "refs": ["forward-web-events.ts:126-173", "forward-web-events.spec.ts:174-193"],
+      "note": "published upstream; stored nowhere here, the row needs a wallet"
+    }
+  },
+  {
+    "id": "forward-web.no_traits",
+    "request": {"path": "/forward-web", "body": "$web_event", "patch": {"traits": "$delete"}},
+    "expected": {"status": 200, "body": {"ok": true, "validationPassed": 0}},
+    "source": {
+      "kind": "accepted", "refs": ["event-parser.ts:462", "forward-web-events.spec.ts:149-172"],
+      "note": "event.traits.ethAddress throws outside any try, the framework's 500; the unit spec mocks the parser and expects 200 validationPassed 0, which dcl-one answers without a row"
+    },
+    "effect": {"rows": 0}
+  },
+  {
+    "id": "forward-web.no_page",
+    "request": {"path": "/forward-web", "body": "$web_event", "patch": {"context.page": "$delete"}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid web event"}},
+    "source": {
+      "kind": "accepted", "refs": ["event-parser.ts:316-330"],
+      "note": "event.context.page.path throws outside any try, the framework's 500; dcl-one refuses the identify as not a web event"
+    },
+    "effect": {"rows": 0}
+  },
+  {
+    "id": "forward-web.duplicate_delivery", "request": {"path": "/forward-web", "body": "$web_event"},
+    "harness": {"repeat": 2}, "expected": {"status": 200, "body": {"ok": true, "validationPassed": 1}},
+    "effect": {"rows": 1}, "source": {"kind": "source", "refs": ["forward-web-events.ts:123"]}
+  },
+  {
+    "id": "checkpoint.unsigned", "request": {"path": "/forward-onboarding-checkpoint", "body": "$checkpoint"},
+    "harness": {"sign": "none"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 2, "recorded": false}},
+    "source": {
+      "kind": "source",
+      "refs": ["forward-onboarding-checkpoint.ts:19-27", "forward-onboarding-checkpoint.spec.ts:64-79"]
+    }
+  },
+  {
+    "id": "checkpoint.bad_signature",
+    "request": {"path": "/forward-onboarding-checkpoint", "body": "$checkpoint"},
+    "harness": {"sign": "wrong"},
+    "expected": {"status": 401, "body": {"ok": false, "error": "Invalid signature"}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 2, "recorded": false}},
+    "source": {
+      "kind": "source",
+      "refs": ["forward-onboarding-checkpoint.ts:19-27", "forward-onboarding-checkpoint.spec.ts:64-79"]
+    }
+  },
+  {
+    "id": "checkpoint.missing",
+    "request": {
+      "path": "/forward-onboarding-checkpoint", "body": "$checkpoint",
+      "patch": {"properties.checkpointId": "$delete"}
+    },
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid checkpointId"}},
+    "source": {
+      "kind": "source",
+      "refs": ["forward-onboarding-checkpoint.ts:29-35", "forward-onboarding-checkpoint.spec.ts:94-127"]
+    }
+  },
+  {
+    "id": "checkpoint.zero",
+    "request": {"path": "/forward-onboarding-checkpoint", "body": "$checkpoint", "patch": {"properties.checkpointId": 0}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid checkpointId"}},
+    "source": {"kind": "source", "refs": ["forward-onboarding-checkpoint.ts:29-35"]}
+  },
+  {
+    "id": "checkpoint.eight",
+    "request": {"path": "/forward-onboarding-checkpoint", "body": "$checkpoint", "patch": {"properties.checkpointId": 8}},
+    "expected": {"status": 400, "body": {"ok": false, "error": "Invalid checkpointId"}},
+    "source": {"kind": "source", "refs": ["forward-onboarding-checkpoint.ts:29-35"]}
+  },
+  {
+    "id": "checkpoint.string_id",
+    "request": {
+      "path": "/forward-onboarding-checkpoint", "body": "$checkpoint",
+      "patch": {"properties.checkpointId": "3"}
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 3, "recorded": false}},
+    "source": {
+      "kind": "accepted", "refs": ["forward-onboarding-checkpoint.ts:30"],
+      "note": "Number('3') is 3, the notifier's 200; the route records nothing (the body names any user)"
+    }
+  },
+  {
+    "id": "checkpoint.full",
+    "request": {
+      "path": "/forward-onboarding-checkpoint", "body": "$checkpoint",
+      "patch": {
+        "properties.wallet": "0x749DFCD93DA457FDB4B31017C48550982AE70546",
+        "properties.metadata": {"step": "profile"}
+      }
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 2, "recorded": false}},
+    "source": {
+      "kind": "accepted",
+      "refs": ["forward-onboarding-checkpoint.ts:44-56", "forward-onboarding-checkpoint.spec.ts:138-165"],
+      "note": "the notifier lifted the whole body (wallet and metadata included) as the auth server's checkpoint; dcl-one records nothing from this route"
+    }
+  },
+  {
+    "id": "checkpoint.optional_absent",
+    "request": {
+      "path": "/forward-onboarding-checkpoint",
+      "body": {"event": "Onboarding Checkpoint", "properties": {"checkpointId": 2}}
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 2, "recorded": false}},
+    "source": {
+      "kind": "source",
+      "refs": [
+        "forward-onboarding-checkpoint.ts:46-56", "forward-onboarding-checkpoint.spec.ts:167-195",
+        "onboarding.rs validate_checkpoint"
+      ],
+      "note": "200 at the ingress; the store refuses the body without userIdentifier (a warning)"
+    }
+  },
+  {
+    "id": "checkpoint.completed",
+    "request": {
+      "path": "/forward-onboarding-checkpoint", "body": "$checkpoint",
+      "patch": {"properties.action": "completed"}
+    },
+    "harness": {
+      "seed_checkpoint": {
+        "checkpointId": 2, "action": "reached", "userIdentifier": "user@example.com",
+        "identifierType": "email", "email": "user@example.com"
+      }
+    },
+    "expected": {"status": 200, "body": {"ok": true}},
+    "effect": {"checkpoint": {"user": "user@example.com", "checkpoint": 2, "completed": false}},
+    "source": {
+      "kind": "accepted", "refs": ["forward-onboarding-checkpoint.ts:44-56"],
+      "note": "the notifier completed the seeded checkpoint; dcl-one leaves it reached"
+    }
+  },
+  {
+    "id": "writes.disabled", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {"identity": "fresh", "writes_enabled": false},
+    "expected": {"status": 503, "body_subset": {"ok": false, "error": "Service Unavailable"}},
+    "effect": {"rows": 0},
+    "source": {"kind": "source", "refs": ["social/src/writes.rs"], "note": "the social writes switch, not the notifier"}
+  },
+  {
+    "id": "signature.key_unset", "request": {"path": "/forward", "body": "$move_to_parcel"},
+    "harness": {"identity": "fresh", "signing_key": false},
+    "expected": {"status": 503, "body_subset": {"ok": false, "error": "Service Unavailable"}},
+    "effect": {"rows": 0},
+    "source": {
+      "kind": "source", "refs": ["segment_webhooks/mod.rs gate"],
+      "note": "the port's answer without SEGMENT_SIGNING_KEY; the notifier refused to start"
+    }
+  }
+]

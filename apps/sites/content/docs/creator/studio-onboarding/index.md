@@ -18,7 +18,7 @@ You will build alongside other creators, test your work with real players, and g
 
 # How much funding is available?
 
-Creator Success funds games in stages, starting with **up to $4,100 across V0 and V1**. Games that show strong retention can then be considered for additional V2 and V3 funding rounds.
+Creator Success funds games in stages, starting with **up to $4,100 across V0 and V1**. Games that show strong retention can then be considered for additional funding rounds, starting with **V2 at $2,800 USD**, and then V3.
 
 ## V0: The Vertical Slice — $1,000 USD
 
@@ -34,7 +34,7 @@ V1 turns what worked in the vertical slice into the **first complete playable ve
 
 ## What happens after V1?
 
-Games showing strong player retention can be considered for further development and funding.
+Games showing strong player retention can be considered for further development and funding. The next stage, **V2, is funded at $2,800 USD**.
 
 Progression is not automatic. Each stage is based on what we learn from playtesting, live player data and the potential for further development. Strong projects can therefore move from one small paid project into an ongoing series of development stages.
 
@@ -82,9 +82,9 @@ Before designing a game for Decentraland, experience it as a player.
 
 Once you are in Decentraland, open **Discover** → **Places** and play at least three of the **Featured games**.
 
-<!-- ![Places button in the Decentraland explorer](/docs/creator/images/media/onboarding-places-button.png) -->
+<!-- ![Places button in the Decentraland explorer](images/media/onboarding-places-button.png) -->
 
-<!-- ![Featured badge on a place card](/docs/creator/images/media/onboarding-featured-badge.png) -->
+<!-- ![Featured badge on a place card](images/media/onboarding-featured-badge.png) -->
 
 As you play, take short notes on:
 
@@ -144,7 +144,7 @@ Decentraland’s **Game Design Skills** help you develop your idea against the C
 
 Download and share the skills files below with your preferred AI assistant and ask it to guide you through the process. It will help you work through the key design questions and turn your decisions into a clear GDD.
 
-[**Download the Game Design Skills**](https://github.com/decentraland/docs/raw/main/resources/dcl-gdd.zip)
+[**Download the Game Design Skills**](https://github.com/decentraland/docs/raw/main/resources/game-design-skills.zip)
 
 ### Complete the template yourself
 

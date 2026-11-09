@@ -17,7 +17,12 @@
 //! item (the nft index; its envelope until published); an order only by an
 //! owner of a token of the item who holds no active lease on it (403); a
 //! trade record by anyone, for a known order (404). The writes sit behind
-//! `DATA_WRITES_ENABLED` (the router's gate).
+//! `DATA_WRITES_ENABLED` (the router's gate). A bid, a bid's accept and an
+//! order are the Marketplace's, refused before the preflight while its rollout
+//! is off (`features`); their cancels stay open, and so does a trade record
+//! (it only appends a fill to an order the log already holds). That gate is on a client's
+//! write only: bids and orders pulled from peers still enter the log, and the
+//! reads serve them (the Shop's pages hide them without the Marketplace).
 //!
 //! What changed: the five old tables (`market_bids_local`, ...) are the
 //! `kind` of one log, and their five BIGSERIALs are one `seq`, so the one
@@ -522,6 +527,10 @@ pub async fn place_bid(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<BidPlace>(&state, &headers, "/v1/federation/bid", &body).await {
             Ok(x) => x,
@@ -584,6 +593,10 @@ pub async fn accept_bid(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<BidAccept>(&state, &headers, "/v1/federation/bid/accept", &body).await {
             Ok(x) => x,
@@ -621,6 +634,10 @@ pub async fn create_order(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<OrderCreate>(&state, &headers, "/v1/federation/order", &body).await {
             Ok(x) => x,

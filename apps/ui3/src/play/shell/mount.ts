@@ -7,10 +7,12 @@ import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../lib/entryParams'
 import { migratePrefs } from '../lib/prefs'
-import { request } from './login'
+import { currentLogin, request } from './login'
 import { onInWorld } from './googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { siteUrl } from '../lib/baseDomain'
+import { loadOnce } from '../lib/loadOnce'
+import type { ShellShop, ShellShopWallet } from './shop/purchase'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
 // own process, answers its identity/sign requests, and registers the service worker that gives the
@@ -21,7 +23,14 @@ import { siteUrl } from '../lib/baseDomain'
 // mount would start a second app, with a second engine, beside the first.
 let shellMounted = false
 
-export function mountPlayShell(): void {
+export interface PlayShellOptions {
+  /** Loads the buyer's wallet for the in-world Shop's purchases, as the host page resolves it, on the
+   *  app's first shop request (with the purchase code, and like it loaded again after a failed load).
+   *  Without one the Shop can't buy here (its dialog says so). */
+  shopWallet?: () => Promise<ShellShopWallet | null>
+}
+
+export function mountPlayShell(options: PlayShellOptions = {}): void {
   if (shellMounted) return
   shellMounted = true
   // The service worker's scope is the package DIRECTORY, but the production entry URL has no
@@ -79,6 +88,25 @@ export function mountPlayShell(): void {
     dropAttributionParams([AUTH_RETURN_PARAM])
   }
 
+  // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
+  // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
+  const shellShop: () => Promise<ShellShop> = loadOnce(() =>
+    Promise.all([
+      import('./shop/purchase'),
+      import('./shop/overlay'),
+      options.shopWallet?.() ?? null
+    ]).then(([purchase, overlay, wallet]) =>
+      purchase.createShellShop({
+        login: currentLogin,
+        wallet,
+        ui: overlay.createShopOverlay(() => frame?.focus()),
+        post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
+        openExternal: (url) => void window.open(url, '_blank', 'noopener'),
+        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+      })
+    )
+  )
+
   // Shown instead of the app when the app would share this page's process.
   function refuse(): void {
     console.error('[shell] this page is cross-origin isolated, so the app would share its process')
@@ -104,7 +132,8 @@ export function mountPlayShell(): void {
       case 'bevy-shell:request': {
         let reply: { result?: unknown; error?: string }
         try {
-          reply = { result: await request(m.method, m.params) }
+          const shopRequest = typeof m.method === 'string' && m.method.startsWith('shop.')
+          reply = { result: shopRequest ? await (await shellShop()).request(m.method as string, m.params) : await request(m.method, m.params) }
         } catch (err) {
           reply = { error: err instanceof Error ? err.message : String(err) }
         }

@@ -6,7 +6,7 @@
 
 Decentraland uses the Ethereum blockchain to record the ownership of all digital assets and tradable items.
 
-![](/docs/player/images/media/get-a-wallet-account.webp)
+![](/docs/player/images/media/get-a-wallet-account.webp)
 
 Digital wallets are tools that work as a bridge between the blockchain and the dApp (decentralized applications). This means that with a wallet you will be able to monitor your available funds, transaction history and security options.
 
@@ -20,11 +20,11 @@ See a tutorial for [**making an account with a social profile**](https://www.you
 
 To enter Decentraland, you must use a wallet that is integrated to your web browser, so we recommend you [MetaMask](https://metamask.io/)
 
-![](/docs/player/images/media/get-a-wallet-metamask-logo.webp)
+![](/docs/player/images/media/get-a-wallet-metamask-logo.webp)
 
 Once you install it, you will see an icon like this:
 
-![](/docs/player/images/media/get-a-wallet-metamask-extension.webp)
+![](/docs/player/images/media/get-a-wallet-metamask-extension.webp)
 
 ## Wallet address
 
@@ -32,11 +32,11 @@ All wallets have a public and private key. A public key Is a unique identifier f
 
 You can localize your wallet address clicking on the extension icon in your browser, and then clicking on your wallet name with the public key to copy it to clipboard:
 
-![](/docs/player/images/media/get-a-wallet-public-key-1.webp)
+![](/docs/player/images/media/get-a-wallet-public-key-1.webp)
 
 Or by clicking on your account details:
 
-![](/docs/player/images/media/get-a-wallet-public-key-2.webp)
+![](/docs/player/images/media/get-a-wallet-public-key-2.webp)
 
 The private key is used by your wallet to sign each transaction and certify that it was truly sent by you. It is also used to restore your wallet in case you forget your password.
 
@@ -44,7 +44,7 @@ Keep in mind that a digital wallet is like a bank account, so make sure you **do
 
 ## What is Ether (ETH), and how do I send it to my wallet?
 
-![](/docs/player/images/media/get-a-wallet-ether.webp)
+![](/docs/player/images/media/get-a-wallet-ether.webp)
 
 For executing transactions, you'll need to put money in your wallet. dApps based on Ethereum, like Decentraland, use Ether: a digital currency that powers the Ethereum network. It acts like any other currency, in that its value fluctuates with the market.
 
@@ -73,7 +73,7 @@ You need to buy ETH from Coinbase or another exchange using normal fiat currency
 
 ## What is MANA and how do I get it?
 
-![](/docs/player/images/media/get-a-wallet-mana.webp)
+![](/docs/player/images/media/get-a-wallet-mana.webp)
 
 [MANA](https://etherscan.io/token/decentraland) is Decentraland's fungible (reproducible or interchangeable) cryptocurrency token. It is burned, or spent in exchange for LAND parcels, wearables and names.
 
@@ -90,7 +90,7 @@ Steps to buy MANA:
 * _'Gas' is composed of two parts: Gas Price and Gas Limit. Gas Price is what you offer to pay the miners (in a tiny measurement of ether called 'gwei') for each operation to execute the smart contract. Gas Limit is how many operations you let them do before they run out of gas and drop the transaction._
 * _1 gwei = 1/1,000,000,000th of an Ether._
 
-![](/docs/player/images/media/get-a-wallet-gas.webp)
+![](/docs/player/images/media/get-a-wallet-gas.webp)
 
 To summarize, Gas Price (gwei) is the amount of Ether offered per gas unit to pay miners to process your transaction. The higher the gas price you set, the faster your transaction will get processed. So, for more important transactions – such as a collectible that you really like ;D – think about increasing the suggested gas price.
 

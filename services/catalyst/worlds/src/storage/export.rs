@@ -860,9 +860,7 @@ mod lifecycle_tests {
             settings,
         )
         .await;
-        let error = result
-            .err()
-            .expect("invalid timeout must refuse the export");
+        let error = result.expect_err("invalid timeout must refuse the export");
         assert!(matches!(error, ApiError::Misconfigured(_)));
         let response = error.into_response();
         assert_eq!(

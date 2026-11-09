@@ -34,16 +34,9 @@ pub enum BodyRefusal {
 /// the `oneOf`: the first error of each branch, then the `oneOf` error.
 pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRefusal> {
     let body: Value = serde_json::from_slice(bytes).map_err(|e| {
-        let message = v8_parse_message(bytes).unwrap_or_else(|| e.to_string());
-        BodyRefusal::Schema(json!({ "ok": false, "message": message }))
+        BodyRefusal::Schema(json!({ "ok": false, "message": json_parse_message(bytes, &e) }))
     })?;
-    // JSON.parse keeps keys in body order; AJV names the first extra one.
-    let keys = match body {
-        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
-            .map(|k| k.0)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
+    let keys = object_keys_in_order(&body, bytes);
     let mut errors = Vec::new();
     for (branch, key) in ["ids", "pointers"].into_iter().enumerate() {
         match selector_branch_error(&body, &keys, branch, key) {
@@ -76,6 +69,45 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
         "message": "Invalid JSON body",
         "data": errors,
     })))
+}
+
+/// `@dcl/schema-validator-component` 1.0.1's `isJsonContentType`, the check
+/// behind its 415: the media type before the first `;`, trimmed and
+/// lowercased, is `application/json` or matches `^[^/\s]+\/[^/\s]+\+json$`
+/// (an RFC 6839 `type/subtype+json`). An absent header is not JSON.
+pub fn is_json_content_type(content_type: Option<&str>) -> bool {
+    let Some(raw) = content_type else {
+        return false;
+    };
+    let media = raw
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let token = |s: &str| !s.is_empty() && !s.contains('/') && !s.contains(char::is_whitespace);
+    media == "application/json"
+        || media
+            .split_once('/')
+            .is_some_and(|(kind, sub)| token(kind) && sub.strip_suffix("+json").is_some_and(token))
+}
+
+/// The message `JSON.parse` throws for a body that is not JSON: V8's text
+/// for the failures below, else serde's. The schema validator answers it as
+/// `{ok: false, message}`.
+pub fn json_parse_message(bytes: &[u8], error: &serde_json::Error) -> String {
+    v8_parse_message(bytes).unwrap_or_else(|| error.to_string())
+}
+
+/// An object body's keys in body order, as `JSON.parse` keeps them (AJV names
+/// the first extra one); empty for any other value.
+pub fn object_keys_in_order(body: &Value, bytes: &[u8]) -> Vec<String> {
+    match body {
+        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
+            .map(|k| k.0)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// V8's `JSON.parse` message for the parse failures the production peer was
@@ -160,14 +192,64 @@ pub fn ordered_refusal_json(value: &Value) -> String {
 }
 
 /// The first AJV error of `oneOf` branch `branch` (`{key: string[1..=1000]}`,
-/// `required`, `additionalProperties: false`), in AJV's keyword order: type,
-/// required, additionalProperties, then the property's type, item count and
-/// items.
+/// `required`, `additionalProperties: false`), in AJV's keyword order.
 fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str) -> Option<Value> {
-    let error = |instance: String, schema: &str, keyword: &str, params: Value, message: String| {
+    array_property_error(
+        body,
+        keys,
+        &format!("oneOf/{branch}/"),
+        key,
+        MAX_IDS_OR_POINTERS,
+        |item| match item.as_str() {
+            None => Some(ItemError::not_a_string()),
+            Some("") => Some(ItemError {
+                keyword: "minLength",
+                params: json!({ "limit": 1 }),
+                message: "must NOT have fewer than 1 characters".into(),
+            }),
+            Some(_) => None,
+        },
+    )
+}
+
+/// Why AJV refuses one array item: the keyword under the property's
+/// `items`, its params and its message.
+pub struct ItemError {
+    pub keyword: &'static str,
+    pub params: Value,
+    pub message: String,
+}
+
+impl ItemError {
+    /// `items: {type: "string"}` refusing a non-string.
+    pub fn not_a_string() -> Self {
+        Self {
+            keyword: "type",
+            params: json!({ "type": "string" }),
+            message: "must be string".into(),
+        }
+    }
+}
+
+/// The first error AJV 8 (`allErrors: false`) reports for an object schema
+/// with one required array property `key` (`additionalProperties: false`,
+/// 1..=`max_items` items), in AJV's keyword order: type, required,
+/// additionalProperties, then the property's type, maxItems, minItems and the
+/// first item `item_error` refuses. `schema` is the schema's path under `#/`
+/// (empty at the root, `oneOf/<n>/` for a branch); `keys` are the body's keys
+/// in order ([`object_keys_in_order`]).
+pub fn array_property_error(
+    body: &Value,
+    keys: &[String],
+    schema: &str,
+    key: &str,
+    max_items: usize,
+    item_error: impl Fn(&Value) -> Option<ItemError>,
+) -> Option<Value> {
+    let error = |instance: String, path: &str, keyword: &str, params: Value, message: String| {
         Some(json!({
             "instancePath": instance,
-            "schemaPath": format!("#/oneOf/{branch}/{schema}"),
+            "schemaPath": format!("#/{schema}{path}"),
             "keyword": keyword,
             "params": params,
             "message": message,
@@ -210,13 +292,13 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must be array".into(),
         );
     };
-    if items.len() > MAX_IDS_OR_POINTERS {
+    if items.len() > max_items {
         return error(
             format!("/{key}"),
             &format!("{property}/maxItems"),
             "maxItems",
-            json!({ "limit": MAX_IDS_OR_POINTERS }),
-            format!("must NOT have more than {MAX_IDS_OR_POINTERS} items"),
+            json!({ "limit": max_items }),
+            format!("must NOT have more than {max_items} items"),
         );
     }
     if items.is_empty() {
@@ -228,26 +310,16 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must NOT have fewer than 1 items".into(),
         );
     }
-    items
-        .iter()
-        .enumerate()
-        .find_map(|(i, item)| match item.as_str() {
-            None => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/type"),
-                "type",
-                json!({ "type": "string" }),
-                "must be string".into(),
-            ),
-            Some("") => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/minLength"),
-                "minLength",
-                json!({ "limit": 1 }),
-                "must NOT have fewer than 1 characters".into(),
-            ),
-            Some(_) => None,
-        })
+    items.iter().enumerate().find_map(|(i, item)| {
+        let refused = item_error(item)?;
+        error(
+            format!("/{key}/{i}"),
+            &format!("{property}/items/{}", refused.keyword),
+            refused.keyword,
+            refused.params,
+            refused.message,
+        )
+    })
 }
 
 /// A JSON object's keys in body order, each once (where JSON.parse keeps a
@@ -285,6 +357,24 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_content_types_follow_the_schema_validator() {
+        let ct = |v: &str| is_json_content_type(Some(v));
+        assert!(ct("application/json"));
+        assert!(ct("Application/JSON; charset=utf-8"));
+        assert!(ct("application/vnd.api+json"));
+        assert!(ct("text/x+json"));
+        assert!(ct("a/b+c+json"));
+        assert!(!ct("application/+json"));
+        assert!(!ct("/+json"));
+        assert!(!ct("a/b/c+json"));
+        assert!(!ct("a b/c+json"));
+        assert!(!ct("application/jsonfoo"));
+        assert!(!ct("text/plain"));
+        assert!(!ct("application/json-patch"));
+        assert!(!is_json_content_type(None));
+    }
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

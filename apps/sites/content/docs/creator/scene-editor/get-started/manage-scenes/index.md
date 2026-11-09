@@ -86,7 +86,7 @@ You can check your used and remaining storage budget in two places:
 
 - The **Manage** section of the Creator Hub shows how much of your total budget is used and your total storage capacity. Click **View Details** for a breakdown of how your MANA, LAND, and NAME holdings add up.
 
-<img src="/docs/.gitbook/assets/world-storage-budget.webp" width="300" />
+<img src="/docs/creator/.gitbook/assets/world-storage-budget.webp" width="300" />
 
 - The **Worlds** tab of the [Builder](https://decentraland.org/builder/worlds).
 

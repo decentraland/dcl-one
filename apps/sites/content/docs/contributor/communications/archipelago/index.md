@@ -28,11 +28,11 @@ In these cases, dynamic island assignment won't be available, and the realm's RP
 
 After opening a connection to Archipelago, clients must begin by requesting and signing a challenge from the service to verify their identity.
 
-The first message a client sends is a [`ChallengeRequestMessage`](#ChallengeRequestMessage) with their Ethereum address (i.e. their public key). They will receive a [`ChallengeResponseMessage`](#ChallengeResponseMessage) with a randomly generated string to sign, and must respond with a [`SignedChallengeMessage`](#SignedChallengeMessage).
+The first message a client sends is a [`ChallengeRequestMessage`](#challengerequestmessage) with their Ethereum address (i.e. their public key). They will receive a [`ChallengeResponseMessage`](#challengeresponsemessage) with a randomly generated string to sign, and must respond with a [`SignedChallengeMessage`](#signedchallengemessage).
 
-The [`SignedChallengeMessage`](#SignedChallengeMessage) carries a JSON-serialized [authentication chain](/docs/contributor/authentication/authchain/) that begins with the provided address, and ends with the challenge signature.
+The [`SignedChallengeMessage`](#signedchallengemessage) carries a JSON-serialized [authentication chain](/docs/contributor/authentication/authchain/) that begins with the provided address, and ends with the challenge signature.
 
-If the signature is successfully verified by the service, the client is authenticated and will receive a [`WelcomeMessage`](#WelcomeMessage).
+If the signature is successfully verified by the service, the client is authenticated and will receive a [`WelcomeMessage`](#welcomemessage).
 
 ```mermaid
 sequenceDiagram
@@ -48,14 +48,14 @@ sequenceDiagram
 
 ## Sending Heartbeat {#heartbeat}
 
-During their session, clients must periodically send a [`Heartbeat`](#Heartbeat) message to keep Archipelago updated with the necessary information to issue island assignments.
+During their session, clients must periodically send a [`Heartbeat`](#heartbeat-message) message to keep Archipelago updated with the necessary information to issue island assignments.
 
 
 > [!NOTE]
 > The recommended heartbeat frequency for comms clients is about one update per second.
 
 
-If a client stops sending [`Heartbeat`](#Heartbeat) messages, Archipelago (depending on its current policy) may close the connection.
+If a client stops sending [`Heartbeat`](#heartbeat-message) messages, Archipelago (depending on its current policy) may close the connection.
 
 ## Getting Island Assignments {#assignment}
 
@@ -79,7 +79,7 @@ Clients must listen for these assignments, closing and opening transport connect
 
 ## Client Messages
 
-##### `ChallengeRequestMessage` <small>[↗ source][ChallengeRequestMessage]</small> {#ChallengeRequestMessage}
+### `ChallengeRequestMessage` <small>[↗ source][ChallengeRequestMessage]</small> {#challengerequestmessage}
 
 Sent by the client as the first message of a session, to start the authentication flow.
 
@@ -91,19 +91,19 @@ The `address` field must be derived from the first private key of the [authentic
 
 ---
 
-##### `SignedChallengeMessage` <small>[↗ source][SignedChallengeMessage]</small> {#SignedChallengeMessage}
+### `SignedChallengeMessage` <small>[↗ source][SignedChallengeMessage]</small> {#signedchallengemessage}
 
-Sent by the client after receiving a [`ChallengeResponseMessage`](#ChallengeResponseMessage), to complete the authentication flow.
+Sent by the client after receiving a [`ChallengeResponseMessage`](#challengeresponsemessage), to complete the authentication flow.
 
 | Field             | Type     | Value                                                                                                             |
 | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `auth_chain_json` | `string` | A JSON-serialized [authentication chain](/docs/contributor/authentication/authchain/) ending with the challenge signature. |
 
-The first key in the [authentication chain](/docs/contributor/authentication/authchain/) must correspond to the address sent in the original [`ChallengeRequestMessage`](#ChallengeRequestMessage).
+The first key in the [authentication chain](/docs/contributor/authentication/authchain/) must correspond to the address sent in the original [`ChallengeRequestMessage`](#challengerequestmessage).
 
 ---
 
-##### `Heartbeat` <small>[↗ source][Heartbeat]</small> {#Heartbeat}
+### `Heartbeat` <small>[↗ source][Heartbeat]</small> {#heartbeat-message}
 
 Sent by the client at regular intervals (typically once per second), to update Archipelago on their position and/or request an island assignment.
 
@@ -112,15 +112,15 @@ Sent by the client at regular intervals (typically once per second), to update A
 | `position`     | `Position` | The client's 3D position in the world map                   |
 | `desired_room` | `string?`  | The ID of an island the client would like to be assigned to |
 
-The first `Heartbeat` message a client sends is quickly followed by an [`IslandChangedMessage`](#IslandChangedMessage) from Archipelago. Subsequent updates, however, are independent of island assignments. Clients should not expect a `Heartbeat` to be responded.
+The first `Heartbeat` message a client sends is quickly followed by an [`IslandChangedMessage`](#islandchangedmessage) from Archipelago. Subsequent updates, however, are independent of island assignments. Clients should not expect a `Heartbeat` to be responded.
 
 When the `desired_room` parameter is included, the service will attempt to honor the request, but a reassignment to that island is not guaranteed. It depends on Archipelago's policy (e.g. limits on island population).
 
 ## Server Messages
 
-##### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small> {#ChallengeResponseMessage}
+### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small> {#challengeresponsemessage}
 
-Sent by Archipelago in response to a [`ChallengeRequestMessage`](#ChallengeRequestMessage)
+Sent by Archipelago in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
 
 | Field               | Type     | Value                                                                                               |
 | ------------------- | -------- | --------------------------------------------------------------------------------------------------- |
@@ -129,7 +129,7 @@ Sent by Archipelago in response to a [`ChallengeRequestMessage`](#ChallengeReque
 
 ---
 
-##### `WelcomeMessage` <small>[↗ source][WelcomeMessage]</small> {#WelcomeMessage}
+### `WelcomeMessage` <small>[↗ source][WelcomeMessage]</small> {#welcomemessage}
 
 Sent by Archipelago after successful authentication.
 
@@ -139,7 +139,7 @@ Sent by Archipelago after successful authentication.
 
 ---
 
-##### `IslandChangedMessage` <small>[↗ source][IslandChangedMessage]</small> {#IslandChangedMessage}
+### `IslandChangedMessage` <small>[↗ source][IslandChangedMessage]</small> {#islandchangedmessage}
 
 Sent by Archipelago when the client is (re)assigned to an island.
 
@@ -158,7 +158,7 @@ The `peers` field contains the current identities and positions of all peers in 
 
 ---
 
-##### `KickedMessage` <small>[↗ source][KickedMessage]</small> {#KickedMessage}
+### `KickedMessage` <small>[↗ source][KickedMessage]</small> {#kickedmessage}
 
 Sent by Archipelago before closing a connection.
 
@@ -172,7 +172,7 @@ The standard values for the `reason` field are:
 
 ---
 
-##### `JoinIslandMessage` <small>[↗ source][JoinIslandMessage]</small> {#JoinIslandMessage}
+### `JoinIslandMessage` <small>[↗ source][JoinIslandMessage]</small> {#joinislandmessage}
 
 Sent by Archipelago when a peer is assigned to the client's island.
 
@@ -185,7 +185,7 @@ The `island_id` field will match the client's current assignment.
 
 ---
 
-##### `LeftIslandMessage` <small>[↗ source][LeftIslandMessage]</small> {#LeftIslandMessage}
+### `LeftIslandMessage` <small>[↗ source][LeftIslandMessage]</small> {#leftislandmessage}
 
 Sent by Archipelago when a peer is removed from the client's island.
 

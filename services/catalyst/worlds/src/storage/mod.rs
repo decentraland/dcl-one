@@ -784,10 +784,9 @@ async fn resolve_and_authorize(
             } else {
                 Ok(false)
             };
-            if matches!(logs, Ok(true)) {
-                true
-            } else if policy.allow_owners_and_deployers
-                && has_scene_permission(state, &realm, &deployment, parcel, &signer).await?
+            if matches!(logs, Ok(true))
+                || (policy.allow_owners_and_deployers
+                    && has_scene_permission(state, &realm, &deployment, parcel, &signer).await?)
             {
                 true
             } else {

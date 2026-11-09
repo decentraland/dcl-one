@@ -303,10 +303,46 @@ pub fn dm_state(mut input: ConsoleCommand<DmStateCommand>, states: DmUserStates)
     ));
 }
 
-/// True if the local user has blocked `address`; such senders' DMs are dropped on receipt.
-pub fn blocked_by_me(social: &SocialClient, address: Address) -> bool {
+/// True if either side has blocked the other. Their chat and reactions are not shown, on any
+/// channel.
+pub fn blocked_either_way(social: &SocialClient, address: Address) -> bool {
     social
         .0
         .as_ref()
-        .is_some_and(|client| client.blocked.contains(&address))
+        .is_some_and(|client| blocks_hide_chat(&client.blocked, &client.blocked_by, address))
+}
+
+fn blocks_hide_chat(
+    blocked: &bevy::platform::collections::HashSet<Address>,
+    blocked_by: &bevy::platform::collections::HashSet<Address>,
+    address: Address,
+) -> bool {
+    blocked.contains(&address) || blocked_by.contains(&address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::platform::collections::HashSet;
+
+    #[test]
+    fn nearby_chat_is_hidden_in_both_block_directions() {
+        let i_blocked = Address::repeat_byte(1);
+        let blocked_me = Address::repeat_byte(2);
+        let stranger = Address::repeat_byte(3);
+        let blocked = HashSet::from([i_blocked]);
+        let blocked_by = HashSet::from([blocked_me]);
+
+        assert!(blocks_hide_chat(&blocked, &blocked_by, i_blocked));
+        assert!(blocks_hide_chat(&blocked, &blocked_by, blocked_me));
+        assert!(!blocks_hide_chat(&blocked, &blocked_by, stranger));
+    }
+
+    #[test]
+    fn nothing_is_hidden_without_a_social_client() {
+        assert!(!blocked_either_way(
+            &SocialClient(None),
+            Address::repeat_byte(1)
+        ));
+    }
 }

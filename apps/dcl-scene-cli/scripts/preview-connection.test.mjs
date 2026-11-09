@@ -73,3 +73,52 @@ test('HTTP errors and unexpected health responses do not report connected', asyn
     assert.equal(p.offline(), true)
   }
 })
+
+test('condition polling checks immediately, backs off and clamps to its deadline', async () => {
+  const pauses = []
+  let now = 0, calls = 0
+  const context = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => [], getElementById: () => null },
+    performance: { now: () => now },
+    setTimeout: (fn, ms) => { pauses.push(ms); now += ms; queueMicrotask(fn) },
+    check: async () => ++calls === 4 ? 'ready' : undefined,
+  })
+  vm.runInContext(source, context)
+  assert.equal(await vm.runInContext('pageWaitFor(check, 1000)', context), 'ready')
+  assert.deepEqual(pauses, [100, 200, 400])
+  calls = 0
+  context.check = async () => ++calls === 1
+  pauses.length = 0
+  assert.equal(await vm.runInContext('pageWaitFor(check, 1000)', context), true)
+  assert.deepEqual(pauses, [])
+  context.check = async () => false
+  await assert.rejects(vm.runInContext('pageWaitFor(check, 250)', context), /did not finish updating/)
+  assert.deepEqual(pauses, [100, 150])
+})
+
+test('a warming page reloads only after the server removes its pending marker', async () => {
+  let now = 0, calls = 0, reloads = 0
+  const pauses = []
+  const context = vm.createContext({
+    document: { querySelector: () => null, querySelectorAll: () => [], getElementById: () => null },
+    performance: { now: () => now }, AbortSignal,
+    location: { href: 'http://preview/target', reload: () => reloads++ },
+    fetch: async (_url, options) => {
+      assert.ok(options.signal)
+      const html = ++calls < 3 ? 'pending' : 'ready'
+      assert.equal(reloads, 0)
+      return { ok: true, text: async () => html }
+    },
+    DOMParser: class {
+      parseFromString(html) {
+        return { querySelectorAll: () => [], getElementById: () => html === 'pending' ? {} : null }
+      }
+    },
+    setTimeout: (fn, ms) => { pauses.push(ms); now += ms; queueMicrotask(fn) },
+  })
+  vm.runInContext(source, context)
+  await vm.runInContext("pageRefreshWhen(doc => !doc.getElementById('page-warming'), 1000)", context)
+  assert.equal(calls, 3)
+  assert.equal(reloads, 1)
+  assert.deepEqual(pauses, [100, 200])
+})

@@ -18,6 +18,7 @@ export function categoryForType(type: unknown): string {
   if (
     t === "land_transfer_received" ||
     t === "item_sold" ||
+    t === "item_discounted" ||
     t === "item_published" ||
     t === "bid_accepted" ||
     t === "bid_received" ||
@@ -106,6 +107,10 @@ const NOTIFICATION_TEMPLATES: Record<
     title: "Community Ownership Transferred",
     body: `You're now the owner of ${cname(m)}.`,
   }),
+  item_discounted: (m) => ({
+    title: "A favorite is on sale",
+    body: `${str(m, "nftName") ?? "An item you saved"} is ${typeof m.discountPct === "number" ? `${m.discountPct}%` : "now"} off.`,
+  }),
   credits_reminder_claim_credits: () => ({
     title: "Marketplace Credits",
     body: "You have Credits waiting to be claimed.",
@@ -174,6 +179,8 @@ const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export function actorAddress(n: Notification | null | undefined): string | null {
   const recipient = (n?.address ?? "").toLowerCase();
+  // A broadcast has no recipient, and no broadcast type names an actor.
+  if (!recipient) return null;
   let found: string | null = null;
   const scan = (v: unknown, depth: number): void => {
     if (found) return;

@@ -5,7 +5,18 @@ export type PlaceRow = { id: string, title: string | null, description: string |
  * Immutable content-entity identifier for this indexed deployment.
  * Null for legacy rows awaiting reconciliation (upstream places #856).
  */
-deployment_id: string | null, deployed_at: string | null, world: boolean, world_name: string | null, user_favorite: boolean, user_like: boolean, user_dislike: boolean, user_count: number | null, user_visits: number, like_rate: number | null, like_score: number | null, live?: boolean, live_event_name?: string | null, 
+deployment_id: string | null, deployed_at: string | null, world: boolean, world_name: string | null, user_favorite: boolean, user_like: boolean, user_dislike: boolean, user_count: number | null, user_visits: number, like_rate: number | null, like_score: number | null, 
+/**
+ * The serialized `textsearch` tsvector of upstream's places table (`p.*`,
+ * places `Place/types.ts:64`): the mirrored value when upstream sent one,
+ * otherwise the same vector computed here (`query::textsearch_sql`).
+ */
+textsearch: string | null, 
+/**
+ * `ts_rank_cd(textsearch, query)`, selected only when `search` is set
+ * (places `Place/model.ts:305,323-328`).
+ */
+rank?: number, live?: boolean, live_event_name?: string | null, 
 /**
  * Wallet addresses connected here, present only when with_connected_users=true:
  * an empty array means nobody is connected, null means the comms service could

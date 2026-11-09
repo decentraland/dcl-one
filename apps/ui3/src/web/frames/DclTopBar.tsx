@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import { catalystBase, getJSON } from "../../data/catalyst/client";
@@ -47,11 +47,13 @@ const LINK_DEFS = {
 
 export type DclTopBarNavId = keyof typeof LINK_DEFS;
 
-const BellMark = ({ size = 19 }: { size?: number }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
-    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-    <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+// from: decentraland-ui2@3.23.8:dist/components/Navbar/icons.js (BellIcon): the filled bell of DCL's navbar.
+const BellMark = ({ size = 24 }: { size?: number }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">
+    <path
+      d="M12 21.75C13.1 21.75 14 20.85 14 19.75H10C10 20.85 10.89 21.75 12 21.75ZM18 15.75V10.75C18 7.68 16.36 5.11 13.5 4.43V3.75C13.5 2.92 12.83 2.25 12 2.25C11.17 2.25 10.5 2.92 10.5 3.75V4.43C7.63 5.11 6 7.67 6 10.75V15.75L4 17.75V18.75H20V17.75L18 15.75Z"
+      fill="currentColor"
+    />
   </svg>
 );
 
@@ -76,6 +78,8 @@ type DclTopBarProps = {
   onNavigate?: ChromeNavigate;
   mobileNavigation?: (closeMenu: () => void) => ReactNode;
   accountControl?: ReactNode;
+  /** Balance chips for a signed-in account, before the bell (the Shop's credits). */
+  balances?: ReactNode;
 };
 
 const accountLinks = (account: string) => [
@@ -95,6 +99,7 @@ export default function DclTopBar({
   onNavigate = undefined,
   mobileNavigation,
   accountControl,
+  balances,
 }: DclTopBarProps) {
   const layout = useSiteLayout();
   const renderMobileNavigation = mobileNavigation ?? layout?.sections;
@@ -292,6 +297,7 @@ export default function DclTopBar({
       </nav>
 
       <div className="dtb__right">
+        {isIn ? balances : null}
         {isIn ? (
           <div className="dtb__bellwrap" ref={bellRef}>
             <button
@@ -360,8 +366,8 @@ export default function DclTopBar({
             onNavigate={onNavigate}
             align="right"
           >
-            <span className="dtb__avatar u-avatar" style={{ "--sz": "40px", "--hue": 268 } as CSSProperties}>
-              {faceUrl && (
+            <span className="dtb__avatar u-avatar">
+              {faceUrl ? (
                 <img
                   className="u-avatar__img"
                   src={faceUrl}
@@ -371,6 +377,9 @@ export default function DclTopBar({
                   loading="lazy"
                   onError={() => setFaceUrl("")}
                 />
+              ) : (
+                // As ui2's navbar: an account without a face picture shows the Decentraland mark on its disc.
+                <img className="dtb__avatar-logo" src={logo} alt="" width="40" height="40" data-testid="topbar-avatar-logo" />
               )}
             </span>
           </AccountMenu>

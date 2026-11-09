@@ -7,14 +7,14 @@ This page covers patterns for integrating blockchain functionality with Redux an
 
 > [!CAUTION]
 > **Never store these in Redux:**
-> 
+>
 > * `window.ethereum`
 > * Provider instances (`ethers.Provider`, `Web3Provider`)
 > * Signer instances
 > * WebSocket connections
 > * Contract instances
 > * `AbortController` instances
-> 
+>
 > These are non-serializable and violate Redux principles.
 
 

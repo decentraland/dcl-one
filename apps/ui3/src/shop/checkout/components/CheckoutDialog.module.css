@@ -1,0 +1,557 @@
+/* from: shop@3a322cf9:app/src/components/BuyModal/modal.styles.ts (Modal, Scrim, Card, Head, HeadRow, Title, X, Balance*,
+         Body, Asset*, Warning*, Packs, Pack*, Total*, Ctas, Btn, Logo, BuyError*, ProcessingText, Progress*, and Success's
+         layout for the pending screen; "Purchase complete!" is Buy now's own, BuyModal.module.css),
+         app/src/components/CreditPackPicker/CreditPackPicker.styles.ts (PackTile),
+         app/src/components/CartCheckoutModal/CartCheckoutModal.styles.ts (Scroll, QtyTag),
+         app/src/styles/index.css (cart-pop-in, .spinner), app/src/styles/theme.ts (the colours below).
+   The checkout dialogs' shell (CheckoutDialog.tsx), shared by Buy now's and the cart's as upstream's modal.styles is: a
+   scrim over the whole viewport and a card holding a header (title, close, the Credits balance) and one body per phase.
+   Upstream draws both on its dark surface, which is the only one ported here. The dialogs render in a portal outside
+   `.shop-chrome`; their root carries `data-shop-tokens`, which gives them the same token scope (shoptheme.css). */
+
+.root {
+  --ckm-accent: var(--shop-accent, #691fa9);
+  --ckm-soft-white: var(--shop-soft-white, #fcfcfc);
+  --ckm-gray4: var(--shop-gray-4, #cfcdd4);
+  --ckm-glass: var(--shop-glass, rgba(255, 255, 255, 0.2));
+  --ckm-glass-strong: var(--shop-glass-strong, rgba(255, 255, 255, 0.3));
+  --ckm-overlay: var(--shop-overlay, rgba(0, 0, 0, 0.4));
+  --ckm-modal-tile: var(--shop-modal-tile, #3f1365);
+  --ckm-red: var(--shop-dcl-red, #ff2d55);
+  --ckm-buy: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
+  --ckm-white: var(--shop-white, #ffffff);
+  --ckm-progress: linear-gradient(90deg, var(--ckm-red) 0%, var(--shop-flare-amber, #ffbc5b) 100%);
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  overflow-y: auto;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+}
+/* The dialog takes focus when it opens (for its Escape and its reader), which draws no ring of its own. */
+.root:focus {
+  outline: none;
+}
+.root *,
+.root *::before,
+.root *::after {
+  box-sizing: border-box;
+}
+
+/* Fixed, not absolute: the overlay scrolls, and the scrim must keep dimming the whole viewport. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(22, 21, 24, 0.45);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Wide enough for the four credit packs in one row; never taller than the viewport, the body scrolls instead. */
+.card {
+  position: relative;
+  z-index: 1;
+  margin: auto;
+  width: 100%;
+  max-width: 700px;
+  min-width: 0;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--ckm-accent);
+  border-radius: 16px;
+  padding: 12px 16px 16px;
+  box-shadow: 0 24px 60px rgba(22, 21, 24, 0.28);
+  animation: pop-in 0.16s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  color: var(--ckm-soft-white);
+}
+.card[data-tall] {
+  min-height: 379px;
+  justify-content: space-between;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--ckm-glass);
+}
+.headrow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ckm-soft-white);
+}
+.x {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ckm-white);
+  cursor: pointer;
+  padding: 2px;
+  line-height: 0;
+}
+.balance {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.balanceLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ckm-gray4);
+}
+.balanceIco {
+  width: 14px;
+  height: 14px;
+  color: var(--ckm-soft-white);
+}
+.balanceValue {
+  font-size: 14px;
+  color: var(--ckm-soft-white);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.body[data-processing] {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 24px 0;
+}
+
+/* The item: a tile of its own, artwork flush against its left edge. */
+.asset {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  background: var(--ckm-overlay);
+  border-radius: 16px;
+  overflow: hidden;
+}
+/* `--buy-tile`: the item's rarity colour, known only at runtime. */
+.thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 176px;
+  height: 179px;
+  background: var(--buy-tile, var(--ckm-modal-tile));
+  border: 1.5px solid transparent;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.thumb img {
+  width: 83%;
+  height: 83%;
+  object-fit: contain;
+  filter: drop-shadow(0.7px 2.9px 3.7px rgba(0, 0, 0, 0.1));
+}
+.info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 24px 16px 24px 8px;
+}
+.name {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ckm-soft-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.creator {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.43;
+  color: var(--ckm-soft-white);
+}
+.price {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.price span {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ckm-soft-white);
+}
+.priceIco {
+  width: 20px;
+  height: 20px;
+  color: var(--ckm-soft-white);
+}
+
+
+/* The insufficient-funds banner: warm peach fill with the warning glyph. */
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--shop-warning-wash, rgba(255, 162, 90, 0.3));
+  border-radius: 8px;
+  padding: 16px;
+}
+.warning > svg {
+  flex-shrink: 0;
+}
+.warningText {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.334;
+  color: var(--ckm-soft-white);
+}
+.warningText b {
+  font-weight: 700;
+}
+.warningLink {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.334;
+  color: var(--ckm-soft-white);
+  text-decoration: underline;
+}
+.warningLink:hover {
+  color: var(--ckm-gray4);
+}
+
+/* The 6px inset is what the selected tile's lift grows into; the negative margin gives it back to the body's stack. */
+.packs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: -6px 0;
+  padding: 6px;
+}
+.pack {
+  position: relative;
+  flex: 1 1 140px;
+  height: 109px;
+  border: 1px solid transparent;
+  background: var(--ckm-modal-tile);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 3px;
+  font: inherit;
+  transition:
+    transform 0.12s ease,
+    border-color 0.12s ease,
+    border-width 0.12s ease,
+    padding 0.12s ease;
+}
+/* The buy gradient as the ring: the flat fill clipped to the padding box, the gradient to the border box. */
+.pack:hover:not(:disabled),
+.pack[data-on] {
+  padding: 0;
+  border-color: transparent;
+  border-width: 4px;
+  background-image: linear-gradient(var(--ckm-modal-tile), var(--ckm-modal-tile)), var(--ckm-buy);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+.pack[data-on] {
+  transform: scale(1.03);
+}
+.packIco {
+  width: 24px;
+  height: 26px;
+  flex: none;
+}
+.packAmount {
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--ckm-soft-white);
+}
+.packUsd {
+  font-size: 14px;
+  color: var(--ckm-soft-white);
+}
+
+.total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 2px solid var(--ckm-glass);
+  padding-top: 12px;
+}
+.totalCredits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ckm-soft-white);
+}
+.totalIco {
+  width: 22px;
+  height: 22px;
+  color: var(--ckm-soft-white);
+}
+.totalUsd {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ckm-soft-white);
+}
+
+.ctas {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  margin-top: -8px;
+  padding-top: 8px;
+  background: var(--ckm-accent);
+}
+.btn {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  border-radius: 12px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn[data-full] {
+  width: 100%;
+}
+.btn[data-variant="gradient"] {
+  background: var(--ckm-buy);
+  color: var(--ckm-soft-white);
+}
+.btn[data-variant="gradient"]:hover:not(:disabled),
+.btn[data-variant="gradient"]:active:not(:disabled) {
+  background-image: linear-gradient(var(--ckm-red), var(--ckm-red));
+}
+/* On the dark modal the dismissing CTA is the translucent white secondary. */
+.btn[data-variant="outline"] {
+  background: var(--ckm-glass);
+  color: var(--ckm-soft-white);
+}
+.btn[data-variant="outline"]:hover:not(:disabled) {
+  background: var(--ckm-glass-strong);
+}
+.btn[data-variant="ruby"] {
+  background: var(--ckm-red);
+  color: var(--ckm-soft-white);
+}
+@media (hover: hover) {
+  .btn[data-variant="ruby"]:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  width: 30px;
+  height: 30px;
+  margin-top: 14px;
+  border-radius: 50%;
+  border: 3px solid var(--ckm-glass);
+  border-top-color: var(--ckm-soft-white);
+  animation: spin 0.8s linear infinite;
+}
+
+.logo {
+  width: 61px;
+  height: 61px;
+}
+.processing {
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--ckm-soft-white);
+  text-align: center;
+}
+.progress {
+  width: 100%;
+  max-width: 456px;
+  height: 12px;
+  background: var(--ckm-glass);
+  border-radius: 100px;
+  overflow: hidden;
+}
+@keyframes progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.progressFill {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 100px;
+  background: var(--ckm-progress);
+  animation: progress 1.1s ease-in-out infinite;
+}
+
+/* The cart's lines in the no-funds screen: the dialog's elastic region, giving up height first so the packs, the total
+   and the buttons below stay on screen; about one row at least, since a scroll box's automatic minimum is zero. */
+.scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 120px;
+  max-height: 360px;
+  overflow-y: auto;
+  width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ckm-glass-strong) transparent;
+}
+.scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: var(--shop-media, #ecebed);
+  border-radius: 10px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: #a2a2a2;
+  border-radius: var(--shop-radius-btn, 8px);
+}
+.qty {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ckm-gray4);
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  border-radius: 16px;
+  padding: 24px 16px;
+}
+.errorArt {
+  width: 64px;
+  height: 80px;
+  object-fit: contain;
+}
+.errorText {
+  margin: 0;
+  text-align: center;
+  font-size: 20px;
+  line-height: 1.334;
+  font-weight: 400;
+  color: var(--ckm-soft-white);
+}
+.errorText b {
+  font-weight: 700;
+}
+/* A status screen's centre (a purchase still confirming): the loader and what to expect. */
+.success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .thumb {
+    width: 120px;
+    height: 120px;
+  }
+  .name {
+    font-size: 16px;
+  }
+  .warning {
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px;
+  }
+  /* Phones get a fixed 2x2: wrapping by content width could leave three rows. */
+  .packs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 12px;
+  }
+  .pack {
+    height: 83px;
+    gap: 6px;
+    min-width: 0;
+  }
+  .pack[data-on] {
+    transform: none;
+  }
+  /* One CTA per row where both labels are long, the primary on top. */
+  .ctas[data-stack] {
+    flex-direction: column-reverse;
+  }
+  .ctas[data-stack] > * {
+    flex: none;
+    width: 100%;
+  }
+}
+
+/* The pop-in, the spinner and the progress bar hold still for a reader who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .spinner,
+  .progressFill {
+    animation: none;
+  }
+}
+
+/* The warning glyph, in the Shop's own colour. */
+.warningMark {
+  fill: var(--shop-warning, #f48221);
+}

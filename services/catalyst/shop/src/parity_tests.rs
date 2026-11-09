@@ -881,6 +881,160 @@ fn token_order_json(signer: &str, contract: &str, token_id: &str) -> String {
 }
 
 #[tokio::test]
+async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refused() {
+    let Some(state) = matic_state(None).await else {
+        return;
+    };
+    state.set_marketplace_features(false);
+    let app = || market_router(state.clone());
+
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/lists",
+        signed_headers("post", "/v1/lists", "{}", true).await,
+        Some(json!({ "name": format!("Off {}", &tag()[..6]), "private": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body.to_string().contains("dapps-shop-marketplace-features"),
+        "{body}"
+    );
+
+    // A resale order is the Marketplace's; a creator's own item order is the Shop's primary sale and is not refused
+    // for the rollout (it fails later, on its fake signature).
+    let meta = r#"{"signer":"dcl:marketplace","intent":"dcl:create-trade"}"#;
+    let contract = contract_of(&tag(), 6);
+    let resale: Value =
+        serde_json::from_str(&token_order_json(&sf::address(), &contract, "1")).unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/trades",
+        signed_headers("post", "/v1/trades", meta, true).await,
+        Some(resale),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let primary: Value =
+        serde_json::from_str(&item_order_json(&sf::address(), &contract, "0")).unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/trades",
+        signed_headers("post", "/v1/trades", meta, true).await,
+        Some(primary),
+    )
+    .await;
+    assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // Saving to a named list is refused; the plain favorite (the default list) is not, and fails later on an item
+    // that is not in the mirror.
+    let item = format!("{contract}-0");
+    let picks = format!("/v1/picks/{item}");
+    let named = "00000000-0000-4000-8000-000000000001";
+    for body in [
+        json!({ "pickedFor": [named] }),
+        json!({ "unpickedFrom": [named] }),
+    ] {
+        let (status, answer) = call(
+            app(),
+            "POST",
+            &picks,
+            signed_headers("post", &picks, "{}", true).await,
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    }
+    let (status, body) = call(
+        app(),
+        "POST",
+        &picks,
+        signed_headers("post", &picks, "{}", true).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // The caller's own Favorites row is the plain favorite too, by its real id.
+    let own = lists::get_or_create_default_list(&state.pool, &sf::address().to_lowercase())
+        .await
+        .unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        &picks,
+        signed_headers("post", &picks, "{}", true).await,
+        Some(json!({ "pickedFor": [own] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // The federation log takes no bid or resale order either: refused before the signature is read.
+    for path in [
+        "/v1/federation/bid",
+        "/v1/federation/bid/accept",
+        "/v1/federation/order",
+    ] {
+        let (status, body) = call(app(), "POST", path, HeaderMap::new(), Some(json!({}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
+    }
+
+    // On again, the same list is written.
+    state.set_marketplace_features(true);
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/lists",
+        signed_headers("post", "/v1/lists", "{}", true).await,
+        Some(json!({ "name": format!("On {}", &tag()[..6]), "private": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+#[tokio::test]
+async fn the_marketplace_flag_reads_this_nodes_overrides_and_never_writes_the_shared_dapps_row() {
+    use crate::explore::api::feature_flags;
+    let Some(state) = matic_state(None).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let key = "dapps-shop-marketplace-features";
+    let stored = || async {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT document FROM explore_api.feature_flags WHERE app = 'dapps'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stored().await;
+    // A run that failed before its cleanup leaves the override behind: start from none.
+    feature_flags::clear_local_flag(&pool, "dapps", key)
+        .await
+        .unwrap();
+
+    // No service configured: only this node's overrides count, on top of an empty document.
+    feature_flags::set_local_flag(&pool, "dapps", key, true)
+        .await
+        .unwrap();
+    state.set_marketplace_features(false);
+    state.refresh_feature_flags().await.unwrap();
+    assert!(state.marketplace_features(), "the override opens it");
+    feature_flags::clear_local_flag(&pool, "dapps", key)
+        .await
+        .unwrap();
+    state.refresh_feature_flags().await.unwrap();
+    assert!(!state.marketplace_features(), "absent reads off");
+
+    assert_eq!(stored().await, before, "the shared dapps row is Social's");
+    state.set_marketplace_features(true);
+}
+
+#[tokio::test]
 async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana() {
     use alloy::signers::SignerSync;
     let Some(state) = matic_state(None).await else {

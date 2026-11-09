@@ -401,11 +401,11 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     let (status, about) = node.get("/world/B.DCL.ETH/about").await;
     assert_eq!(status, StatusCode::OK, "{about}");
     let urns = about["configurations"]["scenesUrn"].as_array().unwrap();
-    assert_eq!(urns.len(), 2);
+    assert_eq!(urns.len(), 1, "the newest scene only, as upstream");
     for urn in urns {
         let urn = urn.as_str().unwrap();
         assert!(
-            urn.ends_with("?=&baseUrl=http://127.0.0.1:5210/contents/"),
+            urn.ends_with("?=&baseUrl=http://127.0.0.1:5210/worlds-content-server/contents/"),
             "{urn}"
         );
         assert!(b_ids.iter().any(|id| urn.contains(id)), "{urn}");
@@ -443,7 +443,7 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
         index["data"][0]["scenes"][0]["thumbnail"]
             .as_str()
             .unwrap()
-            .starts_with("http://127.0.0.1:5210/contents/"),
+            .starts_with("http://127.0.0.1:5210/worlds-content-server/contents/"),
         "{index}"
     );
     let (status, st) = node.get("/worlds/status").await;

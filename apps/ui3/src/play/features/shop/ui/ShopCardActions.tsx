@@ -3,6 +3,7 @@
 
 import { Button, MaskIcon } from '../../../design'
 import externalIcon from '../../../assets/shop/external.svg'
+import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopCardActions.module.css'
 
 export function ShopCardActions({
@@ -14,7 +15,8 @@ export function ShopCardActions({
   /** Absent when the item can't be tried on. */
   tryOn?: { label: string; disabled?: boolean; title?: string; onClick: () => void }
   buyInWorld: boolean
-  onBuy: () => void
+  /** BUY, with how it was pressed. */
+  onBuy: (input: PressedWith) => void
   /** Absent when the item has no page on the web Shop to view it on. */
   onView?: () => void
 }): React.JSX.Element {
@@ -26,7 +28,7 @@ export function ShopCardActions({
         </Button>
       )}
       {buyInWorld ? (
-        <Button size="card" className={styles.action} onClick={onBuy}>
+        <Button size="card" className={styles.action} onClick={(e) => onBuy(pressedWith(e))}>
           BUY
         </Button>
       ) : (

@@ -465,16 +465,6 @@ function PublishedProjectCard({
             >
               Analytics
             </Link>
-            {role === "owner" ? (
-              <Link
-                to={`/create/scene-errors?type=world&scene=${encodeURIComponent(card.id.toLowerCase())}`}
-                prefetch="intent"
-                className="chm__settingsbtn"
-                style={{ textDecoration: "none", position: "relative", zIndex: 1 }}
-              >
-                Errors
-              </Link>
-            ) : null}
           </div>
         </>
       )}

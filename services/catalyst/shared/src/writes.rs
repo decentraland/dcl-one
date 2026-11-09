@@ -1,6 +1,5 @@
 //! The write switches every domain applies: the route-local [`Gate`]
-//! middleware (the creator plane's, reused by camera-reel and the telemetry
-//! console), the data plane's [`DataWrites`] (`DATA_WRITES_ENABLED`) and the
+//! middleware (the creator plane's, reused by camera-reel), the data plane's [`DataWrites`] (`DATA_WRITES_ENABLED`) and the
 //! operator plane's [`OPS_WRITES_ENABLED`]. Off, a gated mutating request
 //! answers 503 with a `Retry-After`; the reads keep answering. On, a write
 //! still waits for the restore stamps ([`restore`]) when the node has them:
@@ -26,7 +25,7 @@ pub use restore::{Hold, RestoreStamps};
 /// set; the twin of `SOCIAL_WRITES_ENABLED`.
 pub const OPS_WRITES_ENABLED: &str = "OPS_WRITES_ENABLED";
 
-pub const WRITES_DISABLED_MESSAGE: &str = "operator-plane writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts credits, telemetry console or registry writes";
+pub const WRITES_DISABLED_MESSAGE: &str = "operator-plane writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts credits or registry writes";
 
 /// Why a gated write is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]

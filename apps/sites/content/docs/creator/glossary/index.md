@@ -28,7 +28,11 @@ The **CLI** (`npx @dcl/sdk-commands`) is the command-line alternative to the Cre
 
 ### Builder
 
-The **Builder** ([decentraland.org/builder](https://decentraland.org/builder)) is the web dashboard for managing wearable and emote collections, LAND, and Decentraland NAMEs. It is not a scene editing tool.
+The **Builder** ([decentraland.org/builder](https://decentraland.org/builder)) is the web dashboard for managing LAND, Decentraland NAMEs, Worlds and Linked Wearables. It is not a scene editing tool.
+
+### Decentraland Create
+
+**Decentraland Create** ([decentraland.org/create](https://decentraland.org/create)) is the web app for creating, publishing, and selling wearables and emotes collections.
 
 ### Explorer
 

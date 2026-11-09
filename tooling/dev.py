@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import secrets
 import shlex
 import shutil
@@ -31,6 +32,15 @@ SETTINGS = STATE / 'settings.json'
 # Sepolia), for trading with testnet wallets; offline: empty, for local deployments.
 PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
+PROGRESS_SECONDS = 30
+ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))')
+
+
+def backoff_delays(deadline, first=.1, maximum=2):
+    delay = first
+    while (remaining := deadline - time.monotonic()) > 0:
+        yield min(delay, remaining)
+        delay = min(delay * 2, maximum)
 
 
 def run(argv, **kwargs):
@@ -46,10 +56,10 @@ def save_json(path, value):
 def ports_free(base):
     sockets = []
     try:
-        # TCP (NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport (the Sites port) and ENet ports,
-        # LiveKit's media.
-        for kind, port in [*((socket.SOCK_STREAM, port) for port in (base, base + 2, base + 3, base + 4, base + 5,
-                                                                      base + 7, base + 8, base + 9)),
+        # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
+        # (the Sites port) and ENet ports, LiveKit's media.
+        for kind, port in [*((socket.SOCK_STREAM, port) for port in (base, base + 1, base + 2, base + 3, base + 4,
+                                                                      base + 5, base + 7, base + 8, base + 9)),
                            *((socket.SOCK_DGRAM, port) for port in (base + 2, base + 6, base + 7))]:
             sock = socket.socket(socket.AF_INET, kind)
             sockets.append(sock)
@@ -248,6 +258,9 @@ def runtime_env(config):
         'DATABASE_URL': database_url(config), 'CATALYST_DATABASE_URL': database_url(config),
         'HTTP_SERVER_HOST': '127.0.0.1',
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
+        # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
+        # worktree) would otherwise fail to start its API.
+        'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.
         'LIVEKIT_HOST': f'ws://127.0.0.1:{livekit_ports(config)[0]}',
@@ -264,8 +277,9 @@ def runtime_env(config):
         'CONTENT_HISTORY_PRUNE_ENABLED': 'false', 'WORLDS_CONTENT_MIRROR_ENABLED': 'false',
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
+        'MARKETPLACE_SALES_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
-        'PRICE_POLL_ENABLED': 'false',
+        'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
         'PRESENCE_COLLECTOR_ENABLED': 'false', 'JOBS_FIRST_PASS_NOW': 'true',
         'CONTENT_FORWARD_UPSTREAM_URL': '', 'WORLDS_FORWARD_UPSTREAM_URL': '',
@@ -327,6 +341,7 @@ def runtime_env(config):
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
+            'SHOP_RENTALS_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
@@ -383,6 +398,8 @@ def testnet_env():
         # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
         # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
+        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        'SHOP_RENTALS_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.
@@ -414,7 +431,17 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **name_simulation_env(),
     }
+
+
+def name_simulation_env():
+    """The in-world Shop's NAME purchase rehearsal, off unless FOUNDATION_DEV_NAME_SIMULATION=1 asks for it.
+
+    It turns on VITE_SHOP_NAME_SIMULATION for the Sites build, whose /play shell then rehearses BUY NAME on
+    Amoy with the real price, balance and availability, and buys nothing (apps/ui3/src/play/shell/shop/
+    namePurchase.ts). Only this profile sets it, with VITE_SHOP_CHAIN_ID=80002, which the shell needs too."""
+    return {'VITE_SHOP_NAME_SIMULATION': 'true'} if os.environ.get('FOUNDATION_DEV_NAME_SIMULATION') == '1' else {}
 
 
 def credits_signer_env():
@@ -453,9 +480,18 @@ def pc_argv(*args):
     return ['process-compose', '--use-uds', '--unix-socket', address, '--log-file', str(STATE / logfile), *args]
 
 
+def pc_env(env=None):
+    xdg = STATE / 'xdg'
+    # This fallback directory quiets missing-config noise without shadowing host settings.
+    (xdg / 'process-compose').mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ if env is None else env)
+    env['XDG_CONFIG_DIRS'] = f"{env.get('XDG_CONFIG_DIRS') or '/etc/xdg'}:{xdg}"
+    return env
+
+
 def pc(*args, **kwargs):
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return subprocess.run(pc_argv(*args), cwd=STATE, **kwargs)
+    return subprocess.run(pc_argv(*args), cwd=STATE, env=pc_env(kwargs.pop('env', None)), **kwargs)
 
 
 def supervisor_running():
@@ -541,7 +577,9 @@ def postgres(config):
         raise RuntimeError('PostgreSQL major version changed. Data preserved; migrate it before restarting.')
     os.execvpe('postgres', ['postgres', '-D', str(data), '-h', '127.0.0.1',
                            '-p', str(config['port'] + 3), '-k', '',
-                           '-c', 'max_connections=40', '-c', 'shared_buffers=64MB'], env)
+                           '-c', 'max_connections=400', '-c', 'shared_buffers=64MB',
+                           # Concurrent test binaries apply the schema at once; an apply holds thousands of locks.
+                           '-c', 'max_locks_per_transaction=256'], env)
 
 
 def ensure_collation(config, database='catalyst'):
@@ -611,6 +649,15 @@ def seed_trades(config):
     print(f"Seeded {sql(config, 'SELECT count(*) FROM shop.trades')} trades from {snapshot.name}.")
 
 
+def seed_dev_flags(config):
+    # The node refuses the Shop's Marketplace writes (resales, bids, lists, rental listings) while the
+    # dapps-shop-marketplace-features rollout is off, and a development stack reads no flags service: it
+    # counts only this node's overrides. A development stack and the trade journey exercise those writes,
+    # so they start with the override on; an override a developer set (either way) is kept.
+    sql(config, "INSERT INTO explore_api.feature_flags_local (app, name, value) "
+                "VALUES ('dapps', 'dapps-shop-marketplace-features', true) ON CONFLICT (app, name) DO NOTHING")
+
+
 # Creator Hub's asset catalogue, from the @dcl/asset-packs package Sites installs; the files it
 # names are pulled from BUILDER_CONTENT_BUCKET_URL (then BUILDER_ASSET_PACKS_BUCKET_URL) on first read.
 ASSET_PACKS_CATALOG = ROOT / 'apps/sites/node_modules/@dcl/asset-packs/catalog.json'
@@ -652,9 +699,11 @@ def reap_orphans():
             for signum in (stop, signal.SIGKILL):
                 (os.killpg if group else os.kill)(pid, signum)
                 deadline = time.monotonic() + 30
-                while (alive := started(pid) == record['started']) and time.monotonic() < deadline:
-                    time.sleep(.2)
-                if not alive:
+                for delay in backoff_delays(deadline):
+                    if started(pid) != record['started']:
+                        break
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
+                if started(pid) != record['started']:
                     break
         path.unlink()
 
@@ -711,6 +760,7 @@ def task(name):
         if name == 'api-build':
             # Before the index process starts mirroring, so the snapshot's rows are not fetched again.
             seed_trades(config)
+            seed_dev_flags(config)
             return
         import_asset_catalog(config, binary)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})
@@ -759,7 +809,7 @@ def supervise():
     os.chdir(STATE)
     # Task output is already in each task's log; keep it out of service.log and the journal.
     os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
-    os.execvpe('process-compose', pc_argv(*args), env)
+    os.execvpe('process-compose', pc_argv(*args), pc_env(env))
 
 
 def service_name():
@@ -891,10 +941,12 @@ def up(postgres_only=False):
         args, env = prepared
         pc(*args, '--detached', check=True, env=env)
         deadline = time.monotonic() + 10
+        delays = backoff_delays(deadline)
         while not supervisor_running():
-            if time.monotonic() >= deadline:
+            delay = next(delays, None)
+            if delay is None:
                 raise RuntimeError('Supervisor startup timed out. Inspect .cache/dev/supervisor.log.')
-            time.sleep(.1)
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
     print('Starting PostgreSQL only.' if postgres_only else
           'Starting PostgreSQL, the API and Sites. The first run downloads dependencies and compiles Rust.')
     print('Use foundation-dev logs api-build, foundation-dev status or foundation-dev wait.')
@@ -902,18 +954,60 @@ def up(postgres_only=False):
     return status()
 
 
+def log_position(path):
+    try:
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino, stat.st_size
+    except OSError:
+        return None
+
+
+def last_line(path, limit=4096, after=None):
+    try:
+        with path.open('rb') as log:
+            stat = os.fstat(log.fileno())
+            offset = after[2] if after and after[:2] == (stat.st_dev, stat.st_ino) and after[2] <= stat.st_size else 0
+            log.seek(max(offset, stat.st_size - limit))
+            tail = ANSI.sub('', log.read().decode(errors='replace'))
+            tail = ''.join(c for c in tail if c.isprintable() or c in '\n\r').rstrip()
+            return re.split(r'[\r\n]', tail)[-1].strip()
+    except OSError:
+        return ''
+
+
+def progress(processes, elapsed, log_positions=None):
+    running = [p['name'] for p in processes if p.get('is_running')]
+    pending = [p['name'] for p in processes if not p.get('is_running') and p.get('status') == 'Pending']
+    line = f"{int(elapsed) // 60}m{int(elapsed) % 60:02d}s running: {', '.join(running) or 'nothing'}"
+    if pending:
+        line += f"; waiting to start: {', '.join(pending)}"
+    for name in ('web-install', 'api-build'):
+        after = (log_positions or {}).get(name)
+        if name in running and (last := last_line(STATE / f'{name}.log', after=after)):
+            line += f'; {name}: {last[:160]}'
+    return line
+
+
 def wait_ready(timeout, postgres_only=False):
     config = settings()
     urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    started = reported = time.monotonic()
+    deadline = started + timeout
+    log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
+    print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
+    delays = backoff_delays(deadline)
+    while True:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
-        for process in json.loads(processes.stdout):
+        listing = json.loads(processes.stdout)
+        for process in listing:
             if process.get('exit_code', 0) != 0 and not process.get('is_running'):
                 name = process['name']
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
+        if time.monotonic() - reported >= PROGRESS_SECONDS:
+            reported = time.monotonic()
+            print(progress(listing, reported - started, log_positions), flush=True)
         try:
             if postgres_only:
                 sql(config, 'SELECT 1', 'postgres')
@@ -931,7 +1025,10 @@ def wait_ready(timeout, postgres_only=False):
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
         except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
-            time.sleep(1)
+            delay = next(delays, None)
+            if delay is None:
+                break
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
     raise RuntimeError('Startup timed out. Check foundation-dev status and foundation-dev logs api/sites.')
 
 
@@ -949,6 +1046,7 @@ def wait_first_mirror_pass(config, deadline):
     # prerequisite for readiness: an error, an unreadable status or the deadline only warns.
     url = f"http://127.0.0.1:{config['port']}/api/status"
     announced = None
+    delays = backoff_delays(deadline, maximum=5)
     while True:
         try:
             with urllib.request.urlopen(url, timeout=3) as response:
@@ -970,7 +1068,7 @@ def wait_first_mirror_pass(config, deadline):
         if pending != announced:
             print(f"Waiting for the first {', '.join(pending)} mirror pass; its routes answer 503 until then.")
             announced = pending
-        time.sleep(2)
+        time.sleep(min(next(delays, 0), max(0, deadline - time.monotonic())))
 
 
 def live_postgres_pid():
@@ -1013,13 +1111,18 @@ def down():
                 raise RuntimeError('Supervisor is unavailable while development ports are occupied. '
                                    'Inspect .cache/dev/supervisor.log; no processes were stopped.')
             return 0
-        pc('down', check=True)
+        # process-compose can close the connection before it answers the stop
+        # request ("failed to stop project ... EOF"); the socket and the ports
+        # say whether it stopped, not the exit code.
+        pc('down')
         deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            if not control_socket.exists() and (config is None or ports_free(config['port'])):
-                return 0
-            time.sleep(.2)
-    raise RuntimeError('Shutdown timed out. Inspect .cache/dev/supervisor.log before restarting.')
+        delays = backoff_delays(deadline)
+        while control_socket.exists() or (config is not None and not ports_free(config['port'])):
+            delay = next(delays, None)
+            if delay is None:
+                raise RuntimeError('Shutdown timed out. Inspect .cache/dev/supervisor.log before restarting.')
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        return 0
 
 
 def main():

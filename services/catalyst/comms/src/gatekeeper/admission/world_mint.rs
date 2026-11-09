@@ -28,7 +28,7 @@ use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::access::{Access, Ban, WorldAdmission};
+use crate::access::{Access, AccessGrant, Ban, WorldAdmission};
 use crate::gatekeeper::SharedState;
 use crate::gatekeeper::livekit::{AccessToken, build_adapter_url, join_grants};
 use crate::rooms::{ResolveError, RoomRequest, WORLD_ROOM_PREFIX};
@@ -97,34 +97,65 @@ impl SecretThrottle<'_> {
         if invalid_secret {
             return;
         }
-        let result = async {
-            let mut tx = self.pool.begin().await?;
-            sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'").execute(&mut *tx).await?;
-            let attempts: Option<i32> = sqlx::query_scalar("SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3 FOR UPDATE")
-                .bind(self.world).bind(self.subject_key()).bind(reservation.window).fetch_optional(&mut *tx).await?;
-            if let Some(attempts) = attempts {
-                let statement = if attempts == 1 {
-                    "DELETE FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                } else {
-                    "UPDATE social.world_secret_attempts SET attempts=attempts-1 WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                };
-                sqlx::query(statement).bind(self.world).bind(self.subject_key()).bind(reservation.window).execute(&mut *tx).await?;
-            }
-            tx.commit().await
-        }.await;
+        let result = super::functions::bounded(async {
+            let functions = super::functions::installed(self.pool).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT social.{}($1,$2,$3)",
+                functions.refund
+            )))
+            .bind(self.world)
+            .bind(self.subject_key())
+            .bind(reservation.window)
+            .execute(self.pool)
+            .await
+        })
+        .await;
         if let Err(error) = result {
             tracing::warn!(%error, world=self.world, "world secret reservation refund failed; charge expires with its window");
         }
     }
+
+    /// A right secret forgets the caller's earlier failures in this world, as
+    /// upstream's `clearAttempts` does after a successful handshake.
+    pub async fn clear(&self) {
+        let result = super::functions::bounded(
+            sqlx::query(
+                "DELETE FROM social.world_secret_attempts WHERE world_name = $1 AND subject = $2",
+            )
+            .bind(self.world)
+            .bind(self.subject_key())
+            .execute(self.pool),
+        )
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, world=self.world, "world secret attempts clear failed; they expire with their window");
+        }
+    }
 }
 
+/// The expiry sweep deletes this many rows per statement.
+const SWEEP_BATCH: i64 = 1000;
+/// The expiry sweep stops after this time. The next run continues.
+const SWEEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Drops expired throttle windows (the `comms-secret-attempts-sweep` job).
+/// The sweep deletes in short batches. It continues while a batch is full,
+/// so a backlog drains in one run. It stops when a batch is short or when
+/// the time budget is used.
 pub async fn sweep_secret_attempts(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT 1000 FOR UPDATE SKIP LOCKED)")
-        .bind(window_start_cutoff(now))
-        .execute(pool)
-        .await?;
-    Ok(())
+    let cutoff = window_start_cutoff(now);
+    let started = std::time::Instant::now();
+    loop {
+        let removed = sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT $2 FOR UPDATE SKIP LOCKED)")
+            .bind(cutoff)
+            .bind(SWEEP_BATCH)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        if removed < SWEEP_BATCH as u64 || started.elapsed() >= SWEEP_BUDGET {
+            return Ok(());
+        }
+    }
 }
 
 fn too_many_attempts() -> ApiError {
@@ -134,8 +165,21 @@ fn too_many_attempts() -> ApiError {
     )
 }
 
-fn invalid_world(world_name: &str) -> ApiError {
-    ApiError::not_found(format!("World \"{world_name}\" is invalid or blocked."))
+/// The world mints' `InvalidWorldError`; `comms-adapter-handler` words its 404 apart.
+fn invalid_world(world_name: &str, adapter: bool) -> ApiError {
+    ApiError::not_found(if adapter {
+        format!("World \"{world_name}\" was not found.")
+    } else {
+        format!("World \"{world_name}\" is invalid or blocked.")
+    })
+}
+
+/// `logic/comms/errors.ts` texts.
+const PLATFORM_BANNED: &str = "Access denied, platform-banned user.";
+const DENY_LISTED: &str = "Access denied, deny-listed wallet.";
+
+fn not_allowed(world_name: &str) -> String {
+    format!("You are not allowed to access world \"{world_name}\".")
 }
 
 /// Stamp authorization after any already-started access edit commits. A short
@@ -145,19 +189,18 @@ pub(crate) async fn authorization_started(
     pool: &PgPool,
     world: &WorldName,
 ) -> Result<NaiveDateTime, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR SHARE")
+    super::functions::bounded(async {
+        let functions = super::functions::installed(pool).await?;
+        let started: Option<NaiveDateTime> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT social.{}($1)",
+            functions.stamp
+        )))
         .bind(world.key())
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
-    let started = sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
-        .fetch_one(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(started)
+        started.ok_or(sqlx::Error::RowNotFound)
+    })
+    .await
 }
 
 pub(crate) const AUTHORIZATION_FIELD: &str = "worldAuthorization";
@@ -240,6 +283,9 @@ pub struct CommsAdapterResponse {
     pub fixed_adapter: String,
 }
 
+/// The three mints, behind the NUL guard and CORS like the other worlds
+/// routers: the handshake carries `x-identity-*` headers, so a browser
+/// explorer sends a preflight first.
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/worlds/{world_name}/comms", post(world_comms))
@@ -248,6 +294,12 @@ pub fn router(state: SharedState) -> Router {
             post(world_scene_comms),
         )
         .route("/get-comms-adapter/{room_id}", post(get_comms_adapter))
+        .layer(axum::middleware::from_fn(
+            crate::shared::nul_guard::nul_guard_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
+            crate::shared::cors::cors_middleware,
+        ))
         .with_state(state)
 }
 
@@ -272,12 +324,9 @@ async fn get_comms_adapter(
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
-    let Some(world_name) = room_id.strip_prefix(WORLD_ROOM_PREFIX) else {
-        return ApiError::bad_request("Invalid room id requested.").into_response();
-    };
     let path = SignedPath::from_uris(&original, &uri);
     answer(
-        mint(&state, world_name, None, &path, &headers, true).await,
+        mint(&state, &room_id, None, &path, &headers, true).await,
         ADAPTER_ROUTE_REASONS,
     )
 }
@@ -301,14 +350,16 @@ const WORLD_ROUTE_REASONS: &[u16] = &[401, 403, 404, 429, 503];
 /// `comms-adapter-handler` throws http-commons errors except its 429.
 const ADAPTER_ROUTE_REASONS: &[u16] = &[429];
 
-/// The mint's answer: the listed statuses carry the reason in `error` (and in `message`).
+/// The mint's answer: the listed statuses carry the reason in `error` (and in
+/// `message`); a signed-fetch refusal keeps the middleware's own body.
 fn answer(result: Result<Json<CommsAdapterResponse>, ApiError>, reasons: &[u16]) -> Response {
     let error = match result {
         Ok(json) => return json.into_response(),
         Err(error) => error,
     };
-    let reason = (!matches!(error, ApiError::Internal(_)) && reasons.contains(&error.status()))
-        .then(|| error.public_message());
+    let reason = (!matches!(error, ApiError::Internal(_) | ApiError::SignedFetch { .. })
+        && reasons.contains(&error.status()))
+    .then(|| error.public_message());
     let mut response = error.into_response();
     if let Some(reason) = reason {
         response.headers_mut().remove(CONTENT_LENGTH);
@@ -332,9 +383,14 @@ fn require_explorer_handshake(metadata: &serde_json::Value) -> Result<(), ApiErr
     Ok(())
 }
 
+/// `target` is the world name on the two `/worlds/...` routes and the room
+/// id (`world-<name>`) on `/get-comms-adapter`, whose prefix is checked after
+/// the signed fetch and the handshake metadata, as upstream checks it. Then,
+/// in upstream's order: platform ban, deny list, the world (a name that cannot
+/// be a world is an unknown one), and the rest.
 async fn mint(
     state: &SharedState,
-    world_name: &str,
+    target: &str,
     scene_id: Option<&str>,
     path: &SignedPath,
     headers: &HeaderMap,
@@ -349,21 +405,41 @@ async fn mint(
     )
     .await
     .map_err(map_auth_error_api)?;
-    if explorer_handshake {
+    let world_name = if explorer_handshake {
         require_explorer_handshake(&auth.metadata)?;
-    }
+        target
+            .strip_prefix(WORLD_ROOM_PREFIX)
+            .ok_or_else(|| ApiError::bad_request("Invalid room id requested."))?
+    } else {
+        target
+    };
     let identity = auth.signer.clone();
-    if state.deny_list.is_denied(identity.as_str()).await {
-        return Err(ApiError::unauthorized(
-            "Access denied, wallet is deny-listed.",
-        ));
-    }
     let secret = auth.secret();
-    let world = WorldName::parse(world_name).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    if world.display() != world_name {
-        return Err(ApiError::bad_request("Invalid world name"));
-    }
     let now = chrono::Utc::now().naive_utc();
+
+    match crate::gatekeeper::moderation::admission_ban(
+        state.policy.as_ref(),
+        state.bans.as_ref(),
+        &identity,
+        None,
+        None,
+        now,
+    )
+    .await
+    .map_err(undetermined)?
+    {
+        Some(Ban::Blocked | Ban::Platform) => {
+            return Err(ApiError::unauthorized(PLATFORM_BANNED));
+        }
+        Some(Ban::Scene) | None => {}
+    }
+    if state.deny_list.is_denied(identity.as_str()).await {
+        return Err(ApiError::unauthorized(DENY_LISTED));
+    }
+    let world = WorldName::parse(world_name)
+        .ok()
+        .filter(|world| world.display() == world_name)
+        .ok_or_else(|| invalid_world(world_name, explorer_handshake))?;
 
     let admission = state
         .policy
@@ -383,26 +459,8 @@ async fn mint(
         max_attempts: state.world_mint.max_secret_attempts,
     };
 
-    match crate::gatekeeper::moderation::admission_ban(
-        state.policy.as_ref(),
-        state.bans.as_ref(),
-        &identity,
-        None,
-        None,
-        now,
-    )
-    .await
-    .map_err(undetermined)?
-    {
-        Some(Ban::Blocked | Ban::Platform) => {
-            return Err(ApiError::unauthorized(
-                "Access denied, you are banned from the platform.",
-            ));
-        }
-        Some(Ban::Scene) | None => {}
-    }
     if matches!(admission, WorldAdmission::Unknown | WorldAdmission::Blocked) {
-        return Err(invalid_world(world_name));
+        return Err(invalid_world(world_name, explorer_handshake));
     }
 
     let scene = match scene_id {
@@ -435,7 +493,7 @@ async fn mint(
         }
         // The lobby: the row vanished since `world_admission`, still an unknown world.
         Err(ResolveError::UnresolvedRoom(_)) if scene_id.is_none() => {
-            return Err(invalid_world(world_name));
+            return Err(invalid_world(world_name, explorer_handshake));
         }
         Err(ResolveError::UnresolvedRoom(_)) => {
             return Err(ApiError::not_found(format!(
@@ -484,29 +542,21 @@ async fn mint(
             .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
             .await;
     }
-    match access.map_err(undetermined)? {
-        Access::Allowed(_) => {}
+    let by_secret = match access.map_err(undetermined)? {
+        Access::Allowed(grant) => grant == AccessGrant::SharedSecret,
         Access::Banned(Ban::Scene) => {
             return Err(ApiError::unauthorized(format!(
                 "You are banned from world \"{world_name}\"."
             )));
         }
-        Access::Banned(_) => {
-            return Err(ApiError::unauthorized(
-                "Access denied, you are banned from the platform.",
-            ));
+        Access::Banned(_) => return Err(ApiError::unauthorized(PLATFORM_BANNED)),
+        // `world-comms-handler` answers a refused secret 403, `comms-adapter-handler` 401.
+        Access::InvalidSecret if explorer_handshake => {
+            return Err(ApiError::unauthorized(not_allowed(world_name)));
         }
-        Access::InvalidSecret => {
-            return Err(ApiError::forbidden(format!(
-                "Access denied, invalid secret for world \"{world_name}\"."
-            )));
-        }
-        Access::NotAllowed => {
-            return Err(ApiError::unauthorized(format!(
-                "You are not allowed to access world \"{world_name}\"."
-            )));
-        }
-    }
+        Access::InvalidSecret => return Err(ApiError::forbidden(not_allowed(world_name))),
+        Access::NotAllowed => return Err(ApiError::unauthorized(not_allowed(world_name))),
+    };
 
     let participants = state
         .presence
@@ -537,6 +587,9 @@ async fn mint(
     )
     .to_jwt()
     .map_err(|e| ApiError::internal(format!("token mint failed: {e}")))?;
+    if by_secret {
+        attempts.clear().await;
+    }
     Ok(Json(CommsAdapterResponse {
         fixed_adapter: build_adapter_url(&state.livekit.client_url, &token),
     }))
@@ -656,6 +709,29 @@ mod throttle_tests {
     }
 
     #[tokio::test]
+    async fn the_sweep_drains_a_backlog_larger_than_one_batch() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("sweep-{}.dcl.eth", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().naive_utc();
+        let expired = window_start_cutoff(now) - chrono::TimeDelta::seconds(1);
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) SELECT $1,'expired-'||n,1,$2 FROM generate_series(1,$3) AS n")
+            .bind(&world).bind(expired).bind(SWEEP_BATCH * 2 + 1).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'live',1,$2)")
+            .bind(&world).bind(now).execute(&pool).await.unwrap();
+        sweep_secret_attempts(&pool, now).await.unwrap();
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT subject FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
     async fn authorization_stamp_waits_for_an_inflight_world_edit() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -769,6 +845,50 @@ mod throttle_tests {
         .await
         .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn database_wait_deadlines_refuse_stamps_and_retain_unsettled_charges() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let world =
+            WorldName::parse(&format!("deadline-{}.dcl.eth", uuid::Uuid::new_v4())).unwrap();
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES($1)")
+            .bind(world.key())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let throttle = SecretThrottle {
+            pool: &pool,
+            world: world.key(),
+            subject: "caller",
+            max_attempts: 3,
+        };
+        let reservation = throttle
+            .reserve(chrono::Utc::now().naive_utc())
+            .await
+            .unwrap()
+            .unwrap();
+        crate::gatekeeper::admission::functions::installed(&pool)
+            .await
+            .unwrap();
+        let held = pool.acquire().await.unwrap();
+        let error = authorization_started(&pool, &world).await.unwrap_err();
+        assert!(
+            matches!(error, sqlx::Error::Io(ref error) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        throttle.settle(false, reservation).await;
+        drop(held);
+        let count: i32 = sqlx::query_scalar(
+            "SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(world.key())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(authorization_started(&pool, &world).await.is_ok());
     }
 
     #[tokio::test]

@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import textwrap
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -136,6 +139,13 @@ class ResolverTest(unittest.TestCase):
         self.assertFalse(result['run'])
         self.assertFalse(result['legs'])
         self.assertIn(f'base web build ({MAIN[0]}, CI run 90) is not optimized', result['notes'])
+
+    def test_a_fleet_that_is_off_is_the_note_even_for_an_unoptimized_change_build(self):
+        self.github.build_info = {f'bevy-explorer-web-{MERGE}': {'engine': {'optimized': False}}}
+        result = self.resolve(enabled='none')
+        self.assertFalse(result['run'])
+        self.assertEqual(result['notes'], 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.')
+        self.assertEqual(self.github.zips_read(), [])
 
     def test_fork_pr(self):
         self.assert_skipped(self.resolve(event=completed(head_repository={'full_name': 'fork/project'},
@@ -272,6 +282,89 @@ class OutputTest(unittest.TestCase):
                     patch('builtins.print') as printed:
                 self.assertEqual(inputs.main(), 1)
             self.assertTrue(printed.call_args.args[0].startswith('::error::'))
+
+
+class QueueWatchdogTest(unittest.TestCase):
+    def queue(self, states, timeout=1, expire_after_sleep=False):
+        source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
+        step = source.split('      - name: Wait for every leg to start\n', 1)[1]
+        body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / 'states.json').write_text(json.dumps(states))
+            gh = folder / 'gh'
+            gh.write_text(f'#!{sys.executable}\n' + textwrap.dedent("""\
+                import json, os
+                from pathlib import Path
+                folder = Path(os.environ['QUEUE_FIXTURE'])
+                counter = folder / 'calls'
+                call = int(counter.read_text()) if counter.exists() else 0
+                counter.write_text(str(call + 1))
+                states = json.loads((folder / 'states.json').read_text())
+                state = states[min(call, len(states) - 1)]
+                print(state if isinstance(state, str) else json.dumps(state))
+                """))
+            gh.chmod(0o755)
+            environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}',
+                               QUEUE_FIXTURE=str(folder), GITHUB_WORKSPACE=str(Path(__file__).parents[2]),
+                               QUEUE_EXPIRE_AFTER_SLEEP='1' if expire_after_sleep else '',
+                               EXPECTED_LABELS='first-chrome,second-chrome',
+                               QUEUE_TIMEOUT_MINUTES=str(timeout), GITHUB_REPOSITORY=REPO,
+                               GITHUB_RUN_ID='42', RUN_URL='https://example.test/run',
+                               GITHUB_STEP_SUMMARY=str(folder / 'summary'), GITHUB_OUTPUT=str(folder / 'output'))
+            result = subprocess.run(['bash', '-euo', 'pipefail', '-c',
+                                     'sleep() { printf "%s\\n" "$1" >> "$QUEUE_FIXTURE/sleeps"; '
+                                     'if [ -n "$QUEUE_EXPIRE_AFTER_SLEEP" ]; then SECONDS=$((SECONDS + 60 * QUEUE_TIMEOUT_MINUTES)); fi; }\n' + textwrap.dedent(body)],
+                                    cwd=folder, env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return (int((folder / 'calls').read_text()),
+                    (folder / 'sleeps').read_text().splitlines() if (folder / 'sleeps').exists() else [],
+                    (folder / 'output').read_text() if (folder / 'output').exists() else '',
+                    (folder / 'summary').read_text() if (folder / 'summary').exists() else '')
+
+    def test_empty_partial_and_queued_publication_requires_every_leg_to_start(self):
+        first = {'name': 'first-chrome / Chrome', 'status': 'in_progress'}
+        second = {'name': 'second-chrome / Chrome', 'status': 'queued'}
+        calls, sleeps, output, _ = self.queue([
+            {'jobs': []}, {'jobs': [first]}, {'jobs': [first, second]},
+            {'jobs': [{**first, 'status': 'completed'}, {**second, 'status': 'in_progress'}]},
+        ])
+        self.assertEqual(calls, 4)
+        self.assertEqual(sleeps, ['5', '10', '20'])
+        self.assertEqual(output, '')
+
+    def test_missing_legs_still_exhaust_the_queue_deadline(self):
+        calls, sleeps, output, _ = self.queue([{'jobs': [{'name': 'Queue watchdog', 'status': 'in_progress'}]}], timeout=0)
+        self.assertEqual(calls, 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(output, 'stuck=true\n')
+
+    def test_unusable_jobs_responses_retry_until_every_leg_starts(self):
+        started = {'jobs': [
+            {'name': 'first-chrome / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome / Chrome', 'status': 'completed'},
+        ]}
+        for response in [{}, {'jobs': None}, 'malformed JSON']:
+            with self.subTest(response=response):
+                calls, sleeps, output, summary = self.queue([response, started])
+                self.assertEqual(calls, 2)
+                self.assertEqual(sleeps, ['5'])
+                self.assertEqual(output, '')
+                self.assertEqual(summary, '')
+
+    def test_final_unusable_response_preserves_the_last_queued_runner(self):
+        queued = {'jobs': [
+            {'name': 'first-chrome / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome / Chrome', 'status': 'queued'},
+        ]}
+        for response in [{}, {'jobs': None}, 'malformed JSON']:
+            with self.subTest(response=response):
+                calls, sleeps, output, summary = self.queue([queued, response], expire_after_sleep=True)
+                self.assertEqual(calls, 2)
+                self.assertEqual(sleeps, ['5'])
+                self.assertEqual(output, 'stuck=true\n')
+                self.assertIn('**second-chrome**', summary)
+                self.assertNotIn('**a leg**', summary)
 
 
 if __name__ == '__main__':

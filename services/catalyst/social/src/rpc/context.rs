@@ -255,8 +255,10 @@ impl Context {
             socket.end(code, reason);
         }
         let deadline = Instant::now() + budget;
+        let mut delay = Duration::from_millis(1);
         while self.live_connections() > 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+            delay = delay.saturating_mul(2).min(Duration::from_millis(100));
         }
     }
 

@@ -1,0 +1,16 @@
+{
+    "version": 1,
+    "components": [
+        {
+            "name": "my-lib::custom::InexistentComponent",
+            "data": {
+                "512": {
+                    "$case": "json",
+                    "json": {
+                        "test": 111
+                    }
+                }
+            }
+        }
+    ]
+}

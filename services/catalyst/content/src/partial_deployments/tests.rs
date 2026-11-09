@@ -213,6 +213,9 @@ fn batch_request(
             format!("multipart/form-data; boundary={boundary}"),
         )
         .header("x-real-ip", "203.0.113.7")
+        // Clients declare their length: an undeclared body takes a
+        // source's whole in-flight share.
+        .header(header::CONTENT_LENGTH, body.len())
         .body(Body::from(body))
         .unwrap()
 }

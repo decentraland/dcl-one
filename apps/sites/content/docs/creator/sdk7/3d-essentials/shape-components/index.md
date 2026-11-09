@@ -6,7 +6,7 @@ Three dimensional scenes in Decentraland are based on the [Entity-Component](htt
 
 The rendered shape of an entity is determined by what component it uses.
 
-![](/docs/creator/images/media/ecs-simple-components-new.webp)
+![](/docs/creator/images/media/ecs-simple-components-new.webp)
 
 ## Use the Scene Editor in Creator Hub
 
@@ -79,9 +79,9 @@ MeshRenderer.setSphere(myCube)
 
 > [!WARNING]
 > **📔 Note**: The `MeshRenderer` component must be imported via
-> 
+>
 > > `import { MeshRenderer } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -106,7 +106,7 @@ The `src` field is required, you must give it a value when constructing the comp
 > **💡 Tip**: We recommend keeping your models separate in the `assets/scene/models` folder inside your scene.
 
 
-glTF models can include their own embedded textures, materials, colliders and animations. See [3D models](https://github.com/decentraland/docs-creator/blob/main/creator/3d-modeling/3d-models/README.md) for more information on this. To override the materials of a model, use the [GltfNodeModifiers](/docs/creator/sdk7/3d-essentials/materials/#modify-gltf-materials) component. See [Modify glTF materials](/docs/creator/sdk7/3d-essentials/materials/#modify-gltf-materials) for more details.
+glTF models can include their own embedded textures, materials, colliders and animations. See [3D models](https://github.com/decentraland/docs/blob/main/creator/3d-modeling/3d-models.md) for more information on this. To override the materials of a model, use the [GltfNodeModifiers](/docs/creator/sdk7/3d-essentials/materials/#modify-gltf-materials) component. See [Modify glTF materials](/docs/creator/sdk7/3d-essentials/materials/#modify-gltf-materials) for more details.
 
 To prevent players from walking through a 3D model, or to make a model clickable, you must have a [collider](/docs/creator/sdk7/3d-essentials/colliders/), which may be embedded in the model or provided via a `MeshCollider` component.
 
@@ -115,9 +115,9 @@ Keep in mind that all models, their shaders and their textures must be within th
 
 > [!WARNING]
 > **📔 Note**: The `GltfContainer` component must be imported via
-> 
+>
 > `import { GltfContainer } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -169,7 +169,7 @@ To ensure that 3D models in your scene load faster and take up less memory, foll
 
 * Save your models in _.glb_ format, which is a lighter version of _.gltf_.
 * If you have multiple models that share the same textures, export your models with textures in a separate file. That way multiple models can refer to a single texture file that only needs to be loaded once.
-* If your scene has entities that appear and disappear, it might be a good idea to pool these entities and keep them underground, or at a scale of 0. This will help them appear faster, the trade-off is that they will occupy memory when not in use. See [entities and components](/docs/creator/sdk7/architecture/entities-components/#pooling-entities-and-components)
+* If your scene has entities that appear and disappear, it might be a good idea to pool these entities and keep them underground, or at a scale of 0. This will help them appear faster, the trade-off is that they will occupy memory when not in use.
 
 ## Stretching a shape
 
@@ -229,7 +229,7 @@ MeshRenderer.setBox(child)
 
 > [!WARNING]
 > **📔 Note**: If an entity has its own `VisibilityComponent`, this overrides any configuration from parents. 
-> 
+>
 > If an entity doesn't have its own `VisibilityComponent`, then its visibility is determned by its nearest parent with a `VisibilityComponent` and `propagateToChildren` set to _true_.
 
 

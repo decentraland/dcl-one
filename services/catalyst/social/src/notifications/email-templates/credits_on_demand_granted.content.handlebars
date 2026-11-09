@@ -1,0 +1,55 @@
+{{#if metadata.denomination}}
+{{!--
+  The Shop's Credits hero, drawn the way the Shop's purchase receipt draws it: the coin stack is baked into the
+  image and the amount is live text on its right. Outlook ignores CSS background images, so it gets a VML rect
+  with the same image and a solid purple fallback. Images come from the Shop's email assets at a pinned (immutable)
+  CDN version, so an email read long after it was sent still finds them. On phones the
+  layout's stylesheet shrinks it with the column (the credits-hero classes), and the amount is also in the text below,
+  for clients that drop that stylesheet.
+--}}
+<table role="presentation" class="credits-hero" width="560" cellpadding="0" cellspacing="0" border="0" style="width: 560px; margin: 0 auto; border-collapse: collapse;">
+  <tr>
+    <td class="credits-hero" background="https://cdn.decentraland.org/@dcl/shop/1.3.1-31179091387.commit-ec5b1ea/email/hero-credits.png" bgcolor="#632087" width="560" height="224" valign="middle" style="width: 560px; height: 224px; background-color: #632087; background-image: url('https://cdn.decentraland.org/@dcl/shop/1.3.1-31179091387.commit-ec5b1ea/email/hero-credits.png'); background-repeat: no-repeat; background-position: top left; background-size: 560px 224px; border-radius: 8px;">
+      <!--[if gte mso 9]>
+      <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width: 560px; height: 224px;">
+      <v:fill type="frame" src="https://cdn.decentraland.org/@dcl/shop/1.3.1-31179091387.commit-ec5b1ea/email/hero-credits.png" color="#632087" />
+      <v:textbox inset="0,0,0,0"><div>
+      <![endif]-->
+      <table role="presentation" class="credits-hero" width="560" cellpadding="0" cellspacing="0" border="0" style="width: 560px; border-collapse: collapse;">
+        <tr>
+          <td class="credits-hero-spacer" width="286" style="width: 286px; font-size: 0; line-height: 0;">&nbsp;</td>
+          <td align="left" valign="middle" style="padding: 8px 0 0 0;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+              <tr>
+                <td width="28" valign="middle" style="width: 28px;">
+                  <img src="https://cdn.decentraland.org/@dcl/shop/1.3.1-31179091387.commit-ec5b1ea/email/credit-glyph.png" class="credits-hero-glyph" width="28" height="30" alt="" style="display: block; width: 28px; height: 30px; border: 0;" />
+                </td>
+                <td width="8" style="width: 8px; font-size: 0; line-height: 0;">&nbsp;</td>
+                <td class="credits-hero-amount" align="left" valign="middle" style="font-size: 40px; line-height: 40px; font-weight: 800; color: #FFFFFF; white-space: nowrap;">{{metadata.creditsGranted}}</td>
+                <td width="4" style="width: 4px; font-size: 0; line-height: 0;">&nbsp;</td>
+                <td class="credits-hero-unit" align="left" valign="middle" style="font-size: 20px; line-height: 24px; font-weight: 500; color: #ECEBED; white-space: nowrap;">CREDITS</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <!--[if gte mso 9]></div></v:textbox></v:rect><![endif]-->
+    </td>
+  </tr>
+</table>
+
+<p style="font-size: 16px; font-weight: 700; line-height: 24px; text-align: center; color: #43404A;">
+  {{#if metadata.studioName}}{{metadata.studioName}} gifted you {{metadata.creditsGranted}} Credits.{{else}}You received {{metadata.creditsGranted}} Credits.{{/if}} They never expire: spend them in the Shop.
+</p>
+{{else}}
+<p style="font-size: 16px; font-weight: 700; line-height: 24px; text-align: center; color: #43404A;">
+  Congratulations! You've earned extra Marketplace Credits for this season. Make sure to spend them before they expire!
+</p>
+
+<div style="text-align: center;">
+  <span style="font-size: 14px; font-weight: 400; color: #716B7C; line-height: 100%; display: inline-block; vertical-align: middle;">Credits Earned:</span>
+  <span style="display: inline-block; font-size: 16px; vertical-align: middle; font-weight: 700; color: #43404A; margin-left: 4px; line-height: 24px;">
+    <img src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/fd0562e1-968e-49df-97cb-19b7ea5f3dda/34x33.png" alt="Credits Icon" style="vertical-align: middle; margin-right: 4px;">
+    {{metadata.creditsGranted}}
+  </span>
+</div>{{/if}}
