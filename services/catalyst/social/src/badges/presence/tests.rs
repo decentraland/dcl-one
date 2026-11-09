@@ -836,3 +836,30 @@ async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
         [("EV_a".into(), "join".into(), "world".into(), "PA_1".into())]
     );
 }
+
+#[tokio::test]
+async fn a_failed_insert_is_tried_once_more() {
+    let backoff = std::time::Duration::from_millis(1);
+    let mut calls = 0;
+    let stored = sink::retry_once(backoff, || {
+        calls += 1;
+        let first = calls == 1;
+        async move {
+            if first {
+                Err(sqlx::Error::PoolTimedOut)
+            } else {
+                Ok(7_u64)
+            }
+        }
+    })
+    .await;
+    assert_eq!((stored.unwrap(), calls), (7, 2));
+    let mut calls = 0;
+    let stored = sink::retry_once(backoff, || {
+        calls += 1;
+        async { Err::<u64, _>(sqlx::Error::PoolTimedOut) }
+    })
+    .await;
+    assert!(stored.is_err());
+    assert_eq!(calls, 2, "one retry, then the batch is dropped");
+}

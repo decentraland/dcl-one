@@ -1271,7 +1271,8 @@ world rooms only, with LiveKit's participant sid as the session. Each process
 queues them without blocking the webhook (10,000 events, a dropped one counted
 in `badges_presence_events_dropped_total`) and its writer inserts batches into
 `social.presence_events`, keyed by LiveKit's event id, so a redelivered
-webhook is one row. Expected volume is every join and leave of every scene and
+webhook is one row. A failed batch insert is retried once after 1 s, then
+dropped and counted. Expected volume is every join and leave of every scene and
 world room while `BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
 up to 500 in `seq` order, one transaction per event that deletes it, so the

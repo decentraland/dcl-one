@@ -4,7 +4,9 @@
 //! `social.presence_events` in batches (keyed by LiveKit's event id, so a
 //! redelivered webhook is one row). The engine applies the rows later.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use sqlx::PgPool;
@@ -17,6 +19,8 @@ use crate::identity::Address;
 /// Events queued between the webhook and the writer; past it they are dropped.
 pub const QUEUE: usize = 10_000;
 const BATCH: usize = 500;
+/// The pause before a failed batch insert is tried once more.
+const RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// One row of `social.presence_events`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +95,12 @@ impl EventSink {
         }
     }
 
-    /// Inserts whatever is queued now, without the writer (tests). A no-op
+    /// Stores `batch`, trying once more after a pause.
+    async fn store(&self, pool: &PgPool, batch: Vec<PresenceEvent>) -> Result<u64, sqlx::Error> {
+        retry_once(RETRY_BACKOFF, || insert(pool, &batch)).await
+    }
+
+    /// Stores whatever is queued now, without the writer (tests). A no-op
     /// once the writer owns the receiver.
     pub async fn flush(&self, pool: &PgPool) -> Result<u64, sqlx::Error> {
         let mut batch = Vec::new();
@@ -100,7 +109,7 @@ impl EventSink {
                 batch.push(event);
             }
         }
-        insert(pool, &batch).await
+        self.store(pool, batch).await
     }
 
     /// The `badges-presence-events` writer, on every process that receives
@@ -109,6 +118,7 @@ impl EventSink {
         let Some(mut rx) = self.rx.lock().take() else {
             return;
         };
+        let sink = self.clone();
         jobs.spawn("badges-presence-events", move |ctx| async move {
             let mut batch = Vec::with_capacity(BATCH);
             loop {
@@ -121,12 +131,13 @@ impl EventSink {
                         0
                     }
                 };
-                if !batch.is_empty()
-                    && let Err(error) = insert(&pool, &batch).await
+                let rows = batch.len();
+                if rows > 0
+                    && let Err(error) = sink.store(&pool, std::mem::take(&mut batch)).await
                 {
                     metrics::counter!("badges_presence_events_dropped_total", "reason" => "insert_failed")
-                        .increment(batch.len() as u64);
-                    tracing::warn!(%error, rows = batch.len(), "presence events not stored");
+                        .increment(rows as u64);
+                    tracing::warn!(%error, rows, "presence events not stored");
                 }
                 batch.clear();
                 if received == 0 {
@@ -150,6 +161,23 @@ impl RoomEventSink for EventSink {
             metrics::counter!("badges_presence_events_dropped_total", "reason" => reason)
                 .increment(1);
             tracing::warn!(reason, "presence event dropped");
+        }
+    }
+}
+
+/// Runs `op` once more after `backoff` when it fails, so a brief database
+/// blip loses nothing.
+pub(super) async fn retry_once<T, F, Fut>(backoff: Duration, mut op: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, sqlx::Error>>,
+{
+    match op().await {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            tracing::warn!(%error, "presence events not stored; retrying");
+            tokio::time::sleep(backoff).await;
+            op().await
         }
     }
 }
