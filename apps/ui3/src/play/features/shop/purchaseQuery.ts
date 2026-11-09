@@ -11,8 +11,9 @@ import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { inShell, onShellMessage, shellRequest } from '../../lib/shell'
-import { isShellError } from '../../lib/shellReply'
+import { isShellError, ShellError } from '../../lib/shellReply'
 import {
+  LEGACY_SHOP_BUSY_MESSAGE,
   parseOperationEvent,
   SHOP_BUSY,
   SHOP_EVENT,
@@ -83,9 +84,13 @@ export interface ShopPurchase {
  */
 export type ShopOpening = 'opened' | 'busy' | 'unavailable'
 
-/** What a request to open a purchase that failed with `e` came to. */
-function failedOpening(e: unknown, what: string): ShopOpening {
-  if (isShellError(e, SHOP_BUSY)) return 'busy'
+/**
+ * What a request to open a purchase that failed with `e` came to: busy by SHOP_BUSY's code, or, from a shell from
+ * before codes (its capabilities don't say `codedErrors`, or aren't known), by LEGACY_SHOP_BUSY_MESSAGE's exact words.
+ */
+function failedOpening(e: unknown, what: string, capabilities: ShopCapabilities | undefined): ShopOpening {
+  const legacyBusy = capabilities?.codedErrors !== true && e instanceof Error && !(e instanceof ShellError) && e.message === LEGACY_SHOP_BUSY_MESSAGE
+  if (isShellError(e, SHOP_BUSY) || legacyBusy) return 'busy'
   console.warn(`[shop] the ${what} could not open`, e)
   return 'unavailable'
 }
@@ -169,9 +174,9 @@ export function useShopPurchase(onBackpack: () => void, names: ShopNameActions =
       versioned(await shellRequest<ShopOperation>(SHOP_METHODS.buy, request, BUY_TIMEOUT_MS))
       return 'opened'
     } catch (e) {
-      return failedOpening(e, 'purchase')
+      return failedOpening(e, 'purchase', queryClient.getQueryData(purchaseQueries.capabilities().queryKey))
     }
-  }, [])
+  }, [queryClient])
   const buy = useCallback(
     (item: CatalogItem, input?: PressedWith): Promise<ShopOpening> =>
       item.itemId == null ? Promise.resolve('unavailable') : request([{ contract: item.contractAddress.toLowerCase(), itemId: String(item.itemId), quantity: 1 }], false, input),
@@ -186,8 +191,8 @@ export function useShopPurchase(onBackpack: () => void, names: ShopNameActions =
       versioned(await shellRequest<ShopOperation>(SHOP_METHODS.buyName, request, BUY_TIMEOUT_MS))
       return 'opened'
     } catch (e) {
-      return failedOpening(e, 'NAME purchase')
+      return failedOpening(e, 'NAME purchase', queryClient.getQueryData(purchaseQueries.capabilities().queryKey))
     }
-  }, [])
+  }, [queryClient])
   return { available: inShell, buy, checkout, buyAll, buyName }
 }
