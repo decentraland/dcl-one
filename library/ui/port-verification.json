@@ -3,7 +3,7 @@
   "lockHash": "ae135626eb93c8bccb5b4999408e7cab3c934b7cba21eb5859c983dec8867337",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "0ecf55523e2b342407168c145ccae573316bab49",
+  "figmaTree": ":library/ui/figma",
   "checks": {
     "fetch-source": {
       "result": "pass",
