@@ -337,7 +337,8 @@ async fn send_with_permission(
     };
     let _call = budget.track_call();
 
-    let origin = prompt_origin(&request.url)?;
+    let origin = common::util::prompt_origin(&request.url)
+        .ok_or_else(|| type_error("fetch URL has no origin"))?;
     let (sx, rx) = RpcResultSender::channel();
     state
         .borrow_mut()
@@ -356,18 +357,6 @@ async fn send_with_permission(
         .run(send_request(state, request, is_server, allow_private))
         .await
         .map_err(|_| type_error("fetch request timed out"))?
-}
-
-/// `scheme://host:port` of a request URL, what the permission prompt shows.
-fn prompt_origin(url: &str) -> Result<String, AnyError> {
-    let url = deno_core::url::Url::parse(url)?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| type_error("fetch URL has no host"))?;
-    let port = url
-        .port_or_known_default()
-        .ok_or_else(|| type_error("fetch URL has no port"))?;
-    Ok(format!("{}://{host}:{port}", url.scheme()))
 }
 
 async fn send_request(

@@ -676,9 +676,17 @@ pub fn is_loopback_url(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| url.is_loopback())
 }
 
+/// `scheme://host:port` of a URL, for permission prompts; `None` without a host or port.
+pub fn prompt_origin(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?;
+    let port = url.port_or_known_default()?;
+    Some(format!("{}://{host}:{port}", url.scheme()))
+}
+
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
 /// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
-/// benchmarking, reserved, multicast, unique-local/link-local v6, unspecified, and IPv6
+/// IETF protocol assignments, reserved, multicast, unique-local/link-local v6, unspecified, and IPv6
 /// addresses that carry a forbidden IPv4 address (see [`embedded_ipv4`]).
 pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -696,8 +704,8 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
                 || o[0] >= 240
                 // carrier-grade NAT 100.64.0.0/10
                 || (o[0] == 100 && (o[1] & 0xc0) == 64)
-                // benchmarking 198.18.0.0/15
-                || (o[0] == 198 && (o[1] & 0xfe) == 18)
+                // IETF protocol assignments 192.0.0.0/24, DS-Lite AFTR/B4 included
+                || o[..3] == [192, 0, 0]
         }
         IpAddr::V6(v6) => {
             if let Some(v4) = embedded_ipv4(v6) {
@@ -718,15 +726,17 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
 }
 
 /// The IPv4 address an IPv6 address carries to a translator or tunnel: v4-mapped
-/// `::ffff:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96` and 6to4 `2002::/16`.
+/// `::ffff:0:0/96`, SIIT `::ffff:0:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96`
+/// and 6to4 `2002::/16`.
 fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     let seg = v6.segments();
     let o = v6.octets();
     let low = || std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
     match seg {
-        [0, 0, 0, 0, 0, 0xffff, ..] | [0, 0, 0, 0, 0, 0, ..] | [0x64, 0xff9b, 0, 0, 0, 0, ..] => {
-            Some(low())
-        }
+        [0, 0, 0, 0, 0, 0xffff, ..]
+        | [0, 0, 0, 0, 0xffff, 0, ..]
+        | [0, 0, 0, 0, 0, 0, ..]
+        | [0x64, 0xff9b, 0, 0, 0, 0, ..] => Some(low()),
         [0x2002, ..] => Some(std::net::Ipv4Addr::new(o[2], o[3], o[4], o[5])),
         _ => None,
     }
@@ -762,6 +772,8 @@ pub async fn assert_public_url(url_str: &str, allow_private: bool) -> Result<(),
 /// unique-local. Deliberately EXCLUDES link-local (`169.254/16`, `fe80::/10`) so cloud
 /// metadata (`169.254.169.254` and `fd00:ec2::254`) stays unreachable even where local
 /// network access is permitted. This is the set that `allow_private` opens up.
+/// Embedded IPv4 forms are not decoded: preview refuses them, and DNS64 never synthesizes
+/// the well-known prefix for private IPv4 (RFC 6052 §3.1).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -940,9 +952,9 @@ mod tests {
     #[test]
     fn special_purpose_ranges_are_forbidden() {
         for address in [
-            // benchmarking, reserved, broadcast, multicast
-            "198.18.0.1",
-            "198.19.255.255",
+            // IETF protocol assignments, reserved, broadcast, multicast
+            "192.0.0.1",
+            "192.0.0.255",
             "240.0.0.1",
             "255.255.255.255",
             "224.0.0.1",
@@ -956,6 +968,10 @@ mod tests {
             // local-use NAT64, whatever the embedding
             "64:ff9b:1::a00:5",
             "64:ff9b:1:808:808::",
+            // SIIT
+            "::ffff:0:a00:5",
+            "::ffff:0:7f00:1",
+            "::ffff:0:a9fe:a9fe",
             // v4-compatible
             "::a00:5",
             "::7f00:1",
@@ -970,10 +986,13 @@ mod tests {
         }
         for address in [
             "8.8.8.8",
-            "198.17.255.255",
-            "198.20.0.1",
+            // fake-IP proxies (Clash, sing-box, Surge) resolve every hostname here
+            "198.18.0.1",
+            "198.19.255.255",
+            "192.0.1.1",
             "223.255.255.255",
             "64:ff9b::808:808",
+            "::ffff:0:808:808",
             "::808:808",
             "2002:808:808::1",
             "2001:4860:4860::8888",

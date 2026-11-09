@@ -275,15 +275,11 @@ async fn abort_skips_a_queued_fetch_and_releases_an_active_body_read() {
 #[tokio::test]
 async fn the_permission_prompt_names_the_parsed_origin() {
     let mut runtime = client_runtime();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let port = listener.local_addr().unwrap().port();
     runtime
         .execute_script(
             "<test>",
-            format!(
-                "fetch('http://decentraland.org:x@127.0.0.1:{port}/path?q=1').catch(() => {{}});"
-            ),
+            "fetch('http://decentraland.org:x@127.0.0.1:8000/path?q=1').catch(() => {});
+             fetch('http://[::1]:80/').catch(() => {});",
         )
         .unwrap();
     let calls = std::mem::take(runtime.op_state().borrow_mut().borrow_mut::<RpcCalls>());
@@ -294,5 +290,11 @@ async fn the_permission_prompt_names_the_parsed_origin() {
             _ => panic!("expected Fetch permission"),
         })
         .collect();
-    assert_eq!(messages, vec![Some(format!("http://127.0.0.1:{port}"))]);
+    assert_eq!(
+        messages,
+        vec![
+            Some("http://127.0.0.1:8000".to_owned()),
+            Some("http://[::1]:80".to_owned()),
+        ]
+    );
 }
