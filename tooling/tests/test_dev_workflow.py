@@ -49,6 +49,39 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
 
+    def test_every_third_party_action_is_in_the_policy_allowlist(self):
+        # The repository's actions policy allows GitHub's own actions, verified creators' actions and
+        # the third-party actions tooling/repo-actions-policy.sh lists; a workflow naming any other
+        # fails at startup, before its first job. The workflows and composite actions keep to the
+        # listed ones, so that the script is the whole inventory of what runs here.
+        root = WORKFLOW.parents[2]
+        policy = (root / 'tooling/repo-actions-policy.sh').read_text()
+        allowed = tuple(p.rstrip('*') for p in re.findall(r"patterns_allowed\[\]=([^'\s]+)", policy))
+        self.assertTrue(allowed)
+        files = sorted([*WORKFLOW.parent.glob('*.y*ml'), *(root / '.github/actions').glob('*/action.y*ml')])
+        self.assertTrue(files)
+        for path in files:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                match = re.match(r"""\s*-?\s*\{?\s*uses:\s*["']?([^\s"'#},]+)""", line)
+                if not match or match[1].startswith(('actions/', 'github/', './')):
+                    continue
+                if not match[1].startswith(allowed):
+                    self.fail(f'{path.relative_to(root)}:{number} uses {match[1]}, which tooling/repo-actions-policy.sh '
+                              'does not list: add a patterns_allowed line there and apply it, or use a listed action')
+
+    def test_pnpm_version_comes_from_the_package_manager_field(self):
+        # One pin: package.json's packageManager names the pnpm the workflows install, with no
+        # install scripts run on the way.
+        root = WORKFLOW.parents[2]
+        pins = {d: json.loads((root / d / 'package.json').read_text())['packageManager']
+                for d in ('library/js-sdk-toolchain', 'library/protocol')}
+        self.assertEqual(len(set(pins.values())), 1, pins)
+        self.assertRegex(next(iter(pins.values())), r'^pnpm@\d+\.\d+\.\d+$')
+        for name in ('sdk.yml', 'protocol.yml'):
+            text = WORKFLOW.with_name(name).read_text()
+            self.assertIn('npm install --global --ignore-scripts "$(jq -r .packageManager package.json)"', text, name)
+            self.assertNotRegex(text, r'pnpm@\d', name)
+
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())

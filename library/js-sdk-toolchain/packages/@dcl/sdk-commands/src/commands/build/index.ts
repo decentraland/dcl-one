@@ -1,7 +1,14 @@
 import path from 'path'
 import { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
-import { installDependencies, needsDependencies, SceneProject, WearableProject } from '../../logic/project-validations'
+import {
+  installDependencies,
+  needsDependencies,
+  SceneProject,
+  WearableProject,
+  printPackageManagerHint,
+  printRuntimeVersionWarning
+} from '../../logic/project-validations'
 import { getBaseCoords } from '../../logic/scene-validations'
 import { b64HashingFunction } from '../../logic/project-files'
 import { bundleProject } from '../../logic/bundle'
@@ -11,7 +18,7 @@ import { Result } from 'arg'
 
 interface Options {
   args: Result<typeof args>
-  components: Pick<CliComponents, 'fs' | 'logger' | 'analytics' | 'spawner'>
+  components: Pick<CliComponents, 'fs' | 'logger' | 'analytics' | 'spawner' | 'config'>
 }
 
 export const args = declareArgs({
@@ -64,6 +71,8 @@ export async function buildScene(options: Options, project: SceneProject | Weara
       await installDependencies(options.components, project.workingDirectory)
     }
   }
+  await printPackageManagerHint(options.components, project.workingDirectory)
+  await printRuntimeVersionWarning(options.components, project.workingDirectory)
 
   const watch = !!options.args['--watch']
 

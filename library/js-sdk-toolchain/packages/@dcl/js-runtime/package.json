@@ -18,6 +18,9 @@
     "url": "git+https://github.com/decentraland/js-sdk-toolchain",
     "directory": "packages/@dcl/js-runtime"
   },
+  "dependencies": {
+    "@dcl/ecs": "workspace:*"
+  },
   "types": "./index.d.ts",
   "typings": "./index.d.ts"
 }

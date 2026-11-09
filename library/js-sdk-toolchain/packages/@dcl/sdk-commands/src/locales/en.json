@@ -56,7 +56,13 @@
       "dir_not_empty": "The target directory specified is not empty. Run this command with --yes to override.",
       "invalid_arguments": "Specifying --template and --project at the same time is not allowed. Please specify only one of them.",
       "invalid_project": "The requested scene doesn't exist empty. Valid options are: {{options}}",
-      "invalid_template_zip_url": "The zip downloaded has many folder on the root, make sure it has only one folder on the root."
+      "invalid_template_zip_url": "The zip downloaded has many folder on the root, make sure it has only one folder on the root.",
+      "invalid_template_zip": "Cannot extract {{path}}: {{reason}}.",
+      "template_download_failed": "Downloading {{url}} failed with HTTP status {{status}}.",
+      "template_zip_escapes": "{{path}} has an entry that would be written outside the destination: {{entry}}."
+    },
+    "install": {
+      "pnpm_not_found": "pnpm is not installed, and {{workingDirectory}} installs with it (its lockfile is pnpm's). Install it with \"npm install -g pnpm\" or enable it with \"corepack enable\"."
     },
     "quests": {
       "invalid_target": "The provided target is not a valid URL",
@@ -79,6 +85,14 @@
       "build_failed": "Failed to build the scene: {{error}}",
       "bundle_not_found": "Could not find the bundled scene at {{bundlePath}}",
       "execution_failed": "Failed to execute scene code: {{error}}"
+    }
+  },
+  "warnings": {
+    "install": {
+      "use_pnpm": "{{workingDirectory}} was installed with npm. pnpm is faster and runs no dependency install scripts unless you allow them: install it (npm install -g pnpm), run \"pnpm import\" to convert package-lock.json, delete package-lock.json and run \"pnpm add -D @dcl/sdk-commands@{{version}}\" so the scripts find the CLI."
+    },
+    "build": {
+      "js_runtime_version": "@dcl/js-runtime {{runtime}} is installed next to @dcl/sdk {{sdk}}. Each pins its own @dcl/ecs, so the ~system module types can disagree with the scene's: install @dcl/js-runtime@{{sdk}}."
     }
   }
 }

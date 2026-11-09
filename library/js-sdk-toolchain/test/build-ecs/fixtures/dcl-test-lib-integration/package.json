@@ -14,9 +14,9 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@dcl/ecs": "file:../../../../packages/@dcl/ecs",
-    "@dcl/js-runtime": "file:../../../../packages/@dcl/js-runtime",
-    "@dcl/sdk": "file:../../../../packages/@dcl/sdk",
+    "@dcl/ecs": "workspace:*",
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk": "workspace:*",
     "@types/uuid": "^8.3.4"
   },
   "dependencies": {
