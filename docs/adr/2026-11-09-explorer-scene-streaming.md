@@ -63,7 +63,13 @@ and loads are admitted in waves.
   camera starts no stand-in. The realm's active-entities response, which already carries every
   scene's content map, is kept for this instead of fetching each definition again.
 
-The far LOD lands in a follow-up change on this decision.
+- **The far LOD is the pipeline's mesh, by url.** `abgen-cdn.<base>/LOD/lods-unity/lods/
+  {sceneId}_1.glb`, one glTF placed at the scene's base parcel and dressed like the near LOD's
+  models. A scene gets one from the near range out to 320 m (20 parcels), and keeps it inside
+  the near range until the near LOD shows. Its download names the scene as its owner (the
+  `&owner` key on a url path), so it ranks in the LOD tier like the near LOD's files rather
+  than with the ownerless requests. A mesh the loader refuses, or none published, leaves the
+  scene's parcels to the imposters.
 
 ## Rejected
 
@@ -86,8 +92,12 @@ The far LOD lands in a follow-up change on this decision.
 - Entering a dense area spawns six scenes, nearest and in front first, then one more as each
   comes up, instead of every scene in range in one frame.
 - A loading scene within 80 m shows its own models as soon as they have all loaded, where the
-  pipeline has a descriptor for it; elsewhere its imposter tile where one is baked, and nothing
-  where none is. The walls are gone.
+  pipeline has a descriptor for it; a scene from there to 320 m shows the pipeline's mesh where
+  one is published; elsewhere its imposter tile where one is baked, and nothing where none is.
+  The walls are gone.
+- The far LOD's textures stay as the glTF carries them: the texture processor compresses only
+  content-addressed files, and url downloads live in the web cache, so a mesh re-decodes its
+  textures on every load. Compressing them is a change to the processor's cache targets.
 - The stand-in's models are the live scene's first downloads done early: when the scene comes
   up, its containers find them loaded.
 - A scene stalled in loading holds a wave slot for 20 s, then the wave moves on with it still

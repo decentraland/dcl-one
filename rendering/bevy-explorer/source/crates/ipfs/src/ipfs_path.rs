@@ -410,12 +410,16 @@ where
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum IpfsKey {
     BaseUrl,
+    /// The scene hash a url request downloads on behalf of (a scene's far LOD mesh): its
+    /// download ranks under that hash instead of with the ownerless requests.
+    Owner,
 }
 
 impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
+            IpfsKey::Owner => Path::new("&owner"),
         }
     }
 }
@@ -426,6 +430,7 @@ impl TryFrom<&str> for IpfsKey {
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
+            "&owner" => Ok(Self::Owner),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -646,9 +651,11 @@ impl IpfsPath {
             IpfsType::ContentFile { content_hash, .. } => Some(content_hash),
             IpfsType::Entity { hash, .. } => Some(hash),
             IpfsType::SceneContent { scene_hash, .. } => Some(scene_hash),
-            IpfsType::UrlCached { .. }
-            | IpfsType::UrlUncached { .. }
-            | IpfsType::IndexDb { .. } => None,
+            // a url request names its owner, if any, in its keys
+            IpfsType::UrlCached { .. } | IpfsType::UrlUncached { .. } => {
+                self.key_values.get(&IpfsKey::Owner).map(String::as_str)
+            }
+            IpfsType::IndexDb { .. } => None,
         }
     }
 
@@ -813,7 +820,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        content_file_path, is_http_url, resolve_content_uri, ContentPathExt, IpfsPath, IpfsType,
+        content_file_path, is_http_url, resolve_content_uri, ContentPathExt, IpfsKey, IpfsPath,
+        IpfsType,
     };
 
     #[test]
@@ -1085,5 +1093,14 @@ mod tests {
             ext: "png".to_owned(),
         });
         assert_eq!(url.scene_hash(), None);
+
+        // a url request downloading for a scene names it, and the key survives the path form
+        let owned = IpfsPath::new_from_url("https://example.com/lod_1.glb", "glb")
+            .with_keyvalue(IpfsKey::Owner, "bafyscene".to_owned());
+        assert_eq!(owned.scene_hash(), Some("bafyscene"));
+        let reparsed = IpfsPath::new_from_path(&PathBuf::from(&owned))
+            .unwrap()
+            .unwrap();
+        assert_eq!(reparsed.scene_hash(), Some("bafyscene"));
     }
 }

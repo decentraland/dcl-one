@@ -1,10 +1,12 @@
-//! A scene's stand-in while it is in range but not live: the scene's own glTF files, placed from
-//! the asset pipeline's initial-scene-state descriptor (unity-explorer's LOD 0). They load under
-//! the scene's content paths with the scene's loader settings, so the live scene's containers
-//! find them in the asset cache and take them over. Nothing of it shows until every file has
-//! loaded or failed; it goes in the frame the live scene's content is on screen.
+//! A scene's stand-ins while it is in range but not live. Near: the scene's own glTF files,
+//! placed from the asset pipeline's initial-scene-state descriptor (unity-explorer's LOD 0).
+//! They load under the scene's content paths with the scene's loader settings, so the live
+//! scene's containers find them in the asset cache and take them over. Far: the pipeline's one
+//! mesh for the scene (LOD 1). Nothing of a stand-in shows until every file has loaded or
+//! failed; the far one goes when the near one shows, and any goes in the frame the live scene's
+//! content is on screen.
 
-use std::{f32::consts::PI, sync::Arc, time::Duration};
+use std::{f32::consts::PI, path::PathBuf, sync::Arc, time::Duration};
 
 use bevy::{
     asset::{LoadState, RenderAssetTransferPriority},
@@ -29,8 +31,8 @@ use common::{
 };
 use dcl_component::transform_and_parent::{DclQuat, DclTranslation};
 use ipfs::{
-    ipfs_path::IpfsPath, ContentMap, EntityDefinition, IpfsAssetServer, IpfsIo, IpfsModifier,
-    IpfsResource,
+    ipfs_path::{IpfsKey, IpfsPath},
+    ContentMap, EntityDefinition, IpfsAssetServer, IpfsIo, IpfsModifier, IpfsResource,
 };
 use scene_material::{BoundRegion, SceneBound, SceneBounds, SceneMaterial};
 use serde::Deserialize;
@@ -50,6 +52,18 @@ use crate::{
 /// How far from the player a scene that is not live gets a near LOD: unity-explorer's LOD 0
 /// band. The live load distance lies inside it, so a loading scene has one too.
 pub const NEAR_LOD_DISTANCE: f32 = 80.0;
+
+/// How far a scene that is not live gets a far LOD, the pipeline's one mesh for it:
+/// unity-explorer's LOD 1 band, out to 20 parcels. Beyond it only the imposters remain.
+pub const FAR_LOD_DISTANCE: f32 = 320.0;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LodLevel {
+    /// the scene's own models, placed from the descriptor
+    Near,
+    /// the pipeline's one mesh for the scene
+    Far,
+}
 
 pub struct SceneLodPlugin;
 
@@ -80,13 +94,14 @@ pub struct SceneDefinition {
     pub parcels: Vec<IVec2>,
 }
 
-/// The stand-in of one scene: the root its models hang from, at the scene's base parcel. While
+/// One stand-in of one scene: the root its models hang from, at the scene's base parcel. While
 /// it exists the scene's hash ranks its downloads in the LOD tier (the hooks), below every live
 /// scene's; once the scene spawns, its own registration takes the hash to the scene tier.
 #[derive(Component)]
 #[component(on_insert = register_lod_hash, on_replace = release_lod_hash)]
 pub struct SceneLod {
     pub hash: String,
+    pub level: LodLevel,
     pub parcels: Vec<IVec2>,
     pub state: LodState,
 }
@@ -189,10 +204,11 @@ fn release_lod_hash(world: DeferredWorld, context: HookContext) {
     ipfs.release_download_priority(&lod.hash);
 }
 
-/// Which scenes have a stand-in: every scene with a parcel within the near LOD range whose
-/// content is not on screen, in a realm (never in preview). A stand-in goes when its scene's
-/// content is shown, when the scene leaves the range, or when the realm's pointers no longer
-/// name it.
+/// Which scenes have which stand-in, in a realm (never in preview): a scene whose content is not
+/// on screen gets a near LOD while a parcel of it is within the near range, and a far LOD while
+/// one is within the far range, started beyond the near range and kept inside it until the near
+/// LOD shows. A stand-in goes when its scene's content is shown, when the scene leaves its
+/// range, or when the realm's pointers no longer name it.
 #[allow(clippy::too_many_arguments)]
 fn update_scene_lods(
     mut commands: Commands,
@@ -210,20 +226,18 @@ fn update_scene_lods(
         return;
     };
 
-    let mut wanted: HashSet<&str> = HashSet::new();
+    // the nearest parcel of every scene within the far range
+    let mut nearest: HashMap<&str, f32> = HashMap::new();
     if !preview.is_preview && pointers.min() != IVec2::MAX {
-        let in_range = parcels_in_range(
-            focus,
-            NEAR_LOD_DISTANCE.max(range.load),
-            pointers.min(),
-            pointers.max(),
-        );
-        for (parcel, _) in &in_range {
+        let in_range = parcels_in_range(focus, FAR_LOD_DISTANCE, pointers.min(), pointers.max());
+        for (parcel, distance) in &in_range {
             if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
-                wanted.insert(hash.as_str());
+                let nearest = nearest.entry(hash.as_str()).or_insert(f32::MAX);
+                *nearest = nearest.min(*distance);
             }
         }
     }
+    let near_range = NEAR_LOD_DISTANCE.max(range.load);
 
     let shown = |hash: &str| {
         live_scenes
@@ -232,11 +246,22 @@ fn update_scene_lods(
             .and_then(|entity| contexts.get(*entity).ok())
             .is_some_and(RendererSceneContext::content_shown)
     };
+    let near_shown: HashSet<&str> = lods
+        .iter()
+        .filter(|(_, lod)| lod.level == LodLevel::Near && matches!(lod.state, LodState::Shown(_)))
+        .map(|(_, lod)| lod.hash.as_str())
+        .collect();
 
-    let mut existing: HashSet<&str> = HashSet::new();
+    let mut existing: HashSet<(&str, LodLevel)> = HashSet::new();
     for (entity, lod) in &lods {
-        if wanted.contains(lod.hash.as_str()) && !shown(&lod.hash) {
-            existing.insert(lod.hash.as_str());
+        let distance = nearest.get(lod.hash.as_str()).copied();
+        let keep = !shown(&lod.hash)
+            && match lod.level {
+                LodLevel::Near => distance.is_some_and(|distance| distance < near_range),
+                LodLevel::Far => distance.is_some() && !near_shown.contains(lod.hash.as_str()),
+            };
+        if keep {
+            existing.insert((lod.hash.as_str(), lod.level));
             continue;
         }
         // the root takes the models with it; the spawner only needs to forget the instances
@@ -256,17 +281,28 @@ fn update_scene_lods(
         commands.entity(entity).despawn();
     }
 
-    for hash in wanted {
-        if existing.contains(hash) || shown(hash) {
+    for (hash, distance) in nearest {
+        if shown(hash) {
             continue;
         }
         let Some(definition) = definitions.0.get(hash) else {
             continue;
         };
+        let level = if distance < near_range {
+            LodLevel::Near
+        } else {
+            LodLevel::Far
+        };
+        if existing.contains(&(hash, level))
+            || (level == LodLevel::Far && near_shown.contains(hash))
+        {
+            continue;
+        }
         let origin = definition.base.as_vec2() * PARCEL_SIZE;
         commands.spawn((
             SceneLod {
                 hash: hash.to_owned(),
+                level,
                 parcels: definition.parcels.clone(),
                 state: LodState::Pending,
             },
@@ -277,8 +313,9 @@ fn update_scene_lods(
 }
 
 /// Starts a stand-in once it has a partition and the scene is not wholly behind the camera
-/// (unity-explorer fetches no LOD for one that is), and turns the fetched descriptor into the
-/// scene's glTF loads, under the scene's content paths and loader settings.
+/// (unity-explorer fetches no LOD for one that is). A far LOD is one glTF by url, downloaded
+/// under the scene's hash; a near LOD fetches the descriptor and turns it into the scene's glTF
+/// loads, under the scene's content paths and loader settings.
 fn start_scene_lods(
     mut lods: Query<(&mut SceneLod, Option<&Partition>)>,
     definitions: Res<SceneDefinitions>,
@@ -289,6 +326,31 @@ fn start_scene_lods(
         match &mut lod.state {
             LodState::Pending => {
                 if !partition.is_some_and(|partition| !partition.0.is_behind) {
+                    continue;
+                }
+                if lod.level == LodLevel::Far {
+                    let url = format!(
+                        "{}/LOD/lods-unity/lods/{}_1.glb",
+                        common::base_domain::service(Service::AbgenCdn),
+                        lod.hash.to_lowercase()
+                    );
+                    let path = IpfsPath::new_from_url(&url, "glb")
+                        .with_keyvalue(IpfsKey::Owner, lod.hash.clone());
+                    let handle = ipfas
+                        .asset_server()
+                        .load_with_settings::<Gltf, GltfLoaderSettings>(
+                            PathBuf::from(&path),
+                            scene_gltf_loader_settings(
+                                RenderAssetTransferPriority::Priority(0),
+                                false,
+                            ),
+                        );
+                    lod.state = LodState::Loading(vec![LodModel {
+                        handle,
+                        transform: Transform::IDENTITY,
+                        instance: None,
+                        failed: false,
+                    }]);
                     continue;
                 }
                 let Some(definition) = definitions.0.get(&lod.hash) else {
@@ -415,7 +477,8 @@ async fn fetch_descriptor(
 
 /// Places each model as its glTF arrives and, once every model is placed or has failed, dresses
 /// them as the live scene would (meshes uploaded, root nodes turned, collider nodes hidden,
-/// lights off, scene-bound materials) and shows the stand-in in one frame.
+/// lights off, scene-bound materials) and shows the stand-in in one frame. A stand-in none of
+/// whose files loaded shows nothing and leaves its parcels to the imposters.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn build_scene_lods(
     mut commands: Commands,
@@ -472,6 +535,12 @@ fn build_scene_lods(
             }
         }
         if !all_placed {
+            continue;
+        }
+        if models.iter().all(|model| model.instance.is_none()) {
+            // every file failed (a mesh the loader refuses, a missing file): nothing to show,
+            // and the parcels stay the imposters'
+            lod.state = LodState::Nothing;
             continue;
         }
 
