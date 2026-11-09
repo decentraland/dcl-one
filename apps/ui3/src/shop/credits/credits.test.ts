@@ -14,7 +14,7 @@ import {
   reportIntentSubmission,
 } from "./credits";
 import { nextBalancePoll } from "./hooks";
-import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, usdForCredits } from "./payments";
+import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, pollCreditGrant, usdForCredits } from "./payments";
 import { pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
 import { RESUME_CART_KEY } from "../checkout/purchase/cart";
@@ -146,6 +146,21 @@ describe("packs", () => {
     t = 0;
     const unpaid = createFakeShop({ packOrder: () => ({ status: "initiated" }) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 2500, now }, unpaid.client)).toEqual({ status: "initiated" });
+  });
+
+  it("a mock order id is granted only with mock payments on; otherwise the server is asked, so a link shows no Credits never bought", async () => {
+    const shop = createFakeShop({ packOrder: () => ({ status: "initiated" }) });
+    let t = 0;
+    const now = () => (t += 1000);
+    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, timeoutMs: 2500, now }, shop.client)).toEqual({ status: "initiated" });
+    expect(shop.log.some((r) => r.name === "packOrder")).toBe(true);
+    const w = window as Window & { __SHOP_PAYMENTS__?: string };
+    w.__SHOP_PAYMENTS__ = "mock";
+    try {
+      expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, packs: CREDIT_PACKS }, shop.client)).toMatchObject({ status: "credited" });
+    } finally {
+      delete w.__SHOP_PAYMENTS__;
+    }
   });
 });
 
