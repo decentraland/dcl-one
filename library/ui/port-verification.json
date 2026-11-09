@@ -1,33 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "f6194ab7ba21d568344f2fde11675aad15d9ed8c7b27482cf5d8c09ce004419c",
+  "lockHash": "42976fb8ddb31d009e250a1939a4fcd4e483c01bef1cd07e592744dca5ce7b71",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "d64bd48ec9c14f63dd5091e55303c42dfd0b2bd1",
+  "figmaTree": "0ecf55523e2b342407168c145ccae573316bab49",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, 544 capture files fetched and match the pinned digest table"
+      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "run on this tree: 433 files match the lock, every difference names a code"
+      "detail": "run on this tree: 437 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, 0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, ok true, 0 mappings checked"
+      "detail": "ok true, 0 mappings checked"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, catalog unchanged after regeneration"
+      "detail": "catalog unchanged after regeneration"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: navbar-bounds build test passes, 19 of 19"
+      "detail": "19 of 19 targeted navbar bounds checks pass"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "clean verified-cache install reproduces all 39 tracked files including provenance, second install changes nothing"
     }
   }
 }

@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "toolingCommit": "8f27c6f68ac1d25a534f55edcf46e0266adec2ce",
+  "capture": {
+    "repository": "https://github.com/decentraland/figma-design-system",
+    "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+    "inputs": {
+      "variables.json": "cc74f776e62fbf5c911a92a4cd4109e319a8151a1d4d85eb97774502bc04daf2",
+      "text-styles.json": "f5b8bc2a41043077646f11e888cb52d54a77dfeff572d987a4c3f01e7d33fdc1",
+      "paint-styles.json": "7869803275dfd774228efaf300411fef367422ee6d47bf67cc5055dee5aac032",
+      "icons.json": "8d1b89a30c12eca564fa71d02a7419b0128f8377b0fbd8775c835df7546b495f"
+    }
+  },
+  "generatorModules": [
+    {
+      "path": "library/ui/figma/src/generators/css-layers.ts",
+      "sha256": "0129c896ed5f1c6feb24ccdd44e21d3f54c43b084ec05f2ec2fa949da870d745",
+      "blob": "3aaebd3999cc57c6de6ba8fba8ce75a6a89d5a05"
+    },
+    {
+      "path": "library/ui/figma/src/generators/icons.ts",
+      "sha256": "0d815307d998f59e7ae4544e8f632cabddf8903122637fdefe42ee77f87090c3",
+      "blob": "2c6fb4e13f25dc18f2f0b483105736f132eab873"
+    },
+    {
+      "path": "library/ui/figma/src/generators/tokens.ts",
+      "sha256": "6bd11a3f8708933ed98dc8f83e5806c1b73b07d0a8dd30885f57b43bbeb352de",
+      "blob": "48dc0f32bf1303f5ac0602fc3b8e305239f1f8df"
+    }
+  ],
+  "families": {
+    "colors": {
+      "nodeId": "1:5238",
+      "directory": "colors"
+    },
+    "icons": {
+      "nodeId": "1:5239",
+      "directory": "icons"
+    },
+    "typography": {
+      "nodeId": "1:5237",
+      "directory": "typography"
+    },
+    "layouts": {
+      "nodeId": "15521:20146",
+      "directory": "layout"
+    },
+    "spacings": {
+      "nodeId": "15521:20146",
+      "directory": "spacing"
+    }
+  },
+  "output": [
+    {
+      "path": "colors/colors.css",
+      "sha256": "d0da162c5cc9f32bac49718f9319c17148e4df4aa87eda80123f96cb66df096c"
+    },
+    {
+      "path": "colors/colors.ts",
+      "sha256": "c0e97cb4870a6ec37f9ebedac672dfc431e2c14d788fff49772221cb22d5211c"
+    },
+    {
+      "path": "icons/backpack.tsx",
+      "sha256": "182708520a95aec315829e0af32b8d23bc50a3265bf021a91dd70d50490d8260"
+    },
+    {
+      "path": "icons/chat.tsx",
+      "sha256": "9e64c064fc46139edf80ae60b6d31244afe6dad13ade3212012d7f0938fb41dc"
+    },
+    {
+      "path": "icons/component.tsx",
+      "sha256": "dc6553cffafe3674f476c891babdf36574fa188732b99637274ce757ffcc5895"
+    },
+    {
+      "path": "icons/editor.tsx",
+      "sha256": "c05a208aa6f09ed9c8d4e4ebe6832a480b1fe36ac5e070a62e610ee9abba8080"
+    },
+    {
+      "path": "icons/emotes.tsx",
+      "sha256": "95ac94453c2834c4b54be231caa8eab8f11036b9c5839e95021c0886b700ace6"
+    },
+    {
+      "path": "icons/general.tsx",
+      "sha256": "bc79a996d64f0234ea15f168981174e267774689415fa11d996e154df71d313a"
+    },
+    {
+      "path": "icons/iconMeta.ts",
+      "sha256": "517f617f8a828ed345adac1544e02f8779aa88a44031b5415fb87b89435a80b2"
+    },
+    {
+      "path": "icons/index.ts",
+      "sha256": "b4e9fb09808a91c5618278b9ecc1f41fc4517deac6c664f01e5ca1af8e14b1c0"
+    },
+    {
+      "path": "icons/map.tsx",
+      "sha256": "1c2b13688a011258b7055bb0593c40c482348327f7e5d99ce106fa5f969264fe"
+    },
+    {
+      "path": "icons/menus.tsx",
+      "sha256": "06a7aff4691eb2e3bf937330c7c8727aaad58636b6a33ed8ee6d46208e0dd130"
+    },
+    {
+      "path": "icons/navbar.tsx",
+      "sha256": "be16dd128ab9ce6748cbedffec321c51d173c55f36009403a3ca5da2661bd3da"
+    },
+    {
+      "path": "icons/notifications.tsx",
+      "sha256": "6622512804a8fd27c96b342ed86bfa0c3d12e39a32487736827924a7f48706db"
+    },
+    {
+      "path": "icons/profile.tsx",
+      "sha256": "c442b2d70c5ab3f0d35033b98f0aba3ff30cc65f24e9b62088c9096750cbdf08"
+    },
+    {
+      "path": "icons/shop.tsx",
+      "sha256": "e20e4afba5cf87243b751132f2d8d7279bff8bf75a3a8029296aa9ab35c8e517"
+    },
+    {
+      "path": "icons/social.tsx",
+      "sha256": "aac95a347fc6a63e83363bfdf97830d450f3c93466899858f31ada59b607a0d7"
+    },
+    {
+      "path": "icons/types.ts",
+      "sha256": "3f29a1502cf48b0a44495bf446dcbbca452942972c408053ae6ba556ffd1f0bd"
+    },
+    {
+      "path": "layout/layout.css",
+      "sha256": "30b6dd412b0aab0251ef02eb5b0bf82e1513aeca710d97e375de2c453202312e"
+    },
+    {
+      "path": "layout/layout.ts",
+      "sha256": "ebca854793408db20a8f839e1e5d10fb1c12b34afade17f64ad044bf576ecf9d"
+    },
+    {
+      "path": "spacing/spacing.css",
+      "sha256": "76990936f38ad90109356d6f4fa8ad99f866fc2a17d97ba079017af896e98334"
+    },
+    {
+      "path": "spacing/spacing.ts",
+      "sha256": "09ea7949fb3089caae2f14289953401202a40e868118b1ce60d80fd1832ebc7a"
+    },
+    {
+      "path": "theme.ts",
+      "sha256": "97ea7379aec628ef9b975b015ebf1cd202625786b21c316ea72e362f0f8d7705"
+    },
+    {
+      "path": "typography/text-styles.module.css",
+      "sha256": "c872186524c559dc5e0435d40c1d3fb2abcd6ef728a8f7358a476596558ba8e4"
+    },
+    {
+      "path": "typography/typography.ts",
+      "sha256": "4224fd5c2c14a6e9858e6af7b34c21643b6611840a8dc6c06c621086f5822cd9"
+    }
+  ],
+  "fontSource": "typography/font-source.json"
+}

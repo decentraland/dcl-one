@@ -70,6 +70,25 @@ describe('when the CLI receives an explicit configuration outside its working di
     }
   )
 
+  it('should refuse installing from the live source', async () => {
+    await expect(run(['install', 'foundations', '--source', 'rest'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('never rest')
+    })
+  })
+
+  it('should reject an unknown install target', async () => {
+    await expect(run(['install', 'unknown'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('Unknown install target')
+    })
+  })
+
+  it.each([['install'], ['install', 'foundations', 'extra']])(
+    'should reject the incomplete install arguments %j',
+    async (...args) => {
+      await expect(run(args)).rejects.toMatchObject({ stderr: expect.stringContaining('Usage:') })
+    }
+  )
+
   it('should refuse sync from the live source, which only diff may read', async () => {
     await expect(run(['sync', '--source', 'rest'])).rejects.toMatchObject({
       stderr: expect.stringContaining('reads only the verified fetch-source cache')

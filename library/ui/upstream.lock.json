@@ -68,7 +68,12 @@
         "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
         "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment.",
+        "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
+        "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
+        "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
+        "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails.",
         "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
+        "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key. Key-holding jobs may not rewrite a checkout with git, may pass only allowlisted action inputs (same repository, no parent paths, artifacts only under runner.temp or a workspace dot directory), may not map the key into an action step, interpolate expressions in the key step, write GITHUB_ENV or GITHUB_PATH, or use parent path segments or loader assignments in the key step.",
         "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header."
       ],
       "snapshot": {
@@ -738,12 +743,13 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/lock-digests.mjs": {
-          "sha256": "0907d6c7f77d549baf801592aa7c296acdda2b512df70befda4564d353880e85",
+          "sha256": "4486460f4146df945beb13823246c2b3b56e46e2ac832420b4b8bfa9cf820ff6",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "request-scope-hardening",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "public-foundations-integrity"
           ]
         },
         "library/ui/figma/lock-digests.test.ts": {
@@ -757,11 +763,13 @@
           ]
         },
         "library/ui/figma/port-verification.mjs": {
-          "sha256": "ac5b77575c9e6f01432b2d11bf364927e4ed19e05d3ff41dd26616dcb7f84663",
+          "sha256": "ec41df35b8d4ed7161556f42cecb2f731934fdb68747c91bde94a853385a7bd4",
           "fds": null,
           "deviation": [
             "dcl-one-only",
-            "bot-review-279"
+            "bot-review-279",
+            "public-foundations-integrity",
+            "verified-install"
           ]
         },
         "library/ui/figma/port-verification.test.ts": {
@@ -770,6 +778,13 @@
           "deviation": [
             "dcl-one-only",
             "bot-review-279"
+          ]
+        },
+        "library/ui/figma/public-foundations.mjs": {
+          "fds": null,
+          "sha256": "d1a2de701273b4cbde03573a8d5c0ced73f1ea0861435d11b78f14cd015b8661",
+          "deviation": [
+            "public-foundations-integrity"
           ]
         },
         "library/ui/figma/review/dcl-ui-review/index.html": {
@@ -2332,18 +2347,20 @@
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/cli.test.ts": {
-          "sha256": "5dd0abb313c61fe516225f08bc8bf2924ce522f3dabf7ec8ab08860624d0b8e2",
+          "sha256": "b85bf0bbaa535096339c83b135d854369f2143ba6147db6bb7edf2d36a8aafd1",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.test.ts",
             "sha256": "e0a6f001d53d1eb8e69c5601873d52c348bff503c067b3804f749e834ff8acd5"
           },
           "deviation": [
             "live-access-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "port:9c6dfbe6",
+            "seal-removed"
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "f1f44a2a63b9bc9e1d439a6441b921b59187aefaf2f32fd48eba6023a6055f39",
+          "sha256": "c6d617effe0d3a0eb212d82a41ed6f7d8f57c15615fe209d56f19eef331d24ad",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2352,7 +2369,9 @@
             "live-access-removed",
             "capture-removed",
             "live-read-restored",
-            "cache-hardening"
+            "cache-hardening",
+            "port:9c6dfbe6",
+            "seal-removed"
           ]
         },
         "library/ui/figma/src/config.ts": {
@@ -3108,6 +3127,26 @@
           ],
           "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
+        "library/ui/figma/src/install.test.ts": {
+          "fds": null,
+          "deviation": [
+            "port:9c6dfbe6",
+            "seal-removed",
+            "foundation-review",
+            "verified-install"
+          ],
+          "sha256": "b7041238fbdd688862a5275a5f2a6a2683a79b502ff09a882743ed0ce5b51951"
+        },
+        "library/ui/figma/src/install.ts": {
+          "fds": null,
+          "deviation": [
+            "port:9c6dfbe6",
+            "seal-removed",
+            "foundation-review",
+            "verified-install"
+          ],
+          "sha256": "d8bb29109e43229e22bc1dcd62b0654b10f7453f2ae8b88d299a4a3ae23758ea"
+        },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
           "fds": {
@@ -3351,6 +3390,13 @@
           "sha256": "6d5d8ceadb8197674fa61f2fb8b2b3b36b0ed2c97679ea2f7d31d23919cef44c",
           "fds": null,
           "deviation": "dcl-one-only"
+        },
+        "library/ui/figma/src/public-foundations.test.ts": {
+          "fds": null,
+          "sha256": "6375d4ee72902c6598b163ae69bde3c1873225327deeaaeffd1f4d94d53f5316",
+          "deviation": [
+            "public-foundations-integrity"
+          ]
         },
         "library/ui/figma/src/retirement-selection.test.ts": {
           "sha256": "8c5dbcf6e85932426d8bb3376330180c209ffc0abb3b769bdba4c5f047f755c1",
@@ -3908,13 +3954,14 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "9e8d7f30adaef8a2b81f9a8373411644ae7a1888e7942125087e285504990cc6",
+          "sha256": "9e926bca6de65dc4d36761fa563cf8f3b4469c8c0e2344b8842675d7b6d1e182",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "review-followup-2",
             "bot-review-279-b",
-            "bot-review-279-c"
+            "bot-review-279-c",
+            "key-scan-repair"
           ]
         },
         "library/ui/figma/test/snapshot.ts": {
@@ -3934,14 +3981,15 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "21ba2fd87ef0c72cad36d93ffffd08f1df5572125d552daa466145c809f62dc3",
+          "sha256": "02651d1bb492141659339b9bb381e3b963394917466a969374105fdd87f78881",
           "fds": null,
           "deviation": [
             "capture-removed",
             "bot-review-279",
             "review-followup-2",
             "bot-review-279-b",
-            "review-followup-3"
+            "review-followup-3",
+            "key-scan-repair"
           ]
         },
         "library/ui/figma/tsconfig.json": {
@@ -3971,9 +4019,316 @@
         "review-followup-2": 47,
         "bot-review-279-b": 48,
         "bot-review-279-c": 49,
-        "review-followup-3": 50,
-        "port:15940fd7": 51
+        "public-foundations-integrity": 50,
+        "port:9c6dfbe6": 51,
+        "seal-removed": 51,
+        "foundation-review": 52,
+        "verified-install": 53,
+        "review-followup-3": 54,
+        "key-scan-repair": 55,
+        "port:15940fd7": 56
       }
     }
-  ]
+  ],
+  "publicFoundations": {
+    "files": {
+      "colors/colors.css": {
+        "sha256": "d0da162c5cc9f32bac49718f9319c17148e4df4aa87eda80123f96cb66df096c",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "colors/colors.ts": {
+        "sha256": "c0e97cb4870a6ec37f9ebedac672dfc431e2c14d788fff49772221cb22d5211c",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "foundations.css": {
+        "sha256": "72952f308af54e070814a26604417de430c857f164f3e05ac324a296abc87689",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "icons/backpack.tsx": {
+        "sha256": "182708520a95aec315829e0af32b8d23bc50a3265bf021a91dd70d50490d8260",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/chat.tsx": {
+        "sha256": "9e64c064fc46139edf80ae60b6d31244afe6dad13ade3212012d7f0938fb41dc",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/component.tsx": {
+        "sha256": "dc6553cffafe3674f476c891babdf36574fa188732b99637274ce757ffcc5895",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/editor.tsx": {
+        "sha256": "c05a208aa6f09ed9c8d4e4ebe6832a480b1fe36ac5e070a62e610ee9abba8080",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/emotes.tsx": {
+        "sha256": "95ac94453c2834c4b54be231caa8eab8f11036b9c5839e95021c0886b700ace6",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/general.tsx": {
+        "sha256": "bc79a996d64f0234ea15f168981174e267774689415fa11d996e154df71d313a",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/iconMeta.ts": {
+        "sha256": "517f617f8a828ed345adac1544e02f8779aa88a44031b5415fb87b89435a80b2",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/index.ts": {
+        "sha256": "b4e9fb09808a91c5618278b9ecc1f41fc4517deac6c664f01e5ca1af8e14b1c0",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/map.tsx": {
+        "sha256": "1c2b13688a011258b7055bb0593c40c482348327f7e5d99ce106fa5f969264fe",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/menus.tsx": {
+        "sha256": "06a7aff4691eb2e3bf937330c7c8727aaad58636b6a33ed8ee6d46208e0dd130",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/navbar.tsx": {
+        "sha256": "be16dd128ab9ce6748cbedffec321c51d173c55f36009403a3ca5da2661bd3da",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/notifications.tsx": {
+        "sha256": "6622512804a8fd27c96b342ed86bfa0c3d12e39a32487736827924a7f48706db",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/profile.tsx": {
+        "sha256": "c442b2d70c5ab3f0d35033b98f0aba3ff30cc65f24e9b62088c9096750cbdf08",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/shop.tsx": {
+        "sha256": "e20e4afba5cf87243b751132f2d8d7279bff8bf75a3a8029296aa9ab35c8e517",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/social.tsx": {
+        "sha256": "aac95a347fc6a63e83363bfdf97830d450f3c93466899858f31ada59b607a0d7",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "icons/types.ts": {
+        "sha256": "3f29a1502cf48b0a44495bf446dcbbca452942972c408053ae6ba556ffd1f0bd",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "index.ts": {
+        "sha256": "6c15f297f674102b40311679a4eb2ffd01cde5f4edf280d7bce03fdd4574be0f",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "layout/layout.css": {
+        "sha256": "30b6dd412b0aab0251ef02eb5b0bf82e1513aeca710d97e375de2c453202312e",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "layout/layout.ts": {
+        "sha256": "ebca854793408db20a8f839e1e5d10fb1c12b34afade17f64ad044bf576ecf9d",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "source.json": {
+        "sha256": "f7e54da54118dbe5295fc67e80140452836a47eabfa36e35ca047966785100ff",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "spacing/spacing.css": {
+        "sha256": "76990936f38ad90109356d6f4fa8ad99f866fc2a17d97ba079017af896e98334",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "spacing/spacing.ts": {
+        "sha256": "09ea7949fb3089caae2f14289953401202a40e868118b1ce60d80fd1832ebc7a",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "theme.ts": {
+        "sha256": "97ea7379aec628ef9b975b015ebf1cd202625786b21c316ea72e362f0f8d7705",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "typography/font-source.json": {
+        "sha256": "aa6b4030480b644d90c640c3b56ce5cf1c86f7400df0e0d0c1f4468174113fdc",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "typography/fonts/OFL.txt": {
+        "sha256": "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "LICENSE"
+        }
+      },
+      "typography/fonts/inter-cyrillic-ext-wght-normal.woff2": {
+        "sha256": "ca157063339ac4ad418f214f3abfed119b0798ab4d377386ce5c9e5a7a435ebd",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-cyrillic-ext-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-cyrillic-wght-normal.woff2": {
+        "sha256": "71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-cyrillic-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-greek-ext-wght-normal.woff2": {
+        "sha256": "6e9e020a25f9b56d418f2c085b1d3c09725a4da23fe693a5b463064606732190",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-greek-ext-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-greek-wght-normal.woff2": {
+        "sha256": "1be3448e292fbf05ffe176fe1e43f135013d50b1e7d324ad1a558f623d3bb6f6",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-greek-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-latin-ext-wght-normal.woff2": {
+        "sha256": "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-latin-ext-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-latin-wght-normal.woff2": {
+        "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-latin-wght-normal.woff2"
+        }
+      },
+      "typography/fonts/inter-vietnamese-wght-normal.woff2": {
+        "sha256": "5c66f9e07e90c6d4ac4922cc68d60de26c17b1858e677fb5e603fce3952b3ff2",
+        "origin": {
+          "kind": "npm",
+          "package": "@fontsource-variable/inter",
+          "version": "5.3.0",
+          "license": "OFL-1.1",
+          "path": "files/inter-vietnamese-wght-normal.woff2"
+        }
+      },
+      "typography/inter.css": {
+        "sha256": "227ee8698cf6dc5c1bad4d2fd6696ab2bec902f2a0a81e65a04012b230833fdf",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "typography/text-styles.module.css": {
+        "sha256": "c872186524c559dc5e0435d40c1d3fb2abcd6ef728a8f7358a476596558ba8e4",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      },
+      "typography/text-styles.module.css.d.ts": {
+        "sha256": "23970b006bf230f93cefb9ee35804cf5f3513175ec5df7ee05ca8cdb8354fe76",
+        "origin": {
+          "kind": "source",
+          "repository": "https://github.com/decentraland/dcl-one"
+        }
+      },
+      "typography/typography.ts": {
+        "sha256": "4224fd5c2c14a6e9858e6af7b34c21643b6611840a8dc6c06c621086f5822cd9",
+        "origin": {
+          "kind": "generated",
+          "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
+        }
+      }
+    }
+  }
 }
