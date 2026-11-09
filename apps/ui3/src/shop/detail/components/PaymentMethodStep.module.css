@@ -6,6 +6,7 @@
 
 .step {
   --pms-soft-white: var(--shop-soft-white, #fcfcfc);
+  --pms-white: var(--shop-white, #ffffff);
   --pms-gray4: var(--shop-gray-4, #cfcdd4);
   --pms-glass: var(--shop-glass, rgba(255, 255, 255, 0.2));
   --pms-overlay: var(--shop-overlay, rgba(0, 0, 0, 0.4));
@@ -28,10 +29,6 @@
   min-height: 0;
   overflow-y: auto;
   font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
-}
-/* The MANA mark is drawn white on the dark surface. */
-.step img[data-mana] {
-  filter: brightness(0) invert(1);
 }
 
 .head {
@@ -63,10 +60,6 @@
   cursor: pointer;
   color: #ffffff;
 }
-.close:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 .close:focus-visible {
   outline: 2px solid #ffffff;
   outline-offset: 2px;
@@ -93,7 +86,8 @@
   width: 180.465px;
   height: 179.763px;
   border-radius: 16px;
-  background: var(--shop-media, #ecebed);
+  /* `--pms-tile`: the item's rarity colour, known only at runtime. */
+  background: var(--pms-tile, var(--shop-media, #ecebed));
   border: 1.5px solid transparent;
   overflow: hidden;
 }
@@ -250,6 +244,12 @@
   flex: none;
   display: block;
   object-fit: contain;
+}
+/* The MANA mark, white on the dark surface. */
+.manaArt,
+.manaMini,
+.manaPriceIco {
+  color: var(--pms-white);
 }
 .creditsArt {
   width: 32.582px;

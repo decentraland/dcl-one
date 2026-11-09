@@ -9,7 +9,7 @@
 // relayed (or sent by the wallet when the relay cannot run). A credit is released only when nothing may
 // have consumed it; a broadcast that has not confirmed is pending, never re-sent.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
@@ -43,7 +43,7 @@ export type CombinedBuyProps = {
   portal?: boolean;
 };
 
-export type CombinedPhase =
+type CombinedPhase =
   | { kind: "review" }
   | { kind: "approve"; auth: ShopAuthorization }
   | { kind: "working" }
@@ -54,15 +54,17 @@ export type CombinedPhase =
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 
 /** What paying with Credits and MANA is doing, and what the screen drawing it can do next. */
-export type CombinedBuyRun = {
+type CombinedBuyRun = {
   phase: CombinedPhase;
   busy: boolean;
+  /** The split the buyer confirmed with `start`, which the purchase pays: what an approval asks for, not a re-poll. */
+  agreed: MixedPayment | null;
   /** Why it cannot start: no wallet to send it, or a wallet on another account than the session's. */
   blocked: string | null;
   start(): Promise<void>;
   /** The MANA approval a self-custody wallet grants before the purchase. */
   grant(): Promise<void>;
-  /** Granted: the purchase goes on, on the terms it started with. */
+  /** Granted: the purchase goes on, on the terms it started with, unless the screen that started it is gone. */
   approved(): void;
   declined(): void;
   /** Back to the start after a failure, so the buyer can choose again. */
@@ -81,6 +83,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [phase, setPhase] = useState<CombinedPhase>({ kind: "review" });
   const guard = useRef(createSpendGuard());
   const terms = useRef<Terms | null>(null);
+  // An approval granted after its screen closed must not go on to buy: nothing would be left to show it.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
@@ -193,6 +203,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   return {
     phase,
     busy,
+    agreed: terms.current?.mixed ?? null,
     blocked,
     start,
     grant: async () => {
@@ -203,7 +214,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     },
     approved: () => {
       const ctx = context();
-      if (ctx && terms.current) void pay(ctx, terms.current);
+      if (mounted.current && ctx && terms.current) void pay(ctx, terms.current);
     },
     declined: () => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." }),
     reset: () => {
@@ -213,13 +224,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
 }
 
 export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
-  const { phase, busy, blocked, start, grant, approved, declined } = useCombinedBuy({ line, offer, mixed, onDone });
+  const { phase, busy, agreed, blocked, start, grant, approved, declined } = useCombinedBuy({ line, offer, mixed, onDone });
   const title = `Buy ${line.display.name}`;
   const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
   const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
 
   if (phase.kind === "approve") {
-    return <AuthorizeStep auth={phase.auth} requiredWei={mixed.manaWei} portal={portal} grant={grant} onAuthorized={approved} onCancel={declined} />;
+    return <AuthorizeStep auth={phase.auth} requiredWei={(agreed ?? mixed).manaWei} portal={portal} grant={grant} onAuthorized={approved} onCancel={declined} />;
   }
 
   return (

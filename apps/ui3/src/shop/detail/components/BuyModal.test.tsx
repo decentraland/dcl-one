@@ -131,7 +131,7 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     expect(within(dialog).getByRole("heading", { name: "Buy Item" })).toBeTruthy();
     expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("Rainbow Hat");
-    expect(within(dialog).queryByTestId("buy-modal-methods")).toBeNull();
+    expect(within(dialog).queryByTestId("payment-method-step")).toBeNull();
     await pressBuy(dialog);
     expect(await within(dialog).findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toHaveTextContent("Your purchase was successful! You can find your item in the My Items tab.");
     expect(within(dialog).getByRole("heading", { name: "Purchase complete!" })).toBeTruthy();
@@ -159,11 +159,11 @@ describe("Buy now's dialog", () => {
     expect(within(step).getByRole("heading", { name: "Choose your payment method" })).toBeTruthy();
     // The step replaces the dialog's own header: no "Buy Item" above it.
     expect(within(dialog).queryByRole("heading", { name: "Buy Item" })).toBeNull();
-    expect(within(step).getByTestId("buy-modal-asset")).toHaveTextContent("Rainbow Hat");
+    expect(within(step).getByTestId("payment-method-asset")).toHaveTextContent("Rainbow Hat");
     const credits = within(step).getByTestId("pay-with-credits");
     const mana = within(step).getByTestId("pay-with-mana");
-    expect(credits).toHaveAttribute("aria-pressed", "true");
-    expect(mana).toHaveAttribute("aria-pressed", "false");
+    expect(credits).toHaveAttribute("aria-checked", "true");
+    expect(mana).toHaveAttribute("aria-checked", "false");
     expect(credits).toHaveTextContent("CreditsCredits Balance:10K12");
     expect(mana).toHaveTextContent("Polygon MANAMana Balance:1,0002.3");
     await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
@@ -177,7 +177,7 @@ describe("Buy now's dialog", () => {
     // Nothing ticked: nothing to pay with.
     expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
     fireEvent.click(within(step).getByTestId("pay-with-mana"));
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
     expect(demo.cart.getSnapshot().lines).toEqual([]);
     // The pick is the line's own method in the dialog's cart, which the checkout prices and pays.
     const held = Object.keys(sessionStorage).find((k) => k.startsWith("dcl-shop-buynow:v1:") && k.includes("dcl-shop-cart:v1:"))!;
@@ -201,9 +201,13 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
     const mana = within(step).getByTestId("pay-with-mana");
-    expect(mana).toBeDisabled();
-    expect(within(mana).getByTestId("mana-shortfall-note")).toHaveTextContent("Not enough MANA");
-    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-pressed", "true");
+    // Disabled, but reachable: its reason is what a keyboard or screen reader user lands on.
+    expect(mana).toHaveAttribute("aria-disabled", "true");
+    expect(mana).not.toBeDisabled();
+    expect(mana).toHaveAccessibleDescription("Not enough MANA");
+    fireEvent.click(mana);
+    expect(mana).toHaveAttribute("aria-checked", "false");
+    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "true");
     await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
   });
 
@@ -213,8 +217,8 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
     // The Credits do not pay alone, so both are ticked: the split, each row stating its own leg.
-    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-pressed", "true");
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
+    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
     expect(within(step).getByTestId("pay-with-credits-amount")).toHaveTextContent("3");
     expect(within(step).getByTestId("pay-with-mana-amount")).toHaveTextContent("1.7");
     const confirm = within(step).getByTestId("confirm-payment");
@@ -239,12 +243,102 @@ describe("Buy now's dialog", () => {
     );
     const dialog = await settledDialog();
     const step = await within(dialog).findByTestId("payment-method-step");
-    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
     const held = await within(step).findByTestId("buy-modal-held");
     expect(held).toHaveTextContent("Your wallet is on another account than the one you're signed in with.");
     expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
     fireEvent.click(within(held).getByRole("button", { name: "Sign in with this wallet" }));
     expect(switched).toBe(1);
+  });
+
+  it("with both able to pay alone, ticking MANA moves the pick to it instead of leaving both ticked over a dead Buy", async () => {
+    renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    fireEvent.click(within(step).getByTestId("pay-with-mana"));
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-checked", "true");
+    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-checked", "false");
+    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+  });
+
+  it("MANA picked and then the Credits again: the line goes back to the Credits, which pay", async () => {
+    const { demo } = renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    const held = () => Object.keys(sessionStorage).find((k) => k.startsWith("dcl-shop-buynow:v1:") && k.includes("dcl-shop-cart:v1:"))!;
+    const method = () => (JSON.parse(sessionStorage.getItem(held())!) as { lines: { method: string | null }[] }).lines[0]!.method;
+    fireEvent.click(within(step).getByTestId("pay-with-mana"));
+    await waitFor(() => expect(method()).toBe("mana"));
+    fireEvent.click(within(step).getByTestId("pay-with-credits"));
+    await waitFor(() => expect(method()).toBeNull());
+    const confirm = within(step).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(authorizations(demo)).toHaveLength(1);
+  });
+
+  it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {
+    const { demo, closed } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(closed()).toBe(0);
+    expect(screen.getByTestId("authorize-step-action")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(await screen.findByTestId("buy-error")).toHaveTextContent("MANA spending was not approved, so nothing was bought.");
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+  });
+
+  it("an approval that lands after the dialog is gone buys nothing", async () => {
+    const { demo, unmount } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
+    unmount();
+    await act(async () => new Promise((r) => setTimeout(r, 200)));
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+  });
+
+  it("a split still being confirmed says so, without a Check again its run cannot answer", async () => {
+    const { closed } = renderBuy(
+      { session: "web3", balanceCents: 30, confirm: "none", handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n) },
+    );
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
+    const pending = await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
+    expect(pending).toHaveTextContent("Your purchase is still being confirmed.");
+    expect(within(pending).queryByRole("button", { name: "Check again" })).toBeNull();
+    fireEvent.click(within(pending).getByRole("button", { name: "Close" }));
+    expect(closed()).toBe(1);
+  });
+
+  it("a split on a price the review found changed: the first press agrees to the new price and starts nothing", async () => {
+    const { demo } = renderBuy(
+      { session: "web3", balanceCents: 30, offers: "repriced", handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n) },
+    );
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    expect(await within(step).findByTestId("price-changed")).toBeTruthy();
+    const confirm = within(step).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    // Agreed: the notice goes, the step stays, and Buy is there for the press that pays (the demo's chain keeps the
+    // old price, so the payment itself is the other split tests').
+    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).queryByTestId("price-changed")).toBeNull());
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+    await waitFor(() => expect(within(screen.getByTestId("payment-method-step")).getByTestId("confirm-payment")).toBeEnabled());
   });
 
   it("a split the wallet declines ends on the failure panel, and Try again goes back to the step", async () => {

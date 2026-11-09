@@ -35,7 +35,7 @@ import { rarityCardPalette } from "../../discovery/lib/rarity";
 import { myItemsRouteFor } from "../../discovery/lib/routes";
 import { invalidateShopQueries } from "../../discovery/query";
 import { Confetti, JumpInIcon } from "../../history/celebration";
-import { creditsCeil } from "../../model/money";
+import { creditsCeil, manaWei, ZERO_MANA } from "../../model/money";
 import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -211,7 +211,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   const manaPays = holdsMana && mana?.state.kind === "ready";
   const mixed = holdsMana ? (mana?.mixed ?? null) : null;
   const manaRail = manaPays || !!mixed;
-  const priceManaWei = mana?.quote?.method === "mana" ? mana.quote.amount : 0n;
+  const priceManaWei = mana?.quote?.method === "mana" ? mana.quote.amount : ZERO_MANA;
   const creditsShort = credits?.state.kind === "topUpRequired" ? creditsCeil(credits.state.short) : null;
   // The split settles in one transaction of its own (CombinedBuy's), shown on this dialog's screens, on the offer the
   // checkout has just priced.
@@ -237,10 +237,11 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
     if (checked) setPriced(true);
   }, [checked]);
 
+  // The split's approval counts as its purchase running, as the checkout's own does: nothing closes the dialog under it.
   const phase: Phase =
     run.kind === "success"
       ? "complete"
-      : run.kind === "working"
+      : run.kind === "working" || run.kind === "approve"
         ? "processing"
         : run.kind === "pending"
           ? "pending"
@@ -389,7 +390,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   };
 
   if (run.kind === "approve") {
-    return <AuthorizeStep auth={run.auth} requiredWei={mixed?.manaWei} grant={combined.grant} onAuthorized={combined.approved} onCancel={combined.declined} portal={false} />;
+    return <AuthorizeStep auth={run.auth} requiredWei={combined.agreed?.manaWei} grant={combined.grant} onAuthorized={combined.approved} onCancel={combined.declined} portal={false} />;
   }
 
   if (co.approval) {
@@ -419,12 +420,11 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             rails={rails}
             priceManaWei={priceManaWei}
             balanceCredits={co.balance?.credits ?? 0}
-            manaBalanceWei={co.manaBalance ?? 0n}
+            manaBalanceWei={co.manaBalance === null ? ZERO_MANA : manaWei(co.manaBalance)}
             onPick={pick}
             ready={stepReady}
             onBuy={buyWith}
             onClose={close}
-            busy={busy}
             notice={
               priceChanged || stepHeld ? (
                 <span className={styles.notes}>
