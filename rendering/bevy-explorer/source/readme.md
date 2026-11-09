@@ -170,7 +170,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
-  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
   `/scene_bans` (the addresses the current scene room bans, whose Nearby chat is dropped, and the
   drop count), `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera

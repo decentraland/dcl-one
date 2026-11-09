@@ -1,5 +1,7 @@
 //! The gatekeeper writes a scene room's LiveKit metadata as
 //! `{"sceneAdmins": [..], "bannedAddresses": [..]}` and rewrites it on every ban and unban.
+//! The list lives on the current scene room, so it is empty from a scene change until the new
+//! room's join-time metadata arrives.
 
 use alloy_core::primitives::Address;
 use bevy::{platform::collections::HashSet, prelude::*};
