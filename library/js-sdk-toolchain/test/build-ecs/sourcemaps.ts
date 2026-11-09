@@ -1,0 +1,52 @@
+import { readFile } from 'fs/promises'
+import { fileURLToPath } from 'url'
+import { BasicSourceMapConsumer, SourceMapConsumer, SourceNode } from 'source-map'
+import { existsSync } from 'fs'
+
+/**
+ * This file contains function to ensure that a correct format is emitted for source maps
+ */
+
+export async function loadSourceMap(bundleFile: string) {
+  const source = await readFile(bundleFile, 'utf8')
+  if (!source.includes('//# sourceMappingURL=data:application/json;base64,'))
+    throw new Error(`Source map not emitted for file ${bundleFile}`)
+
+  const [file, sourceMapBase64] = source.split('//# sourceMappingURL=data:application/json;base64,')
+  const sourceMap = Buffer.from(sourceMapBase64, 'base64').toString()
+  const map = await new SourceMapConsumer(JSON.parse(sourceMap))
+  const node = SourceNode.fromStringWithSourceMap(file, map)
+  return { map, node }
+}
+
+export function assertFilesExist(map: BasicSourceMapConsumer) {
+  console.log(`sourceRoot:`, map.sourceRoot)
+  console.log(`sources:`, map.sources)
+
+  // the source map should have a root, and it must be a file: url
+  expect(map.sourceRoot.startsWith('file://')).toBeTruthy()
+
+  // then check each file
+  expect(map.sources.length).toBeGreaterThan(0)
+  for (const file of map.sources) {
+    // virtual modules have no backing file; source-map >=0.7.5 no longer joins
+    // scheme-prefixed sources with sourceRoot, so skip them before asserting
+    if (file.endsWith('sdk-composite:all-composites')) continue
+    if (file.endsWith('sdk-scripts:script-utils')) continue
+
+    expect(file.startsWith('file://')).toBeTruthy()
+
+    if (file.endsWith('entry-point.ts')) continue
+
+    // Skip files from node_modules - npm packages often don't ship source files
+    // but may include source maps pointing to them. The source content is still
+    // embedded in the source map (validated by hasContentsOfAllSources below).
+    if (file.includes('/node_modules/')) continue
+
+    const fileExist = existsSync(fileURLToPath(file)) ? file : 'does not exit'
+    expect(fileExist).toBe(file)
+  }
+
+  // to ensure a good developer experience we must provide sourcemaps for each file
+  expect(map.hasContentsOfAllSources()).toBeTruthy()
+}

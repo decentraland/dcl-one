@@ -508,6 +508,10 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Button (card sizes)">
         <Button size="card">Jump in</Button>
+        <Button size="cta">Claim name</Button>
+        <Button size="cta" disabled>
+          Claim name
+        </Button>
         <div style={{ width: 264 }}>
           <Button size="cardSm">Jump in</Button>
         </div>
@@ -524,6 +528,10 @@ export function Showcase(): React.JSX.Element {
         <div style={{ maxWidth: 320 }}>
           <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
         </div>
+      </Section>
+
+      <Section title="ColorPicker (swatch, hue only: name colour)">
+        <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
       </Section>
 
       <Section title="Panel">
@@ -577,10 +585,25 @@ export function Showcase(): React.JSX.Element {
             />
           ))}
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
+          {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
+            <EquippedItemCard
+              key={r}
+              name={`Pinned ${r}`}
+              rarity={r}
+              shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
+              shopLabel={i === 0 ? 'Buy' : 'View'}
+              price={i === 0 ? '25 Credits' : undefined}
+              pinShop
+              categoryIcon={<Icon name="emotes" size={15} />}
+            />
+          ))}
+        </div>
       </Section>
 
       <Section title="ScrollThumb (fixed length, as the Shop draws it)">
         <ShowcaseScroller />
+        <ShowcaseRowScroller />
       </Section>
 
       <Section title="Chat components">
@@ -612,6 +635,21 @@ function ShowcaseScroller(): React.JSX.Element {
         ))}
       </div>
       <ScrollThumb target={ref} length={80} className={undefined} />
+    </div>
+  )
+}
+
+// A short row that scrolls sideways, its thumb along the bottom.
+function ShowcaseRowScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 140 }}>
+      <div ref={ref} style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} style={{ flex: 'none', width: 110, height: 110, borderRadius: 16, background: 'var(--white-10)' }} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
     </div>
   )
 }

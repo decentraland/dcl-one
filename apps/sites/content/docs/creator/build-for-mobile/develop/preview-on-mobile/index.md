@@ -12,10 +12,10 @@ You can preview your scene directly on the Decentraland mobile app from the Crea
 ## Option A — From the Creator Hub
 
 1. Open your scene in the Creator Hub.
-2. Click the dropdown next to the **Preview** button and choose **Show QR Code for Mobile**.
-3. Scan the displayed QR code with your phone's camera. The link opens the Decentraland mobile app and loads your scene preview.
+2. Click the arrow next to the **Play** button to open **Play Options**, then choose **Show QR Code for Mobile**.
+3. Scan the displayed QR code with your phone's camera. The link opens the Decentraland mobile app and loads your scene preview. Click the dark area around the popup to close it.
 
-<figure><img src="/docs/.gitbook/assets/mobile-preview-creator-hub.webp" alt="Creator Hub preview dropdown with the Show QR Code for Mobile option"><figcaption><p>The "Show QR Code for Mobile" option in the Creator Hub preview dropdown.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/mobile-preview-creator-hub.webp" alt="Creator Hub Play Options menu with the Show QR Code for Mobile option"><figcaption><p>The "Show QR Code for Mobile" option in the Creator Hub Play Options menu.</p></figcaption></figure>
 
 ## Option B — From the command line
 
@@ -27,7 +27,7 @@ npm run start -- --mobile
 
 The CLI prints a QR code in the terminal that points to your scene's LAN URL. Scan it with your phone to load the scene in the Decentraland mobile app.
 
-<figure><img src="/docs/.gitbook/assets/mobile-preview-cli-qr.webp" alt="QR code printed by the Decentraland CLI for mobile preview"><figcaption><p>A QR code printed by <code>npm run start -- --mobile</code>. Scan it with your phone to open the scene in the Decentraland mobile app.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/mobile-preview-cli-qr.webp" alt="QR code printed by the Decentraland CLI for mobile preview"><figcaption><p>A QR code printed by <code>npm run start -- --mobile</code>. Scan it with your phone to open the scene in the Decentraland mobile app.</p></figcaption></figure>
 
 
 > [!NOTE]

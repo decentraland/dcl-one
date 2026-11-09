@@ -100,6 +100,9 @@ describe('bridgeAbout', () => {
   test('leaves a document alone whose content url is absolute already, or that is not the bridge', () => {
     const absolute = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=https://cdn.example/bridge-scene/static/`] } })
     assert.equal(bridgeAbout(absolute, 'http://127.0.0.1:1'), absolute)
+    // protocol-relative is not root-relative: the engine takes it as it is
+    const protocolRelative = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=//cdn.example/bridge-scene/static/`] } })
+    assert.equal(bridgeAbout(protocolRelative, 'http://127.0.0.1:1'), protocolRelative)
     const other = JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafa?=&baseUrl=/x/', 'urn:decentraland:entity:bafb?=&baseUrl=/y/'] } })
     assert.equal(bridgeAbout(other, 'http://127.0.0.1:1'), other)
     assert.equal(bridgeAbout('{}', 'http://127.0.0.1:1'), '{}')

@@ -128,6 +128,7 @@ scenario('the own passport shows its header controls and its About and Equipped 
     { name: 'Copy name', role: 'button' },
     { name: 'Copy address', role: 'button' },
     { name: 'OVERVIEW', role: 'tab' },
+    { name: 'CREATIONS', role: 'tab' },
     { name: 'Edit profile', role: 'button' }
   ] satisfies Selector[]) {
     assert.ok(await explorer.hud.isVisible(control), `the passport should show its ${control.name} ${control.role}`)

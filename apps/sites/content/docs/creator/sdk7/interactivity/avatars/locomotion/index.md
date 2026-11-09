@@ -56,7 +56,7 @@ For reference, here are the default values for those properties:
 
 > [!NOTE]
 > **💡 Tip**: None of these properties can be lower than 0. If you set one of them to a negative value, it will be clamped to 0. Setting these values to zero will have the same effect as using the `InputModifier` to block the use of certain keys.
-> 
+>
 > You can only affect the player's locomotion if they are inside the scene's bounds. To affect other players' avatars, you must run the code that affects their locomotion on their own instance.
 
 

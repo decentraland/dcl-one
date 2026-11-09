@@ -3,7 +3,9 @@
 //! Authorized`, `Not Found`; a 403 carries its message as `error`, like the
 //! old handlers' own 403s; a 500 is `{error: "Internal Server Error"}`), with
 //! the two upload-limit shapes (503 + `Retry-After` and 408) the multipart
-//! routes share with `POST /entities`. Internal detail never reaches the wire. Shared by
+//! routes share with `POST /entities`, and a refused signed fetch as the
+//! crypto-middleware's `onError` answers it (`{error: <its message>, message:
+//! SIGNED_FETCH_MESSAGE}`). Internal detail never reaches the wire. Shared by
 //! worlds (its routes, through `worlds::core::http`) and the world comms
 //! mints in comms, which answer in the worlds service's envelope.
 
@@ -31,7 +33,15 @@ pub enum ApiError {
     /// 408: multipart receive or processing deadline exceeded.
     #[error("{0}")]
     RequestTimeout(String),
+
+    /// A refused signed fetch, answered as upstream's signed-fetch `onError`:
+    /// `{error: <crypto-middleware message>, message: SIGNED_FETCH_MESSAGE}`.
+    #[error("{error}")]
+    SignedFetch { status: u16, error: String },
 }
+
+/// The `message` of every signed-fetch refusal on the worlds routes.
+pub const SIGNED_FETCH_MESSAGE: &str = "This endpoint requires a signed fetch request. See ADR-44.";
 
 impl ApiError {
     pub fn http(status: u16, msg: impl Into<String>) -> Self {
@@ -66,6 +76,12 @@ impl ApiError {
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
     }
+    pub fn signed_fetch(status: u16, error: impl Into<String>) -> Self {
+        Self::SignedFetch {
+            status,
+            error: error.into(),
+        }
+    }
     pub fn service_unavailable(msg: impl Into<String>) -> Self {
         Self::http(503, msg)
     }
@@ -80,7 +96,7 @@ impl ApiError {
     }
     pub fn status(&self) -> u16 {
         match self {
-            ApiError::Http { status, .. } => *status,
+            ApiError::Http { status, .. } | ApiError::SignedFetch { status, .. } => *status,
             ApiError::Internal(_) => 500,
             ApiError::TooManyRequests { .. } => 429,
             ApiError::UploadShed(_) => 503,
@@ -91,6 +107,7 @@ impl ApiError {
     pub fn public_message(&self) -> String {
         match self {
             ApiError::Http { message, .. } => message.clone(),
+            ApiError::SignedFetch { error, .. } => error.clone(),
             ApiError::Internal(_) => "internal error".to_string(),
             ApiError::TooManyRequests { message, .. } => message.clone(),
             ApiError::UploadShed(m) | ApiError::RequestTimeout(m) => m.clone(),
@@ -193,6 +210,11 @@ impl IntoResponse for ApiError {
                 .into_response(),
             ApiError::UploadShed(m) => shed_response(&m),
             ApiError::RequestTimeout(m) => timeout_response(&m),
+            ApiError::SignedFetch { status, error } => (
+                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                Json(json!({ "error": error, "message": SIGNED_FETCH_MESSAGE })),
+            )
+                .into_response(),
         };
         if response.status() == StatusCode::SERVICE_UNAVAILABLE
             && !response.headers().contains_key(RETRY_AFTER)

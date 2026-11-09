@@ -24,9 +24,9 @@ node driver.mjs --url <url> [--chrome <path>] [--headed] [--arg <flag>]... [comm
 ```
 
 One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`,
-with the credential of a `/login_identity` or `/hud_login` line (its first argument, an identity
-valid for days) replaced by `<redacted>` wherever it appears; without commands it reads them from
-stdin, one per line. Exit code 1 if a command failed, 2 for
+with the credential of a `/login_identity` or `/hud_login` line (the first word that is neither a
+flag nor a flag's value, an identity valid for days) replaced by `<redacted>` wherever it appears;
+without commands it reads them from stdin, one per line. Exit code 1 if a command failed, 2 for
 a bad command line. On Git Bash for Windows, pass commands on stdin: it rewrites an argument that
 starts with `/`.
 
@@ -48,7 +48,8 @@ a frame of the page's origin with both `window.engine_console_command` and
 
 `consoleMessages()` is what the page said so far, every frame's: `console.*` calls, uncaught
 exceptions, the browser's own log entries (a request that failed, a worker that would not
-register) and a target that crashed, oldest first, the last 300. `screenshot()` is the page as a
+register) and a target that crashed, oldest first, the last 300, each cut at 2000 characters once
+the credentials of the lines run were replaced. `screenshot()` is the page as a
 JPEG. Both are for a boot that does not become ready: what `ready()`'s timeout cannot say. An
 error `launch` throws carries the same messages as its `console`. A first navigation the browser
 aborts (`net::ERR_ABORTED`, seen on a browser's first start on a machine) is made once more.

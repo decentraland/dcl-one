@@ -130,22 +130,23 @@ class InventoryTests(unittest.TestCase):
         for invocation in [guard.BROAD.replace("--workspace", "-p catalyst-comms"),
                            guard.BROAD + " --exclude catalyst", guard.BROAD + " case_name",
                            guard.BROAD + " -- --skip required", guard.BROAD + " -- --ignored",
-                           guard.BROAD.replace("cargo test", "cargo test --test unrelated")]:
+                           guard.BROAD.replace("catalyst-test.sh", "catalyst-test.sh --test unrelated")]:
             with self.subTest(invocation=invocation), self.assertRaises(ValueError):
                 guard.validate_invocation(invocation, {})
         with self.assertRaises(ValueError):
             guard.validate_invocation(guard.BROAD, {"MAKEFLAGS": "NODE_CRATES=-p catalyst-comms"})
 
     def test_catalyst_inventory_compiles_the_runtime_selection(self):
-        runtime = guard.BROAD.split(" && ")[1].split()
+        runtime = ["cargo", "test", "--locked", *guard.SELECTION.split()]
         manifest = '{"catalyst": {"required": ["case"]}, "unix": {}}'
         with (
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
             mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
             mock.patch.dict(guard.os.environ, clear=True),
-            mock.patch.object(Path, "read_text", side_effect=[manifest, ""]),
+            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
             mock.patch.object(guard, "verify_resolution"),
             mock.patch.object(guard, "validate_runtime_script"),
+            mock.patch.object(guard, "validate_test_script"),
             self.assertRaisesRegex(ValueError, "missing required target: required"),
         ):
             guard.main()
@@ -192,6 +193,23 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
 
+
+    def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        guard.validate_test_script(script)
+        guard.validate_test_script(script.replace("# Run the node", "# Runs the node"))
+        for bad in [script.replace("#!/usr/bin/env bash", "#!/usr/bin/env true"),
+                    script.replace("set -euo pipefail", "set -uo pipefail"),
+                    script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
+                    script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
+                    script.replace('run "$jobs" < "$logs/binaries"', 'run "$jobs" < <(head -n 1 "$logs/binaries")'),
+                    script.replace('< "$logs/others"', '< <(head -n 1 "$logs/others")'),
+                    script.replace('run "$socket_jobs" < "$logs/sockets"\n', ''),
+                    script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
+                    script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace("cores=", "exit 0\ncores=")]:
+            with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
+                guard.validate_test_script(bad)
 
     def test_vendor_examples_compile_gate_cannot_be_removed_filtered_or_conditional(self):
         script = (ROOT / "tooling/dev-test.sh").read_text()

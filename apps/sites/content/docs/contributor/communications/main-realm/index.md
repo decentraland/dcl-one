@@ -2,7 +2,7 @@
 
 Decentraland has as many realms as there are Catalyst with communications services, but there is one distinctive realm known as MAIN which exists outside the Catalysts network. The MAIN realm was specifically designed to streamline the user connection process, making it easier for users to interact and meet. It is constructed with a set of services capable of substituting the communication service of a Catalyst node. This realm serves as the default destination for users upon logging into Decentraland.
 
-<img src="/docs/player/images/main-realm.webp" width="800"/>
+<img src="/docs/contributor/.gitbook/assets/main-realm.webp" width="800"/>
 
 The [realm provider](https://github.com/decentraland/realm-provider) services exposes an [/about](https://realm-provider.decentraland.org/main/about) endpoint with a realm description according to the [ADR-110: Realm description](https://adr.decentraland.org/adr/ADR-110). This provides the information to establish a connection with the content management network, known as one of Catalyst node's services, and also supplies the connection details for the MAIN realm communication services. 
 
@@ -12,6 +12,6 @@ The MAIN communications service is accessed through the [WebSocket Connector](ht
 
 The Archipelago stats service shares the same API implementation as the Archipelago service in the Catalyst node. You can explore the API at this link: [Catalyst API Specs](https://decentraland.github.io/catalyst-api-specs/#tag/Archipelago). The service is accessible through the following URL `https://archipelago-stats.decentraland.org/` and the available endpoints are under the `/comms/` as described in the API Spec, e.g.: `https://archipelago-stats.decentraland.org/comms/peers`.
 
-The [LiveKit](/docs/contributor/communications/transport-types/livekit/) Cloud platform manages the intricate task of exchanging users' information through WebRTC and it is the primary cloud platform shared by the majority of Catalyst nodes for the same purpose. 
+The [LiveKit](/docs/contributor/communications/transport-types/livekit/) Cloud platform manages the intricate task of exchanging users' information through WebRTC and it is the primary cloud platform shared by the majority of Catalyst nodes for the same purpose.
 
 The fundamental concept derived from the MAIN realm is that different users have the flexibility to connect to any Catalyst node for content management purposes (downloads scenes, wearables, emotes, or send profile updates) but despite the selection of a specific content management node, the connection to the communication service **can** be the same. As a result, even if users are utilizing different Catalyst nodes as content servers but they find themselves at close scene coordinates, they will have the ability to interact with each other.

@@ -18,7 +18,9 @@ export interface Console {
  *  after it was logged). The web driver's `driver.mjs` has the same rule, which a test keeps in
  *  step. */
 export function secretOf(line: string): string | undefined {
-  return /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1]
+  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1]
+  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
+  return token?.replace(/^["']|["']$/g, '')
 }
 
 /** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout

@@ -31,6 +31,7 @@ use crate::land_authz::indexer::{
 pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_NFT: &str = "nft";
+pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 
 /// How old a publish may be before readers stop trusting it (a stopped job).
@@ -117,6 +118,8 @@ pub struct IndexSettings {
     pub mana_transfers_enabled: bool,
     /// `MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`.
     pub trade_events_enabled: bool,
+    /// `MARKETPLACE_SALES_INDEX_ENABLED`.
+    pub sales_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -152,6 +155,7 @@ impl Default for IndexSettings {
             nft_enabled: false,
             mana_transfers_enabled: false,
             trade_events_enabled: false,
+            sales_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -754,10 +758,16 @@ pub async fn run_pass(
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
+            let replay =
+                super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
             rewind(&mut tx, name, net, to).await?;
+            // Cursor rows are locked after the deletes: producers wait only for the commit.
+            if let Some(replay) = replay {
+                replay.apply(&mut tx).await?;
+            }
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);

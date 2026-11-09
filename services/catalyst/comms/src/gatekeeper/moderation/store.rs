@@ -875,6 +875,19 @@ pub struct UpsertPlayerConnection {
     pub device_id: Option<String>,
 }
 
+#[async_trait::async_trait]
+impl super::BanStatus for Moderation {
+    async fn ban(
+        &self,
+        actor: &Address,
+        scene: Option<&crate::world_identity::SceneId>,
+        device: Option<&str>,
+        now: NaiveDateTime,
+    ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
+        Moderation::ban(self, actor, scene, device, now).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,18 +980,5 @@ mod tests {
         assert_ne!(scene_admin_id("p", "0xa"), scene_admin_id("q", "0xa"));
         assert_eq!(sent_device_id(Some("  ")), None);
         assert_eq!(sent_device_id(Some(" d ")).as_deref(), Some("d"));
-    }
-}
-
-#[async_trait::async_trait]
-impl super::BanStatus for Moderation {
-    async fn ban(
-        &self,
-        actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
-        device: Option<&str>,
-        now: NaiveDateTime,
-    ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
-        Moderation::ban(self, actor, scene, device, now).await
     }
 }

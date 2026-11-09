@@ -14,6 +14,11 @@
 //! upstream's, so a patch that sets them answers 409 naming the upstream. A
 //! soft-deleted event answers not found, as before.
 //!
+//! The HTTP admin bearer's `PATCH /api/events/{id}` state changes follow
+//! upstream's `admin.ts` instead (`AdminState`, [`apply_admin_state_change`]):
+//! approve/unapprove/reject/unreject with their no-ops, the required
+//! rejection reason and the flag reset; `events::writes` parses that body.
+//!
 //! An operator's event creation (the console's `events/create`, the old
 //! admin `POST /api/events`): the old body (unknown fields refused), its
 //! validation (name <= 150, description <= 5000, safe url and images, the
@@ -83,6 +88,16 @@ impl AdminPatch {
             .is_some_and(|reason| reason.chars().count() > 500)
         {
             return Err(ApiError::bad_request("reason too long"));
+        }
+        if self.name.as_ref().is_some_and(|n| n.chars().count() > 150) {
+            return Err(ApiError::bad_request("name must be at most 150 characters"));
+        }
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|d| d.chars().count() > MAX_EVENT_DESCRIPTION_CHARS)
+        {
+            return Err(ApiError::bad_request("description too long"));
         }
         let mut resolved = Self {
             name: self.name.clone(),
@@ -235,9 +250,10 @@ pub(crate) async fn mirrored_event(pool: &PgPool, event_id: &str) -> ApiError {
     ))
 }
 
-/// Applies `body` to the event as `actor`. `Ok(false)` when there is no such
-/// event (or it was deleted): the old route's 404; a patch of a mirrored
-/// event's own fields answers [`mirrored_event`].
+/// Applies `body` to the event as `actor` (the console's vocabulary).
+/// `Ok(false)` when there is no such event (or it was deleted): the old
+/// route's 404; a patch of a mirrored event's own fields answers
+/// [`mirrored_event`].
 pub async fn moderate(
     pool: &PgPool,
     event_id: &str,
@@ -245,6 +261,129 @@ pub async fn moderate(
     actor: &str,
     settings: &crate::Settings,
 ) -> Result<bool, ApiError> {
+    moderate_with(pool, event_id, body, actor, settings, false, |raw| {
+        apply_admin_state(raw, body, actor).map(|()| true)
+    })
+    .await
+}
+
+/// `admin.ts:253-308` (`applyStateChange`): the admin bearer's state body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminState {
+    Approve,
+    Unapprove,
+    Reject(String),
+    Unreject,
+}
+
+impl AdminState {
+    /// The console-shaped decision the mirrored overlay records for it.
+    fn as_patch(&self) -> AdminPatch {
+        match self {
+            AdminState::Approve => AdminPatch {
+                approved: Some(true),
+                ..Default::default()
+            },
+            AdminState::Unapprove => AdminPatch {
+                approved: Some(false),
+                ..Default::default()
+            },
+            AdminState::Reject(reason) => AdminPatch {
+                rejected: Some(true),
+                reason: Some(reason.clone()),
+                highlighted: Some(false),
+                trending: Some(false),
+                ..Default::default()
+            },
+            AdminState::Unreject => AdminPatch {
+                rejected: Some(false),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+/// `admin.ts:131-228`: the changes a bearer state change makes, `false`
+/// when upstream answered the event unchanged (no write, no notification).
+pub fn apply_admin_state_change(
+    raw: &mut Map<String, Value>,
+    state: &AdminState,
+    actor: &str,
+) -> bool {
+    match state {
+        AdminState::Approve => {
+            // buildApprovalChanges (:131-146)
+            if flag(raw, "approved")
+                && !flag(raw, "rejected")
+                && text(raw, "rejection_reason").is_none()
+            {
+                return false;
+            }
+            set_approved(raw, actor);
+        }
+        AdminState::Unapprove => {
+            // unapproveEventByActor (:184-195)
+            if !flag(raw, "approved") && text(raw, "approved_by").is_none() {
+                return false;
+            }
+            raw.insert("approved".into(), json!(false));
+            raw.insert("approved_by".into(), Value::Null);
+        }
+        AdminState::Reject(reason) => {
+            // buildRejectionChanges (:148-166): the reason compared as sent.
+            if flag(raw, "rejected") && text(raw, "rejection_reason").as_deref() == Some(reason) {
+                return false;
+            }
+            set_rejected(raw, actor, Some(reason.clone()));
+            raw.insert("highlighted".into(), json!(false));
+            raw.insert("trending".into(), json!(false));
+        }
+        AdminState::Unreject => {
+            // unrejectEventByActor (:216-228)
+            if !flag(raw, "rejected")
+                && text(raw, "rejected_by").is_none()
+                && text(raw, "rejection_reason").is_none()
+            {
+                return false;
+            }
+            raw.insert("rejected".into(), json!(false));
+            raw.insert("rejected_by".into(), Value::Null);
+            raw.insert("rejection_reason".into(), Value::Null);
+        }
+    }
+    true
+}
+
+/// The admin bearer's state change (`patchEventAdmin`, `admin.ts:367-373`):
+/// a soft-deleted event is still patched (`getAdminEvent` has no deletion
+/// filter, fixture `events.admin_patch.soft_deleted_still_patchable`).
+/// `Ok(false)` when there is no such event.
+pub async fn moderate_state(
+    pool: &PgPool,
+    event_id: &str,
+    state: &AdminState,
+    actor: &str,
+    settings: &crate::Settings,
+) -> Result<bool, ApiError> {
+    let body = state.as_patch();
+    moderate_with(pool, event_id, &body, actor, settings, true, |raw| {
+        Ok(apply_admin_state_change(raw, state, actor))
+    })
+    .await
+}
+
+async fn moderate_with<F>(
+    pool: &PgPool,
+    event_id: &str,
+    body: &AdminPatch,
+    actor: &str,
+    settings: &crate::Settings,
+    allow_deleted: bool,
+    apply: F,
+) -> Result<bool, ApiError>
+where
+    F: FnOnce(&mut Map<String, Value>) -> Result<bool, ApiError>,
+{
     super::mirror::reclaim_local(pool).await?;
     let mut tx = pool.begin().await?;
     let row: Option<(Value, String, String)> =
@@ -260,7 +399,7 @@ pub async fn moderate(
         Value::Object(m) => m,
         _ => Map::new(),
     };
-    if is_soft_deleted(&raw) {
+    if is_soft_deleted(&raw) && !allow_deleted {
         return Ok(false);
     }
     let mirrored = origin != LOCAL;
@@ -268,7 +407,10 @@ pub async fn moderate(
         drop(tx);
         return Err(mirrored_event(pool, event_id).await);
     }
-    apply_admin_state(&mut raw, body, actor)?;
+    if !apply(&mut raw)? {
+        tx.rollback().await?;
+        return Ok(true);
+    }
     if !mirrored {
         begin_metric_approval(&mut tx, before.as_object().unwrap_or(&Map::new()), &mut raw).await?;
     }
@@ -625,8 +767,46 @@ pub(crate) fn series_may_have_future_dates(
     normalized_series(recurrent, frequency, count, until) && until.is_none_or(|u| u > now)
 }
 
-/// The old `validate_create`: the start instant, or the 400.
+/// `validateEventUrl` (`Event/utils.ts:826-835`).
+pub(super) fn validate_event_url(url: &str) -> Result<(), ApiError> {
+    crate::sanitize::validate_event_url(url)
+        .map(|_| ())
+        .map_err(|_| {
+            ApiError::bad_request(format!(
+                "Invalid event url {url}; only public HTTP(S) URLs are allowed"
+            ))
+        })
+}
+
+/// `validateImageUrl` (`Event/utils.ts:837-870`) as this node applies it:
+/// the poster must be one this node serves (`posters::resolve`); the refusal
+/// is upstream's text. Fixtures `events.create.image_wrong_origin`,
+/// `.image_vertical_wrong_origin`, `events.patch.image_wrong_origin`.
+pub(super) fn invalid_image(url: &str) -> ApiError {
+    ApiError::bad_request(format!(
+        "Invalid image url {url}, please upload the image through the upload poster endpoint (POST /poster)"
+    ))
+}
+
+/// `isInsideWorldLimits(x, y)` for every event, world events included
+/// (`createEvent.ts:95-103`, `updateEvent.ts:349-357`).
+pub(super) fn check_world_limits(x: i32, y: i32, body: &Value) -> Result<(), ApiError> {
+    if super::handlers::is_inside_world_limits(x, y) {
+        Ok(())
+    } else {
+        Err(ApiError::with_data(
+            400,
+            "Event is outside the world limits",
+            json!({ "body": body }),
+        ))
+    }
+}
+
+/// The old `validate_create` with upstream's refusals (`createEvent.ts:81-163`):
+/// the start instant, or the 400 echoing the body.
 pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTime<Utc>, ApiError> {
+    let echo = serde_json::to_value(body).unwrap_or(Value::Null);
+    let refuse = |message: &str| ApiError::with_data(400, message, json!({ "body": echo }));
     if body.name.chars().count() > 150 {
         return Err(ApiError::bad_request("name must be at most 150 characters"));
     }
@@ -650,11 +830,11 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
             "organizer text exceeds the maximum length",
         ));
     }
-    if let Some(u) = &body.url {
-        crate::sanitize::validate_event_url(u).map_err(ApiError::bad_request)?;
+    if let Some(u) = body.url.as_deref().filter(|u| !u.is_empty()) {
+        validate_event_url(u)?;
     }
     for img in [&body.image, &body.image_vertical].into_iter().flatten() {
-        crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
+        crate::sanitize::sanitize_asset_url(img).map_err(|_| invalid_image(img))?;
     }
     if let Some(urn) = body.featured_item.as_deref().filter(|v| !v.is_empty()) {
         validate_featured_item(urn).map_err(ApiError::bad_request)?;
@@ -667,25 +847,29 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
     if !(-170..=170).contains(&body.x) || !(-170..=170).contains(&body.y) {
         return Err(ApiError::bad_request("coordinates out of range"));
     }
-    let world = body.world.unwrap_or(false);
-    if !world && !super::handlers::is_inside_world_limits(body.x, body.y) {
-        return Err(ApiError::bad_request("coordinates outside world limits"));
-    }
+    check_world_limits(body.x, body.y, &echo)?;
     let recurrent = body.recurrent.unwrap_or(false);
     let frequency = body.recurrent_frequency.as_deref();
     let until = body.recurrent_until.as_deref().and_then(parse_rfc3339);
+    // `createEvent.ts:105-125`: the past-iteration cap before any expansion.
+    if let Some(rule) = echo.as_object()
+        && super::recurrence::estimate_past_iterations(rule, now)
+            > super::recurrence::MAX_RECURRENT_PAST_ITERATIONS
+    {
+        return Err(refuse(super::recurrence::TOO_MANY_PAST_ITERATIONS_MESSAGE));
+    }
     if !series_may_have_future_dates(recurrent, frequency, body.recurrent_count, until, now)
         && finish_at_of(start_at, body.duration).is_some_and(|finish_at| finish_at <= now)
     {
-        return Err(ApiError::bad_request(PAST_FINISH_AT_MESSAGE));
+        return Err(refuse(PAST_FINISH_AT_MESSAGE));
     }
     if normalized_series(recurrent, frequency, body.recurrent_count, until)
         && until.is_some_and(|u| u <= now)
     {
-        return Err(ApiError::bad_request(PAST_RECURRENT_UNTIL_MESSAGE));
+        return Err(refuse(PAST_RECURRENT_UNTIL_MESSAGE));
     }
     if body.duration > MAX_EVENT_DURATION_MS {
-        return Err(ApiError::bad_request(max_duration_message()));
+        return Err(refuse(&max_duration_message()));
     }
     Ok(start_at)
 }
@@ -711,9 +895,7 @@ pub fn build_create_raw(
         .url
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| {
-            super::metadata::jump_in_url(world, body.server.as_deref(), body.x, body.y)
-        });
+        .unwrap_or_else(|| super::metadata::jump_in_url(body.server.as_deref(), body.x, body.y));
     let mut seen = std::collections::HashSet::new();
     let schedules: Vec<String> = body
         .schedules
@@ -937,19 +1119,39 @@ where
     }
 }
 
+/// `createEvent.ts:178-202`, `updateEvent.ts:493-534`: the community
+/// failures are 400 `Failed to validate community ownership: Community
+/// "<id>" not found or you don't have <access> it`, `access` being `access
+/// to` on create, `permission to access` or `permission to detach this
+/// event from` on update. Fixtures `events.create.community_not_member`,
+/// `events.patch.community_not_member`, `.community_detach_not_member`.
+pub(super) fn community_failure(id: &str, access: &str, body: &Value) -> ApiError {
+    ApiError::with_data(
+        400,
+        format!(
+            "Failed to validate community ownership: Community \"{id}\" not found or you don't have {access} it"
+        ),
+        json!({ "body": body }),
+    )
+}
+
 /// A community event may only be linked by an owner or moderator of that
-/// active community. This uses the shared membership authority, not a claim
-/// supplied by the event form.
+/// active community (upstream asked the Communities API for the signer's
+/// communities). This uses the shared membership authority, not a claim
+/// supplied by the event form; the failure is [`community_failure`].
 pub(super) async fn validate_community<'e, E>(
     executor: E,
     id: &str,
     signer: &str,
+    access: &str,
+    body: &Value,
 ) -> Result<(), ApiError>
 where
     E: sqlx::PgExecutor<'e>,
 {
-    let id =
-        uuid::Uuid::parse_str(id).map_err(|_| ApiError::bad_request("invalid community_id"))?;
+    let Ok(id) = uuid::Uuid::parse_str(id) else {
+        return Err(community_failure(id, access, body));
+    };
     let managed: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM social.communities c \
          LEFT JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $2 \
@@ -961,11 +1163,20 @@ where
     .fetch_one(executor)
     .await?;
     if !managed {
-        return Err(ApiError::forbidden(
-            "You don't have permission to link this community",
-        ));
+        return Err(community_failure(&id.to_string(), access, body));
     }
     Ok(())
+}
+
+/// The document a validation 400 echoes as `data.body`: without this node's
+/// private authoring keys (`_image_source`, `_metrics_*`).
+pub(super) fn public_body(raw: &Map<String, Value>) -> Value {
+    Value::Object(
+        raw.iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
 }
 
 /// Validate catalogue references before committing an event. Arrays are
@@ -977,6 +1188,7 @@ pub(super) async fn validate_references<'e, E>(
 where
     E: sqlx::PgExecutor<'e>,
 {
+    // `createEvent.ts:165-176`, `updateEvent.ts:362-373`.
     if let Some(categories) = raw.get("categories").and_then(Value::as_array) {
         let known = super::categories::list();
         if categories.len() > 25
@@ -986,9 +1198,14 @@ where
                     .any(|known| category.as_str() == Some(&known.name))
             })
         {
-            return Err(ApiError::bad_request("Invalid category tag supplied"));
+            return Err(ApiError::with_data(
+                400,
+                "Invalid category tag supplied",
+                json!({ "body": public_body(raw) }),
+            ));
         }
     }
+    // `updateEvent.ts:302-323`: `Schedule not found: <missing ids>`.
     if let Some(schedules) = raw.get("schedules").and_then(Value::as_array) {
         if schedules.len() > 100 {
             return Err(ApiError::bad_request("too many schedules"));
@@ -999,18 +1216,43 @@ where
             .map(str::to_owned)
             .collect();
         if !schedules.is_empty() {
-            let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM explore.schedules_local WHERE id = ANY($1)",
-            )
-            .bind(&schedules)
-            .fetch_one(executor)
-            .await?;
-            if count != schedules.len() as i64 {
-                return Err(ApiError::bad_request("Schedule not found"));
+            let found: Vec<String> =
+                sqlx::query_scalar("SELECT id FROM explore.schedules_local WHERE id = ANY($1)")
+                    .bind(&schedules)
+                    .fetch_all(executor)
+                    .await?;
+            let missing: Vec<&str> = schedules
+                .iter()
+                .filter(|id| !found.contains(id))
+                .map(String::as_str)
+                .collect();
+            if !missing.is_empty() {
+                return Err(ApiError::with_data(
+                    400,
+                    format!("Schedule not found: {}", missing.join(", ")),
+                    json!({ "body": public_body(raw) }),
+                ));
             }
         }
     }
     Ok(())
+}
+
+/// `posters::resolve` with upstream's refusal text (`validateImageUrl`);
+/// a node without a blob store cannot hold the poster: 503, as upstream
+/// answered without its bucket (`utils.ts:838-843`).
+pub(super) async fn resolve_poster<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    image: &str,
+    settings: &crate::Settings,
+    kind: &str,
+) -> Result<String, ApiError> {
+    super::posters::resolve(executor, image, settings, kind)
+        .await
+        .map_err(|error| match error {
+            ApiError::Http { status: 400, .. } => invalid_image(image),
+            other => other,
+        })
 }
 
 /// Creates the event as the old admin path did, the operator as the
@@ -1036,12 +1278,18 @@ pub async fn create_as(
     places: Option<&crate::places::PlacesComponent>,
 ) -> Result<String, ApiError> {
     let mut body = body.clone();
+    // `createEvent.ts:83-93`: the custom url, then the images.
+    if let Some(u) = body.url.as_deref().filter(|u| !u.is_empty()) {
+        validate_event_url(u)?;
+    }
     for (image, kind) in [
         (&mut body.image, "poster"),
         (&mut body.image_vertical, "poster-vertical"),
     ] {
-        if let Some(value) = image {
-            *value = super::posters::resolve(pool, value, settings, kind).await?;
+        if let Some(value) = image.as_deref().filter(|v| !v.is_empty()) {
+            *image = Some(resolve_poster(pool, value, settings, kind).await?);
+        } else {
+            *image = None;
         }
     }
     let body = &body;
@@ -1059,17 +1307,26 @@ pub async fn create_as(
     let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
-    if let Some(raw) = doc.as_object_mut() {
-        let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw, None, true, places).await?;
-    }
-    if creator != ADMIN_CREATOR {
-        if let Some(community) = body.community_id.as_deref() {
-            validate_community(pool, community, creator).await?;
-        }
-    }
     if let Some(raw) = doc.as_object() {
         validate_references(pool, raw).await?;
+    }
+    if creator != ADMIN_CREATOR
+        && let Some(community) = body.community_id.as_deref()
+    {
+        let echo = serde_json::to_value(body).unwrap_or(Value::Null);
+        validate_community(pool, community, creator, "access to", &echo).await?;
+    }
+    if let Some(raw) = doc.as_object_mut() {
+        let mut conn = pool.acquire().await?;
+        super::metadata::enrich(
+            &mut conn,
+            raw,
+            None,
+            true,
+            &settings.events_base_url,
+            places,
+        )
+        .await?;
     }
     let mut tx = pool.begin().await?;
     let created_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
@@ -1196,6 +1453,32 @@ mod tests {
             .as_object()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn an_admin_patch_refuses_text_over_the_create_bounds() {
+        let long_name = AdminPatch {
+            name: Some("n".repeat(151)),
+            ..AdminPatch::default()
+        };
+        assert_eq!(
+            long_name.resolved().unwrap_err().to_string(),
+            "name must be at most 150 characters"
+        );
+        let long_description = AdminPatch {
+            description: Some("d".repeat(MAX_EVENT_DESCRIPTION_CHARS + 1)),
+            ..AdminPatch::default()
+        };
+        assert_eq!(
+            long_description.resolved().unwrap_err().to_string(),
+            "description too long"
+        );
+        let at_the_bound = AdminPatch {
+            name: Some("n".repeat(150)),
+            description: Some("d".repeat(MAX_EVENT_DESCRIPTION_CHARS)),
+            ..AdminPatch::default()
+        };
+        assert!(at_the_bound.resolved().is_ok());
     }
 
     #[test]
@@ -1665,8 +1948,8 @@ mod tests {
                 },
                 now
             )
-            .is_ok(),
-            "a world event is not bound to Genesis"
+            .is_err(),
+            "a world event is bound to the world limits too (createEvent.ts:95-103)"
         );
         assert!(
             validate_create(
@@ -1706,7 +1989,7 @@ mod tests {
             (
                 json!(false),
                 json!("admin"),
-                json!("https://decentraland.org/play/?position=10%2C20")
+                json!("https://decentraland.org/jump/events?position=10%2C20")
             )
         );
     }

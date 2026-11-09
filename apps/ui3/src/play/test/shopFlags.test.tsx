@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { primeRemoteFlags, REMOTE_FLAG, remoteFlag } from '../../shop/discovery/lib/remoteFlags'
+import { primeRemoteFlags, REMOTE_FLAG, remoteFlag, remoteFlagVariant } from '../../shop/discovery/lib/remoteFlags'
 import { flagQueries, useShopFlag } from '../features/shop/flagsQuery'
 
 function host(): { client: QueryClient; wrapper: ({ children }: { children: React.ReactNode }) => React.JSX.Element } {
@@ -26,6 +26,23 @@ describe('the Shop rollout flags', () => {
     expect(String(f.mock.calls[0][0])).toMatch(/\/dapps\.json$/)
     // The web Shop's fetchers read the same answer from their module.
     expect(remoteFlag(REMOTE_FLAG.creatorSales)).toBe(true)
+  })
+
+  it("hands the web Shop the variants too, so a page it opens next keeps My Store's address list", async () => {
+    const list = `0x${'a'.repeat(40)}`
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          flags: { 'dapps-shop-my-store': true },
+          variants: { 'dapps-shop-my-store': { name: 'testers', enabled: true, payload: { type: 'string', value: list } } }
+        })
+      )
+    )
+    const { wrapper } = host()
+    const { result } = renderHook(() => useShopFlag(REMOTE_FLAG.myStore), { wrapper })
+    await waitFor(() => expect(result.current).toBe(true))
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list)
   })
 
   it('is off when the file cannot be read', async () => {

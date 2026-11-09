@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
-use av::AVPlayerPlugin;
+use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
@@ -41,6 +41,7 @@ use bevy::{
 };
 #[cfg(not(debug_assertions))]
 use build_time::build_time_utc;
+use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
 use common::{
     inputs::InputMap,
@@ -652,12 +653,17 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
+            // without an extension to the last image loader registered, which must stay
+            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
+            // registered before it, then only ever sees `.ktx2` paths.
+            .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
             .add_plugins(CollectiblesPlugin)
             .add_plugins(WorldUiPlugin)
             .add_plugins(TextureCameraPlugin)
-            .add_plugins(ImageProcessingPlugin)
+            .add_plugins(CameraReelPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
             .add_plugins(world_state::WorldStatePlugin)
             .add_plugins(deep_link::DeepLinkPlugin)

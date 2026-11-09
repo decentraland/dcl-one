@@ -22,7 +22,8 @@
   max-width: 1760px;
   margin: 0 auto;
   padding: 28px 54px 80px;
-  min-height: calc(100vh - var(--shop-nav-h, 92px) - 66px);
+  /* As upstream's .page: fills the first viewport below the nav. */
+  min-height: calc(100vh - var(--shop-nav-h, 92px));
   color: var(--sa-soft-white);
   font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
 }
@@ -464,7 +465,8 @@
   padding: 0 12px;
   border: 0;
   border-radius: var(--shop-radius-card, 12px);
-  background: rgba(0, 0, 0, 0.4);
+  /* As upstream's EmptyState CTA (shop@71433483): the glass fill, stronger on hover. */
+  background: rgba(255, 255, 255, 0.2);
   color: var(--sa-soft-white);
   font-family: inherit;
   font-size: 15px;
@@ -476,11 +478,9 @@
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.shop-activity-empty__cta:hover {
-  background: rgba(0, 0, 0, 0.55);
-}
+.shop-activity-empty__cta:hover,
 .shop-activity-empty__cta:active {
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(255, 255, 255, 0.3);
 }
 .shop-activity-empty[data-cta="solid"] .shop-activity-empty__cta {
   background: var(--sa-soft-white);

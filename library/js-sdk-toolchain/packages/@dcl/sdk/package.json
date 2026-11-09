@@ -1,0 +1,36 @@
+{
+  "name": "@dcl/sdk",
+  "description": "",
+  "version": "7.0.0",
+  "author": "Decentraland",
+  "dependencies": {
+    "@dcl/ecs": "file:../ecs",
+    "@dcl/ecs-math": "2.1.0",
+    "@dcl/js-runtime": "file:../js-runtime",
+    "@dcl/react-ecs": "file:../react-ecs",
+    "@dcl/sdk-commands": "file:../sdk-commands"
+  },
+  "keywords": [],
+  "license": "Apache-2.0",
+  "main": "./index.js",
+  "minCliVersion": "3.14.1",
+  "repository": {
+    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
+    "directory": "packages/@dcl/sdk"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && tsc -p tsconfig.json --watch"
+  },
+  "tsdoc": {
+    "tsdocFlavor": "AEDoc"
+  },
+  "typedoc": {
+    "entryPoint": "./src/index.ts",
+    "readmeFile": "./README.md",
+    "displayName": "SDK",
+    "tsconfig": "./tsconfig.json"
+  },
+  "types": "./index.d.ts",
+  "typings": "./index.d.ts"
+}

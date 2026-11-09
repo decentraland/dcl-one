@@ -8,24 +8,23 @@
 use std::collections::BTreeMap;
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
+use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::comms::world_identity::{ParcelError, ParcelSet, WorldName};
+use crate::comms::world_identity::{Parcel, ParcelError, ParcelSet, WorldName};
+use crate::content::validation;
 use crate::policy::Permission;
 use crate::shared::identity::{Address, PermissionDecision};
 use crate::shared::signed_fetch::SignedPath;
 
 use super::auth::{PERMISSIONS_METADATA_KEYS, map_auth_error_api, require_verified};
 use super::http::{ApiError, QueryPairs, js_parse_int, pagination, query_param};
-use super::store::{
-    self, AccessSetting, AllowListEdit, AllowListEditOutcome, MAX_ACCESS_COMMUNITIES,
-    MAX_ACCESS_WALLETS,
-};
+use super::store::{self, AccessCaps, AccessSetting, AllowListEdit, AllowListEditOutcome};
 use super::{Revocation, SharedState};
 
 #[derive(Debug, Serialize)]
@@ -59,6 +58,9 @@ pub struct PermissionSummaryEntry {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
 pub struct PermissionsResponse {
     pub permissions: WorldPermissionsBlock,
+    // Left out when the name has no holder, as upstream's `undefined`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub owner: Option<String>,
     pub summary: BTreeMap<String, Vec<PermissionSummaryEntry>>,
 }
@@ -71,6 +73,17 @@ fn parse_address(raw: &str) -> Result<Address, ApiError> {
     Address::parse(raw).map_err(|_| ApiError::bad_request(format!("Invalid address: {raw}.")))
 }
 
+/// A path `:address`, as upstream's `EthAddress.validate`: exactly
+/// `^0x[a-fA-F0-9]{40}$` (no padding, no `0X`).
+fn parse_path_address(raw: &str) -> Result<Address, ApiError> {
+    let strict =
+        raw.len() == 42 && raw.starts_with("0x") && raw[2..].bytes().all(|b| b.is_ascii_hexdigit());
+    if !strict {
+        return Err(ApiError::bad_request(format!("Invalid address: {raw}.")));
+    }
+    parse_address(raw)
+}
+
 /// GET /world/{world_name}/permissions
 pub async fn get_permissions(
     State(state): State<SharedState>,
@@ -79,8 +92,12 @@ pub async fn get_permissions(
     let world = parse_world(&world_name)?;
     let record = store::get_world(&state.pool, &world).await?;
     let records = store::permission_records(&state.pool, &world).await?;
+    // `getAccessForWorld` reads through `getRawWorldRecords`, whose deny-list
+    // filter leaves such a world out: its access reads as the default.
+    let denied = store::raw_records_exclude(&state.pool, &state.names, &world).await;
     let access = record
         .as_ref()
+        .filter(|_| !denied)
         .map(|w| w.access.clone())
         .unwrap_or_default();
     // The live holder; 503 while the authority cannot answer, as other owner reads.
@@ -153,20 +170,31 @@ async fn owner_decision(
     }
 }
 
-async fn verify_owner(
+/// The strict (6.x) signed fetch of the owner-gated routes. Upstream runs it
+/// as middleware, before the body, path and owner checks.
+async fn verify_signer(
     state: &SharedState,
     headers: &HeaderMap,
-    path: &SignedPath,
+    original: &Uri,
+    uri: &Uri,
     method: &str,
-    world: &WorldName,
-) -> Result<OwnerCheck, ApiError> {
-    let auth = require_verified(headers, method, path, &[], state.eip1654.as_deref())
+) -> Result<Address, ApiError> {
+    let path = SignedPath::from_uris(original, uri);
+    let auth = require_verified(headers, method, &path, &[], state.eip1654.as_deref())
         .await
         .map_err(map_auth_error_api)?;
-    owner_decision(state, world, &auth.signer).await?;
+    Ok(auth.signer)
+}
+
+async fn verify_owner(
+    state: &SharedState,
+    world: &WorldName,
+    signer: Address,
+) -> Result<OwnerCheck, ApiError> {
+    owner_decision(state, world, &signer).await?;
     let world_found = store::get_world(&state.pool, world).await?.is_some();
     Ok(OwnerCheck {
-        signer: auth.signer,
+        signer,
         world_found,
     })
 }
@@ -218,7 +246,6 @@ pub async fn post_permissions(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let world = parse_world(&world_name)?;
     let auth = require_verified(
         &headers,
         "post",
@@ -228,6 +255,7 @@ pub async fn post_permissions(
     )
     .await
     .map_err(map_auth_error_api)?;
+    let world = parse_world(&world_name)?;
     owner_decision(&state, &world, &auth.signer).await?;
 
     let meta = &auth.metadata;
@@ -277,7 +305,7 @@ pub async fn post_permissions(
                 .await?;
         }
         "access" => {
-            let access = access_from_metadata(meta)?;
+            let access = access_from_metadata(meta, state.settings.access_caps)?;
             if let AccessSetting::AllowList { communities, .. } = &access {
                 require_community_member(&state, &auth.signer, communities).await?;
             }
@@ -315,7 +343,33 @@ fn metadata_wallets(meta: &Value) -> Result<Vec<Address>, ApiError> {
         .collect()
 }
 
-fn access_from_metadata(meta: &Value) -> Result<AccessSetting, ApiError> {
+/// JS `String(value)` of a metadata field, as upstream's template literals
+/// print it (`undefined` when absent).
+fn js_string(value: Option<&Value>) -> String {
+    match value {
+        None => "undefined".into(),
+        Some(Value::Null) => "null".into(),
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Bool(b)) => b.to_string(),
+        Some(Value::Number(n)) => match n.as_f64() {
+            Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() < 1e21 => format!("{f:.0}"),
+            _ => n.to_string(),
+        },
+        // `Array.prototype.join`: null and undefined elements print empty.
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| match v {
+                Value::Null => String::new(),
+                other => js_string(Some(other)),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Some(Value::Object(_)) => "[object Object]".into(),
+    }
+}
+
+fn access_from_metadata(meta: &Value, caps: AccessCaps) -> Result<AccessSetting, ApiError> {
+    // Upstream switches with `===`, so only a string can name a type.
     let ty = meta.get("type").and_then(|v| v.as_str()).unwrap_or("");
     Ok(match ty {
         "unrestricted" => AccessSetting::Unrestricted,
@@ -342,16 +396,19 @@ fn access_from_metadata(meta: &Value) -> Result<AccessSetting, ApiError> {
         "allow-list" => {
             let wallets = metadata_strings(meta, "wallets");
             let communities = metadata_strings(meta, "communities");
-            if wallets.len() > MAX_ACCESS_WALLETS as usize {
+            // Upstream checks the communities cap first.
+            if communities.len() as i64 > caps.communities {
                 return Err(ApiError::bad_request(format!(
-                    "Too many wallets in allow-list. Maximum allowed is {MAX_ACCESS_WALLETS}, but {} were provided.",
-                    wallets.len()
+                    "Too many communities. Maximum allowed is {}, but {} were provided.",
+                    caps.communities,
+                    communities.len()
                 )));
             }
-            if communities.len() > MAX_ACCESS_COMMUNITIES as usize {
+            if wallets.len() as i64 > caps.wallets {
                 return Err(ApiError::bad_request(format!(
-                    "Too many communities. Maximum allowed is {MAX_ACCESS_COMMUNITIES}, but {} were provided.",
-                    communities.len()
+                    "Too many wallets in allow-list. Maximum allowed is {}, but {} were provided.",
+                    caps.wallets,
+                    wallets.len()
                 )));
             }
             for w in &wallets {
@@ -365,9 +422,10 @@ fn access_from_metadata(meta: &Value) -> Result<AccessSetting, ApiError> {
                 communities,
             }
         }
-        other => {
+        _ => {
             return Err(ApiError::bad_request(format!(
-                "Invalid access type: {other}."
+                "Invalid access type: {}.",
+                js_string(meta.get("type"))
             )));
         }
     })
@@ -421,21 +479,15 @@ pub async fn put_permissions_address(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let address = parse_address(&address)?;
+    let signer = verify_signer(&state, &headers, &original, &uri, "put").await?;
+    let address = parse_path_address(&address)?;
     let Some(permission) = parse_permission(&permission_name) else {
         return Err(ApiError::bad_request(format!(
             "Invalid permission name: {permission_name}."
         )));
     };
     let world = parse_world(&world_name)?;
-    let owner = verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "put",
-        &world,
-    )
-    .await?;
+    let owner = verify_owner(&state, &world, signer).await?;
     let ensure_owner = (!owner.world_found).then_some(&owner.signer);
 
     if is_allow_list_permission(permission) {
@@ -453,8 +505,11 @@ pub async fn put_permissions_address(
         if let Some(signer) = ensure_owner {
             store::ensure_world(&state.pool, &world, signer).await?;
         }
-        apply_allow_list_edit(&state, &world, AllowListEdit::AddWallet(&address), || {
-            ApiError::bad_request(format!("Cannot add wallet: allow-list would exceed the maximum of {MAX_ACCESS_WALLETS} wallets."))
+        apply_allow_list_edit(&state, &world, AllowListEdit::AddWallet(&address), |caps| {
+            ApiError::bad_request(format!(
+                "Cannot add wallet: allow-list would exceed the maximum of {} wallets.",
+                caps.wallets
+            ))
         })
         .await?;
     }
@@ -469,22 +524,16 @@ pub async fn delete_permissions_address(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let address = parse_address(&address)?;
+    let signer = verify_signer(&state, &headers, &original, &uri, "delete").await?;
+    let address = parse_path_address(&address)?;
     let Some(permission) = parse_permission(&permission_name) else {
         return Err(ApiError::bad_request(format!(
             "Permission '{permission_name}' does not support allow-list. Only 'deployment', 'streaming', and 'access' do."
         )));
     };
     let world = parse_world(&world_name)?;
-    verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "delete",
-        &world,
-    )
-    .await?;
-    if !store::world_is_valid(&state.pool, &state.policy, &world).await? {
+    owner_decision(&state, &world, &signer).await?;
+    if !store::world_is_valid(&state.pool, &state.policy, &state.names, &world).await? {
         return Err(ApiError::not_found(format!(
             "World \"{}\" not found.",
             world.display()
@@ -506,7 +555,7 @@ pub async fn delete_permissions_address(
             &state,
             &world,
             AllowListEdit::RemoveWallet(&address),
-            || ApiError::internal("unreachable: removals have no cap"),
+            |_| ApiError::internal("unreachable: removals have no cap"),
         )
         .await?;
         // Kicks only if nothing else admits it (e.g. a listed community).
@@ -516,40 +565,99 @@ pub async fn delete_permissions_address(
 }
 
 const MAX_PARCELS_PER_REQUEST: usize = 500;
+const PARCEL_PATTERN: &str = "^-?\\d+,-?\\d+$";
 
-/// Upstream's `permissionParcelsSchema`: exactly `{parcels}`, 1-500 `x,y` strings.
-fn parcels_body(body: Result<Json<Value>, JsonRejection>) -> Result<ParcelSet, ApiError> {
-    // 415 mirrors upstream's schema validator; storage routes predate it and answer 400.
-    let Json(value) = body.map_err(|rejection| match rejection {
-        JsonRejection::MissingJsonContentType(_) => {
-            ApiError::http(415, "Content-Type must be application/json")
-        }
-        other => ApiError::bad_request(other.body_text()),
-    })?;
-    schema_parcels(&value)
+/// A refusal of the parcel routes: the worlds envelope, or the
+/// `@dcl/schema-validator-component` body upstream's validator middleware
+/// answers in its own shape (`{ok: false, message[, data]}`).
+#[derive(Debug)]
+pub enum ParcelsRefusal {
+    Api(ApiError),
+    Validator { status: StatusCode, body: Value },
 }
 
-fn schema_parcels(value: &Value) -> Result<ParcelSet, ApiError> {
-    let invalid = || ApiError::bad_request("Invalid JSON body");
-    let body = value
-        .as_object()
-        .filter(|o| o.len() == 1)
-        .ok_or_else(invalid)?;
-    let items = body
-        .get("parcels")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid)?;
-    if !(1..=MAX_PARCELS_PER_REQUEST).contains(&items.len()) {
-        return Err(invalid());
+impl From<ApiError> for ParcelsRefusal {
+    fn from(e: ApiError) -> Self {
+        Self::Api(e)
     }
-    let raw = items
-        .iter()
-        .map(Value::as_str)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(invalid)?;
-    ParcelSet::parse_strict(&raw).map_err(|e| match e {
-        ParcelError::NotStrict(_) => invalid(),
-        ParcelError::Malformed(_) => ApiError::bad_request(format!("Invalid parcels: {e}")),
+}
+
+impl From<sqlx::Error> for ParcelsRefusal {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Api(e.into())
+    }
+}
+
+impl IntoResponse for ParcelsRefusal {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Api(e) => e.into_response(),
+            Self::Validator { status, body } => (
+                status,
+                [(header::CONTENT_TYPE, "application/json")],
+                validation::ordered_refusal_json(&body),
+            )
+                .into_response(),
+        }
+    }
+}
+
+/// Upstream's `withSchemaValidatorMiddleware(permissionParcelsSchema)`: a
+/// JSON content type (415), a JSON body (400 with the parse error), then
+/// exactly `{parcels}` with 1-500 `x,y` strings (400 `Invalid JSON body` and
+/// AJV's first error).
+fn parcels_body(headers: &HeaderMap, body: &[u8]) -> Result<ParcelSet, ParcelsRefusal> {
+    let refuse = |status: StatusCode, body: Value| ParcelsRefusal::Validator { status, body };
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    if !crate::content::validation::is_json_content_type(content_type) {
+        return Err(refuse(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            json!({ "ok": false, "message": "Content-Type must be application/json" }),
+        ));
+    }
+    let value: Value = serde_json::from_slice(body).map_err(|e| {
+        refuse(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "message": validation::json_parse_message(body, &e) }),
+        )
+    })?;
+    let keys = validation::object_keys_in_order(&value, body);
+    if let Some(error) = parcels_schema_error(&value, &keys) {
+        return Err(refuse(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "message": "Invalid JSON body", "data": [error] }),
+        ));
+    }
+    let raw: Vec<&str> = value["parcels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    // The pattern passed; only a coordinate past i32 is left.
+    ParcelSet::parse_strict(&raw)
+        .map_err(|e| ApiError::bad_request(format!("Invalid parcels: {e}")).into())
+}
+
+/// The first error AJV 8 (`allErrors: false`) reports for
+/// `permissionParcelsSchema`: `{parcels}` with 1-500 strings matching
+/// [`PARCEL_PATTERN`].
+fn parcels_schema_error(body: &Value, keys: &[String]) -> Option<Value> {
+    validation::array_property_error(body, keys, "", "parcels", MAX_PARCELS_PER_REQUEST, |item| {
+        match item.as_str() {
+            None => Some(validation::ItemError::not_a_string()),
+            // `Parcel::parse_strict`'s shape is the pattern (JS `$`: the end only).
+            Some(raw) if matches!(Parcel::parse_strict(raw), Err(ParcelError::NotStrict(_))) => {
+                Some(validation::ItemError {
+                    keyword: "pattern",
+                    params: json!({ "pattern": PARCEL_PATTERN }),
+                    message: format!("must match pattern \"{PARCEL_PATTERN}\""),
+                })
+            }
+            Some(_) => None,
+        }
     })
 }
 
@@ -557,7 +665,7 @@ fn validate_address_and_allow_list(
     address: &str,
     permission_name: &str,
 ) -> Result<(Address, Permission), ApiError> {
-    let address = parse_address(address)?;
+    let address = parse_path_address(address)?;
     match parse_permission(permission_name) {
         Some(p) if is_allow_list_permission(p) => Ok((address, p)),
         _ => Err(ApiError::bad_request(format!(
@@ -573,19 +681,13 @@ pub async fn post_permission_parcels(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Result<StatusCode, ApiError> {
-    let parcels = parcels_body(body)?;
+    body: Bytes,
+) -> Result<StatusCode, ParcelsRefusal> {
+    let signer = verify_signer(&state, &headers, &original, &uri, "post").await?;
+    let parcels = parcels_body(&headers, &body)?;
     let (address, permission) = validate_address_and_allow_list(&address, &permission_name)?;
     let world = parse_world(&world_name)?;
-    verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "post",
-        &world,
-    )
-    .await?;
+    verify_owner(&state, &world, signer).await?;
     let mut tx = state.pool.begin().await?;
     let created =
         store::add_parcels_to_permission(&mut *tx, &world, permission, &address, &parcels).await?;
@@ -605,29 +707,24 @@ pub async fn delete_permission_parcels(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Result<StatusCode, ApiError> {
-    let parcels = parcels_body(body)?;
-    let (address, permission) = validate_address_and_allow_list(&address, &permission_name)?;
+    body: Bytes,
+) -> Result<StatusCode, ParcelsRefusal> {
+    let signer = verify_signer(&state, &headers, &original, &uri, "delete").await?;
+    let parcels = parcels_body(&headers, &body)?;
+    let raw_address = address;
+    let (address, permission) = validate_address_and_allow_list(&raw_address, &permission_name)?;
     let world = parse_world(&world_name)?;
-    verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "delete",
-        &world,
-    )
-    .await?;
+    verify_owner(&state, &world, signer).await?;
     let mut tx = state.pool.begin().await?;
     let removal =
         store::remove_parcels_from_permission(&mut *tx, &world, permission, &address, &parcels)
             .await?;
     let Some(dropped) = removal else {
         return Err(ApiError::bad_request(format!(
-            "Permission not found. Address {} does not have {permission_name} permission for world {}.",
-            address.as_str(),
+            "Permission not found. Address {raw_address} does not have {permission_name} permission for world {}.",
             world.display()
-        )));
+        ))
+        .into());
     };
     // Removing the last parcel drops the grant, so the address hears it was revoked.
     let removed: &[String] = if dropped {
@@ -668,7 +765,8 @@ pub async fn get_allowed_parcels_for_permission(
     Path((world_name, permission_name, address)): Path<(String, String, String)>,
     Query(q): Query<QueryPairs>,
 ) -> Result<Json<Value>, ApiError> {
-    let (address, permission) = validate_address_and_allow_list(&address, &permission_name)?;
+    let raw_address = address;
+    let (address, permission) = validate_address_and_allow_list(&raw_address, &permission_name)?;
     let world = parse_world(&world_name)?;
     let (limit, offset) = pagination(&q);
     let bbox = bounding_box(&q)?;
@@ -684,8 +782,7 @@ pub async fn get_allowed_parcels_for_permission(
     .await?
     .ok_or_else(|| {
         ApiError::not_found(format!(
-            "Permission '{permission_name}' not found for address {} in world {}.",
-            address.as_str(),
+            "Address {raw_address} does not have {permission_name} permission for world {}.",
             world.display()
         ))
     })?;
@@ -697,15 +794,17 @@ pub async fn get_addresses_for_parcel_permission(
     State(state): State<SharedState>,
     Path((world_name, permission_name)): Path<(String, String)>,
     Query(q): Query<QueryPairs>,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Result<Json<Value>, ApiError> {
-    let parcels = parcels_body(body)?;
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, ParcelsRefusal> {
+    let parcels = parcels_body(&headers, &body)?;
     let permission = match parse_permission(&permission_name) {
         Some(p) if is_allow_list_permission(p) => p,
         _ => {
             return Err(ApiError::bad_request(format!(
                 "Permission '{permission_name}' does not support allow-list. Only 'deployment' and 'streaming' do."
-            )));
+            ))
+            .into());
         }
     };
     let world = parse_world(&world_name)?;
@@ -722,6 +821,31 @@ pub async fn get_addresses_for_parcel_permission(
     Ok(Json(json!({ "total": total, "addresses": addresses })))
 }
 
+/// PUT and DELETE /world/{world_name}/permissions/{permission_name}/parcels:
+/// upstream's router falls through to `:permission_name/:address` with the
+/// address `parcels`; matchit picks the static segment, so these hand it on.
+pub async fn put_permissions_parcels_address(
+    state: State<SharedState>,
+    Path((world_name, permission_name)): Path<(String, String)>,
+    original: OriginalUri,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let path = Path((world_name, permission_name, "parcels".to_string()));
+    put_permissions_address(state, path, original, uri, headers).await
+}
+
+pub async fn delete_permissions_parcels_address(
+    state: State<SharedState>,
+    Path((world_name, permission_name)): Path<(String, String)>,
+    original: OriginalUri,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let path = Path((world_name, permission_name, "parcels".to_string()));
+    delete_permissions_address(state, path, original, uri, headers).await
+}
+
 /// PUT /world/{world_name}/permissions/access/communities/{communityId}
 pub async fn put_permissions_access_community(
     State(state): State<SharedState>,
@@ -730,20 +854,22 @@ pub async fn put_permissions_access_community(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
+    let signer = verify_signer(&state, &headers, &original, &uri, "put").await?;
     let community = parse_community(&community_id)?;
     let world = parse_world(&world_name)?;
-    let owner = verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "put",
-        &world,
-    )
-    .await?;
+    let owner = verify_owner(&state, &world, signer).await?;
     require_community_member(&state, &owner.signer, &[community_id]).await?;
-    apply_allow_list_edit(&state, &world, AllowListEdit::AddCommunity(community), || {
-        ApiError::bad_request(format!("Too many communities. Maximum allowed is {MAX_ACCESS_COMMUNITIES}, cannot add more."))
-    })
+    apply_allow_list_edit(
+        &state,
+        &world,
+        AllowListEdit::AddCommunity(community),
+        |caps| {
+            ApiError::bad_request(format!(
+                "Too many communities. Maximum allowed is {}, cannot add more.",
+                caps.communities
+            ))
+        },
+    )
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -756,21 +882,15 @@ pub async fn delete_permissions_access_community(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
+    let signer = verify_signer(&state, &headers, &original, &uri, "delete").await?;
     let community = parse_community(&community_id)?;
     let world = parse_world(&world_name)?;
-    verify_owner(
-        &state,
-        &headers,
-        &SignedPath::from_uris(&original, &uri),
-        "delete",
-        &world,
-    )
-    .await?;
+    verify_owner(&state, &world, signer).await?;
     apply_allow_list_edit(
         &state,
         &world,
         AllowListEdit::RemoveCommunity(community),
-        || ApiError::internal("unreachable: removals have no cap"),
+        |_| ApiError::internal("unreachable: removals have no cap"),
     )
     .await?;
     state
@@ -785,15 +905,16 @@ async fn apply_allow_list_edit(
     state: &SharedState,
     world: &WorldName,
     edit: AllowListEdit<'_>,
-    cap_error: impl FnOnce() -> ApiError,
+    cap_error: impl FnOnce(AccessCaps) -> ApiError,
 ) -> Result<(), ApiError> {
-    match store::modify_allow_list_access(&state.pool, world, edit).await? {
+    let caps = state.settings.access_caps;
+    match store::modify_allow_list_access(&state.pool, world, caps, edit).await? {
         AllowListEditOutcome::Applied => Ok(()),
         AllowListEditOutcome::NotAllowList => Err(ApiError::bad_request(format!(
             "World \"{}\" does not have allow-list access type. Cannot add or remove wallets.",
             world.display()
         ))),
-        AllowListEditOutcome::CapExceeded => Err(cap_error()),
+        AllowListEditOutcome::CapExceeded => Err(cap_error(caps)),
     }
 }
 
@@ -801,64 +922,119 @@ async fn apply_allow_list_edit(
 mod tests {
     use super::*;
 
+    fn access(meta: &Value) -> Result<AccessSetting, ApiError> {
+        access_from_metadata(meta, AccessCaps::default())
+    }
+
     #[test]
     fn access_metadata_parses_the_old_document_shapes() {
         assert_eq!(
-            access_from_metadata(&json!({ "type": "unrestricted" })).unwrap(),
+            access(&json!({ "type": "unrestricted" })).unwrap(),
             AccessSetting::Unrestricted
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "nft-ownership", "nft": "urn:x" })).unwrap(),
+            access(&json!({ "type": "nft-ownership", "nft": "urn:x" })).unwrap(),
             AccessSetting::NftOwnership {
                 nft: "urn:x".into()
             }
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "nft-ownership" }))
+            access(&json!({ "type": "nft-ownership" }))
                 .unwrap_err()
                 .status(),
             400
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "shared-secret", "secret": "" }))
+            access(&json!({ "type": "shared-secret", "secret": "" }))
                 .unwrap_err()
                 .status(),
             400
         );
         assert!(matches!(
-            access_from_metadata(&json!({ "type": "shared-secret", "secret": "MySecret" })).unwrap(),
+            access(&json!({ "type": "shared-secret", "secret": "MySecret" })).unwrap(),
             AccessSetting::SharedSecret { secret_hash } if bcrypt::verify("MySecret", &secret_hash).unwrap()
         ));
         let id = Uuid::new_v4().to_string();
         assert_eq!(
-            access_from_metadata(&json!({ "type": "allow-list", "wallets": ["0xAbC0000000000000000000000000000000000001"], "communities": [id] })).unwrap(),
+            access(&json!({ "type": "allow-list", "wallets": ["0xAbC0000000000000000000000000000000000001"], "communities": [id] })).unwrap(),
             AccessSetting::AllowList { wallets: vec!["0xAbC0000000000000000000000000000000000001".into()], communities: vec![id.clone()] }
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "allow-list", "wallets": ["zzz"] }))
+            access(&json!({ "type": "allow-list", "wallets": ["zzz"] }))
                 .unwrap_err()
                 .status(),
             400
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "allow-list", "communities": ["not-a-uuid"] }))
+            access(&json!({ "type": "allow-list", "communities": ["not-a-uuid"] }))
                 .unwrap_err()
                 .status(),
             400
         );
         assert_eq!(
-            access_from_metadata(&json!({ "type": "bogus" }))
-                .unwrap_err()
-                .status(),
+            access(&json!({ "type": "bogus" })).unwrap_err().status(),
             400
         );
         let many: Vec<String> = (0..1001).map(|i| format!("0x{i:040x}")).collect();
         assert!(
-            access_from_metadata(&json!({ "type": "allow-list", "wallets": many }))
+            access(&json!({ "type": "allow-list", "wallets": many }))
                 .unwrap_err()
                 .public_message()
                 .contains("Too many wallets")
         );
+    }
+
+    /// `access/component.ts:61-71`: communities are checked first, against
+    /// the configured caps.
+    #[test]
+    fn allow_list_caps_come_from_settings_communities_first() {
+        let caps = AccessCaps {
+            wallets: 1,
+            communities: 1,
+        };
+        let wallets = [
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+        ];
+        let communities = [Uuid::new_v4().to_string(), Uuid::new_v4().to_string()];
+        let both = json!({ "type": "allow-list", "wallets": wallets, "communities": communities });
+        assert_eq!(
+            access_from_metadata(&both, caps)
+                .unwrap_err()
+                .public_message(),
+            "Too many communities. Maximum allowed is 1, but 2 were provided."
+        );
+        let wallets_only = json!({ "type": "allow-list", "wallets": wallets });
+        assert_eq!(
+            access_from_metadata(&wallets_only, caps)
+                .unwrap_err()
+                .public_message(),
+            "Too many wallets in allow-list. Maximum allowed is 1, but 2 were provided."
+        );
+        assert!(access(&both).is_ok());
+    }
+
+    /// `access/component.ts:112-114` prints `type` through a template literal
+    /// (`post-permissions.spec.ts`: "and no type is provided").
+    #[test]
+    fn an_invalid_access_type_prints_as_javascript_does() {
+        for (meta, shown) in [
+            (json!({}), "undefined"),
+            (json!({ "type": null }), "null"),
+            (json!({ "type": "invalid" }), "invalid"),
+            (json!({ "type": 7 }), "7"),
+            (json!({ "type": 1.5 }), "1.5"),
+            (json!({ "type": 2.0 }), "2"),
+            (json!({ "type": true }), "true"),
+            (json!({ "type": ["allow-list", null, 1] }), "allow-list,,1"),
+            (json!({ "type": { "a": 1 } }), "[object Object]"),
+        ] {
+            assert_eq!(
+                access(&meta).unwrap_err().public_message(),
+                format!("Invalid access type: {shown}."),
+                "{meta}"
+            );
+        }
     }
 
     #[test]
@@ -883,6 +1059,18 @@ mod tests {
             .is_ok()
         );
         assert!(parse_community(" ").is_err());
+        // `EthAddress.validate`: no padding, no `0X`.
+        for raw in [
+            " 0x0000000000000000000000000000000000000001",
+            "0X0000000000000000000000000000000000000001",
+            "0x00000000000000000000000000000000000000001",
+        ] {
+            assert_eq!(
+                parse_path_address(raw).unwrap_err().public_message(),
+                format!("Invalid address: {raw}.")
+            );
+        }
+        assert!(parse_path_address("0xAbC0000000000000000000000000000000000001").is_ok());
     }
 
     fn pairs(raw: &[(&str, &str)]) -> QueryPairs {
@@ -912,42 +1100,194 @@ mod tests {
         );
     }
 
+    fn json_headers(content_type: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+        headers
+    }
+
+    fn refusal(content_type: &str, body: &[u8]) -> (StatusCode, String) {
+        match parcels_body(&json_headers(content_type), body) {
+            Err(ParcelsRefusal::Validator { status, body }) => {
+                (status, validation::ordered_refusal_json(&body))
+            }
+            other => panic!("not a validator refusal: {other:?}"),
+        }
+    }
+
     #[test]
     fn parcels_body_matches_the_upstream_schema() {
+        let json = "application/json";
         assert_eq!(
-            schema_parcels(&json!({ "parcels": ["0,0", "-1,-20", "00,01"] }))
-                .unwrap()
-                .canonical(),
+            parcels_body(
+                &json_headers(json),
+                br#"{"parcels":["0,0","-1,-20","00,01"]}"#
+            )
+            .unwrap()
+            .canonical(),
             vec!["-1,-20".to_string(), "0,0".into(), "0,1".into()]
         );
-        let too_many: Vec<String> = (0..501).map(|i| format!("{i},0")).collect();
-        let max: Vec<String> = too_many[..500].to_vec();
-        assert!(schema_parcels(&json!({ "parcels": max })).is_ok());
-        for bad in [
-            json!({ "parcels": [] }),
-            json!({ "parcels": too_many }),
-            json!({}),
-            json!([]),
-            json!({ "parcels": "0,0" }),
-            json!({ "parcels": ["0,0"], "extra": true }),
-            json!({ "parcels": [1] }),
-            json!({ "parcels": ["0, 0"] }),
-            json!({ "parcels": ["+1,0"] }),
-            json!({ "parcels": ["1,2,3"] }),
-            json!({ "parcels": ["1,"] }),
-            json!({ "parcels": ["0,0\n"] }),
+        let max: Vec<String> = (0..500).map(|i| format!("{i},0")).collect();
+        let max = json!({ "parcels": max }).to_string();
+        assert!(parcels_body(&json_headers(json), max.as_bytes()).is_ok());
+        assert!(
+            parcels_body(
+                &json_headers("application/vnd.dcl+json; charset=utf-8"),
+                max.as_bytes()
+            )
+            .is_ok()
+        );
+        let error = |instance: &str, schema: &str, keyword: &str, params: &str, message: &str| {
+            format!(
+                r##"{{"ok":false,"message":"Invalid JSON body","data":[{{"instancePath":"{instance}","schemaPath":"#/{schema}","keyword":"{keyword}","params":{params},"message":"{message}"}}]}}"##
+            )
+        };
+        let over: Vec<String> = (0..501).map(|_| "a".to_string()).collect();
+        let over = json!({ "parcels": over }).to_string();
+        // Each body's answer as AJV 8 gives it for `permissionParcelsSchema`.
+        let pattern = r#"must match pattern \"^-?\\d+,-?\\d+$\""#;
+        let pattern_params = r#"{"pattern":"^-?\\d+,-?\\d+$"}"#;
+        for (body, expected) in [
+            (
+                "[]".to_string(),
+                error("", "type", "type", r#"{"type":"object"}"#, "must be object"),
+            ),
+            (
+                "{}".into(),
+                error(
+                    "",
+                    "required",
+                    "required",
+                    r#"{"missingProperty":"parcels"}"#,
+                    "must have required property 'parcels'",
+                ),
+            ),
+            (
+                r#"{"a":1,"parcels":["0,0"]}"#.into(),
+                error(
+                    "",
+                    "additionalProperties",
+                    "additionalProperties",
+                    r#"{"additionalProperty":"a"}"#,
+                    "must NOT have additional properties",
+                ),
+            ),
+            (
+                r#"{"parcels":["0,0"],"b":1,"a":2}"#.into(),
+                error(
+                    "",
+                    "additionalProperties",
+                    "additionalProperties",
+                    r#"{"additionalProperty":"b"}"#,
+                    "must NOT have additional properties",
+                ),
+            ),
+            (
+                r#"{"parcels":"0,0"}"#.into(),
+                error(
+                    "/parcels",
+                    "properties/parcels/type",
+                    "type",
+                    r#"{"type":"array"}"#,
+                    "must be array",
+                ),
+            ),
+            (
+                r#"{"parcels":[]}"#.into(),
+                error(
+                    "/parcels",
+                    "properties/parcels/minItems",
+                    "minItems",
+                    r#"{"limit":1}"#,
+                    "must NOT have fewer than 1 items",
+                ),
+            ),
+            (
+                over,
+                error(
+                    "/parcels",
+                    "properties/parcels/maxItems",
+                    "maxItems",
+                    r#"{"limit":500}"#,
+                    "must NOT have more than 500 items",
+                ),
+            ),
+            (
+                r#"{"parcels":[1,"0,0"]}"#.into(),
+                error(
+                    "/parcels/0",
+                    "properties/parcels/items/type",
+                    "type",
+                    r#"{"type":"string"}"#,
+                    "must be string",
+                ),
+            ),
+            (
+                r#"{"parcels":["0,0","a"]}"#.into(),
+                error(
+                    "/parcels/1",
+                    "properties/parcels/items/pattern",
+                    "pattern",
+                    pattern_params,
+                    pattern,
+                ),
+            ),
+            (
+                r#"{"parcels":["0,0\n"]}"#.into(),
+                error(
+                    "/parcels/0",
+                    "properties/parcels/items/pattern",
+                    "pattern",
+                    pattern_params,
+                    pattern,
+                ),
+            ),
+            (
+                r#"{"parcels":["+1,0"]}"#.into(),
+                error(
+                    "/parcels/0",
+                    "properties/parcels/items/pattern",
+                    "pattern",
+                    pattern_params,
+                    pattern,
+                ),
+            ),
         ] {
             assert_eq!(
-                schema_parcels(&bad).unwrap_err().public_message(),
-                "Invalid JSON body",
-                "{bad}"
+                refusal(json, body.as_bytes()),
+                (StatusCode::BAD_REQUEST, expected),
+                "{body}"
             );
         }
-        assert!(
-            schema_parcels(&json!({ "parcels": ["99999999999,0"] }))
-                .unwrap_err()
-                .public_message()
-                .starts_with("Invalid parcels:")
+        assert_eq!(
+            refusal("text/plain", br#"{"parcels":["0,0"]}"#),
+            (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                r#"{"ok":false,"message":"Content-Type must be application/json"}"#.to_string()
+            )
         );
+        // An unparsable body answers `JSON.parse`'s V8 message.
+        for (body, message) in [
+            (
+                &b"{"[..],
+                "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+            ),
+            (b"", "Unexpected end of JSON input"),
+            (b"oops", "Unexpected token 'o', \"oops\" is not valid JSON"),
+        ] {
+            assert_eq!(
+                refusal(json, body),
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!(r#"{{"ok":false,"message":{}}}"#, Value::from(message))
+                ),
+                "{body:?}"
+            );
+        }
+        // AJV passes it (pattern only); only i32 storage refuses it.
+        assert!(matches!(
+            parcels_body(&json_headers(json), br#"{"parcels":["99999999999,0"]}"#),
+            Err(ParcelsRefusal::Api(e)) if e.public_message().starts_with("Invalid parcels:")
+        ));
     }
 }

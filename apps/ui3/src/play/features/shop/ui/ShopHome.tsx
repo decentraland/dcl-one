@@ -3,13 +3,16 @@
 // page reads it (homeQuery) and draws each row's card.
 
 import { Button, ChevronRight, EmptyState, Rail } from '../../../design'
+import { pressedWith, type PressedWith } from './pressedWith'
 import { ShopItemSkeleton } from './ShopItemCard'
 import styles from './ShopHome.module.css'
 
 /** A row shows five whole cards and the sixth's edge, so it pages five at a time. */
 const ROW_PAGE = 5
-/** What a hovered card grows into: 5% and a 3px ring, ~8px a side and ~11px top and bottom. */
+/** A hovered or selected card's ring sits 8px outside it. */
 const HOVER_ROOM = 12
+/** A hovered outfit's render rises 56px over its card (46px at rest), as the design draws it. */
+const OUTFIT_RISE = 56
 
 /** An outfit's tile: its picture on its gradient. */
 export interface ShopHomeOutfit {
@@ -18,6 +21,13 @@ export interface ShopHomeOutfit {
   image?: string | null
   gradientFrom?: string
   gradientTo?: string
+}
+
+/** What a hovered outfit offers: how many items it has, their price when it has one, and BUY (without it, none). */
+export interface ShopHomeOutfitOffer {
+  items: number
+  price?: React.ReactNode
+  onBuy?: (input: PressedWith) => void
 }
 
 /** A row's items, that they are still coming, or that they couldn't be read. */
@@ -33,6 +43,7 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   newest,
   renderCard,
   onOutfit,
+  outfitOffer,
   onViewAll,
   onRetry
 }: {
@@ -42,6 +53,8 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   /** The grid's own card, so a row's item selects and tries on as it does there. */
   renderCard: (item: T) => React.ReactNode
   onOutfit: (outfit: O) => void
+  /** The hovered outfit's name row: its items, their price and BUY. */
+  outfitOffer?: (outfit: O) => ShopHomeOutfitOffer
   onViewAll: (row: 'trending' | 'newest') => void
   /** Reads a row again after it failed. */
   onRetry: (row: 'trending' | 'newest') => void
@@ -53,19 +66,43 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   return (
     <div className={styles.home}>
       {outfits != null && outfits.length > 0 && (
-        <Rail variant="shop" perPage={4} gap={20} bleed={HOVER_ROOM} className={styles.outfits}>
-          {outfits.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className={styles.outfit}
-              aria-label={`Try on ${o.name}`}
-              style={{ '--from': o.gradientFrom || undefined, '--to': o.gradientTo || undefined } as React.CSSProperties}
-              onClick={() => onOutfit(o)}
-            >
-              {o.image != null && <img src={o.image} alt="" />}
-            </button>
-          ))}
+        <Rail variant="shop" perPage={4} gap={20} bleed={HOVER_ROOM} bleedTop={OUTFIT_RISE + HOVER_ROOM} className={styles.outfits}>
+          {outfits.map((o) => {
+            const offer = outfitOffer?.(o)
+            return (
+              <div
+                key={o.id}
+                className={styles.outfit}
+                style={{ '--from': o.gradientFrom || undefined, '--to': o.gradientTo || undefined } as React.CSSProperties}
+              >
+                <button type="button" className={styles.outfitHit} aria-label={`Try on ${o.name}`} onClick={() => onOutfit(o)} />
+                {o.image != null && (
+                  <span className={styles.outfitArt}>
+                    <img src={o.image} alt="" />
+                  </span>
+                )}
+                <span className={styles.outfitFade} aria-hidden="true" />
+                <span className={styles.outfitInfo}>
+                  <span className={styles.outfitName} title={o.name}>
+                    {o.name}
+                  </span>
+                  {offer != null && (
+                    <span className={styles.outfitMeta}>
+                      <span className={styles.outfitCount}>
+                        {offer.items} {offer.items === 1 ? 'Item' : 'Items'}
+                      </span>
+                      {offer.price != null && <span className={styles.outfitPrice}>{offer.price}</span>}
+                    </span>
+                  )}
+                  {offer?.onBuy != null && (
+                    <Button size="card" className={styles.outfitBuy} aria-label={`Buy ${o.name}`} onClick={(e) => offer.onBuy?.(pressedWith(e))}>
+                      BUY
+                    </Button>
+                  )}
+                </span>
+              </div>
+            )
+          })}
         </Rail>
       )}
       <HomeRow title="Trending" row={trending} renderCard={renderCard} onViewAll={() => onViewAll('trending')} onRetry={() => onRetry('trending')} />
@@ -120,7 +157,8 @@ function HomeRow<T extends { id: string }>({
           ))}
         </div>
       ) : (
-        <Rail perPage={ROW_PAGE} gap={20} bleed={HOVER_ROOM}>
+        // The design's rows page with the arrows only: no dots under them.
+        <Rail perPage={ROW_PAGE} gap={20} bleed={HOVER_ROOM} dots={false}>
           {(row.items ?? []).map((item) => (
             <div key={item.id} className={styles.slot}>
               {renderCard(item)}

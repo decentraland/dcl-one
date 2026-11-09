@@ -38,16 +38,30 @@ impl CefWebviewUri {
     }
 }
 
-/// Specifies the view size of the webview.
-///
-/// This does not affect the actual object size.
+/// Logical view dimensions and the device scale factor used for offscreen painting.
 #[derive(Reflect, Component, Debug, Copy, Clone, PartialEq)]
 #[reflect(Component, Debug, Default)]
-pub struct WebviewSize(pub Vec2);
+pub struct WebviewSize {
+    pub logical: Vec2,
+    pub scale_factor: f32,
+}
 
 impl Default for WebviewSize {
     fn default() -> Self {
-        Self(Vec2::splat(800.0))
+        Self {
+            logical: Vec2::splat(800.0),
+            scale_factor: 1.0,
+        }
+    }
+}
+
+impl From<&Window> for WebviewSize {
+    fn from(window: &Window) -> Self {
+        Self {
+            // CEF requires a nonempty view rect, including while minimized.
+            logical: window.size().max(Vec2::ONE),
+            scale_factor: window.scale_factor(),
+        }
     }
 }
 

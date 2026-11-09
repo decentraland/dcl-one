@@ -57,7 +57,7 @@ Each step in the authentication chain contains three pieces of information: a `t
 
 The first step, which identifies the original authority (i.e the user), must meet these conditions:
 
-1. The `type` is [`SIGNER`](/docs/contributor/authentication/authchain/#SIGNER)
+1. The `type` is [`SIGNER`](/docs/contributor/authentication/authchain/#signer)
 2. The `payload` is the encoded Ethereum account.
 3. The `signature` is empty.
 
@@ -78,7 +78,7 @@ The second step must carry a `signature` from this account for its `payload`.
 
 When delegates are acting on the user's behalf, an item is added to the middle of the chain for each of them. The conditions for these steps are:
 
-1. The type is [`ECDSA_EPHEMERAL`](/docs/contributor/authentication/authchain/#ECDSA_EPHEMERAL)
+1. The type is [`ECDSA_EPHEMERAL`](/docs/contributor/authentication/authchain/#ecdsa_ephemeral)
 2. The `payload` is a specially crafted text (see below).
 
 The `payload` is designed to be easy to read and easy to parse, since both humans (when using their wallet UI) and programs (when crafting and validating) must work with it. It contains exactly 3 lines of case-sensitive plain text:
@@ -226,18 +226,18 @@ The `type` and `payload` values for identification and delegation are standard a
 
 The protocol defines three standard types, and one standard purpose:
 
-**Type `SIGNER`**
+#### Type `SIGNER` {#signer}
 
 **Must** be the initial `type` in the chain, where `payload` is the user's Ethereum address and `signature` is an empty string.
 
-**Type `ECDSA_EPHEMERAL`**
+#### Type `ECDSA_EPHEMERAL` {#ecdsa_ephemeral}
 
 **Must** be the `type` for intermediate steps in the chain, where `payload` is in the form described above.
 
-**Type `ECDSA_SIGNED_ENTITY`**
+#### Type `ECDSA_SIGNED_ENTITY` {#ecdsa_signed_entity}
 
 The final `type` in the chain for authorizing entity deployments, where `payload` is the ID of an entity owned by the user.
 
-**Purpose `Decentraland Login`**
+#### Purpose `Decentraland Login` {#decentraland-login}
 
 The usual `purpose` for World Explorers, signed both when logging into the world and when renewing their delegate key.

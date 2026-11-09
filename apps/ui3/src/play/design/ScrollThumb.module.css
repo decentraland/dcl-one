@@ -16,3 +16,17 @@
   visibility: hidden;
   will-change: transform;
 }
+
+/* Along the scroller's bottom: the track spans its width, the thumb is 14px high. */
+.x {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 14px;
+}
+.x .thumb {
+  width: auto;
+  height: 14px;
+}

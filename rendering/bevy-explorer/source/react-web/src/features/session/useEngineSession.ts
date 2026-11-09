@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '../../engine/engineRpc'
 import { recordVisit } from '../lobby/lobbyApi'
 import type { SatelliteView } from '../../engine/generated'
 import type { AvatarLook } from '../../engine/avatarEquip'
-import type { PreviewFocus } from '../../engine/protocol'
+import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '../../engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '../../lib/analytics'
 import { randomDefaultLook } from '../../lib/guestName'
 import { fetchStoredProfile, useStoredProfile, type StoredProfile } from '../login/useStoredProfile'
@@ -23,11 +23,14 @@ import { provideHudLogin, type HudLoginReply, type HudLoginRequest } from '../..
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
-import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { closeTopPopup, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
+import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
+import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { bootMode } from '../../lib/bootMode'
+import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
@@ -162,6 +165,11 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
+  /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
+  rotate: (degrees: number) => void
+  /** Zoom the preview avatar's camera: `zoom` × the framing in use, 1 to PREVIEW_MAX_ZOOM, keeping the height
+   *  `anchor` (0 top, 1 bottom of the camera's view) where it is (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** Categories shown even though an equipped item hides them. */
   forceRender: string[]
   /** Replace the force-render list (shown at once, deployed with the look on close). */
@@ -294,6 +302,20 @@ export interface SkyboxState {
   setProgressing: (on: boolean) => void
 }
 
+/** Photo mode: the camera reel's in-world camera, owned by the engine (see the photoMode stream). */
+export interface PhotoModeState {
+  /** The engine's last report; `null` before the stream connects. */
+  snapshot: PhotoModeSnapshot | null
+  active: boolean
+  /** The last photo taken, for the capture effect: the snapshot's `captured` pulse lasts one
+   *  engine frame and the next report can overtake it before React renders. */
+  capture: { seq: number; preview: string } | null
+  /** Open or close photo mode (`/photo_mode`); `source` is for analytics only. */
+  set: (enable: boolean, source: PhotoModeSource) => void
+  /** Take a photo (`/take_photo`). */
+  take: () => void
+}
+
 export interface GalleryState {
   /** The local player's camera-reel photos (newest first by dateTime). */
   list: GalleryPhoto[]
@@ -362,6 +384,8 @@ export interface ProfileState {
   saveError: string | null
   /** Apply a partial edit to your own profile. Omitted fields are left alone. */
   save: (edit: ProfileEdit) => void
+  /** Deploy a claimed name's colour without the edit form: a failure reverts it with no error. */
+  saveNameColor: (color: NonNullable<ProfileEdit['nameColor']>) => void
   requestOwnedNames: () => void
   dismissSaveError: () => void
 }
@@ -375,6 +399,8 @@ export interface FriendsState {
   blocked: string[]
   /** The blocked accounts with their profiles (display); `blocked` stays the address set. */
   blockedUsers: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user. */
+  blockedBy: string[]
   /** Signed in, social service still starting. */
   loading: boolean
   open: boolean
@@ -613,6 +639,8 @@ export interface ChatState {
 }
 
 const MAX_CHAT_LINES = 200
+/** The notifications list keeps at most this many, the size of the bridge's full fetch. */
+export const NOTIFICATIONS_KEPT = 50
 // The least time between two notification pings of one conversation and kind: a flood of lines
 // is one sound, not one per line.
 const PING_INTERVAL_MS = 400
@@ -789,6 +817,7 @@ export interface EngineSession {
   events: EventsState
   shop: ShopState
   gallery: GalleryState
+  photoMode: PhotoModeState
   /** The Create page (features/editorHost/CreatePage); `show` opens or closes it without toggling. */
   create: { open: boolean; toggle: () => void; show: (open: boolean) => void }
   /** Scene permission prompts (e.g. ChangeRealm) awaiting an Allow/Deny. */
@@ -901,6 +930,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // for a /hud_login, which may come between a render and the effect that hands it over
   const submittedRef = useRef(false)
   submittedRef.current = submitted
+  const fatalErrorRef = useRef<FatalError | null>(null)
+  fatalErrorRef.current = fatalError
   // The post-jump-in Places picker: stay in 'picking' until the user chooses a destination (or skips).
   const [destinationPicked, setDestinationPicked] = useState(false)
   // Signed in and shown the lobby, with the engine launched holding the world back (web) or already
@@ -1040,8 +1071,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     sent: FriendRequest[]
     blocked: string[]
     blockedUsers: BlockedUser[]
+    blockedBy: string[]
     loading: boolean
-  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], loading: false })
+  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], blockedBy: [], loading: false })
   const [friendsOpen, setFriendsOpen] = useState(false)
   // In-flight friend actions as `op:address`, so their buttons disable until the service answers.
   const [friendPending, setFriendPending] = useState<ReadonlySet<string>>(new Set())
@@ -1071,8 +1103,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
-  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined } | null>(null)
+  // `quiet` marks a save the player didn't press SAVE for (the name colour, saved as the passport
+  // closes): its failure reverts without an error, as unity-explorer drops a failed colour deploy.
+  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined; quiet: boolean } | null>(null)
+  // One profile save at a time: the engine cancels an in-flight deploy when another arrives, which
+  // would report the first as failed although the second carries it. A save asked for meanwhile
+  // waits here, merged with any other waiting one, until the engine answers.
+  const profileInFlightRef = useRef(false)
+  const queuedProfileEditRef = useRef<{ edit: ProfileEdit; quiet: boolean } | null>(null)
+  const startProfileSaveRef = useRef<(edit: ProfileEdit, quiet: boolean) => void>(() => undefined)
+  // The latest profile and claimed names, for a save started from the message handler.
+  const profileRef = useRef(profile)
+  profileRef.current = profile
+  const ownedNamesRef = useRef(ownedNames)
+  ownedNamesRef.current = ownedNames
   const [notifications, setNotifications] = useState<AppNotification[]>([])
+  // The list as of the last render, so a poll result can tell new ids from known ones without a
+  // side effect inside a state updater.
+  const notificationsRef = useRef(notifications)
+  notificationsRef.current = notifications
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
@@ -1118,6 +1167,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [galleryLoaded, setGalleryLoaded] = useState(false)
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
+  const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
+  const [photoCapture, setPhotoCapture] = useState<{ seq: number; preview: string } | null>(null)
+  const photoModeActiveRef = useRef(false)
+  const photoModeSeqRef = useRef(0)
   const [createOpen, setCreateOpen] = useState(false)
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequestMessage[]>([])
   const [visitAnswers, setVisitAnswers] = useState<VisitAnswer[]>([])
@@ -1163,6 +1216,30 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current = driver
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+
+    // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
+    // answer ever comes, so it counts as a failure rather than leaving every later save queued).
+    const settleProfileSave = (ok: boolean, error?: string): void => {
+      profileInFlightRef.current = false
+      // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
+      // pre-save profile goes back — see saveProfile.
+      const revert = profileRevertRef.current
+      profileRevertRef.current = null
+      if (!ok) {
+        if (revert?.quiet !== true) setProfileSaveError(error ?? 'Could not save your profile.')
+        if (revert != null) {
+          // Also the base a queued save starts from below, before any render catches up.
+          profileRef.current = revert.profile
+          setProfile(revert.profile)
+          updateProfile(revert.address, () => revert.stored)
+        }
+      }
+      const queued = queuedProfileEditRef.current
+      queuedProfileEditRef.current = null
+      // A quiet save left waiting runs on its own; the form's SAVE is done once its deploy is.
+      if (queued == null || queued.quiet) setProfileSaving(false)
+      if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet)
+    }
 
     // A community the user is no longer in (left, removed, or the community deleted): its tab
     // goes, and with it its stored history (the delete option went with the tab), its ping and
@@ -1241,6 +1318,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'proximity': {
           const next = msg.tips
           setProximity((prev) => (proximityKey(prev) === proximityKey(next) ? prev : next))
+          break
+        }
+        case 'photoMode': {
+          const state = msg.state
+          // photo mode owns the screen: every page and panel closes as it opens
+          if (state.active && !photoModeActiveRef.current) panelSetters.forEach((set) => set(false))
+          photoModeActiveRef.current = state.active
+          if (state.event === 'uploadFailed' && state.eventSeq !== photoModeSeqRef.current) {
+            showToast('There was an error uploading your screenshot.', { tone: 'error' })
+          }
+          if (state.event === 'captured' && state.eventSeq !== photoModeSeqRef.current) {
+            setPhotoCapture({ seq: state.eventSeq, preview: state.previewJpegBase64 })
+          }
+          if (!state.active) setPhotoCapture(null)
+          if (state.event !== 'none') photoModeSeqRef.current = state.eventSeq
+          setPhotoMode(state)
           break
         }
         case 'avatarClick': {
@@ -1439,6 +1532,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             sent: msg.sent,
             blocked: msg.blocked,
             blockedUsers: msg.blockedUsers ?? [],
+            blockedBy: msg.blockedBy ?? [],
             loading: msg.loading === true
           })
           seedProfiles([...msg.friends, ...msg.received, ...msg.sent])
@@ -1486,22 +1580,30 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setOwnedNames(msg.names)
           break
         case 'profileSaved':
-          setProfileSaving(false)
-          // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-          // pre-save profile goes back — see saveProfile.
-          if (!msg.ok) {
-            setProfileSaveError(msg.error ?? 'Could not save your profile.')
-            const revert = profileRevertRef.current
-            if (revert != null) {
-              setProfile(revert.profile)
-              updateProfile(revert.address, () => revert.stored)
-            }
-          }
-          profileRevertRef.current = null
+          settleProfileSave(msg.ok, msg.error)
           break
         case 'notifications':
           setNotifications(msg.notifications)
+          notificationsRef.current = msg.notifications
           break
+        case 'notificationsNew': {
+          const known = new Set(notificationsRef.current.map((n) => n.id))
+          const at = (n: AppNotification): number => notificationTimeMs(n.timestamp) ?? 0
+          const fresh = msg.notifications.filter((n) => !known.has(n.id)).sort((a, b) => at(b) - at(a))
+          if (fresh.length === 0) break
+          // Kept to the size of the full fetch: older ones come back when the panel refetches.
+          notificationsRef.current = [...fresh, ...notificationsRef.current].slice(0, NOTIFICATIONS_KEPT)
+          setNotifications((prev) => {
+            const have = new Set(prev.map((n) => n.id))
+            return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
+          })
+          // Newest first in the list; toasts and reward popups play in arrival order.
+          const arrived = [...fresh].reverse()
+          queueNotificationToasts(arrived)
+          // A popup, unlike the toasts, would still render with the HUD hidden (?hud=0).
+          if (!bootMode().hideHud) queueRewardPopups(arrived)
+          break
+        }
         case 'emotes':
           setEmotes(msg.emotes)
           break
@@ -1511,6 +1613,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
+          if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)
@@ -2315,6 +2418,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
+    driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
+  }, [])
+  const takePhoto = useCallback(() => {
+    driverRef.current?.send({ kind: 'takePhoto' })
+  }, [])
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
@@ -2484,7 +2593,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
-        if (hudLoginPending.current != null) {
+        // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login
+        if (login != null && hudLoginPending.current != null) {
           hudLoginPending.current.landed = true
           hudLoginPending.current.welcomeAwaited = welcomeShown()
           setHudLoginTick((n) => n + 1)
@@ -2827,6 +2937,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
+  const rotatePreview = useCallback((degrees: number) => {
+    driverRef.current?.send({ kind: 'previewRotate', degrees })
+  }, [])
+  const zoomPreview = useCallback((zoom: number, anchor: number) => {
+    driverRef.current?.send({ kind: 'previewZoom', zoom, anchor })
+  }, [])
   const setForceRender = useCallback((categories: string[]) => {
     setForceRenderState(categories)
     driverRef.current?.send({ kind: 'setForceRender', categories })
@@ -2920,17 +3036,39 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // has deployed the new version, and the catalyst reindexes later still, so waiting for the round
   // trip would leave the passport showing the old profile for seconds after a save. `profileSaved`
   // either confirms it or hands back the pre-save state (see the message handler).
-  const saveProfile = useCallback(
-    (edit: ProfileEdit) => {
-      const address = profile?.address.toLowerCase() ?? ''
-      profileRevertRef.current = { address, profile, stored: peekProfile(address) }
+  startProfileSaveRef.current = (edit: ProfileEdit, quiet: boolean): void => {
+    const current = profileRef.current
+    const address = current?.address.toLowerCase() ?? ''
+    profileRevertRef.current = { address, profile: current, stored: peekProfile(address), quiet }
+    profileInFlightRef.current = true
+    if (!quiet) {
       setProfileSaveError(null)
       setProfileSaving(true)
-      driverRef.current?.send({ kind: 'saveProfile', ...edit })
-      setProfile((prev) => (prev != null ? applyProfileEdit(prev, edit, ownedNames) : prev))
-      updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNames) : mine))
-    },
-    [profile, ownedNames]
+    }
+    driverRef.current?.send({ kind: 'saveProfile', ...edit })
+    const next = current != null ? applyProfileEdit(current, edit, ownedNamesRef.current) : current
+    // A save chained straight after this one must snapshot the edited profile, not the stale render.
+    profileRef.current = next
+    setProfile(next)
+    updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNamesRef.current) : mine))
+  }
+  const queueOrStartProfileSave = useCallback((edit: ProfileEdit, quiet: boolean) => {
+    if (!profileInFlightRef.current) {
+      startProfileSaveRef.current(edit, quiet)
+      return
+    }
+    const waiting = queuedProfileEditRef.current
+    queuedProfileEditRef.current = { edit: { ...waiting?.edit, ...edit }, quiet: (waiting?.quiet ?? true) && quiet }
+    if (!quiet) {
+      setProfileSaveError(null)
+      setProfileSaving(true)
+    }
+  }, [])
+  const saveProfile = useCallback((edit: ProfileEdit) => queueOrStartProfileSave(edit, false), [queueOrStartProfileSave])
+  // The passport's name colour, deployed as it closes. Quiet: a failure only puts the old colour back.
+  const saveNameColor = useCallback(
+    (nameColor: NonNullable<ProfileEdit['nameColor']>) => queueOrStartProfileSave({ nameColor }, true),
+    [queueOrStartProfileSave]
   )
   const dismissProfileSaveError = useCallback(() => setProfileSaveError(null), [])
   const friendAct = useCallback((op: FriendAction, address: string, message?: string) => {
@@ -3016,6 +3154,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Backpack look is dropped rather than committed after the engine has let the account go.
     backpackWasOpen.current = false
     profileRevertRef.current = null
+    profileInFlightRef.current = false
+    queuedProfileEditRef.current = null
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
@@ -3027,6 +3167,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setForceRenderState([])
     setAvatarColors(undefined)
     setNotifications([])
+    clearNotificationToasts()
+    clearRewardPopups()
     setCommunities([])
     setCommunityCards({})
     setFriendPending(new Set())
@@ -3067,6 +3209,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       pendingLogin.current = loginCall
       pendingLoginType.current = loginType
       setSubmitted(true)
+      // at once, not on the next render: a /hud_login in the same task is refused as signed in
+      submittedRef.current = true
       // A ?position/?realm link launches straight there (pickDestination, from the url effect).
       if (urlDestination.current != null) return true
       // Otherwise the lobby: launch now holding the world back, so signing in, the avatar and
@@ -3076,6 +3220,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       // an engine launched for the guest start page keeps its stage, avatar and all, into the lobby
       if (!launchedRef.current) setLobbyStageReady(false)
       setBusy(true)
+      busyRef.current = true
       let ran = false
       const run = (): void => {
         if (ran || driverRef.current == null) return
@@ -3111,9 +3256,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
         // the refs, as the command may come between a render and the effect that hands it over
-        if (submittedRef.current || busyRef.current) return reject(new Error('already signed in: /logout first'))
-        if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
+        if (fatalErrorRef.current != null) return reject(new Error(fatalErrorRef.current.message))
+        if (submittedRef.current) return reject(new Error('already signed in: /logout first'))
+        // a sign-out under a sign-in the engine has not answered yet: busy until it does
+        if (busyRef.current) return reject(new Error('a sign-in is still finishing'))
+        if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         const { identity, guest, defaultOnError, pick, destination } = request
         const previous = storedRef.current
         const login: StoredLogin = { address: rootAddress(identity).toLowerCase(), identity, guest }
@@ -3121,6 +3269,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         storedRef.current = login
         guestPick.current = pick ?? null
         hudDestination.current = hudDestinationOf(destination)
+        // the runner's sign-in stands in for a stored account's own: no Jump In with that one
+        // once its profile check ends, should this sign-in fail
+        autoEntered.current = true
         hudLoginPending.current = {
           resolve,
           reject,
@@ -3140,10 +3291,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       }),
     [engineReady, submitLogin, settleHudLogin]
   )
+  // handed over once, through a ref to the latest callback (and so the latest `submitLogin`): a
+  // command between a render and an effect that would hand a new one over sees the current state
+  const hudLoginRef = useRef(hudLogin)
+  hudLoginRef.current = hudLogin
   useEffect(() => {
-    provideHudLogin(hudLogin)
+    provideHudLogin((request) => hudLoginRef.current(request))
     return () => provideHudLogin(null)
-  }, [hudLogin])
+  }, [])
   // a sign-in the HUD went away under is answered with that, not left to the runner's timeout
   useEffect(() => () => settleHudLogin(new Error('the HUD unmounted')), [settleHudLogin])
 
@@ -3569,7 +3724,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
-  const uiFocus = anyPanelOpen || popupOpen || locked
+  // photo mode reserves all input like a page; the engine reads the camera's keys above that
+  const photoModeActive = photoMode?.active ?? false
+  const uiFocus = anyPanelOpen || popupOpen || locked || photoModeActive
+  // a popup opening on top of photo mode ends it
+  useEffect(() => {
+    if (popupOpen && photoModeActive) setPhotoModeEnabled(false, 'button')
+  }, [popupOpen, photoModeActive, setPhotoModeEnabled])
   // `covered` also spans the loading overlay: it outlives the engine's own out-of-world state
   // (player spawn, render-settle, reveal debounce), so the engine can't see that tail itself.
   const covered = menuPageOpen || phase === 'welcome' || phase === 'lobby' || phase === 'entering'
@@ -3625,12 +3786,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if ((window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
-    // cancel key or gamepad button, and this is the single layered close — topmost popup
-    // first, else the topmost registered leaf layer (lightbox, open dropdown — see
-    // cancelLayers), else any open panels. One layer per press.
+    // cancel key or gamepad button, and this is the single layered close — the most recent of
+    // the topmost popup and the topmost registered leaf layer (lightbox, open dropdown, a menu
+    // inside a popup — see cancelLayers) first, else any open panels. One layer per press.
     if (action === 'Cancel') {
+      if (dispatchCancelLayer(topPopupOrder())) return
       if (hasOpenPopup()) closeTopPopup()
-      else if (dispatchCancelLayer()) return
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
       else setLobbyOpen(false)
@@ -3639,6 +3800,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // the startup lobby mounts only what it opens itself; the world's hotkeys wait for the world
     if (phase === 'lobby') return
     if (hasOpenPopup()) return
+    // in photo mode only its own key and the gallery key act, and both close it
+    if (photoModeActiveRef.current) {
+      if (action === 'PhotoMode' || action === 'Gallery') setPhotoModeEnabled(false, 'shortcut')
+      if (action === 'Gallery') toggleGallery()
+      return
+    }
     // Quick emotes: while the wheel is open, QuickEmoteN plays that slot's emote (which also
     // closes the wheel). With the wheel closed a number does nothing — this covers both
     // "hold B, tap a number" and "tap B, then a number", since either way B opened the wheel.
@@ -3655,6 +3822,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
+      case 'PhotoMode': setPhotoModeEnabled(true, 'shortcut'); break
       case 'Settings': toggleSettings(); break
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
@@ -3751,6 +3919,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       sent: friendsData.sent,
       blocked: friendsData.blocked,
       blockedUsers: friendsData.blockedUsers,
+      blockedBy: friendsData.blockedBy,
       loading: friendsData.loading,
       open: friendsOpen,
       toggle: toggleFriends,
@@ -3769,6 +3938,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saving: profileSaving,
       saveError: profileSaveError,
       save: saveProfile,
+      saveNameColor,
       requestOwnedNames,
       dismissSaveError: dismissProfileSaveError
     },
@@ -3791,7 +3961,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
@@ -3803,6 +3973,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     events: { open: eventsOpen, toggle: toggleEvents },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
+    photoMode: {
+      snapshot: photoMode,
+      active: photoMode?.active ?? false,
+      capture: photoCapture,
+      set: setPhotoModeEnabled,
+      take: takePhoto
+    },
     gallery: {
       list: galleryPhotos,
       current: galleryStorage.current,

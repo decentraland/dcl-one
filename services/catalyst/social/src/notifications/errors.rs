@@ -10,9 +10,11 @@
 //! row 40). Internal detail is logged, never published.
 
 use axum::Json;
-use axum::http::StatusCode;
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::communities::http::ADR44_MESSAGE;
 use crate::http::api_error::Surface;
@@ -37,6 +39,9 @@ pub enum NotificationsError {
         status: u16,
         error: String,
     },
+    /// `@dcl/schema-validator-component`'s 400: the ajv errors under `data`
+    /// (`Null` for a body that is not JSON, which carries none).
+    Schema(Value),
 }
 
 impl From<ApiError> for NotificationsError {
@@ -57,6 +62,13 @@ impl IntoResponse for NotificationsError {
             NotificationsError::SignedFetch { status, error } => {
                 (status, json!({ "error": error, "message": ADR44_MESSAGE }))
             }
+            NotificationsError::Schema(data) => {
+                let mut body = json!({ "ok": false, "message": "Invalid JSON body" });
+                if !data.is_null() {
+                    body["data"] = data;
+                }
+                (400, body)
+            }
             NotificationsError::Api(e) => {
                 let (status, message) = e.wire();
                 let body = match status {
@@ -72,6 +84,47 @@ impl IntoResponse for NotificationsError {
         let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         (status, Json(body)).into_response()
     }
+}
+
+/// A body as upstream's `parseJson` read it: JSON whatever the Content-Type.
+pub fn parse_json(body: &[u8]) -> Result<Value, NotificationsError> {
+    serde_json::from_slice(body).map_err(|_| ApiError::bad_request("Invalid body").into())
+}
+
+/// Router layer: upstream read every body as JSON regardless of the
+/// Content-Type and answered every refusal with the envelope; axum's `Json`
+/// checks the header and its rejections are plain text.
+pub async fn json_wire(mut req: Request, next: Next) -> Response {
+    if !is_json(req.headers()) {
+        req.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+    }
+    let resp = next.run(req).await;
+    let status = resp.status();
+    let plain = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|v| v.as_bytes().starts_with(b"text/plain"));
+    // The 404 fallback is upstream's plain "Not found".
+    if !plain || !status.is_client_error() || status == StatusCode::NOT_FOUND {
+        return resp;
+    }
+    let (status, message) = match status.as_u16() {
+        400 | 415 | 422 => (400, "Invalid body"),
+        s => (s, status.canonical_reason().unwrap_or("Bad request")),
+    };
+    NotificationsError::from(ApiError::http(status, message)).into_response()
+}
+
+fn is_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .map(|m| m.trim().to_ascii_lowercase())
+        .is_some_and(|m| m == "application/json" || m.ends_with("+json"))
 }
 
 #[cfg(test)]

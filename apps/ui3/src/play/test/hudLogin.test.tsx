@@ -238,6 +238,29 @@ describe('/hud_login through the session', () => {
     await waitFor(() => expect(h.session().login.account).toBe(previous))
   })
 
+  it("a failed sign-in during a stored account's profile check leaves that account alone", async () => {
+    let profileArrives!: (response: Response) => void
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => (profileArrives = resolve)))
+    try {
+      const driver = new IdentityDriver()
+      driver.failWith = 'profile fetch failed: 503'
+      // a stored account (a real-shaped address: the profile of any other is not even asked for),
+      // its profile still loading: the auto Jump In waits for it
+      const h = renderSession({ userId: '0x' + 'cd'.repeat(20) }, driver)
+      await waitFor(() => expect(h.session().login.status).toBe('reuse-login-or-new'))
+      await waitFor(() => expect(h.session().login.engineReady).toBe(true))
+      await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
+      await waitFor(() => expect(h.session().phase).toBe('login'))
+      // the profile arrives: the stored account is not jumped into on the runner's behalf
+      profileArrives(new Response('{}', { status: 404 }))
+      await waitFor(() => expect(h.session().login.profile.settled).toBe(true))
+      expect(driver.calls).not.toContain('jumpIn')
+      expect(h.session().phase).toBe('login')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('reports a welcome page whose accept failed', async () => {
     const driver = new IdentityDriver()
     driver.welcome = { terms: true, newProfile: true }
@@ -246,6 +269,20 @@ describe('/hud_login through the session', () => {
     await expect(login(`${ENCODED} --name tester --look 1`)).rejects.toThrow('accepting the welcome page failed: deploy refused')
     expect(h.session().phase).toBe('welcome')
     expect(h.session().welcome.error).toBe('deploy refused')
+  })
+
+  it("refuses a sign-in in the same task as another's submit, before the next render", async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    let refused: Promise<Reply> | undefined
+    act(() => {
+      h.session().login.exploreAsGuest()
+      refused = login(ENCODED)
+    })
+    await expect(refused).rejects.toThrow('already signed in')
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    expect(driver.calls).toContain('loginGuest')
+    expect(driver.identityLogins).toEqual([])
   })
 
   it('refuses a second sign-in while one is under way', async () => {
@@ -259,7 +296,7 @@ describe('/hud_login through the session', () => {
     await expect(first).resolves.toMatchObject({ phase: 'lobby' })
   })
 
-  it('answers a pending sign-in that a sign-out ended', async () => {
+  it('answers a pending sign-in that a sign-out ended, and says so until the engine has answered it', async () => {
     const driver = new IdentityDriver()
     driver.hold = true
     const h = await ready(driver)
@@ -268,7 +305,12 @@ describe('/hud_login through the session', () => {
     act(() => h.session().logout())
     await expect(first).rejects.toThrow('signed out')
     expect(h.session().login.account).toBeNull()
+    // the engine still holds the first sign-in: a new one waits for it, and is told so
+    await expect(login(ENCODED)).rejects.toThrow('a sign-in is still finishing')
+    driver.hold = false
     driver.release()
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
   it('answers a pending sign-in the HUD went away under', async () => {
@@ -348,13 +390,39 @@ describe('/hud_login through the session', () => {
     driver.release()
   })
 
-  it('is answered when the engine fails to launch, the stored sign-in put back', async () => {
+  it('is refused with the crash once the engine has failed', async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    act(() => {
+      ;(window as Window & { __onEngineCrash?: (message: string, source: string) => void }).__onEngineCrash?.('engine stalled', 'watchdog')
+    })
+    await waitFor(() => expect(h.session().fatalError).not.toBeNull())
+    await expect(login(ENCODED)).rejects.toThrow('engine stalled')
+    expect(driver.identityLogins).toEqual([])
+  })
+
+  it('is answered when the engine fails to launch for it, the stored sign-in put back', async () => {
+    // a link's page: no launch before the sign-in, so the launch that fails is the sign-in's own
+    const leave = onPage('/?position=1,2')
+    try {
+      const driver = new LaunchFailingDriver()
+      const h = await ready(driver)
+      expect(h.session().fatalError).toBeNull()
+      await expect(login(ENCODED)).rejects.toThrow('the engine failed to launch')
+      expect(driver.identityLogins).toEqual([])
+      await waitFor(() => expect(h.session().fatalError).not.toBeNull())
+      await waitFor(() => expect(h.session().login.account).toBeNull())
+    } finally {
+      leave()
+    }
+  })
+
+  it('is refused with the failure once the engine failed to launch for the start page', async () => {
     const driver = new LaunchFailingDriver()
     const h = await ready(driver)
-    await expect(login(ENCODED)).rejects.toThrow('the engine failed to launch')
+    await waitFor(() => expect(h.session().fatalError).toMatchObject({ source: 'launch' }))
+    await expect(login(ENCODED)).rejects.toThrow('unreachable')
     expect(driver.identityLogins).toEqual([])
-    expect(h.session().fatalError).not.toBeNull()
-    await waitFor(() => expect(h.session().login.account).toBeNull())
   })
 
   it('is refused before the engine can take a sign-in', async () => {

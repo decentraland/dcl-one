@@ -170,10 +170,11 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
       await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
     }
   } catch (error) {
-    // a page that opened but never arrived: what it said and how it looks, with the error
+    // a page that opened but never arrived: what it said and how it looks, with the error; the
+    // console with the credentials the sign-in sent replaced, should the page have quoted one
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
-    if (evidence) throw new BootError(message(error), evidence.console, evidence.screenshot)
+    if (evidence) throw new BootError(message(error), evidence.console.map((line) => explorer.redactSecrets(line)), evidence.screenshot)
     throw error
   }
   return {
@@ -206,8 +207,8 @@ async function nativeConsole(target: Target, realm: string, position: string): P
  *  the engine's own `/login_identity` leaves the HUD on its start page with the world held, as
  *  the HUD derives its phase from its own flow. The HUD then goes to `destination` from the lobby,
  *  which releases the hold; a guest is a fresh account the engine marks as one, as the HUD's own
- *  guest is. The standalone signs in by console at its `--realm` and `--position`, and waits as
- *  `enterWorld` does, pressing its HUD's `Jump In` when it offers one. */
+ *  guest is. The standalone signs in by console at its `--realm` and `--position`, and waits for
+ *  the world as `enterWorld` does. */
 export async function signIn(
   explorer: Explorer,
   target: Target,
@@ -246,7 +247,7 @@ export async function signIn(
   } else if (mode === 'guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer)
+  return enterWorld(explorer, WORLD_TIMEOUT_MS)
 }
 
 /** `x,y` as a parcel. */
@@ -274,8 +275,8 @@ export async function arrive(explorer: Explorer, realm: string, position: string
   return explorer.teleport(x, y)
 }
 
-/** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promise<WorldState> {
+/** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
   let jumped = false
   return until(
     async () => {

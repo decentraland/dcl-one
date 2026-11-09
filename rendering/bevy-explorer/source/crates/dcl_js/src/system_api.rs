@@ -18,9 +18,9 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
-    SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
+    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -932,6 +932,26 @@ pub async fn op_read_proximity_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<ProximityEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_photo_mode_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPhotoModeStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_photo_mode_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<PhotoModeState>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

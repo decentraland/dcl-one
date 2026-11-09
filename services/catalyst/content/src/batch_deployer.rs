@@ -1121,9 +1121,11 @@ mod tests {
         assert!(!outcome.deployed);
         let (retry_count, description) = outcome.failure.expect("queued for a retry");
         assert_eq!(retry_count, 0);
+        // The RPC's error is logged; the public record carries the fixed sentence.
         assert!(
             description.starts_with("Validation undecided:")
-                && description.contains("missing trie node"),
+                && description.ends_with(crate::validator::checker::PARCEL_ACCESS_UNDECIDED)
+                && !description.contains("missing trie node"),
             "{description}"
         );
         assert!(outcome.due, "the retry worker picks it up");

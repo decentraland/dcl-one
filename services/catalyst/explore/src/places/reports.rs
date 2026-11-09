@@ -117,6 +117,10 @@ fn public_path<'a>(headers: &'a HeaderMap, route: &'a str) -> &'a str {
 }
 
 /// `POST /api/report`: `{ entity_id | place_id, ... }` -> `{ signed_url }`.
+/// wkc `withAuth` (`Report/routes.ts:29`), so a missing chain is the 400
+/// "Invalid Auth Chain" and a bad or stale one the 401 "Invalid signature:
+/// …" / "Expired signature: …" (fixtures `report.post.no_auth`,
+/// `report.post.bad_signature`); the 201 is the router layer's.
 pub async fn post_report(
     State(state): State<SharedState>,
     method: Method,
@@ -128,7 +132,9 @@ pub async fn post_report(
     if let Some(Json(env)) = body.as_ref().filter(|Json(v)| catalyst_fed::is_envelope(v)) {
         return fed_report(&state, &headers, env.clone()).await;
     }
-    let reporter = state.signer(&headers, method.as_str(), uri.path()).await?;
+    let reporter = state
+        .wkc_signer(&headers, method.as_str(), uri.path())
+        .await?;
     let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
     let entity_id = payload
         .get("entity_id")
@@ -244,7 +250,9 @@ async fn upload_by_capability(
     .rows_affected())
 }
 
-/// Accept the issued capability, or the original reporter's signed fetch.
+/// Accept the issued capability, or the original reporter's signed fetch
+/// (the same wkc refusals as `POST /api/report`: 400 without a chain, 401
+/// on a bad or stale one).
 pub async fn put_report_upload(
     State(state): State<SharedState>,
     method: Method,
@@ -256,13 +264,15 @@ pub async fn put_report_upload(
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
     let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
-    if let Some(token) = upload.token {
-        if upload_by_capability(&state.pool, &filename, &token, &payload).await? != 0 {
-            return Ok(Json(json!({ "ok": true })));
-        }
-        // A stale capability must not override valid reporter authentication.
+    if let Some(token) = upload.token
+        && upload_by_capability(&state.pool, &filename, &token, &payload).await? != 0
+    {
+        return Ok(Json(json!({ "ok": true })));
     }
-    let reporter = state.signer(&headers, method.as_str(), uri.path()).await?;
+    // A stale capability must not override valid reporter authentication.
+    let reporter = state
+        .wkc_signer(&headers, method.as_str(), uri.path())
+        .await?;
     let updated = sqlx::query(
         "UPDATE explore.place_reports SET payload = $3, upload_token_hash = NULL WHERE filename = $1 AND reporter = $2 AND status = 'open'",
     )
@@ -391,11 +401,22 @@ pub async fn resolve_report(
 mod tests {
     use super::*;
 
+    /// The old key (`Report/routes.ts:33-37`): the signer's last eight hex
+    /// characters lowercased, the request second in lowercase hex, `.json`
+    /// (fixture report.post.signed_user); the random suffix is this node's.
     #[test]
     fn filename_keeps_upstream_prefix() {
         let f = report_filename("0x1234567890ABCDEF1234567890abcdef12345678", 0x6500_0000);
         assert!(f.starts_with("1234567865000000"), "{f}");
         assert!(f.ends_with(".json"), "{f}");
+        let key = f.trim_end_matches(".json");
+        assert!(
+            key.len() > 16
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            "an S3-like lowercase hex key: {f}"
+        );
     }
 
     #[test]
@@ -492,8 +513,21 @@ mod tests {
                 json!({"scenario": scenario}),
             )
             .await;
-            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            // `{ ok, data: { signed_url } }` and nothing else (`Report/routes.ts:67-69`).
+            assert_eq!(
+                body.as_object().unwrap().keys().collect::<Vec<_>>(),
+                ["data", "ok"]
+            );
+            assert_eq!(
+                body["data"].as_object().unwrap().keys().collect::<Vec<_>>(),
+                ["signed_url"]
+            );
             let issued = url::Url::parse(body["data"]["signed_url"].as_str().unwrap()).unwrap();
+            assert!(
+                issued.query_pairs().count() > 0,
+                "the client PUTs application/json to an absolute URL carrying its credential: {issued}"
+            );
             let token = issued
                 .query_pairs()
                 .find(|(key, _)| key == "token")
@@ -532,7 +566,7 @@ mod tests {
                 )
                 .await
                 .0,
-                StatusCode::UNAUTHORIZED
+                StatusCode::BAD_REQUEST
             );
             assert_eq!(
                 upload_by_capability(
@@ -569,7 +603,7 @@ mod tests {
                 sqlx::query("UPDATE explore.place_reports SET created_at = timezone('UTC', now()) - interval '1 day' WHERE filename = $1").bind(filename).execute(&pool).await.unwrap();
                 assert_eq!(
                     request(&app, "PUT", &full, false, payload.clone()).await.0,
-                    StatusCode::UNAUTHORIZED
+                    StatusCode::BAD_REQUEST
                 );
             }
             if scenario == "legacy" {
@@ -588,7 +622,7 @@ mod tests {
                 assert!(!serde_json::to_string(&rows).unwrap().contains(&token));
                 assert_eq!(
                     request(&app, "PUT", &full, false, payload.clone()).await.0,
-                    StatusCode::UNAUTHORIZED
+                    StatusCode::BAD_REQUEST
                 );
             }
             if scenario == "resolved" {
@@ -612,7 +646,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     request(&app, "PUT", &full, false, payload.clone()).await.0,
-                    StatusCode::UNAUTHORIZED
+                    StatusCode::BAD_REQUEST
                 );
                 assert_eq!(
                     request(&app, "PUT", path, true, payload.clone()).await.0,
@@ -632,7 +666,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     request(&app, "PUT", &full, false, payload.clone()).await.0,
-                    StatusCode::UNAUTHORIZED
+                    StatusCode::BAD_REQUEST
                 );
                 continue;
             }
@@ -643,8 +677,8 @@ mod tests {
                 );
                 assert!(matches!(
                     (first.0, second.0),
-                    (StatusCode::OK, StatusCode::UNAUTHORIZED)
-                        | (StatusCode::UNAUTHORIZED, StatusCode::OK)
+                    (StatusCode::OK, StatusCode::BAD_REQUEST)
+                        | (StatusCode::BAD_REQUEST, StatusCode::OK)
                 ));
             } else {
                 let upload = match scenario {
@@ -670,7 +704,7 @@ mod tests {
                 request(&app, "PUT", &full, false, json!({"reason":"overwrite"}))
                     .await
                     .0,
-                StatusCode::UNAUTHORIZED
+                StatusCode::BAD_REQUEST
             );
             let stored: Value =
                 sqlx::query_scalar("SELECT payload FROM explore.place_reports WHERE filename = $1")

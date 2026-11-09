@@ -440,6 +440,7 @@ pub struct CommsState {
     pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
     /// The world comms mints' throttle and capacity (`admission::world_mint`).
     pub world_mint: admission::world_mint::MintState,
+    pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
     /// The island feed's settings (`admission::cluster`); the subscriber starts with
     /// [`Self::start_island_feed`].
     pub cluster: admission::cluster::ClusterConfig,
@@ -493,6 +494,7 @@ impl CommsState {
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
             world_mint: admission::world_mint::MintState::default(),
+            world_access_cursor: std::sync::Mutex::new(None),
             cluster: admission::cluster::ClusterConfig::default(),
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
@@ -735,9 +737,8 @@ impl CommsState {
     }
 
     /// The existing island subscriber authority, without extending its process lifetime.
-    pub(crate) fn island_subscriber(
-        &self,
-    ) -> Weak<admission::cluster::subscriber::ClusterSubscriber> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn island_subscriber(&self) -> Weak<admission::cluster::subscriber::ClusterSubscriber> {
         self.island_feed.lock().unwrap().clone()
     }
 
@@ -909,8 +910,8 @@ pub fn router(state: SharedState) -> Router {
 }
 
 /// `POST /livekit-webhook` alone, with the gatekeeper router's body cap and
-/// guards; `serve` also nests it under `/worlds-content-server`, where WCS
-/// received the same webhook.
+/// guards; `serve` mounts it at the root and under `/worlds-content-server`,
+/// where WCS received the same webhook.
 pub fn webhook_router(state: SharedState) -> Router {
     Router::new()
         .route("/livekit-webhook", post(webhook::livekit_webhook))

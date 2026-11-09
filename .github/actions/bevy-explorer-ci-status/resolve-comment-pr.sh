@@ -11,7 +11,7 @@
 # Prints GITHUB_OUTPUT lines on stdout:
 #   pr-number   the pull request to write to, or empty when the run belongs to none
 #   head-ref    the pull request's head branch
-#   head-sha    the commit the run built or tested
+#   head-sha    the PR head, which can differ from the merge commit the run checked out
 #
 # A failed lookup resolves to no pull request with a warning rather than failing the caller: the
 # writers must never red a run over a lookup blip.

@@ -46,7 +46,7 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
@@ -59,8 +59,13 @@ jobs:
         with:
           key: bevy-explorer-headless-${{ matrix.platform }}
           workspaces: rendering/bevy-explorer/source -> target
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+      - name: Restore the vendored Bevy's cached file times
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build the local headless app
         run: python ../../../apps/bevy-explorer/build-headless.py --target ${{ matrix.target }}
+      - name: Record the vendored Bevy's file times for the cache
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stamp snapshot version
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:

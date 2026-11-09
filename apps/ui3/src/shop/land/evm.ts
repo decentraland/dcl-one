@@ -46,7 +46,12 @@ export function rpcReader(chainId: number, opts: { base?: string; fetchImpl?: ty
         body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "eth_call", params: [{ to, data }, "latest"] }),
         signal,
       });
-      if (!res.ok) throw new Error(`The chain reader answered ${res.status}`);
+      if (!res.ok) {
+        // The unread body is released, not left holding the connection; a stream that already failed can't
+        // be, and that mustn't replace the status.
+        void res.body?.cancel().catch(() => {});
+        throw new Error(`The chain reader answered ${res.status}`);
+      }
       const body = (await res.json()) as RpcResponse;
       if (body.error) throw new Error(body.error.message ?? "The chain read failed");
       if (typeof body.result !== "string" || !body.result.startsWith("0x")) throw new Error("The chain read returned no data");
