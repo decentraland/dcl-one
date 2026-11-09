@@ -200,7 +200,7 @@ onSceneReadyObservable.add(() => {
 
 
 > [!WARNING]
-> **📔 Note**: The `getUserData()` and `getPlayerData()` functions are deprecated from SDK v7.4.x. Use `getPlayer()` instead. See [User data](/docs/creator/sdk7/interactivity/user-data/#get-user-data).
+> **📔 Note**: The `getUserData()` and `getPlayerData()` functions are deprecated from SDK v7.4.x. Use `getPlayer()` instead. See [User data](/docs/creator/sdk7/interactivity/user-data/#get-player-data).
 
 
 To obtain information from the current player that's running the scene, use `getUserData()`.
@@ -236,7 +236,7 @@ Both `getUserData()` and `getPlayerData()` return the same data structure availa
 > **📔 Note**: User IDs must always be lowercase. If copying a wallet address, make sure all the characters are set to lowercase.
 
 
-The `getUserPublicKey()` and `getUserAccount()` functions are also deprecated. Please use `getPlayer()` instead. See [User data](/docs/creator/sdk7/interactivity/user-data/#get-user-data).
+The `getUserPublicKey()` and `getUserAccount()` functions are also deprecated. Please use `getPlayer()` instead. See [User data](/docs/creator/sdk7/interactivity/user-data/#get-player-data).
 
 ## Get skybox time
 
@@ -307,7 +307,7 @@ onPlayerClickedObservable.add((clickEvent) => {
 
 > [!WARNING]
 > **📔 Note**: The `onPlayerClickedObservable` event is deprecated from SDK v7.x. Future versions will allow for a more [data-oriented approach](/docs/creator/sdk7/architecture/data-oriented-programming/), based on regularly querying data rather than events.
-> 
+>
 > As an alternative, you can attach an invisible collider to the player and detect clicks against this.
 
 

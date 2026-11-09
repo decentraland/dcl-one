@@ -17,7 +17,10 @@ export default defineConfig({
             'figma/src/**/*.test.ts',
             'figma/test/**/*.test.ts',
             'figma/agent-kit/**/*.test.ts',
-            'figma/key-guard.test.ts'
+            'figma/key-guard.test.ts',
+            'figma/lfs-prefetch.test.ts',
+            'figma/lock-digests.test.ts',
+            'figma/port-verification.test.ts'
           ],
           // Fixtures that workers build once and copy per test live in one folder per run.
           globalSetup: ['figma/test/global-setup.ts']
@@ -37,11 +40,12 @@ export default defineConfig({
           environment: 'jsdom',
           include: [
             'components/**/*.test.tsx',
-            'apps/**/*.test.tsx',
             'foundations/**/*.test.ts',
             'test/**/*.test.{ts,tsx}',
             'figma/review/test/**/*.dom.test.tsx'
           ],
+          // Build contracts run only in the consumer project, avoiding duplicate concurrent builds.
+          exclude: ['test/**/*.build.test.ts', 'test/consumer/**'],
           setupFiles: ['test/setup.ts'],
           css: { modules: { classNameStrategy: 'non-scoped' } }
         }

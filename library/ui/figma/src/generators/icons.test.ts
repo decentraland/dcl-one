@@ -90,15 +90,23 @@ describe('generateIcons', () => {
     })
   })
 
-  describe('when generating the real snapshot', () => {
+  describe('when generating the synthetic snapshot', () => {
     it('should retain supported icons and report ambiguous or raster-only source masters', async () => {
       const { meta, skipped } = generateIcons(await snapshotSource().getIcons(), context)
 
-      expect(meta).toHaveLength(474)
-      expect(skipped).toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: 'map/avatar-pic' })])
-      )
-      expect(skipped.every((item) => item.reason.length > 0)).toBe(true)
+      // 22 single icons and one active/inactive pair; one raster-only and one ambiguous master are skipped.
+      expect(meta).toHaveLength(23)
+      expect(meta.find((entry) => entry.name === 'toggle/bell')).toMatchObject({
+        component: 'ToggleBell',
+        hasActiveState: true
+      })
+      expect(skipped).toEqual([
+        { name: 'sample/photo', reason: 'embeds a raster image' },
+        {
+          name: 'sample/ambiguous',
+          reason: 'unsupported or ambiguous variants: 3:26 (size=large)'
+        }
+      ])
     })
 
     it('should keep component names unique', async () => {
@@ -106,5 +114,26 @@ describe('generateIcons', () => {
 
       expect(new Set(meta.map((m) => m.component)).size).toBe(meta.length)
     })
+  })
+})
+
+describe('when a category cannot be a TypeScript import binding', () => {
+  it.each(['social media', 'arrow-icons', 'default', '../outside'])(
+    'should reject %j before generating paths',
+    (category) => {
+      expect(() => generateIcons([icon({ category })], context)).toThrow(
+        'Invalid generated TypeScript identifier'
+      )
+    }
+  )
+})
+
+describe('when one icon has an invalid component identifier', () => {
+  it('should report it as skipped while retaining valid icons', () => {
+    const result = generateIcons([icon({ name: '3d view' }), icon({})], context)
+    expect(result.meta.map((entry) => entry.component)).toEqual(['GeneralLike'])
+    expect(result.skipped).toContainEqual(
+      expect.objectContaining({ name: '3d view', reason: expect.stringContaining('identifier') })
+    )
   })
 })

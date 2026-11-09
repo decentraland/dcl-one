@@ -208,7 +208,24 @@ function renderUsage(
       )
       return ''
     }
-    return value
+    const local = mapping.locals.find((item) => item.local === expression.trim())
+    return local && (local.kind === 'string' || local.kind === 'text')
+      ? value.replace(
+          /[&<>"'{}\r\n]/g,
+          (character) =>
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+              '{': '&#123;',
+              '}': '&#125;',
+              '\r': '&#13;',
+              '\n': '&#10;'
+            })[character]!
+        )
+      : value
   })
   return { usage: errors.length ? undefined : usage, errors }
 }

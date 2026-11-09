@@ -45,6 +45,9 @@ const INTERNAL_PARAMS = [
   'hud',
   'mock',
   'showcase',
+  // `shop=old`: the catalogue page the in-world Shop replaced, while it is retired (`shop=new`, the old
+  // switch, is still accepted)
+  'shop',
   'gate',
   'nogate',
   'bundled',

@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 /// Where a pass starts: fresh at offset 0, or resumed from a persisted cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +143,17 @@ pub async fn last_complete_pass(
     .flatten())
 }
 
+/// Whether `mirror`'s rows were adopted as this node's ([`claim_adoption`]).
+pub async fn adopted(pool: &PgPool, mirror: &str) -> sqlx::Result<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT adopted_at IS NOT NULL FROM explore.mirror_state WHERE mirror = $1",
+    )
+    .bind(mirror)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(false))
+}
+
 /// Records a failure without clearing the cursor, so the next run resumes.
 pub async fn record_error(pool: &PgPool, mirror: &str, error: &str) -> sqlx::Result<()> {
     sqlx::query(
@@ -153,6 +164,24 @@ pub async fn record_error(pool: &PgPool, mirror: &str, error: &str) -> sqlx::Res
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Claims the one-time adoption of `mirror`'s rows inside `tx`, recorded
+/// on the mirror's row (one of its own when the mirror never ran): `true`
+/// the first time, with the row locked until `tx` ends, `false` once recorded.
+pub async fn claim_adoption(tx: &mut PgConnection, mirror: &str) -> sqlx::Result<bool> {
+    let claimed: Option<String> = sqlx::query_scalar(
+        "INSERT INTO explore.mirror_state AS m (mirror, source_url, adopted_at, updated_at) \
+         VALUES ($1, '', timezone('UTC', now()), timezone('UTC', now())) \
+         ON CONFLICT (mirror) DO UPDATE SET \
+           adopted_at = EXCLUDED.adopted_at, updated_at = EXCLUDED.updated_at \
+         WHERE m.adopted_at IS NULL \
+         RETURNING mirror",
+    )
+    .bind(mirror)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(claimed.is_some())
 }
 
 type StatusRow = (
@@ -169,11 +198,13 @@ type StatusRow = (
     Option<String>,
 );
 
+/// Every mirror that has a source; the row an adoption alone created on a
+/// node whose mirror never ran is not one.
 pub async fn status(pool: &PgPool) -> sqlx::Result<Vec<MirrorStatus>> {
     let rows: Vec<StatusRow> = sqlx::query_as(
         "SELECT mirror, source_url, pass_started_at, next_offset, last_pass_at, last_pass_complete, \
                 last_pass_rows, last_pass_swept, last_complete_pass_at, last_complete_pass_rows, last_error \
-         FROM explore.mirror_state ORDER BY mirror",
+         FROM explore.mirror_state WHERE source_url <> '' ORDER BY mirror",
     )
     .fetch_all(pool)
     .await?;

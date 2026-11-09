@@ -3,7 +3,7 @@
 // names both networks. None of these ever points to credits.
 
 import { isShopApiError } from "../api/client";
-import { chainLabel } from "../model/chain";
+import { chainLabel } from "@shop/model/chain";
 import { isUserRejection, isWrongNetworkError, WrongNetworkError } from "../wallet/chain";
 import { AccountChangedError, TxPendingError, TxRevertedError } from "./evm";
 import { RentalIndexLagError, RentalInputError } from "./rentals";

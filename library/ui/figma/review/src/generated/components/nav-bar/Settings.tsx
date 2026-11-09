@@ -80,7 +80,7 @@ export const Settings = ({
   <FigmaView
     as='div'
     views={settingsViews}
-    defaultKey='default'
+    component='Settings'
     select={{
       values: {  },
       booleans: { stat },
@@ -88,7 +88,7 @@ export const Settings = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

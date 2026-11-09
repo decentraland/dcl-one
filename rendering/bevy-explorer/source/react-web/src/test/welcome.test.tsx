@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LaunchHostOptions } from '../engine/engineRpc'
@@ -72,6 +73,18 @@ describe('welcome page', () => {
     expect(h.driver.sentOf('teleport')).toHaveLength(0)
   })
 
+  // The pick's name is a new profile's: were a guest pick ever to land on an account that has
+  // its profile (which `loginPersistentGuest` never does, as it creates a guest each time), the
+  // page would be answered without the name, as its own accept is, rather than rename it.
+  it("answers the page without the pick's name for an account that has its profile", async () => {
+    const h = renderSession({ userId: null }, manual())
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    act(() => h.session().login.exploreAsGuest({ name: 'QuillStonehill', look: 7 }))
+    await waitFor(() => expect(h.driver.sentOf('getWelcome')).toHaveLength(1))
+    h.driver.emit({ kind: 'welcome', terms: true, newProfile: false })
+    await waitFor(() => expect(h.driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }]))
+  })
+
   // The guest start page took the name, the look and the terms before the account existed: the
   // sign-in carried the name and the look, so the page is answered, with the name so the new
   // profile deploys.
@@ -134,6 +147,7 @@ describe('welcome page', () => {
 
   // A failed guest sign-in must not hand its name to the account signed in next on the page.
   it('shows the page to an account signed in after a failed guest sign-in', async () => {
+    expectConsoleOutput('error', [['[login] post-launch login failed:', new Error('guest wallet unavailable')]])
     class FailingGuestNative extends FakeDriver {
       async loginGuest(): Promise<void> {
         throw new Error('guest wallet unavailable')

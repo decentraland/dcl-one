@@ -114,7 +114,7 @@ export const Backpack = ({
   <FigmaView
     as='div'
     views={backpackViews}
-    defaultKey='default'
+    component='Backpack'
     select={{
       values: {  },
       booleans: { stat },
@@ -122,7 +122,7 @@ export const Backpack = ({
     }}
     slots={{ label, label2 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

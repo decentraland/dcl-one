@@ -8,17 +8,15 @@ import * as library from '../generated/components'
 import { StatePreview } from '../components/StateMatrix'
 import data from './catalog.json'
 import { breakpoints } from '../generated/tokens/tokens'
-import review from './review-notes.json'
-import references from './references.json'
 import styles from './ReviewGallery.module.css'
 import { useSelector } from '@tanstack/react-store'
 import { InteractivePreview } from './InteractivePreview'
 import { ReviewNavigation } from './ReviewNavigation'
 import { matchesPlatform } from './navigation'
 import { Foundations } from './Foundations'
-import { ComparisonControls, PixelDifference } from './ComparisonControls'
 import { propertyOptions, selectVariant } from './selection'
-import { reviewStore, type CanvasMode, type FidelityReport } from './review.store'
+import { reviewStore, type CanvasMode } from './review.store'
+import { reviewPageUrl } from './review-url'
 
 const query = new URLSearchParams(location.search)
 const audit = query.has('audit')
@@ -40,13 +38,6 @@ const variant = selected.variants[index]!
 const Component = (library as unknown as Record<string, ComponentType<Record<string, unknown>>>)[
   selected.name
 ]!
-const finding = (review as Record<string, { status: string; finding: string }>)[selected.name]
-const reference = (
-  references as Record<
-    string,
-    { file: string; width: number; height: number; offsetX?: number; offsetY?: number }
-  >
-)[selected.name + '-' + index]
 const background =
   selected.page === 'Search Bar'
     ? '#5e5b67'
@@ -56,16 +47,16 @@ const background =
         ? '#3c3c3c'
         : '#1e1e1e'
 const href = (name: string, v?: number) =>
-  '/dcl-ui-review/?platform=' +
-  reviewStore.state.platform +
-  '&component=' +
-  encodeURIComponent(name) +
-  (v === undefined ? '' : '&variant=' + v)
+  reviewPageUrl(
+    'platform=' +
+      reviewStore.state.platform +
+      '&component=' +
+      encodeURIComponent(name) +
+      (v === undefined ? '' : '&variant=' + v)
+  )
 
 function Stage() {
   const comparison = useSelector(reviewStore, (value) => ({
-    mode: value.mode,
-    opacity: value.opacity,
     canvasMode: value.canvasMode,
     canvasWidth: value.canvasWidth
   }))
@@ -93,20 +84,6 @@ function Stage() {
           style={!audit && comparison.canvasMode !== 'source' ? { width: '100%' } : undefined}
         >
           <Component {...variant.props} />
-          {!audit && comparison.mode === 'overlay' && reference && (
-            <img
-              className={styles.overlay}
-              src={reference.file}
-              width={reference.width}
-              height={reference.height}
-              style={{
-                opacity: comparison.opacity,
-                left: reference.offsetX ?? 0,
-                top: reference.offsetY ?? 0
-              }}
-              alt="Figma overlay"
-            />
-          )}
         </div>
       </StatePreview>
     </div>
@@ -180,16 +157,8 @@ function CanvasControls() {
 }
 
 function App() {
-  const mode = useSelector(reviewStore, (value) => value.mode)
   const platform = useSelector(reviewStore, (value) => value.platform)
   useEffect(() => {
-    if (!audit)
-      void fetch('/dcl-ui-review/fidelity.json')
-        .then((response) => (response.ok ? (response.json() as Promise<FidelityReport>) : null))
-        .then((fidelity) => {
-          if (fidelity) reviewStore.setState((value) => ({ ...value, fidelity }))
-        })
-        .catch(() => undefined)
     void document.fonts.ready.then(() =>
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
@@ -254,10 +223,13 @@ function App() {
               <p>
                 {variant.width} × {variant.height} · {variant.state}
               </p>
-              <p className={styles.status}>
-                {selected.page === 'Progress Bar' ? 'Pending owner review' : finding?.status}
-              </p>
-              <p>{finding?.finding}</p>
+              {selected.imageFillsOmitted > 0 && (
+                <p className={styles.status}>
+                  Image fills not provided: {selected.imageFillsOmitted} Figma image{' '}
+                  {selected.imageFillsOmitted === 1 ? 'fill shows' : 'fills show'} a neutral fill.
+                  This gallery publishes no Figma imagery and makes no claim of visual parity.
+                </p>
+              )}
               {selected.needsManual.length > 0 && (
                 <ul className={styles.issues}>
                   {selected.needsManual.map((reason) => (
@@ -266,42 +238,13 @@ function App() {
                 </ul>
               )}
             </header>
-            <ComparisonControls caseKey={selected.name + '-' + index} />
-            <section className={`${styles.pair} ${mode !== 'side-by-side' ? styles.single : ''}`}>
+            <section className={styles.pair}>
               <article className={styles.panel}>
                 <h2>Current component</h2>
                 <div className={styles.scroll}>
-                  {mode === 'difference' && reference ? (
-                    <PixelDifference
-                      caseKey={selected.name + '-' + index}
-                      source={reference.file}
-                    />
-                  ) : (
-                    <Stage />
-                  )}
+                  <Stage />
                 </div>
               </article>
-              {mode === 'side-by-side' && (
-                <article className={styles.panel}>
-                  <h2>Figma source · same variant</h2>
-                  <div className={styles.scroll}>
-                    {reference ? (
-                      <div className={styles.source} style={{ background }}>
-                        <img
-                          src={reference.file}
-                          width={reference.width}
-                          height={reference.height}
-                          alt={selected.name + ' original Figma variant'}
-                        />
-                      </div>
-                    ) : (
-                      <div className={styles.empty}>
-                        The exact reference for this variant (Figma node {variant.id}) is pending.
-                      </div>
-                    )}
-                  </div>
-                </article>
-              )}
             </section>
             <InteractivePreview
               key={selected.name + '-' + index}

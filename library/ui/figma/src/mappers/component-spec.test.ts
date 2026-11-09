@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { componentSpec, componentSpecs, projectRoot, snapshotSource } from '../../test/snapshot.js'
-import { loadConfig } from '../config.js'
+import { componentSpec, componentSpecs, snapshotSource, testConfig } from '../../test/snapshot.js'
 import type { ViewNode } from '../ir/components.js'
 import type { RawNode } from '../ir/raw-components.js'
 import { buildComponentSpecs } from './component-spec.js'
@@ -22,8 +21,8 @@ describe('buildComponentSpecs', () => {
       const spec = await componentSpec('Button')
 
       expect(spec).toMatchObject({
-        figmaName: 'Button-Contained-Text',
-        page: 'Buttons',
+        figmaName: 'Synthetic Button',
+        page: 'Demo Controls',
         category: 'Inputs',
         tag: 'button',
         defaultKey: 'variant:primary',
@@ -44,7 +43,7 @@ describe('buildComponentSpecs', () => {
       const root = views[0]!.root
 
       expect(declarations(root)).toMatchObject({
-        background: 'var(--dcl-primary-primary)',
+        background: 'var(--dcl-brand-primary)',
         'border-radius': 'var(--dcl-radius-md)',
         padding: 'var(--dcl-space-12) var(--dcl-space-24) var(--dcl-space-12) var(--dcl-space-24)'
       })
@@ -64,7 +63,7 @@ describe('buildComponentSpecs', () => {
       const { views } = await componentSpec('Button')
 
       expect(views[0]!.hover).toEqual([
-        { path: [], decls: [['background', 'var(--dcl-primary-primary-light-1)']] }
+        { path: [], decls: [['background', 'var(--dcl-brand-primary-light)']] }
       ])
     })
   })
@@ -86,14 +85,14 @@ describe('buildComponentSpecs', () => {
       const spec = await componentSpec('InterestedCTA')
       const icon = find(spec.views[0]!.root, (node) => node.kind === 'icon')!
 
-      expect(icon.icon).toMatchObject({ component: 'GeneralStar', size: 20 })
+      expect(icon.icon).toMatchObject({ component: 'SampleStar', size: 20 })
       expect(icon.slot).toBe('icon')
     })
 
     it('should follow a configured legacy icon alias and leave a note', async () => {
       const spec = await componentSpec('SortByButton')
 
-      expect(spec.notes).toContain('legacy-icon:Icn/DownArrow->general/down-arrow')
+      expect(spec.notes).toContain('legacy-icon:LegacyArrow->sample/arrow-down')
       expect(spec.needsManual).toEqual([])
     })
   })
@@ -137,9 +136,9 @@ describe('buildComponentSpecs', () => {
     })
   })
 
-  describe('when rendering the captured web input caret', () => {
+  describe('when rendering a captured text input caret', () => {
     it('should preserve the visible caret dimensions', async () => {
-      const spec = await componentSpec('InputWebCreatorTools')
+      const spec = await componentSpec('CaretInput')
       const view = spec.views.find((entry) => find(entry.root, (node) => node.name === 'Cursor'))!
       const caret = find(view.root, (node) => node.name === 'Cursor')!
 
@@ -151,17 +150,27 @@ describe('buildComponentSpecs', () => {
     it('should flag an instance of a component that was not captured as needs-manual', async () => {
       const friend = await componentSpec('FriendCTA')
 
-      expect(friend.needsManual).toContain('unresolved-instance:ContextualMenuIcons')
+      expect(friend.needsManual).toContain('unresolved-instance:MenuGlyphs')
+    })
+
+    it('should resolve a per-variant icon alias of the same glyph set to the library icon', async () => {
+      const friend = await componentSpec('FriendCTA')
+      const reject = friend.views.find((view) => view.key === 'variant:reject')!
+
+      expect(friend.notes).toContain('legacy-icon:MenuGlyphs->sample/heart')
+      expect(find(reject.root, (node) => node.kind === 'icon')?.icon?.component).toBe('SampleHeart')
     })
 
     it('should prevent promotion of a component whose hidden variants were excluded', async () => {
       const source = snapshotSource()
-      const buttons = (await source.getComponentPage('Buttons'))!
+      const buttons = (await source.getComponentPage('Demo Controls'))!
       const raw = structuredClone(buttons.components[0]!)
       raw.hiddenVariants = [{ id: 'hidden-variant', name: 'State=Hidden' }]
       const [spec] = buildComponentSpecs({
-        pages: [{ name: 'Buttons', category: 'Inputs', data: { ...buttons, components: [raw] } }],
-        config: await loadConfig(projectRoot),
+        pages: [
+          { name: 'Demo Controls', category: 'Inputs', data: { ...buttons, components: [raw] } }
+        ],
+        config: await testConfig(),
         collections: await source.getTokenCollections(),
         textStyles: await source.getTextStyles(),
         icons: new Map()
@@ -171,7 +180,7 @@ describe('buildComponentSpecs', () => {
 
     it('should flag a vector captured without its artwork as a custom glyph', async () => {
       const source = snapshotSource()
-      const buttons = (await source.getComponentPage('Buttons'))!
+      const buttons = (await source.getComponentPage('Demo Controls'))!
       const notify = structuredClone(
         buttons.components.find((component) => component.name === 'Notify')!
       )
@@ -187,9 +196,9 @@ describe('buildComponentSpecs', () => {
 
       const [spec] = buildComponentSpecs({
         pages: [
-          { name: 'Buttons', category: 'Inputs', data: { ...buttons, components: [notify] } }
+          { name: 'Demo Controls', category: 'Inputs', data: { ...buttons, components: [notify] } }
         ],
-        config: await loadConfig(projectRoot),
+        config: await testConfig(),
         collections: await source.getTokenCollections(),
         textStyles: await source.getTextStyles(),
         icons: new Map()
@@ -216,7 +225,7 @@ describe('buildComponentSpecs', () => {
       const specOf = async () =>
         buildComponentSpecs({
           pages: [{ name: page, category: 'Inputs', data: { ...data, components: [raw] } }],
-          config: await loadConfig(projectRoot),
+          config: await testConfig(),
           collections: await source.getTokenCollections(),
           textStyles: await source.getTextStyles(),
           icons: new Map()
@@ -257,10 +266,34 @@ describe('buildComponentSpecs', () => {
         (await componentSpec('Slot')).needsManual.some((r) => r.startsWith('truncated-capture'))
       ).toBe(true)
       expect(
-        (await componentSpec('PageIndicator')).needsManual.some((r) =>
-          r.startsWith('slot-property')
-        )
+        (await componentSpec('PageDots')).needsManual.some((r) => r.startsWith('slot-property'))
       ).toBe(true)
+    })
+  })
+
+  describe('when a layout overlaps its children with negative spacing', () => {
+    it('should pull every later child back by a tokenized negative margin and keep the layer order', async () => {
+      const spec = await componentSpec('AvatarStack')
+      const [first, second, third] = spec.views[0]!.root.children!
+
+      expect(declarations(spec.views[0]!.root).gap).toBeUndefined()
+      expect(declarations(first!)['margin-left']).toBeUndefined()
+      expect(declarations(second!)['margin-left']).toBe('calc(var(--dcl-space-8) * -1)')
+      expect([first, second, third].map((node) => declarations(node!)['z-index'])).toEqual([
+        '1',
+        '2',
+        '3'
+      ])
+    })
+  })
+
+  describe('when a layout distributes its children with space-between', () => {
+    it('should ignore the captured item spacing instead of turning it into a minimum gap', async () => {
+      const spec = await componentSpec('SwitchTitle')
+      const css = declarations(spec.views[0]!.root)
+
+      expect(css['justify-content']).toBe('space-between')
+      expect(css.gap).toBeUndefined()
     })
   })
 
@@ -268,9 +301,25 @@ describe('buildComponentSpecs', () => {
     it('should produce one spec per Figma set with unique names', async () => {
       const specs = await componentSpecs()
 
-      // The frozen capture keeps nine same-named pairs of distinct sets: they fail closed and are excluded.
-      expect(specs.length).toBeGreaterThanOrEqual(176)
+      expect(specs.length).toBe(27)
       expect(new Set(specs.map((spec) => spec.name)).size).toBe(specs.length)
+    })
+
+    it('should leave out both distinct sets that generate the same name', async () => {
+      const source = snapshotSource()
+      const badges = await Promise.all(
+        ['Demo Cursors', 'Demo Feedback'].map(async (page) =>
+          (await source.getComponentPage(page))!.components.filter(
+            (component) => component.name === 'Badge'
+          )
+        )
+      )
+
+      expect(badges.map((list) => list.map((component) => component.id))).toEqual([
+        ['22:30'],
+        ['40:60']
+      ])
+      expect((await componentSpecs()).some((spec) => spec.name === 'Badge')).toBe(false)
     })
   })
 })

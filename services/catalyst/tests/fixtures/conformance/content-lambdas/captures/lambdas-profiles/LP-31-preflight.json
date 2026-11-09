@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/lambdas/profiles",
+    "headers": {
+      "Origin": "https://example.org",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-origin": "*",
+      "access-control-max-age": "36000",
+      "vary": "Access-Control-Request-Headers"
+    },
+    "body": ""
+  }
+}

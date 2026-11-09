@@ -8,18 +8,18 @@ import {
   type RawComponentPage,
   type RawNode
 } from '../ir/raw-components.js'
-import { checksum, pngProblem, validatePage } from './ingest-chunks.js'
-import { decodePng } from './png-decode.js'
 import {
+  checksum,
   NON_RENDERING,
   pageRasters,
   stripImageMetadata,
   stripPngMetadata
 } from './strip-image-metadata.js'
+import { encodePageFileName } from './page-file-name.js'
 
-// The frozen fixtures are stored clean, like every capture. These tests plant synthetic editor metadata,
+// The synthetic snapshot stores its rasters clean, like every capture. These tests plant editor metadata,
 // shaped like what Figma exports really carry (Adobe XMP edit history, EXIF) but with obviously fake
-// values, into real captured PNGs that keep their real colour chunks (iCCP; gAMA and sRGB).
+// values, into its PNGs, which keep their colour chunks (iCCP; gAMA).
 function chunk(type: string, data: Buffer) {
   const length = Buffer.alloc(4)
   length.writeUInt32BE(data.length)
@@ -69,11 +69,13 @@ const plant = (png: Buffer) => Buffer.concat([png.subarray(0, 33), ...PLANTED, p
 
 const page = async (name: string) =>
   rawComponentPageSchema.parse(
-    JSON.parse(await readFile(path.join(snapshotDir, 'components', `${name}.json`), 'utf8'))
+    JSON.parse(
+      await readFile(path.join(snapshotDir, 'components', encodePageFileName(name)), 'utf8')
+    )
   ) as RawComponentPage
 
-// A real captured raster carrying the colour chunk the case is about.
-async function realPng(name: string, colourChunk: string): Promise<Buffer> {
+// A captured raster carrying the colour chunk the case is about.
+async function capturedPng(name: string, colourChunk: string): Promise<Buffer> {
   const found = pageRasters(await page(name))
     .map((raster) => raster.bytes)
     .find((png) => chunks(png).some((entry) => entry.type === colourChunk))
@@ -123,11 +125,11 @@ function plantPage(source: RawComponentPage): RawComponentPage {
 
 describe('stripPngMetadata', () => {
   describe.each([
-    ['Nav bar', 'iCCP'],
-    ['Cursor', 'gAMA']
-  ])('when a real %s raster with %s gets planted editor metadata', (name, colourChunk) => {
+    ['Demo Nav', 'iCCP'],
+    ['Demo Cursors', 'gAMA']
+  ])('when a captured %s raster with %s gets planted editor metadata', (name, colourChunk) => {
     it('should remove every planted chunk and give back the original bytes, colour chunks and samples', async () => {
-      const original = await realPng(name, colourChunk)
+      const original = await capturedPng(name, colourChunk)
       const planted = plant(original)
       expect(chunks(planted).map((entry) => entry.type)).toEqual(
         expect.arrayContaining(PLANTED_TYPES)
@@ -138,12 +140,6 @@ describe('stripPngMetadata', () => {
       expect(chunks(stripped).some((entry) => NON_RENDERING.has(entry.type))).toBe(false)
       expect(stripped.equals(original)).toBe(true)
       expect(chunks(stripped).map((entry) => entry.type)).toContain(colourChunk)
-      const before = decodePng(original)
-      const after = decodePng(stripped)
-      expect(before.problem).toBeUndefined()
-      expect(after.png!.pixels.equals(before.png!.pixels)).toBe(true)
-      expect({ ...after.png!, pixels: undefined }).toEqual({ ...before.png!, pixels: undefined })
-      expect(pngProblem(stripped.toString('base64'))).toBeUndefined()
     })
   })
 
@@ -170,13 +166,12 @@ describe('stripPngMetadata', () => {
 })
 
 describe('stripImageMetadata', () => {
-  describe.each(['Nav bar', 'Cursor'])(
-    'when every raster of the real %s capture gets planted editor metadata',
+  describe.each(['Demo Nav', 'Demo Cursors'])(
+    'when every raster of the %s capture gets planted editor metadata',
     (name) => {
       it('should give back the clean page exactly, with each transport checksum recomputed', async () => {
         const clean = await page(name)
         const planted = plantPage(clean)
-        expect(() => validatePage(planted)).not.toThrow()
         const rasters = pageRasters(planted)
         expect(rasters.length).toBeGreaterThan(0)
         expect(
@@ -189,7 +184,6 @@ describe('stripImageMetadata', () => {
         const stripped = stripImageMetadata(planted)
 
         expect(stripped).toEqual(clean)
-        expect(() => validatePage(stripped)).not.toThrow()
         expect(stripImageMetadata(stripped)).toEqual(stripped)
       })
     }

@@ -2,8 +2,8 @@
 //! viewers, refused to signed non-members, open to the admin bearer), the
 //! join/leave/kick/role/ban/unban writes and the per-wallet community
 //! listings. A ban deletes the member row and the wallet's pending requests
-//! in source-defined independent commits; a kick or ban of a private community's member
-//! reaches the voice-eviction seam.
+//! in source-defined independent commits; a leave, kick or ban of a private
+//! community's member reaches the voice-eviction seam.
 
 use std::collections::HashMap;
 
@@ -733,7 +733,7 @@ pub async fn remove_member(
             );
         }
     }
-    let removed = try_resp!(map_db(
+    let removed = !try_resp!(map_db(
         sqlx::query(
             "WITH removed AS (DELETE FROM social.community_members \
                               WHERE community_id = $1 AND member_address = $2 AND role <> 'owner' RETURNING community_id), \
@@ -748,7 +748,7 @@ pub async fn remove_member(
         .fetch_all(&state.pool)
         .await
     ))
-    .len() > 0;
+    .is_empty();
     if removed {
         if target == signer {
             state.fire_analytics(
@@ -763,10 +763,10 @@ pub async fn remove_member(
         // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
         // and the wallet that left
         state.member_status_changed(uuid, &target, false).await;
+        state
+            .evict_from_private_community_voice(uuid, &target)
+            .await;
         if target != signer {
-            state
-                .evict_from_private_community_voice(uuid, &target)
-                .await;
             // upstream `kickMember`: MEMBER_REMOVED to the kicked wallet
             state
                 .notify_community_event(
@@ -777,14 +777,6 @@ pub async fn remove_member(
                     Audience::One(&target),
                 )
                 .await;
-        } else {
-            let event = crate::notifications::community::CommunityEvent {
-                kind: "community_member_left",
-                key: format!("{uuid}-{target}-{}", now_ms()),
-                community_id: uuid,
-                metadata: json!({}),
-            };
-            tokio::spawn(state.publish_community_event(&event, &Audience::One(&target)));
         }
     }
     StatusCode::NO_CONTENT.into_response()

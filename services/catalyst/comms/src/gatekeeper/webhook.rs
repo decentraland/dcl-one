@@ -233,22 +233,22 @@ pub async fn livekit_webhook(
         return Err(ApiError::bad_request("invalid livekit room event fields"));
     }
     tracing::info!(event = event_kind, "livekit webhook received");
-    if matches!(event_kind, "room_started" | "room_finished") {
-        if let Some(room) = room_name(&event) {
-            state.presence.invalidate_room(&room);
-        }
+    if matches!(event_kind, "room_started" | "room_finished")
+        && let Some(room) = room_name(&event)
+    {
+        state.presence.invalidate_room(&room);
     }
-    if event_kind == "room_finished" {
-        if let (Some(room), Some(sid)) = (
+    if event_kind == "room_finished"
+        && let (Some(room), Some(sid)) = (
             room_name(&event),
             event
                 .get("room")
                 .and_then(|room| room.get("sid"))
                 .and_then(Value::as_str)
                 .filter(|sid| !sid.is_empty()),
-        ) {
-            super::removal::room_closed(&state.pool, &room, sid).await?;
-        }
+        )
+    {
+        super::removal::room_closed(&state.pool, &room, sid).await?;
     }
 
     // Unknown/track events have no handler; they consume no
@@ -295,35 +295,34 @@ pub async fn livekit_webhook(
     }
     // Invalidate before any awaited side effect/resolution. Even a handler
     // retry cannot let a concurrent read certify a room whose event is known.
-    if matches!(event_kind, "participant_joined" | "participant_left") {
-        if let Some(room) = room_name(&event) {
-            state.presence.invalidate_room(&room);
-        }
+    if matches!(event_kind, "participant_joined" | "participant_left")
+        && let Some(room) = room_name(&event)
+    {
+        state.presence.invalidate_room(&room);
     }
-    if matches!(event_kind, "room_started" | "participant_joined") {
-        if let Some(room) = room_name(&event) {
-            let sid = room_sid(&event).filter(|sid| sid.len() <= 128);
-            let due = state
-                .webhooks
-                .state
-                .lock()
-                .unwrap()
-                .metadata_due(&room, sid);
-            if due {
-                // Already serialized by this room's webhook stripe. Record only a
-                // confirmed same-incarnation write; failures remain retryable.
-                let updated =
-                    super::moderation::maintenance::initialize_room(state.as_ref(), &room, sid)
-                        .await?;
-                if let Some(updated) = updated.filter(|updated| sid == Some(updated.as_str())) {
-                    state
-                        .webhooks
-                        .state
-                        .lock()
-                        .unwrap()
-                        .metadata
-                        .insert(room, (updated, tokio::time::Instant::now()));
-                }
+    if matches!(event_kind, "room_started" | "participant_joined")
+        && let Some(room) = room_name(&event)
+    {
+        let sid = room_sid(&event).filter(|sid| sid.len() <= 128);
+        let due = state
+            .webhooks
+            .state
+            .lock()
+            .unwrap()
+            .metadata_due(&room, sid);
+        if due {
+            // Already serialized by this room's webhook stripe. Record only a
+            // confirmed same-incarnation write; failures remain retryable.
+            let updated =
+                super::moderation::maintenance::initialize_room(state.as_ref(), &room, sid).await?;
+            if let Some(updated) = updated.filter(|updated| sid == Some(updated.as_str())) {
+                state
+                    .webhooks
+                    .state
+                    .lock()
+                    .unwrap()
+                    .metadata
+                    .insert(room, (updated, tokio::time::Instant::now()));
             }
         }
     }
@@ -331,49 +330,46 @@ pub async fn livekit_webhook(
     // Presence and the event sink consume one resolved identity. A world
     // scene's complete name is resolved without guessing a hyphen boundary;
     // store failures leave the webhook unapplied for retry.
-    if let (Some(room), Some(identity)) = (room_name(&event), participant_identity(&event)) {
-        if matches!(event_kind, "participant_joined" | "participant_left") {
-            if let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
-                .await
-                .map_err(|error| {
-                    tracing::warn!(%error, room, "canonical room identity unavailable");
-                    ApiError::http(503, "Room identity is temporarily unavailable")
-                })?
-            {
-                if let Some(sink) = state.room_events.as_ref() {
-                    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
-                    sink.observe_room_event(&RoomEvent {
-                        kind: if event_kind == "participant_joined" {
-                            RoomEventKind::Joined
-                        } else {
-                            RoomEventKind::Left
-                        } as i32,
-                        room,
-                        room_type: if parsed.realm.is_world() {
-                            RoomType::World
-                        } else {
-                            RoomType::Scene
-                        } as i32,
-                        realm_name: parsed
-                            .realm
-                            .world()
-                            .map(|w| w.key())
-                            .unwrap_or_else(|| parsed.realm.as_str())
-                            .to_owned(),
-                        scene_id: parsed
-                            .scene_id
-                            .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or("")
-                            .to_owned(),
-                        identity,
-                        participant_sid: participant_sid(&event).unwrap(),
-                        event_time_ms: event_time_ms(&event).unwrap() as u64,
-                        event_id: event_id(&event).unwrap().to_owned(),
-                    });
-                }
-            }
-        }
+    if let (Some(room), Some(identity)) = (room_name(&event), participant_identity(&event))
+        && matches!(event_kind, "participant_joined" | "participant_left")
+        && let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, room, "canonical room identity unavailable");
+                ApiError::http(503, "Room identity is temporarily unavailable")
+            })?
+        && let Some(sink) = state.room_events.as_ref()
+    {
+        use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
+        sink.observe_room_event(&RoomEvent {
+            kind: if event_kind == "participant_joined" {
+                RoomEventKind::Joined
+            } else {
+                RoomEventKind::Left
+            } as i32,
+            room,
+            room_type: if parsed.realm.is_world() {
+                RoomType::World
+            } else {
+                RoomType::Scene
+            } as i32,
+            realm_name: parsed
+                .realm
+                .world()
+                .map(|w| w.key())
+                .unwrap_or_else(|| parsed.realm.as_str())
+                .to_owned(),
+            scene_id: parsed
+                .scene_id
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            identity,
+            participant_sid: participant_sid(&event).unwrap(),
+            event_time_ms: event_time_ms(&event).unwrap() as u64,
+            event_id: event_id(&event).unwrap().to_owned(),
+        });
     }
     state
         .webhooks

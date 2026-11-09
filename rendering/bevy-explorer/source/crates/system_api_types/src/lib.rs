@@ -207,6 +207,29 @@ pub struct ProximityEvent {
     pub actions: Vec<HoverAction>,
 }
 
+/// Photo mode as the HUD shows it: whether the in-world camera is open, what it is doing with
+/// the last photo, and how much room the player has. `event_seq` increments on each `event`,
+/// which carries the capture's preview (base64 JPEG) or the upload's failure message.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct PhotoModeState {
+    pub active: bool,
+    pub hud_hidden: bool,
+    pub cursor_locked: bool,
+    /// `idle`, `capturing`, `encoding` or `uploading`.
+    pub phase: String,
+    pub storage_current: u32,
+    pub storage_max: u32,
+    pub storage_loaded: bool,
+    /// `none`, `captured`, `uploaded` or `uploadFailed`.
+    pub event: String,
+    pub event_seq: u32,
+    pub preview_jpeg_base64: String,
+    pub message: String,
+}
+
 /// A profile the engine holds was inserted or replaced: a foreign player's, or the local
 /// player's own. Carries only the address and the new version; a consumer holding an older
 /// version re-reads the profile itself.
@@ -396,6 +419,20 @@ pub struct DmReactionData {
     pub from: Vec<String>,
 }
 
+/// A community member came online or went offline (the social service's
+/// `SubscribeToCommunityMemberConnectivityUpdates`; `away` is never relayed). The local user's own
+/// updates tell which communities they are in.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct CommunityMemberConnectivityData {
+    pub community_id: String,
+    pub address: String,
+    /// "online" or "offline"
+    pub status: String,
+}
+
 /// Whether the local user can DM `address`, and why not; emitted for the watched recipient.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -405,7 +442,8 @@ pub struct DmUserStateData {
     pub address: String,
     /// "notConnected" (the local user is not in the private chat room), "connected",
     /// "blockedByOwnUser", "privateMessagesBlockedByOwnUser", "privateMessagesBlocked",
-    /// "disconnected" or "otherClient"
+    /// "disconnected" or "otherClient"; for a community channel (`community:<id>`),
+    /// "notConnected", "noRouter" (no message router in the room) or "connected"
     pub state: String,
     /// In the private chat room and not blocked by the local user.
     pub online: bool,

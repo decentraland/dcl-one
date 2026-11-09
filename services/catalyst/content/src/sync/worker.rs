@@ -13,13 +13,14 @@ use std::time::Duration;
 
 use anyhow::Context;
 use sqlx::PgPool;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 
 use crate::batch_deployer::{BatchDeployer, BatchDeployerConfig};
 use crate::bloom_filter::BloomFilter;
 use crate::config::Config;
 use crate::jobs::{JobContext, Jobs};
 use crate::storage::Storage;
+use crate::sync::dao::{self, DaoSource};
 use crate::sync::orchestrator::{SyncControl, SyncDependencies, run_sync_job};
 use crate::sync::retry_failed::run_prune_loop;
 use crate::sync::snapshots::SnapshotScheduling;
@@ -68,7 +69,10 @@ pub fn memory_limits_from_config(config: &Config) -> anyhow::Result<SyncMemoryLi
 /// counting against `MAX_FAILED_DEPLOYMENT_RETRIES`, for up to a week.
 #[derive(Debug, Clone)]
 pub struct SyncSettings {
+    /// `SYNC_SOURCE`; with [`Self::dao`], the list used until a registry read succeeds.
     pub peers: Vec<String>,
+    /// `SYNC_FROM_DAO`: the DAO catalyst list replaces `peers` once read.
+    pub dao: Option<DaoSource>,
     pub entity_types: Option<HashSet<String>>,
     pub from_timestamp_ms: i64,
     pub phased_sync: bool,
@@ -107,6 +111,7 @@ impl SyncSettings {
         .flatten()
         .collect();
         let peers = parse_sync_sources(&config.content.sync_source, &own_urls)?;
+        let dao = dao_source(config, own_urls)?;
         let entity_types = parse_entity_types(&config.content.sync_entity_types)?;
         for (name, value) in [
             (
@@ -141,6 +146,7 @@ impl SyncSettings {
         *MEMORY_LIMITS.lock() = memory_limits_from_config(config)?;
         Ok(Some(Self {
             peers,
+            dao,
             entity_types,
             from_timestamp_ms: config.content.sync_from_timestamp_ms,
             phased_sync: config.content.phased_sync,
@@ -163,6 +169,88 @@ impl SyncSettings {
             prune_ttl_days: config.content.retry_failed_prune_ttl_days,
         }))
     }
+}
+
+/// `SYNC_FROM_DAO` resolved: `None` when off, or when there is no registry
+/// to read (no `ETH_RPC_URL`, an `ETH_NETWORK` without one), which leaves
+/// `SYNC_SOURCE` as the only list.
+fn dao_source(config: &Config, own_urls: Vec<String>) -> anyhow::Result<Option<DaoSource>> {
+    if !config.content.sync_from_dao {
+        return Ok(None);
+    }
+    let Some(rpc_url) = config.content.eth_rpc_url()? else {
+        tracing::warn!("SYNC_FROM_DAO=true without ETH_RPC_URL: syncing from SYNC_SOURCE only");
+        return Ok(None);
+    };
+    let Some(registry) = dao::registry_address(&config.node.eth_network) else {
+        tracing::warn!(
+            eth_network = %config.node.eth_network,
+            "SYNC_FROM_DAO=true on a network with no catalyst registry: syncing from SYNC_SOURCE only"
+        );
+        return Ok(None);
+    };
+    Ok(Some(DaoSource {
+        rpc_url,
+        registry,
+        own_urls,
+    }))
+}
+
+/// The peers to start from: the DAO list when it reads, else `SYNC_SOURCE`.
+async fn initial_peers(settings: &SyncSettings, client: &reqwest::Client) -> Vec<String> {
+    let Some(dao) = &settings.dao else {
+        return settings.peers.clone();
+    };
+    match dao.peers(client).await {
+        Ok(peers) => {
+            tracing::info!(?peers, "Sync peers read from the DAO catalyst list");
+            peers
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, fallback = ?settings.peers, "DAO catalyst list read failed; syncing from SYNC_SOURCE");
+            settings.peers.clone()
+        }
+    }
+}
+
+/// Reads the DAO list every [`dao::REFRESH`] and publishes a changed set; a
+/// failed read keeps the current one.
+fn spawn_dao_refresh(
+    jobs: &Arc<Jobs>,
+    ctx: &JobContext,
+    dao: DaoSource,
+    client: reqwest::Client,
+    tx: watch::Sender<HashSet<String>>,
+) {
+    jobs.spawn_scoped(ctx, "sync-dao-peers", move |ctx| async move {
+        loop {
+            tokio::select! {
+                _ = ctx.cancel.cancelled() => return Ok(()),
+                _ = tokio::time::sleep(dao::REFRESH) => {}
+            }
+            match dao.peers(&client).await {
+                Ok(peers) => {
+                    let peers: HashSet<String> = peers.into_iter().collect();
+                    let changed = tx.send_if_modified(|current| {
+                        let changed = *current != peers;
+                        if changed {
+                            *current = peers.clone();
+                        }
+                        changed
+                    });
+                    ctx.progress(if changed {
+                        format!("peers changed: {} peers", peers.len())
+                    } else {
+                        format!("unchanged: {} peers", peers.len())
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "DAO catalyst list refresh failed; keeping the current peers");
+                    ctx.error(e);
+                }
+            }
+        }
+    });
 }
 
 /// `SERVE_UNSYNCED` with no worker attached: the process claims `Syncing` so
@@ -414,8 +502,14 @@ impl Leader {
                 "SYNC_FROM_TIMESTAMP_MS set: bootstrap is bounded, older entities are never fetched"
             );
         }
-        tracing::info!(peers = ?settings.peers, phased_sync = settings.phased_sync, "Sync orchestrator ready");
-        let peers: HashSet<String> = settings.peers.iter().cloned().collect();
+        let initial = initial_peers(settings, &self.client).await;
+        tracing::info!(peers = ?initial, phased_sync = settings.phased_sync, "Sync orchestrator ready");
+        let (peers_tx, peers) = watch::channel(initial.iter().cloned().collect::<HashSet<_>>());
+        if let Some(dao) = &settings.dao {
+            spawn_dao_refresh(&self.jobs, &ctx, dao.clone(), self.client.clone(), peers_tx);
+        }
+        let retry_peers = Arc::new(RwLock::new(initial));
+        let (bootstrapped_tx, bootstrapped) = watch::channel(false);
         spawn_failed_deployment_jobs(
             &self.jobs,
             &ctx,
@@ -431,10 +525,14 @@ impl Leader {
                 client: self.client.clone(),
                 deployer,
                 failed,
-                peers: settings.peers.clone(),
+                peers: retry_peers.clone(),
+                bootstrapped: Some(bootstrapped),
             },
         );
-        run_sync_job(orchestrator, peers, ctx).await
+        run_sync_job(orchestrator, peers, retry_peers, ctx, move || {
+            let _ = bootstrapped_tx.send(true);
+        })
+        .await
     }
 }
 
@@ -464,11 +562,35 @@ struct FailedDeploymentDeps {
     client: reqwest::Client,
     deployer: Arc<LiveSyncDeployer>,
     failed: Arc<LiveFailedDeploymentsStore>,
-    peers: Vec<String>,
+    peers: Arc<RwLock<Vec<String>>>,
+    /// Set once the sync leader's bootstrap completed; `None` where there is no bootstrap.
+    bootstrapped: Option<watch::Receiver<bool>>,
+}
+
+/// How long the retry loop waits for the sync leader's bootstrap before it starts anyway.
+const RETRY_FAILED_START: Duration = Duration::from_secs(60);
+/// The same for the prune loop.
+const PRUNE_START: Duration = Duration::from_secs(300);
+
+/// Returns at bootstrap completion or after `delay`, whichever comes first, so a peer that never
+/// answers holds the node in `Bootstrapping` without holding the loop; at once with no bootstrap
+/// to wait for, and on cancellation, which the loop then sees.
+async fn wait_to_start(
+    ctx: &JobContext,
+    bootstrapped: Option<watch::Receiver<bool>>,
+    delay: Duration,
+) {
+    let Some(mut bootstrapped) = bootstrapped else {
+        return;
+    };
+    tokio::select! {
+        _ = ctx.cancel.cancelled() => {}
+        _ = tokio::time::timeout(delay, bootstrapped.wait_for(|done| *done)) => {}
+    }
 }
 
 /// `retry-failed` (when enabled; it also sets [`UNDECIDED_RECORDS`](crate::sync::retry_failed::UNDECIDED_RECORDS)) and
-/// `failed-deployments-prune`, scoped to `ctx`.
+/// `failed-deployments-prune`, scoped to `ctx`; each starts per [`wait_to_start`].
 fn spawn_failed_deployment_jobs(
     jobs: &Arc<Jobs>,
     ctx: &JobContext,
@@ -486,9 +608,11 @@ fn spawn_failed_deployment_jobs(
             deps.storage,
             deps.deployer,
             deps.failed,
-            Arc::new(RwLock::new(deps.peers)),
+            deps.peers,
         );
+        let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
+            wait_to_start(&ctx, bootstrapped, RETRY_FAILED_START).await;
             let trace = ctx.clone();
             retry
                 .run(ctx.cancel.clone(), move |outcome| match outcome {
@@ -501,12 +625,13 @@ fn spawn_failed_deployment_jobs(
     }
     let ttl_days = settings.prune_ttl_days;
     let pool = deps.pool;
+    let bootstrapped = deps.bootstrapped;
     jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
+        wait_to_start(&ctx, bootstrapped, PRUNE_START).await;
         let trace = ctx.clone();
         run_prune_loop(
             pool,
             ttl_days,
-            Duration::from_secs(300),
             ctx.cancel.clone(),
             move |outcome| match outcome {
                 Ok(pruned) => trace.progress(format!("pruned {pruned}")),
@@ -547,7 +672,8 @@ pub fn start_failed_deployments(
             client: client.clone(),
             deployer: deployer.clone(),
             failed: Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
-            peers: peers.clone(),
+            peers: Arc::new(RwLock::new(peers.clone())),
+            bootstrapped: None,
         };
         async move {
             deployer.spawn_flush_ticker(&jobs, &ctx);
@@ -600,6 +726,49 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(settings.peers, vec!["https://peer.example/content"]);
+    }
+
+    #[tokio::test]
+    async fn the_dao_list_needs_a_registry_and_falls_back_to_sync_source() {
+        let base = [
+            "--sync-enabled",
+            "--sync-source",
+            "https://peer.example/content",
+            "--public-url",
+            "https://me.example",
+        ];
+        let settings = SyncSettings::from_config(&config(&base)).unwrap().unwrap();
+        assert!(settings.dao.is_none(), "off unless SYNC_FROM_DAO");
+
+        let mut args = base.to_vec();
+        args.extend([
+            "--sync-from-dao",
+            "true",
+            "--eth-rpc-url",
+            "https://rpc.example/",
+        ]);
+        let settings = SyncSettings::from_config(&config(&args)).unwrap().unwrap();
+        let dao = settings.dao.clone().expect("mainnet has a registry");
+        assert_eq!(dao.registry, dao::MAINNET_REGISTRY);
+        assert!(dao.own_urls.contains(&"https://me.example".to_string()));
+
+        let mut other = args.clone();
+        other.extend(["--eth-network", "holesky"]);
+        let none = SyncSettings::from_config(&config(&other)).unwrap().unwrap();
+        assert!(none.dao.is_none(), "no registry on that network");
+
+        // A registry read that fails starts from SYNC_SOURCE.
+        let unreachable = SyncSettings {
+            dao: Some(DaoSource {
+                rpc_url: "https://127.0.0.1:9/".to_string(),
+                ..dao
+            }),
+            ..settings
+        };
+        assert_eq!(
+            initial_peers(&unreachable, &reqwest::Client::new()).await,
+            vec!["https://peer.example/content"]
+        );
     }
 
     #[test]
@@ -783,5 +952,52 @@ mod tests {
     #[tokio::test]
     async fn without_sync_a_process_without_fleet_jobs_runs_neither_loop() {
         assert!(failed_deployment_jobs(true, false).await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_loop_starts_at_bootstrap_or_after_its_delay_whichever_comes_first() {
+        let jobs = Arc::new(Jobs::new());
+        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Duration| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let cancel = jobs.spawn("gate", move |ctx| async move {
+                wait_to_start(&ctx, bootstrapped, delay).await;
+                let _ = tx.send(());
+                Ok(())
+            });
+            (cancel, rx)
+        };
+        let start = tokio::time::Instant::now();
+
+        gate(None, PRUNE_START).1.await.unwrap();
+        assert_eq!(start.elapsed(), Duration::ZERO, "no bootstrap to wait for");
+
+        let (bootstrapped, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), PRUNE_START);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        bootstrapped.send(true).unwrap();
+        started.await.unwrap();
+        let at_bootstrap = start.elapsed();
+        assert!(
+            at_bootstrap >= Duration::from_secs(1) && at_bootstrap < PRUNE_START,
+            "started at the bootstrap, after {at_bootstrap:?}"
+        );
+
+        let (_held, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), RETRY_FAILED_START);
+        started.await.unwrap();
+        let after_delay = start.elapsed() - at_bootstrap;
+        assert!(
+            after_delay >= RETRY_FAILED_START && after_delay < PRUNE_START,
+            "a held bootstrap released the loop after {after_delay:?}"
+        );
+
+        let (_held, rx) = watch::channel(false);
+        let (cancel, started) = gate(Some(rx), PRUNE_START);
+        cancel.cancel();
+        started.await.unwrap();
+        assert!(
+            start.elapsed() - at_bootstrap - after_delay < Duration::from_secs(1),
+            "cancellation released the loop"
+        );
     }
 }

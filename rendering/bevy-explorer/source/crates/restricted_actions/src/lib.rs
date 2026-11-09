@@ -847,25 +847,42 @@ pub async fn lookup_portable(
     let Some(urn) = first_scene else {
         return Err("Empty scenesUrn on server/about/configurations".to_owned());
     };
-    let hacked_urn = urn.replace('?', "?=&").replace("?=&=&", "?=&");
-
-    let Ok(path) = IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn) else {
-        return Err("failed to parse urn".to_owned());
-    };
-
-    let Ok(Some(hash)) = path.context_free_hash() else {
-        return Err("failed to resolve content hash from urn".to_owned());
-    };
-
+    let (hash, pid) = resolve_portable_urn(&urn, &url)?;
     Ok((
         hash,
         PortableSource {
-            pid: hacked_urn,
+            pid,
             parent_scene,
             ens: None,
             super_user,
         },
     ))
+}
+
+fn resolve_portable_urn(urn: &str, realm_url: &str) -> Result<(String, String), String> {
+    let urn = urn.replace('?', "?=&").replace("?=&=&", "?=&");
+    let path = IpfsPath::new_from_urn::<EntityDefinition>(&urn)
+        .map_err(|_| "failed to parse urn".to_owned())?;
+    let hash = path
+        .context_free_hash()
+        .ok()
+        .flatten()
+        .ok_or_else(|| "failed to resolve content hash from urn".to_owned())?;
+    let pid = match path.base_url() {
+        Some(base)
+            if matches!(
+                url::Url::parse(base),
+                Err(url::ParseError::RelativeUrlWithoutBase)
+            ) =>
+        {
+            let base = url::Url::parse(&format!("{}/", realm_url.trim_end_matches('/')))
+                .and_then(|url| url.join(base))
+                .map_err(|error| error.to_string())?;
+            format!("urn:decentraland:entity:{hash}?=&baseUrl={base}")
+        }
+        _ => urn,
+    };
+    Ok((hash, pid))
 }
 
 type SpawnResponseChannel = Option<RpcResultSender<Result<SpawnResponse, String>>>;
@@ -2411,16 +2428,13 @@ fn handle_sign_request(
             response,
         } = ev
         {
-            let Ok(uri) = Uri::try_from(uri) else {
-                response.send(Err(format!("failed to parse uri: {uri}")));
-                continue;
-            };
-
+            let uri = uri.clone();
             let method = method.clone();
             let meta = meta.to_owned().unwrap_or_default();
             let wallet = wallet.clone();
-            let task = IoTaskPool::get()
-                .spawn_compat(async move { sign_request(&method, &uri, &wallet, meta).await });
+            let task = IoTaskPool::get().spawn_compat(async move {
+                wallet::sign_service_request(&method, &uri, &wallet, meta).await
+            });
             tasks.push((response.clone(), task));
         }
     }
@@ -2648,6 +2662,60 @@ pub fn process_startup_scenes(
 
     if tasks.is_empty() {
         *done = true;
+    }
+}
+
+#[cfg(test)]
+mod portable_urn_tests {
+    use super::resolve_portable_urn;
+
+    #[test]
+    fn relative_content_urls_follow_the_served_realm_at_any_gateway_path() {
+        for realm in [
+            "https://play.example/bridge-scene/static/BevyExplorerUI",
+            "https://play.example/play/bridge-scene/static/BevyExplorerUI/",
+        ] {
+            let (hash, urn) = resolve_portable_urn(
+                "urn:decentraland:entity:bafkreiexample?=&baseUrl=../",
+                realm,
+            )
+            .unwrap();
+            assert_eq!(hash, "bafkreiexample");
+            let base = realm
+                .trim_end_matches('/')
+                .trim_end_matches("BevyExplorerUI");
+            assert_eq!(
+                urn,
+                format!("urn:decentraland:entity:bafkreiexample?=&baseUrl={base}")
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_content_urls_and_missing_bases_are_preserved() {
+        for suffix in [
+            "",
+            "?=&baseUrl=https://cdn.example/content/",
+            "?=&baseUrl=file:///scene/",
+        ] {
+            let urn = format!("urn:decentraland:entity:bafkreiexample{suffix}");
+            assert_eq!(
+                resolve_portable_urn(&urn, "https://play.example/realm")
+                    .unwrap()
+                    .1,
+                urn
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_urns_and_relative_bases_without_a_realm_are_rejected() {
+        assert!(resolve_portable_urn("invalid", "https://play.example/realm").is_err());
+        assert!(resolve_portable_urn(
+            "urn:decentraland:entity:bafkreiexample?=&baseUrl=../",
+            "invalid",
+        )
+        .is_err());
     }
 }
 

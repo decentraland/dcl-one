@@ -4,10 +4,12 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, Tabs, openPopup, type TabItem } from '../../design'
+import { Avatar, Button, Pencil, Plus, Tabs, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
+import { isMemberRole, roleLabel } from './roles'
 import { useSession } from '../session/SessionContext'
+import { openCommunityEditModal } from './CommunityCreateModal'
 import type {
   Community,
   CommunityDetailMessage,
@@ -27,18 +29,10 @@ const TABS: TabItem<Tab>[] = [
   { id: 'photos', label: 'PHOTOS' }
 ]
 
-function isMemberRole(role: string): boolean {
-  return role === 'owner' || role === 'moderator' || role === 'member'
-}
 function compact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
   return String(n)
-}
-function roleLabel(role: string): string | null {
-  if (role === 'owner') return 'Owner'
-  if (role === 'moderator') return 'Moderator'
-  return null
 }
 function postDate(ts: number): string {
   return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -148,11 +142,16 @@ function MemberRow({ member, requested, onAdd }: { member: CommunityMember; requ
   )
 }
 
-function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
+function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
   return (
     <div className={styles.place}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
+        {onDelete != null && (
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={onDelete}>
+            <Trash size={14} />
+          </button>
+        )}
       </div>
       <span className={styles.placeName} title={place.title}>{place.title}</span>
       <div className={styles.placeMeta}>
@@ -160,6 +159,17 @@ function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
     </div>
+  )
+}
+
+/** unity-explorer's first tile in the card's Places grid for owners and moderators: opens the
+ *  Edit Community form, where places are linked. */
+function AddPlaceTile({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return (
+    <button type="button" className={styles.addPlace} onClick={onClick}>
+      <Plus size={22} />
+      <span>ADD PLACE</span>
+    </button>
   )
 }
 
@@ -195,6 +205,9 @@ export function CommunityModal({
   onLeave,
   onAddFriend,
   onOpenChat,
+  onEdit,
+  onDelete,
+  onRemovePlace,
   onClose
 }: {
   community: Community
@@ -207,12 +220,21 @@ export function CommunityModal({
   onLeave: (id: string) => void
   onAddFriend: (address: string) => void
   onOpenChat: () => void
+  /** Open the Edit Community form (owners and moderators). */
+  onEdit?: () => void
+  /** Delete the community (owner only; asked first). */
+  onDelete?: (id: string) => void
+  /** Unlink a place the user owns (owners and moderators; asked first). */
+  onRemovePlace?: (id: string, placeId: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
   const [coverFailed, setCoverFailed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [requested, setRequested] = useState<ReadonlySet<string>>(new Set())
+  // the places being deleted: their delete waits for the card's places (or an error) to come back
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => setRemoving(new Set()), [detail, error])
   const member = isMemberRole(community.role)
   const isPrivate = community.privacy === 'private'
   const showCover = community.thumbnail != null && !coverFailed
@@ -221,6 +243,32 @@ export function CommunityModal({
   const addFriend = (address: string): void => {
     setRequested((prev) => new Set(prev).add(address))
     onAddFriend(address)
+  }
+  // unity-explorer's confirmation, with the community's picture
+  const confirmDelete = (): void => {
+    setMenuOpen(false)
+    void showConfirm({
+      title: `Are you sure you want to delete [${community.name}] Community?`,
+      body: showCover ? <img className={styles.confirmThumb} src={community.thumbnail} alt="" /> : undefined,
+      confirmLabel: 'CONTINUE',
+      cancelLabel: 'CANCEL'
+    }).then((yes) => {
+      if (yes) onDelete?.(community.id)
+    })
+  }
+  // as unity-explorer: owners and moderators get the ADD PLACE tile, and delete on the places they own
+  const canModify = community.role === 'owner' || community.role === 'moderator'
+  const confirmRemovePlace = (place: CommunityPlace): void => {
+    void showConfirm({
+      title: `Are you sure you want to delete [${place.title}] from [${community.name}]'s Places?`,
+      body: "Photos and events associated with this Place won't appear on the Community's profile anymore.",
+      confirmLabel: 'DELETE',
+      cancelLabel: 'CANCEL'
+    }).then((yes) => {
+      if (!yes) return
+      setRemoving((prev) => new Set(prev).add(place.id))
+      onRemovePlace?.(community.id, place.id)
+    })
   }
   const copyLink = (): void => {
     void navigator.clipboard?.writeText(`https://decentraland.org/communities/${community.id}`).catch(() => undefined)
@@ -251,6 +299,9 @@ export function CommunityModal({
             {error && <p className={styles.error} role="alert">{error}</p>}
           </div>
           <div className={styles.headActions}>
+            {(community.role === 'owner' || community.role === 'moderator') && onEdit != null && (
+              <button type="button" className={styles.iconBtn} aria-label="Edit Community" onClick={onEdit}><Pencil size={16} /></button>
+            )}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
@@ -270,9 +321,15 @@ export function CommunityModal({
               {menuOpen && (
                 <div className={styles.menu}>
                   <button type="button" className={styles.menuItem} onClick={copyLink}>Copy link</button>
-                  {member && (
+                  {/* an owner cannot leave their community, only delete it (unity-explorer) */}
+                  {member && community.role !== 'owner' && (
                     <button type="button" className={`${styles.menuItem} ${styles.menuDanger}`} onClick={() => { setMenuOpen(false); onLeave(community.id); onClose() }}>
                       Leave community
+                    </button>
+                  )}
+                  {community.role === 'owner' && onDelete != null && (
+                    <button type="button" className={`${styles.menuItem} ${styles.menuDanger}`} onClick={confirmDelete}>
+                      Delete Community
                     </button>
                   )}
                 </div>
@@ -293,8 +350,18 @@ export function CommunityModal({
               <div className={styles.memberGrid}>{detail.members.map((m) => <MemberRow key={m.address} member={m} requested={requested.has(m.address)} onAdd={() => addFriend(m.address)} />)}</div>
             ) : <div className={styles.empty}>No members to show.</div>
           ) : tab === 'places' ? (
-            detail.places.length > 0 ? (
-              <div className={styles.placeGrid}>{detail.places.map((p) => <PlaceCard key={p.id} place={p} />)}</div>
+            detail.places.length > 0 || (canModify && onEdit != null) ? (
+              <div className={styles.placeGrid}>
+                {canModify && onEdit != null && <AddPlaceTile onClick={onEdit} />}
+                {detail.places.map((p) => (
+                  <PlaceCard
+                    key={p.id}
+                    place={p}
+                    onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
+                    deleting={removing.has(p.id)}
+                  />
+                ))}
+              </div>
             ) : <div className={styles.empty}>No places shared yet.</div>
           ) : detail.photos.length > 0 ? (
             <div className={styles.photoGrid}>{detail.photos.map((ph) => <PhotoTile key={ph.id} photo={ph} />)}</div>
@@ -331,12 +398,36 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   const { communities, friends, chat } = session
   const { loadDetail } = communities
 
+  const { fetch } = communities
+  // the browse list only holds what the Communities page fetched; a card opened from elsewhere
+  // (the chat's "View Community") has its community fetched by id, and a join or leave that
+  // re-reads the list (its first page) does not take it away
+  const community =
+    communities.list.find((c) => c.id === communityId) ?? communities.cards[communityId]
+  const listed = community != null
+  useEffect(() => {
+    if (!listed) fetch(communityId)
+  }, [listed, fetch, communityId])
   useEffect(() => {
     loadDetail(communityId)
   }, [loadDetail, communityId])
 
-  const community = communities.list.find((c) => c.id === communityId)
-  if (!community) return null // e.g. the community disappeared from the list while open
+  const error = communities.error?.id === communityId ? communities.error.message : null
+  // deleted: the card goes with it
+  const gone = communities.deleted === communityId
+  useEffect(() => {
+    if (gone) onClose()
+  }, [gone, onClose])
+  if (!community) {
+    // not fetched yet, or gone from the list while open; a failed fetch says so instead of nothing
+    if (error == null) return null
+    return (
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <p className={styles.error} role="alert">{error}</p>
+        <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
+      </div>
+    )
+  }
 
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
 
@@ -344,15 +435,18 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
     <CommunityModal
       community={community}
       detail={detail}
-      error={communities.error?.id === communityId ? communities.error.message : null}
+      error={error}
       onJoin={communities.join}
       onRequestToJoin={communities.requestToJoin}
       onCancelRequest={communities.cancelRequest}
       onLeave={communities.leave}
       onAddFriend={(address) => friends.act('request', address)}
+      onEdit={() => openCommunityEditModal(community)}
+      onDelete={communities.remove}
+      onRemovePlace={communities.removePlace}
       onOpenChat={() => {
         onClose()
-        chat.toggle()
+        chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })
       }}
       onClose={onClose}
     />

@@ -6,7 +6,8 @@ understand the change in one sitting.
 ## Scope
 
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
-  plumbing the problem didn't mention, that is a second PR and a conversation first.
+  plumbing the problem didn't mention, that is a second PR and a conversation first. Give
+  independently useful diagnostics their own PR and verification.
 - Anything that changes an interface between areas, adds a scene-facing capability, or will
   take more than a couple of days gets a short written plan before a branch exists. The
   approach, not prose.
@@ -24,6 +25,14 @@ understand the change in one sitting.
   quirk. Not what the code does, and no archaeological commentary: not what the old design was,
   not why the new one doesn't need X, not an argument addressed to the reviewer. Strip those
   before pushing. Rationale goes in the PR description.
+- When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
+  comments that explain constraints still in force and rename tests that now prove a different
+  contract.
+- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
+  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
+  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
+  code is clear. Unity sources go in the PR description; who decided goes there or in
+  [decisions](decisions.md).
 - Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
@@ -32,13 +41,22 @@ understand the change in one sitting.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
   first; the [scheduling guide](scheduling.md) explains the current setup.
 - If something works better with a change in a dependency, change the dependency. Upstream it
-  where possible; where it is bespoke to us, we maintain our forks for exactly that. See
-  [the bevy fork](bevy-fork.md).
+  where possible; where it is bespoke to us, we maintain our forks for exactly that. Bevy itself
+  is vendored here: see [the bevy fork](bevy-fork.md).
 
 ## Tests
 
 - Test behaviour at a boundary, not the shape of the implementation. A test that has to change
   when the code is refactored without a behaviour change is a cost, not an asset.
+- For route and service contracts, exercise the actual producers and consumers, such as the
+  engine resolver, the HUD resolver and generated proxy configuration. Assert which endpoints
+  they share and which intentionally use separate destinations.
+- Pair a network access denial with a permitted case through the same transport. Check what
+  the server actually received so a client-side error cannot hide an unwanted request.
+- For each required regression, identify the CI job and command that execute it. Verify that
+  selectors include the test, including any explicit opt-in, and that the job has the tools
+  and files the test needs. Check path filters against changes to the test's inputs, including
+  routing sources outside the engine workspace.
 - Parse structured output; never string-compare it. Serialisation order is not stable across
   feature unification.
 - For anything animated or staged, test what lands mid-way, not only the happy path. Enumerate
@@ -50,6 +68,9 @@ understand the change in one sitting.
 
 - Squash-merge discards commit bodies. The description carries the why, the alternatives
   rejected, and how it was verified, naming the platforms covered: native, web, headless.
+  For network capabilities, describe the caller, transport, platform and mode that grant
+  access. For instrumentation, identify the request paths that emit events and which
+  callers bypass them, then verify the documented event lifecycle.
 - A diagram for anything with dataflow, ordering or lifetime changes. A draw.io SVG or a
   mermaid block both render on GitHub. A reviewer reads a diagram in a minute and a 400-line
   diff in an hour.
@@ -81,7 +102,8 @@ understand the change in one sitting.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
-- Changes to bevy go in [the fork](bevy-fork.md); that page covers patching it locally.
+- Changes to bevy go in the vendored tree, `rendering/bevy-explorer/bevy`: see
+  [the bevy fork](bevy-fork.md).
 - `rendering/bevy-explorer/forks.toml` and `cargo-patches.toml` are generated from the lock.
   After changing a git dependency's revision, run `python3 tooling/upstream-forks.py` from the
   dcl-one root so they match; a daily workflow otherwise opens an `upstream/forks` PR.

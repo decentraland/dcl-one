@@ -48,8 +48,9 @@ impl Plugin for DynamicNametagPlugin {
     }
 }
 
+/// Visibility of the HUD's world-space nametags; photo mode flips it on its nametags key.
 #[derive(Resource)]
-struct NametagsVisible(bool);
+pub struct NametagsVisible(pub bool);
 
 /// Read or set visibility of the HUD's world-space nametags.
 #[derive(clap::Parser, ConsoleCommand)]

@@ -7,7 +7,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { requireContracts, type ContractInfo } from "../chain/contracts";
 import { isRevertedTxError, revertedTxHash, sendAndConfirm } from "../chain/wallet";
 import {
@@ -85,16 +85,17 @@ function groupCoupons(purchases: CreditPurchase[]): ListingCoupon[] | undefined 
 }
 
 /**
- * The CreditsManager a group spends through: the one its credits were signed for (a credit's hash binds
- * the manager's address), else the chain's configured one. Credits signed for different managers cannot
- * share a transaction.
+ * The CreditsManager a group spends through: the chain's, from the address book. A credit's hash binds the
+ * manager it was signed for, so a credit that names any other manager is refused here, before anything is
+ * approved or signed: the server's answer never picks a spender or a transaction target.
  */
 export function creditsManagerFor(chainId: ChainId, credits: SpendableCredit[]): ContractInfo {
   const book = requireContracts(chainId).creditsManager;
   if (!book) throw new Error(`No CreditsManager on chain ${chainId}: credits settle on Polygon only`);
-  const signed = [...new Set(credits.map((c) => c.contract?.toLowerCase()).filter((a): a is string => !!a && /^0x[0-9a-f]{40}$/.test(a)))];
-  if (signed.length > 1) throw new Error("A group's credits were signed for different CreditsManagers");
-  return signed[0] ? { ...book, address: signed[0] as ContractInfo["address"] } : book;
+  if (credits.some((c) => c.contract && c.contract.toLowerCase() !== book.address)) {
+    throw new Error("This credit names a Credits manager the Shop does not know.");
+  }
+  return book;
 }
 
 /** The useCredits call of ONE group and the credit ids it spends, shared by both rails. */

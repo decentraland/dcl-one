@@ -56,6 +56,8 @@ Three optional fields take a [Color3](/docs/creator/sdk7/3d-essentials/color-typ
 * `backgroundColor`: the plate's fill. Defaults to the client's native nametag background color.
 * `borderColor`: the plate's outline. Defaults to `backgroundColor`, so there is no visible border unless you set it.
 
+`Color3` has no alpha channel, and the component has no opacity field, so the plate is always fully opaque.
+
 ```ts
 import { AvatarNametag, engine } from '@dcl/sdk/ecs'
 import { Color3 } from '@dcl/sdk/math'
@@ -88,6 +90,7 @@ AvatarNametag.deleteFrom(engine.PlayerEntity)
 
 A few details are worth knowing before you pick your label text:
 
+* **Labels are a single line.** They never wrap.
 * **Long labels are truncated** with an ellipsis. Keep labels to a word or two.
 * **An empty label** (`''`) draws the plate with no text in it.
 * **Spaces are kept**, so a label made only of spaces widens a text-less plate. This is a way to size a plain colored plate.
@@ -96,7 +99,7 @@ A few details are worth knowing before you pick your label text:
 
 > [!NOTE]
 > **💡 Tip**: A plate doesn't need any text. To show a color-coded plate alone, for example to mark team membership, set `label` to a string of spaces and pick a `backgroundColor`. More spaces make a wider plate.
-> 
+>
 > ```ts
 > AvatarNametag.createOrReplace(engine.PlayerEntity, {
 > 	label: '      ',

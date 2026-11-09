@@ -34,8 +34,8 @@ async function loadComponentSpecs(
   const pages: ComponentPageInput[] = []
   const skippedPages: string[] = []
   const inventory = await source.getGenerationInventory?.()
-  // Single-file by construction: the snapshot, its inventory and retirements carry no file key (it
-  // comes from FIGMA_FILE_KEY only), so there is no file-identity check to make here.
+  // Single-file by construction: the snapshot, its inventory and retirements carry no file key (the capture
+  // covers one file), so there is no file-identity check to make here.
   const retirements = await sourceRetirements(source)
   if (config.selection?.readyOnly && !inventory)
     throw new Error('Generation inventory required for ready-only generation')
@@ -78,11 +78,15 @@ async function loadComponentSpecs(
     pages.push({
       name: page.name,
       category: page.category ?? 'Components',
-      data: { ...data, components: selectedComponents }
+      data: {
+        ...data,
+        components: selectedComponents.filter(
+          (component) => !isRetired(retirements, data.page.id, component.id)
+        )
+      }
     })
   }
   if (pages.length === 0) return { specs: [], skippedPages, nameCollisions: [] }
-  const pageIds = new Map(configured.map((page) => [page.name, page.id]))
   const presentIds = new Set(
     pages.flatMap((page) => page.data.components.map((component) => component.id))
   )
@@ -96,11 +100,7 @@ async function loadComponentSpecs(
         .map((artifact) => artifact.split('#component:')[1]!)
     )
   const built = buildComponentSpecsWithCollisions({ pages, config, reservedNames, ...dependencies })
-  const specs = built.specs.filter((spec) => {
-    const pageId = pageIds.get(spec.page)
-    return !pageId || !isRetired(retirements, pageId, spec.figmaId)
-  })
-  return { specs, skippedPages, nameCollisions: built.collisions }
+  return { specs: built.specs, skippedPages, nameCollisions: built.collisions }
 }
 
 // The MCP tools need the same specs the generator emits, without writing any file.

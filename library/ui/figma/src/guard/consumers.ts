@@ -17,10 +17,16 @@ const SKIPPED_DIRECTORIES = new Set([
   'coverage',
   '.figma-cache'
 ])
-const LEDGER = 'figma/figma-snapshot/orphaned-assets.json'
-const RETIREMENTS = 'figma/figma-snapshot/retirements.json'
+// The committed dcl-one ledgers. fetch-source overlays each onto the gitignored capture cache, where a copy of
+// the same bytes sits under the snapshot folder; neither copy is ever a consumer.
+const LEDGER = 'figma/ledger/orphaned-assets.json'
+const RETIREMENTS = 'figma/ledger/retirements.json'
+const CACHED_LEDGERS = [
+  'figma/figma-snapshot/orphaned-assets.json',
+  'figma/figma-snapshot/retirements.json'
+]
 // Lifecycle bookkeeping lists the assets it tracks; it never uses them.
-const BOOKKEEPING = new Set([LEDGER, RETIREMENTS])
+const BOOKKEEPING = new Set([LEDGER, RETIREMENTS, ...CACHED_LEDGERS])
 // Integrity manifests fingerprint every generated file by path: only those fingerprint pairs are excluded.
 const FINGERPRINT_MANIFESTS = new Set([
   'figma/review/src/review/promotion.json',
@@ -170,5 +176,5 @@ function findConsumers(tree: Tree, asset: string): { file: string; token: string
   return found
 }
 
-export { LEDGER, RETIREMENTS, effectiveTree, findConsumers, readTree }
+export { CACHED_LEDGERS, LEDGER, RETIREMENTS, effectiveTree, findConsumers, readTree }
 export type { Tree }

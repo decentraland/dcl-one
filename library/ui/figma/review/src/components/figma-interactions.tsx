@@ -23,7 +23,7 @@ type FigmaInteractionBindings = {
   }
 }
 
-/** Native controls are opt-in: comparison renders never provide these bindings. */
+/** Native controls are opt-in: a static gallery preview never provides these bindings. */
 const FigmaInteractions = createContext<FigmaInteractionBindings | null>(null)
 
 export { FigmaInteractions }

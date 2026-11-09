@@ -46,8 +46,6 @@ anyhow = { workspace = true }
 async-std = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-build-time = { workspace = true }
-futures-lite = { workspace = true }
 web-time = { workspace = true }
 copypwasmta = { workspace = true }
 

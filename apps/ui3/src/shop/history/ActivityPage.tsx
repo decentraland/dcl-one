@@ -10,21 +10,21 @@ import { lazy, Suspense, useMemo, useState, type ComponentType, type ReactNode }
 import { Link, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { shortAddress } from "../model/address";
-import { chainLabel } from "../model/chain";
-import { manaWei } from "../model/money";
+import { shortAddress } from "@shop/model/address";
+import { chainLabel } from "@shop/model/chain";
+import { manaWei } from "@shop/model/money";
 import { useShopWallet } from "../wallet/context";
 import { explorerTxUrl } from "../checkout/chain/config";
 import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { fetchAssetDisplay, fetchTradeDisplay, fetchUserActivity, fetchUserSales } from "../checkout/lib/api";
-import { formatAmount } from "../checkout/lib/currency";
+import { formatAmount } from "@shop/checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { creditOrderPill, fetchUserCreditOrders, fetchUserPurchases, resumeCreditOrder, type CreditOrder } from "../credits/credits";
 import { CreditsAmount, ManaAmount } from "../credits/components/Amount";
 import { buildActivityFeed, filterActivity, type ActivityEntry, type ActivityFilter, type SaleRecord } from "./activity";
 import { foldOrderLines, purchaseOrderPill, type OrderLineItem, type PurchaseOrder } from "./purchases";
 import signInIllustration from "./assets/signin-empty.svg";
-import salesEmptyIllustration from "./assets/sales-empty.svg";
+import salesEmptyIllustration from "../components/empty-art/sales-empty.svg";
 import creditsProduct from "./assets/credits-product.svg";
 import nameGlyph from "./assets/name-glyph.svg";
 import "./activitypage.css";

@@ -7,8 +7,6 @@ import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '.
 import type { MatrixCase } from '../../../components/StateMatrix'
 
 export type NavProfileButtonProps = {
-  variant?: 'desktop' | 'desktopAlt' | 'mobile'
-  state?: 'open' | 'closed' | 'default'
   label?: ReactNode
   label2?: ReactNode
   label3?: ReactNode
@@ -21,7 +19,12 @@ export type NavProfileButtonProps = {
   label10?: ReactNode
   label11?: ReactNode
   forceState?: ForcedState
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+} & (
+  | { variant?: "desktop"; state?: "default" }
+  | { variant: "desktopAlt"; state?: "default" }
+  | { variant: "mobile"; state: "open" }
+  | { variant: "mobile"; state: "closed" }
+) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navProfileButtonViews: Record<string, ViewNode> = {
   'variant:desktop|state:default': {
@@ -739,7 +742,7 @@ export const NavProfileButton = ({
   <FigmaView
     as='button'
     views={navProfileButtonViews}
-    defaultKey='variant:desktop|state:default'
+    component='NavProfileButton'
     select={{
       values: { variant, state },
       booleans: {  },
@@ -747,7 +750,7 @@ export const NavProfileButton = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

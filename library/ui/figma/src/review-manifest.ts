@@ -1,11 +1,14 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { App } from './app.js'
 import type { FigmaConfig } from './config.js'
 import { expandVariants } from './capture/expand-variants.js'
-import { cssName, TokenIndex } from './generators/tokens.js'
+import { pageFolder } from './generators/components.js'
+import { IMAGE_PLACEHOLDER } from './generators/image-fills.js'
+import { cssName, excludePrimitives, TokenIndex } from './generators/tokens.js'
 import { textStyleClass } from './generators/naming.js'
 import type { RawNode } from './ir/raw-components.js'
+import type { TokenCollection } from './ir/schemas.js'
 import { mapVariants, viewKey } from './mappers/variants.js'
 import { loadSpecsFromSource } from './specs.js'
 import type { FigmaSource } from './sources/types.js'
@@ -77,17 +80,11 @@ async function reviewComponents(source: FigmaSource, config: FigmaConfig) {
   return { components, strokeWidths: [...strokeWidths].sort((a, b) => a - b) }
 }
 
-async function writeReviewManifest(app: App, root?: string) {
-  const source = app.createSource('snapshot')
-  const { components, strokeWidths } = await reviewComponents(source, app.config)
-  const [collections, textStyles, icons, syncState] = await Promise.all([
-    source.getTokenCollections(),
-    source.getTextStyles(),
-    source.getIcons(),
-    source.getSyncState?.()
-  ])
-  const index = new TokenIndex(collections)
-  const tokens = collections.flatMap((collection) =>
+// Foundations paints each token through its CSS variable, so it lists only what the tokens emit.
+function foundationTokens(collections: TokenCollection[], excluded: readonly string[]) {
+  const emitted = excludePrimitives(collections, excluded)
+  const index = new TokenIndex(emitted)
+  return emitted.flatMap((collection) =>
     collection.variables.flatMap((token) =>
       collection.modes.map((mode) => ({
         collection: collection.name,
@@ -99,12 +96,33 @@ async function writeReviewManifest(app: App, root?: string) {
       }))
     )
   )
+}
+
+async function writeReviewManifest(app: App, root?: string) {
+  const source = app.createSource('snapshot')
+  const { components: reviewed, strokeWidths } = await reviewComponents(source, app.config)
+  // The gallery publishes no Figma imagery: it says, per component, how many image fills its generated
+  // stylesheet replaced with the neutral placeholder, so a missing image is disclosed instead of passing as design.
+  const generated = path.join(app.resolveOutDir(), 'components')
+  const components = await Promise.all(
+    reviewed.map(async (component) => {
+      const css = await readFile(
+        path.join(generated, pageFolder(component.page), `${component.name}.module.css`),
+        'utf8'
+      )
+      return { ...component, imageFillsOmitted: css.split(IMAGE_PLACEHOLDER).length - 1 }
+    })
+  )
+  const [collections, textStyles, icons, syncState] = await Promise.all([
+    source.getTokenCollections(),
+    source.getTextStyles(),
+    source.getIcons(),
+    source.getSyncState?.()
+  ])
+  const tokens = foundationTokens(collections, app.config.excludedPrimitives)
   const reviewRoot = root ? path.resolve(app.cwd, root) : path.resolve(app.resolveOutDir(), '../..')
   const directory = path.join(reviewRoot, 'src/review')
-  const iconDir = path.join(reviewRoot, 'public/dcl-ui-review/icons')
   await mkdir(directory, { recursive: true })
-  await mkdir(iconDir, { recursive: true })
-  for (const icon of icons) await writeFile(path.join(iconDir, path.basename(icon.file)), icon.svg)
   const manifest = {
     components,
     pages: syncState?.pages ?? [],
@@ -112,13 +130,18 @@ async function writeReviewManifest(app: App, root?: string) {
       tokens,
       textStyles: textStyles.map((style) => ({ ...style, className: textStyleClass(style.name) })),
       strokeWidths,
-      icons: icons.map((entry) => {
-        const icon = { ...entry, svg: undefined }
-        return {
-          ...icon,
-          file: `/dcl-ui-review/icons/${encodeURIComponent(path.basename(icon.file))}`
-        }
-      }),
+      // Metadata only: the gallery draws icons with the generated components, and Figma's SVG exports are not
+      // published.
+      icons: icons.map(({ name, nodeId, section, category, group, variant, width, height }) => ({
+        name,
+        nodeId,
+        section,
+        category,
+        group,
+        variant,
+        width,
+        height
+      })),
       effects: { ready: false, status: 'Disabled in Figma. Existing captured effects are frozen.' }
     }
   }
@@ -132,4 +155,4 @@ async function writeReviewManifest(app: App, root?: string) {
   }
 }
 
-export { reviewComponents, writeReviewManifest }
+export { foundationTokens, reviewComponents, writeReviewManifest }

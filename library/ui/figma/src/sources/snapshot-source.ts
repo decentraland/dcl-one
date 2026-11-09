@@ -19,6 +19,7 @@ import {
 } from '../ir/schemas.js'
 import type { FigmaSource } from './types.js'
 import { readMaterialized } from '../lfs.js'
+import { assertDistinctPageFiles, encodePageFileName } from '../capture/page-file-name.js'
 
 const readText = async (file: string) => (await readMaterialized(file)).toString('utf8')
 
@@ -31,21 +32,37 @@ const iconsFile = z.object({ icons: z.array(iconRecordSchema) })
 class SnapshotSource implements FigmaSource {
   readonly name = 'snapshot' as const
 
+  private verified: Promise<void> | undefined
+
+  // `verify`, when given, runs once before the first read: the configured capture is the cache materialized from
+  // figma-design-system, and a missing, stale or edited cache must fail instead of being read. `retirementsFile`
+  // names the committed retirement ledger, which is the effective one: the cache holds fetch-source's copy of it.
   constructor(
     private readonly dir: string,
-    private readonly legacySnapshotNames: readonly string[] = []
+    private readonly legacySnapshotNames: readonly string[] = [],
+    private readonly verify?: () => Promise<void>,
+    private readonly retirementsFile = path.join(dir, 'retirements.json')
   ) {}
 
+  // Public so a command can verify the cache before it reads anything else derived from it.
+  ready(): Promise<void> {
+    this.verified ??= this.verify ? this.verify() : Promise.resolve()
+    return this.verified
+  }
+
   private async readJson<S extends z.ZodType>(file: string, schema: S): Promise<z.infer<S>> {
+    await this.ready()
     const raw = await readText(path.join(this.dir, file))
     return schema.parse(JSON.parse(raw))
   }
 
   async listPages(): Promise<FigmaPage[]> {
+    await this.ready()
     return (await this.readJson('pages.json', pagesFile)).pages
   }
 
   async getSyncState() {
+    await this.ready()
     const raw = await readText(path.join(this.dir, 'sync-state.json')).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return undefined
@@ -64,11 +81,13 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getRetirements() {
-    const raw = await readIfExists(path.join(this.dir, 'retirements.json'))
+    await this.ready()
+    const raw = await readIfExists(this.retirementsFile)
     return raw === undefined ? emptyRetirements() : retirementsSchema.parse(JSON.parse(raw))
   }
 
   async getGenerationInventory() {
+    await this.ready()
     const raw = await readIfExists(path.join(this.dir, 'generation-inventory.json'))
     return raw === undefined ? undefined : generationInventorySchema.parse(JSON.parse(raw))
   }
@@ -77,6 +96,7 @@ class SnapshotSource implements FigmaSource {
     pageId: string,
     snapshotName?: string
   ): Promise<RawComponentPage | undefined> {
+    await this.ready()
     if (snapshotName) {
       const canonical = await this.getComponentPage(snapshotName)
       if (canonical) {
@@ -91,8 +111,9 @@ class SnapshotSource implements FigmaSource {
         throw error
       }
     )
+    assertDistinctPageFiles(names)
     const matches: RawComponentPage[] = []
-    const excluded = new Set(this.legacySnapshotNames.map((name) => `${name}.json`))
+    const excluded = new Set(this.legacySnapshotNames.map(encodePageFileName))
     for (const name of names.filter((name) => name.endsWith('.json') && !excluded.has(name))) {
       const data = await this.readJson(path.join('components', name), rawComponentPageSchema)
       if (data.page.id === pageId) matches.push(data)
@@ -102,19 +123,31 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getTokenCollections(): Promise<TokenCollection[]> {
+    await this.ready()
     return (await this.readJson('variables.json', variablesFile)).collections
   }
 
   async getTextStyles(): Promise<TextStyle[]> {
+    await this.ready()
     return (await this.readJson('text-styles.json', textStylesFile)).styles
   }
 
   async getGradients(): Promise<GradientStyle[]> {
+    await this.ready()
     return (await this.readJson('paint-styles.json', paintStylesFile)).gradients
   }
 
   async getComponentPage(pageName: string): Promise<RawComponentPage | undefined> {
-    const file = path.join('components', `${pageName}.json`)
+    await this.ready()
+    const name = encodePageFileName(pageName)
+    const names = await readdir(path.join(this.dir, 'components')).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return []
+        throw error
+      }
+    )
+    assertDistinctPageFiles(names)
+    const file = path.join('components', name)
     const raw = await readText(path.join(this.dir, file)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return undefined
       throw error
@@ -123,6 +156,7 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getIcons(): Promise<IconSpec[]> {
+    await this.ready()
     const { icons } = await this.readJson('icons.json', iconsFile)
     return Promise.all(
       icons.map(async (icon) => ({

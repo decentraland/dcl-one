@@ -472,7 +472,7 @@ export const NavNotificationsButton = ({
   <FigmaView
     as='button'
     views={navNotificationsButtonViews}
-    defaultKey='state:closed'
+    component='NavNotificationsButton'
     select={{
       values: { state },
       booleans: {  },
@@ -480,7 +480,7 @@ export const NavNotificationsButton = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

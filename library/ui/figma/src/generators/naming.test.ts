@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { camelCase, kebabCase, pascalCase, uniqueName } from './naming.js'
+import { assertIdentifier, camelCase, kebabCase, pascalCase, uniqueName } from './naming.js'
 
 describe('naming', () => {
   describe('when converting figma names', () => {
@@ -28,5 +28,20 @@ describe('naming', () => {
         uniqueName('GeneralHome2', used)
       ]).toEqual(['GeneralHome2', 'GeneralHome2_2', 'GeneralHome2_3'])
     })
+  })
+})
+
+describe('when validating generated identifiers and import path segments', () => {
+  it.each(['3DCard', 'social media', 'arrow-icons', 'default', '../escape', ''])(
+    'should reject %j',
+    (value) => {
+      expect(() => assertIdentifier(value)).toThrow('Invalid generated TypeScript identifier')
+    }
+  )
+})
+
+describe('when an import binding is forbidden in strict modules', () => {
+  it.each(['eval', 'arguments'])('should reject %s', (name) => {
+    expect(() => assertIdentifier(name)).toThrow('Invalid generated TypeScript identifier')
   })
 })

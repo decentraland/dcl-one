@@ -412,7 +412,7 @@ pub enum Outcome {
 pub fn outcome_of(claimed: &Claimed, result: Result<Option<String>, SendFailure>) -> Outcome {
     match result {
         Ok(message_id) => Outcome::Sent(message_id),
-        Err(SendFailure::NotConfigured) => {
+        Err(SendFailure::NotConfigured | SendFailure::NoSigningKey) => {
             Outcome::Skipped("email delivery not configured".to_string())
         }
         Err(SendFailure::Permanent(e)) => Outcome::Failed(e),

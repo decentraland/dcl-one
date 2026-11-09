@@ -11,7 +11,8 @@ nothing shipped is reproducible, every frame crosses the CPU, and a demuxer
 crash takes the engine down. UUAV, the player built for the Unity Explorer,
 decodes in hardware out of process, inside a sandbox, with crash recovery.
 Its sources now live at `library/uuav`; the Explorer-side integration
-follows in a later change.
+follows in a later change, once it shows frames on every desktop
+platform, Windows included.
 
 ## Decision
 

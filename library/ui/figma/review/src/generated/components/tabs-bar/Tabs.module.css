@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -89,6 +92,7 @@ align-items: center;
 overflow: hidden;
 gap: 10px;
 padding: var(--dcl-space-8) var(--dcl-space-0) var(--dcl-space-12) var(--dcl-space-0);
+flex-shrink: 0;
 transform: scale(-1, 1);
 transform-origin: center;
 opacity: 1;
@@ -130,6 +134,7 @@ align-items: center;
 overflow: hidden;
 gap: 10px;
 padding: var(--dcl-space-8) var(--dcl-space-0) var(--dcl-space-12) var(--dcl-space-0);
+flex-shrink: 0;
 height: 35px;
 transform: scale(-1, 1);
 transform-origin: center;
@@ -151,4 +156,5 @@ line-height: 15px;
 transform: scale(-1, 1);
 transform-origin: center;
 opacity: 1;
+}
 }

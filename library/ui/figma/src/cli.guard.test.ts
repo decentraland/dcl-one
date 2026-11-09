@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { pinTestCapture } from '../test/snapshot.js'
 import { PLACES, GEN, put, writeTree } from './guard/test-fixtures.js'
 
 const execute = promisify(execFile)
@@ -14,6 +16,20 @@ describe('guard and retire commands', () => {
   let staged: string
 
   const run = async (cwd: string, args: string[]) => {
+    // retire verifies the capture before it reads ownership, as fetch-source would have pinned it.
+    // This guard fixture has no config of its own: retire needs one that names the capture to verify.
+    if (args[0] === 'retire') {
+      if (!existsSync(path.join(cwd, 'figma.config.json')))
+        await writeFile(
+          path.join(cwd, 'figma.config.json'),
+          JSON.stringify({
+            snapshotDir: 'figma-snapshot',
+            outDir: 'review/src/generated',
+            pages: {}
+          })
+        )
+      await pinTestCapture(cwd)
+    }
     try {
       const { stdout } = await execute(
         process.execPath,
@@ -105,7 +121,7 @@ describe('guard and retire commands', () => {
 
       expect(result.code).toBe(0)
       const saved = JSON.parse(
-        await readFile(path.join(base, 'figma/figma-snapshot/retirements.json'), 'utf8')
+        await readFile(path.join(base, 'figma/ledger/retirements.json'), 'utf8')
       )
       expect(saved.retired[0].owned).toEqual(
         expect.arrayContaining([`${GEN}/components/places/PlaceCard.tsx`])

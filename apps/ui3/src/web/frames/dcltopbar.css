@@ -161,11 +161,12 @@
 .dtb__dditem:hover,
 .dtb__dditem:focus-visible { background: var(--fill-3); color: #fff; }
 
+/* As ui2's navbar: one 24px gap between every item of the row (balances, bell, avatar). */
 .dtb__right {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 24px;
 }
 
 .dtb__signin {
@@ -187,16 +188,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: 4px;
   background: transparent;
-  color: var(--ink-7);
+  color: #fcfcfc;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: opacity 0.15s ease;
 }
-.dtb__bell:hover { background: var(--fill-3); color: #fff; }
+.dtb__bell:hover { opacity: 0.8; }
 
 .dtb__bellwrap { position: relative; display: inline-flex; }
 .dtb__notif {
@@ -270,9 +272,23 @@
   cursor: pointer;
   border-radius: var(--r-pill);
 }
-.dtb__avatar { border: 2px solid var(--ink-85); }
+/* As ui2's AvatarButton: 48px (40px on mobile) inside a half-white 2px ring, on its pink until the face loads. */
+.dtb__avatar {
+  --sz: 48px;
+  box-sizing: content-box;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  background: #ff4bed;
+}
+.dtb__avatar-logo {
+  position: absolute;
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+  display: block;
+}
 
 @media (max-width: 991px) {
+  .dtb__avatar { --sz: 40px; }
   .dtb { gap: 12px; height: 64px; padding: 0 16px; }
   .dtb__brand img { width: 32px; height: 32px; }
   .dtb__burger { display: inline-flex; order: 99; }

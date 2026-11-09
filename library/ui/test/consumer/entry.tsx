@@ -2,6 +2,6 @@
 // component (preview-only ones by path), so a real build resolves and processes all their CSS.
 import '../../foundations/foundations.css'
 import * as ui from '../../index'
-import { NavBar } from '../../components/NavBar/NavBar'
+import { NavBar } from '../../index'
 
 export { NavBar, ui }

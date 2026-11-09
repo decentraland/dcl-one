@@ -21,11 +21,14 @@ import Rail from "../components/Rail";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "../freshness";
+import { useMarketplace } from "../../market/access";
+import { listingTypeFor } from "@shop/market/access-rule";
 import { isIapMode, shopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
 import "./overview.css";
+import { shopClient } from "../../api/host";
 
 const MIN_DEALS = 3;
 
@@ -79,12 +82,16 @@ export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
+  const listingType = listingTypeFor(useMarketplace());
 
-  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }));
+  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client: shopClient(), signal }));
+  // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
+  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { client: shopClient(), signal }), {
+    keepPrevious: listingType === undefined,
+  });
   const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
-    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { signal }),
+    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { client: shopClient(), signal }),
   );
 
   const items = listings.data?.items ?? [];

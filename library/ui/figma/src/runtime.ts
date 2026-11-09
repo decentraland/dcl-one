@@ -4,9 +4,8 @@ import path from 'node:path'
 import { createApp, type App } from './app.js'
 import { resolveContractConfig } from './contract/config.js'
 import { buildFigmaIndex } from './contract/figma-index.js'
-import { LfsPointerError } from './lfs.js'
 import type { ResolveContext } from './contract/resolve.js'
-import { promotionExclusion } from './promotion/manifest.js'
+import { promotionExclusion } from './promotion/eligibility.js'
 import { loadSpecsFromSource } from './specs.js'
 import type { ComponentSpec } from './ir/components.js'
 
@@ -40,16 +39,11 @@ function supersessionCandidates(
   )
 }
 
+// Only reached with a configured capture: a runtime without Figma config is resolve-only and has no
+// loadSyncedComponents at all. Every load failure (an unmaterialized LFS capture, a stale fetch-source cache,
+// an I/O or schema error) propagates, so check-mappings never silently validates only the hand-written mappings.
 async function syncedComponents(app: App): Promise<Map<string, string[]>> {
-  let specs
-  try {
-    specs = (await loadSpecsFromSource(app.createSource('snapshot'), app.config)).specs
-  } catch (error) {
-    // Without a complete capture, hand-written mappings are validated as before; an unmaterialized
-    // capture is a broken checkout, not a missing one.
-    if (error instanceof LfsPointerError) throw error
-    return new Map()
-  }
+  const { specs } = await loadSpecsFromSource(app.createSource('snapshot'), app.config)
   const record = await readFile(path.resolve(app.cwd, '..', 'components/promotion.json'), 'utf8')
     .then((text) => (JSON.parse(text) as { components: string[] }).components)
     .catch((error: NodeJS.ErrnoException) => {
@@ -87,15 +81,9 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
           : undefined
       })
       let figmaSets: ResolveContext['figmaSets'] = []
-      if (app) {
-        try {
-          figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
-        } catch (error) {
-          // A missing capture means resolve-only mode; an unmaterialized one is a broken checkout.
-          if (error instanceof LfsPointerError) throw error
-          figmaSets = []
-        }
-      }
+      // Only a missing Figma configuration means resolve-only mode: a configured capture that fails to load
+      // (malformed, or an unmaterialized LFS pointer) is a broken checkout and fails closed.
+      if (app) figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
       return {
         mappingRoot: contract.mappingRoot,
         libraryRange: contract.libraryRange,

@@ -11,6 +11,8 @@ import type {
 
 interface FigmaSource {
   readonly name: 'snapshot' | 'rest'
+  // Verifies the capture before any read; a source with nothing to verify omits it.
+  ready?(): Promise<void>
   listPages(): Promise<FigmaPage[]>
   getTokenCollections(): Promise<TokenCollection[]>
   getTextStyles(): Promise<TextStyle[]>

@@ -37,7 +37,7 @@ export const CardActionButton = ({
   <FigmaView
     as='button'
     views={cardActionButtonViews}
-    defaultKey='default'
+    component='CardActionButton'
     select={{
       values: {  },
       booleans: {  },
@@ -45,7 +45,7 @@ export const CardActionButton = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

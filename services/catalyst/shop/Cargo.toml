@@ -19,6 +19,7 @@ catalyst-land-authz = { path = "../land-authz" }
 catalyst-content = { path = "../content" }
 catalyst-comms = { path = "../comms" }
 catalyst-social = { path = "../social" }
+catalyst-explore = { path = "../explore" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true
@@ -35,6 +36,7 @@ bytes.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true
+ipnet.workspace = true
 hex.workspace = true
 urlencoding.workspace = true
 alloy-primitives.workspace = true
@@ -56,11 +58,12 @@ alloy-signer-local.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
-ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-comms/ts", "catalyst-social/ts"]
-test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-price/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support", "catalyst-content/test-support", "catalyst-comms/test-support", "catalyst-social/test-support"]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-comms/ts", "catalyst-social/ts", "catalyst-explore/ts"]
+test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-price/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support", "catalyst-content/test-support", "catalyst-comms/test-support", "catalyst-social/test-support", "catalyst-explore/test-support"]
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
+catalyst-explore = { path = "../explore", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
 catalyst-price = { path = "../price", features = ["test-support"] }

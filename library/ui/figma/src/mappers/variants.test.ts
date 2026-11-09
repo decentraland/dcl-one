@@ -5,12 +5,13 @@ import { snapshotDir } from '../../test/snapshot.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import { rawComponentPageSchema, type RawComponent } from '../ir/raw-components.js'
 import { mapVariants, parseOption, splitWords, viewKey, type VariantOptions } from './variants.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 const wordAliases = { terciary: 'tertiary' }
 const defaults: VariantOptions = { wordAliases }
 
 async function rawComponent(page: string, name: string): Promise<RawComponent> {
-  const raw = await readFile(path.join(snapshotDir, 'components', `${page}.json`), 'utf8')
+  const raw = await readFile(path.join(snapshotDir, 'components', encodePageFileName(page)), 'utf8')
   const found = rawComponentPageSchema
     .parse(JSON.parse(raw))
     .components.find((c) => c.name === name)
@@ -60,7 +61,7 @@ describe('parseOption', () => {
 describe('mapVariants', () => {
   describe('when mapping the main Button', () => {
     it('should expose variant and disabled props and hover as an interaction', async () => {
-      const result = await mapped('Buttons', 'Button-Contained-Text')
+      const result = await mapped('Demo Controls', 'Synthetic Button')
 
       expect(result.props).toEqual([
         {
@@ -91,8 +92,8 @@ describe('mapVariants', () => {
 
   describe('when a set uses numbered variants', () => {
     it('should read Variant2..4 as hover, selected and selected+hover and say so', async () => {
-      // No captured set uses numbered variants any more, so a real set is renamed into that shape.
-      const component = structuredClone(await rawComponent('Buttons', 'Button-Contained-Text'))
+      // No synthetic set uses numbered variants, so the button is renamed into that shape.
+      const component = structuredClone(await rawComponent('Demo Controls', 'Synthetic Button'))
       const names = ['Default', 'Variant2', 'Variant3', 'Variant4']
       component.base = {
         ...component.base,
@@ -118,7 +119,7 @@ describe('mapVariants', () => {
 
   describe('when a set encodes a boolean as On/Off', () => {
     it('should expose a boolean prop named after the property', async () => {
-      const result = await mapped('Buttons', 'HideItem')
+      const result = await mapped('Demo Controls', 'HideItem')
 
       expect(result.props).toEqual([
         {
@@ -132,8 +133,8 @@ describe('mapVariants', () => {
     })
 
     it('should apply a configured prop name and avoid reserved words', async () => {
-      const renamed = await mapped('Buttons', 'Switch', { propNames: { Switch: 'checked' } })
-      const reserved = await mapped('Buttons', 'Switch')
+      const renamed = await mapped('Demo Controls', 'Switch', { propNames: { Switch: 'checked' } })
+      const reserved = await mapped('Demo Controls', 'Switch')
 
       expect(renamed.props.map((prop) => prop.name)).toEqual(['checked', 'loading'])
       expect(reserved.props.map((prop) => prop.name)).toContain('switchValue')
@@ -142,7 +143,7 @@ describe('mapVariants', () => {
 
   describe('when option aliases normalise irregular Figma names', () => {
     it('should map the FriendCTA hover and pressed typos onto their base values', async () => {
-      const result = await mapped('Buttons', 'FriendCTA', {
+      const result = await mapped('Demo Controls', 'FriendCTA', {
         stateWords: ['hover', 'pressed', 'loading'],
         optionAliases: {
           AddFriendHover: 'AddHover',
@@ -160,7 +161,7 @@ describe('mapVariants', () => {
 
   describe('when two Figma variants collapse into the same view', () => {
     it('should report a variant collision instead of silently dropping one', async () => {
-      const result = await mapped('Buttons', 'Button-Multiple-Options', {
+      const result = await mapped('Demo Controls', 'Split Button', {
         optionAliases: { HoverLeft: 'Hover', HoverRight: 'Hover' }
       })
 
@@ -170,7 +171,7 @@ describe('mapVariants', () => {
 
   describe('when an option is configured to be skipped', () => {
     it('should drop that variant and leave a note', async () => {
-      const result = await mapped('Buttons', 'Button-Multiple-Options', {
+      const result = await mapped('Demo Controls', 'Split Button', {
         skipOptions: ['HoverRight'],
         optionAliases: { HoverLeft: 'Hover' }
       })

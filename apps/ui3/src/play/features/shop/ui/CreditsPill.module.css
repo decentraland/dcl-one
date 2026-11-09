@@ -1,0 +1,22 @@
+/* The design's button-pill-icon-text: 48px high, 16px in at the sides, the mark in a 32px box. */
+.pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 8px 16px;
+  overflow: hidden;
+  border: 1.5px solid var(--white-10);
+  border-radius: var(--r-pill);
+  background: var(--black-40);
+  color: var(--text);
+}
+
+.amount {
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  white-space: nowrap;
+}

@@ -106,6 +106,7 @@ pub(super) async fn scene(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn root(
     tx: &mut PgConnection,
     root_key: &str,
@@ -238,6 +239,47 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
+/// The `<world>:<base>` key of a world scene intent queued before the
+/// `schemas/releases/world-scene-ban-keys.sql` release,
+/// which names the scene's entity id (bans moved, queued intents did not).
+async fn legacy_world_ban_key(
+    state: &CommsState,
+    row: &Intent,
+) -> Result<Option<crate::access::SceneBanKey>> {
+    let Some(scene) = row
+        .place_id
+        .as_deref()
+        .and_then(|place| crate::world_identity::SceneId::parse(place).ok())
+    else {
+        return Ok(None);
+    };
+    let rooms = row.scope.as_array().map(Vec::as_slice).unwrap_or_default();
+    let Some(world) = rooms
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(crate::rooms::decode_world_scene_room)
+        .find_map(|(world, room_scene)| (room_scene == scene).then_some(world))
+    else {
+        return Ok(None);
+    };
+    let unavailable = |error| anyhow!("scene identity unavailable: {error:?}");
+    let base = match state
+        .scenes
+        .world_scene(&world, &scene)
+        .await
+        .map_err(unavailable)?
+    {
+        Some(deployment) => Some(deployment.base),
+        None => state
+            .scenes
+            .replaced_world_scene(&world, &scene)
+            .await
+            .map_err(unavailable)?
+            .map(|replaced| replaced.base),
+    };
+    Ok(base.map(|base| crate::access::SceneBanKey::world(&world, base)))
+}
+
 async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result<bool> {
     match row.cause_kind.as_str() {
         "platform" => Ok(state
@@ -247,18 +289,34 @@ async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result
                 actor,
             )
             .await?),
-        "scene" => Ok(actor.as_str() == row.wallet
-            && state
+        "scene" => {
+            if actor.as_str() != row.wallet {
+                return Ok(false);
+            }
+            let place = row
+                .place_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing place"))?;
+            let version = row
+                .scene_version
+                .ok_or_else(|| anyhow!("missing scene version"))?;
+            if state
                 .moderation
-                .scene_removal_applies(
-                    row.place_id
-                        .as_deref()
-                        .ok_or_else(|| anyhow!("missing place"))?,
-                    actor,
-                    row.scene_version
-                        .ok_or_else(|| anyhow!("missing scene version"))?,
-                )
-                .await?),
+                .scene_removal_applies(place, actor, version)
+                .await?
+            {
+                return Ok(true);
+            }
+            Ok(match legacy_world_ban_key(state, row).await? {
+                Some(key) => {
+                    state
+                        .moderation
+                        .scene_removal_applies(key.as_str(), actor, version)
+                        .await?
+                }
+                None => false,
+            })
+        }
         "block" => {
             if actor.as_str() == row.wallet {
                 state
@@ -493,12 +551,18 @@ async fn run_batch(state: &CommsState) -> Result<()> {
     // chance. It is still returned after the batch; per-wallet failures log
     // and retain their closed hazards without failing the shared job.
     let claimed = claim(&state.pool, None).await?;
-    futures::stream::iter(claimed).for_each_concurrent(super::livekit::KICK_CONCURRENCY,|row| async move {
-        let result=tokio::time::timeout(QUANTUM,run_one(state,&row)).await.unwrap_or_else(|_| Err(anyhow!("removal quantum elapsed")));
-        if let Err(error)=result {
-            if let Err(error)=failed(&state.pool,&row,&error).await { tracing::error!(%error,"could not save LiveKit removal retry; claim will expire"); }
-        }
-    }).await;
+    futures::stream::iter(claimed)
+        .for_each_concurrent(super::livekit::KICK_CONCURRENCY, |row| async move {
+            let result = tokio::time::timeout(QUANTUM, run_one(state, &row))
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("removal quantum elapsed")));
+            if let Err(error) = result
+                && let Err(error) = failed(&state.pool, &row, &error).await
+            {
+                tracing::error!(%error,"could not save LiveKit removal retry; claim will expire");
+            }
+        })
+        .await;
     compaction.map_err(|_| anyhow!("island safety maintenance unavailable"))?;
     recovery?;
     Ok(())
@@ -577,7 +641,7 @@ mod tests {
             .unwrap();
         tx.rollback().await.unwrap();
         assert!(
-            claim(&pool, Some(&[root_key.clone()]))
+            claim(&pool, Some(std::slice::from_ref(&root_key)))
                 .await
                 .unwrap()
                 .is_empty()
@@ -587,14 +651,14 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
-        let old = claim(&pool, Some(&[root_key.clone()]))
+        let old = claim(&pool, Some(std::slice::from_ref(&root_key)))
             .await
             .unwrap()
             .pop()
             .unwrap();
         assert_eq!(old.scope, serde_json::json!(rooms));
         assert!(
-            claim(&pool, Some(&[root_key.clone()]))
+            claim(&pool, Some(std::slice::from_ref(&root_key)))
                 .await
                 .unwrap()
                 .is_empty()
@@ -606,7 +670,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let recovered = claim(&pool, Some(&[root_key.clone()]))
+        let recovered = claim(&pool, Some(std::slice::from_ref(&root_key)))
             .await
             .unwrap()
             .pop()
@@ -644,7 +708,7 @@ mod tests {
         failed(&pool, &recovered, &anyhow!("stale failure"))
             .await
             .unwrap();
-        let new = claim(&pool, Some(&[root_key.clone()]))
+        let new = claim(&pool, Some(std::slice::from_ref(&root_key)))
             .await
             .unwrap()
             .pop()
@@ -924,7 +988,7 @@ mod tests {
         assert_eq!(step(&state, &root_key).await, 1);
         assert!(fixture.lock().unwrap().removed.is_empty());
         force_due(&pool, &root_key).await;
-        let abandoned = claim(&pool, Some(&[root_key.clone()]))
+        let abandoned = claim(&pool, Some(std::slice::from_ref(&root_key)))
             .await
             .unwrap()
             .pop()
@@ -948,7 +1012,7 @@ mod tests {
         fixture.lock().unwrap().rooms = serde_json::json!({});
         assert_eq!(step(&restarted, &root_key).await, 0);
         assert!(
-            claim(&pool, Some(&[root_key.clone()]))
+            claim(&pool, Some(std::slice::from_ref(&root_key)))
                 .await
                 .unwrap()
                 .is_empty()
@@ -982,7 +1046,9 @@ mod tests {
         assert_eq!(count, 64);
         // Existing targets precede the rescheduled large root in due order;
         // each bounded page makes progress even while discovery has more work.
-        let page = claim(&pool, Some(&[root_key.clone()])).await.unwrap();
+        let page = claim(&pool, Some(std::slice::from_ref(&root_key)))
+            .await
+            .unwrap();
         assert_eq!(page.len(), PAGE as usize);
         assert!(page.iter().all(|row| !row.target_key.is_empty()));
         for row in page {
@@ -992,15 +1058,16 @@ mod tests {
         for _ in 0..12 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
-        let f = fixture.lock().unwrap();
-        assert_eq!(f.removed.len(), 66);
-        for identity in identities {
-            assert!(f.removed.contains(&identity));
+        {
+            let f = fixture.lock().unwrap();
+            assert_eq!(f.removed.len(), 66);
+            for identity in identities {
+                assert!(f.removed.contains(&identity));
+            }
+            assert!(f.removed.contains(&format!("{}-next-room", actor.as_str())));
         }
-        assert!(f.removed.contains(&format!("{}-next-room", actor.as_str())));
-        drop(f);
         assert!(
-            claim(&pool, Some(&[root_key.clone()]))
+            claim(&pool, Some(std::slice::from_ref(&root_key)))
                 .await
                 .unwrap()
                 .is_empty()
@@ -1137,7 +1204,7 @@ mod tests {
         platform(&mut tx, ban, actor.as_str()).await.unwrap();
         tx.commit().await.unwrap();
         let root_key = key(&["platform", &ban.to_string()]);
-        let root = claim(&state.pool, Some(&[root_key.clone()]))
+        let root = claim(&state.pool, Some(std::slice::from_ref(&root_key)))
             .await
             .unwrap()
             .pop()
@@ -1425,7 +1492,7 @@ mod tests {
         add_target(&state, &root, &room_b, "SECOND-SID", actor.as_str(), &actor)
             .await
             .unwrap();
-        let second = claim(&pool, Some(&[first.root_key.clone()]))
+        let second = claim(&pool, Some(std::slice::from_ref(&first.root_key)))
             .await
             .unwrap()
             .into_iter()
@@ -1442,7 +1509,7 @@ mod tests {
             .await
             .unwrap();
         force_due(&pool, &second.root_key).await;
-        let retried = claim(&pool, Some(&[second.root_key.clone()]))
+        let retried = claim(&pool, Some(std::slice::from_ref(&second.root_key)))
             .await
             .unwrap()
             .into_iter()
@@ -1501,7 +1568,7 @@ mod tests {
         add_target(&state, &root, &room_b, "SECOND-SID", actor.as_str(), &actor)
             .await
             .unwrap();
-        let second = claim(&pool, Some(&[first.root_key.clone()]))
+        let second = claim(&pool, Some(std::slice::from_ref(&first.root_key)))
             .await
             .unwrap()
             .into_iter()

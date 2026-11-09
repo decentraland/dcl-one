@@ -129,6 +129,13 @@ async fn age_blob(storage: &Storage, hash: &str) {
         .unwrap();
 }
 
+/// Cleanup reclaims every expired upload in the process's shared scratch
+/// database but unlinks blobs only in its caller's storage, and each node here
+/// has a storage of its own: another test's run would delete this test's
+/// expired upload and leave its blobs behind. A test holds this guard from
+/// before its first expiry or cleanup run until its last check.
+static RECLAIM: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Moves an upload past its TTL.
 async fn expire(pool: &PgPool, entity_id: &str) {
     sqlx::query(
@@ -206,6 +213,9 @@ fn batch_request(
             format!("multipart/form-data; boundary={boundary}"),
         )
         .header("x-real-ip", "203.0.113.7")
+        // Clients declare their length: an undeclared body takes a
+        // source's whole in-flight share.
+        .header(header::CONTENT_LENGTH, body.len())
         .body(Body::from(body))
         .unwrap()
 }
@@ -455,6 +465,7 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
+    let _reclaim = RECLAIM.lock().await;
     expire(&node.state.pool, &scene.id).await;
     let (status, _, body) = send(
         &router,
@@ -488,7 +499,6 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    // Aged first: another test's cleanup may take it once expired.
     age_blob(storage, &scene.files[0].0).await;
     age_blob(storage, &scene.id).await;
     expire(&node.state.pool, &scene.id).await;
@@ -564,6 +574,7 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
     ] {
         age_blob(storage, hash).await;
     }
+    let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
     cleanup_expired(pool, storage, &limits).await.unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
@@ -634,6 +645,7 @@ async fn cleanup_skips_an_upload_whose_lock_is_held() {
         .await
         .unwrap()
         .expect("free");
+    let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
     age_blob(storage, &scene.files[0].0).await;
     assert!(
@@ -825,11 +837,11 @@ async fn an_account_over_its_byte_rate_waits() {
 async fn the_last_cleanup_run_is_shared() {
     require_test_db!(Some(node) = Node::new("cleanup-at", Limits::default()).await);
     let pool = &node.state.pool;
+    let _reclaim = RECLAIM.lock().await;
     let before = now_ms();
     cleanup_expired(pool, &node.state.storage, &Limits::default())
         .await
         .unwrap();
-    // Another test's run may land meanwhile: any recent run will do.
     let last = last_cleanup_at(pool).await.unwrap().expect("recorded");
     assert!(
         last >= before - 60_000 && last <= now_ms(),

@@ -5,7 +5,7 @@
 // own "is it done?" question, since the relay re-submits with higher fees and the first hash it returned
 // may never appear on chain at all.
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { defaultSleep, shopChainReader, waitForReceipt, type ChainReader } from "../chain/rpc";
 
 export class MetaTxRevertedError extends Error {

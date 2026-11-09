@@ -1,0 +1,34 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/denylist",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "entity_id": "bafkreid44mgpv2yb5uhrk5f2f7disnocovyfoc6tlxv5q4rzhmnisvahba",
+        "reason": "<reason>",
+        "created_by": "0x0000000000000000000000000000000000000b03",
+        "created_at": "1782756919692",
+        "updated_at": "1782756919692"
+      },
+      {
+        "entity_id": "bafkreigprhrerqgdwrgckblk5ebxhrglusanoch7yybddgvlmlilzj2lmu",
+        "reason": "<reason>",
+        "created_by": "0x0000000000000000000000000000000000000b04",
+        "created_at": "1777576838997",
+        "updated_at": "1777576838997"
+      },
+      "<14 more>"
+    ]
+  },
+  "note": "Reduced to the first 2 of 16 entries; reasons replaced. Every value of every entry was a JSON string (created_at and updated_at too); every reason was non-null; entries were ordered by created_at descending; created_by held 2 distinct addresses."
+}

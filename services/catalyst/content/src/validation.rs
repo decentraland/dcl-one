@@ -4,62 +4,23 @@ use super::errors::AppError;
 
 pub const MAX_IDS_OR_POINTERS: usize = 1000;
 
-/// The lamb2 sentence for POST /entities/active; the multi-clause text is part
-/// of the contract.
-pub const ACTIVE_ENTITIES_SELECTOR_MESSAGE: &str = "ids or pointers must be present, but not both. \
-    They must be arrays and contain at least one element. \
-    None of the elements can be empty.";
-
 /// GET /entities/{type} answers with the short form.
 pub const ENTITIES_SELECTOR_MESSAGE: &str = "ids or pointers must be present, but not both";
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum SelectorError {
-    Malformed,
-    TooMany(usize),
-}
-
-impl SelectorError {
-    pub fn into_app_error(self, malformed_message: &str) -> AppError {
-        match self {
-            SelectorError::Malformed => AppError::invalid(malformed_message),
-            SelectorError::TooMany(max) => AppError::invalid(format!(
-                "Too many ids or pointers; the maximum allowed is {max}"
-            )),
-        }
-    }
-}
-
-/// Exactly one of `ids`/`pointers`, non-empty, every element non-empty and
-/// NUL-free; returns whether ids were selected.
-pub fn validate_ids_or_pointers(
-    ids: Option<&[String]>,
-    pointers: Option<&[String]>,
-    max: usize,
-) -> Result<bool, SelectorError> {
-    let is_valid = |s: &String| !s.is_empty() && !s.contains('\0');
-    let (len, use_ids) = match (ids, pointers) {
-        (Some(ids), None) if !ids.is_empty() && ids.iter().all(is_valid) => (ids.len(), true),
-        (None, Some(pointers)) if !pointers.is_empty() && pointers.iter().all(is_valid) => {
-            (pointers.len(), false)
-        }
-        _ => return Err(SelectorError::Malformed),
-    };
-
-    if len > max {
-        return Err(SelectorError::TooMany(max));
-    }
-
-    Ok(use_ids)
+/// GET /entities/{type} with more than [`MAX_IDS_OR_POINTERS`] values.
+pub fn too_many_ids_or_pointers() -> AppError {
+    AppError::invalid(format!(
+        "Too many ids or pointers; the maximum allowed is {MAX_IDS_OR_POINTERS}"
+    ))
 }
 
 /// Why a POST /entities/active body was refused: upstream's
-/// `@dcl/schema-validator-component` 400 body, or (for a NUL byte in an
-/// element, which upstream passes to PostgreSQL) the selector error.
+/// `@dcl/schema-validator-component` 400 body, or an element with a NUL
+/// byte, which upstream passes to PostgreSQL and answers with its bare 500.
 #[derive(Debug)]
 pub enum BodyRefusal {
     Schema(Value),
-    Selector(AppError),
+    NulElement,
 }
 
 /// Parses a POST /entities/active body whatever its `Content-Type`
@@ -73,22 +34,9 @@ pub enum BodyRefusal {
 /// the `oneOf`: the first error of each branch, then the `oneOf` error.
 pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRefusal> {
     let body: Value = serde_json::from_slice(bytes).map_err(|e| {
-        // V8's message for an empty body; any other parse error carries
-        // serde's wording.
-        let message = if bytes.iter().all(u8::is_ascii_whitespace) {
-            "Unexpected end of JSON input".to_string()
-        } else {
-            e.to_string()
-        };
-        BodyRefusal::Schema(json!({ "ok": false, "message": message }))
+        BodyRefusal::Schema(json!({ "ok": false, "message": json_parse_message(bytes, &e) }))
     })?;
-    // JSON.parse keeps keys in body order; AJV names the first extra one.
-    let keys = match body {
-        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
-            .map(|k| k.0)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
+    let keys = object_keys_in_order(&body, bytes);
     let mut errors = Vec::new();
     for (branch, key) in ["ids", "pointers"].into_iter().enumerate() {
         match selector_branch_error(&body, &keys, branch, key) {
@@ -100,10 +48,10 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
                     .flatten()
                     .filter_map(|v| v.as_str().map(str::to_string))
                     .collect();
+                // Upstream hands the NUL to PostgreSQL, which refuses it:
+                // its 500 (`CR-2-nul-element.json`).
                 if values.iter().any(|v| v.contains('\0')) {
-                    return Err(BodyRefusal::Selector(AppError::invalid(
-                        ACTIVE_ENTITIES_SELECTOR_MESSAGE,
-                    )));
+                    return Err(BodyRefusal::NulElement);
                 }
                 return Ok((branch == 0, values));
             }
@@ -123,15 +71,185 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
     })))
 }
 
+/// `@dcl/schema-validator-component` 1.0.1's `isJsonContentType`, the check
+/// behind its 415: the media type before the first `;`, trimmed and
+/// lowercased, is `application/json` or matches `^[^/\s]+\/[^/\s]+\+json$`
+/// (an RFC 6839 `type/subtype+json`). An absent header is not JSON.
+pub fn is_json_content_type(content_type: Option<&str>) -> bool {
+    let Some(raw) = content_type else {
+        return false;
+    };
+    let media = raw
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let token = |s: &str| !s.is_empty() && !s.contains('/') && !s.contains(char::is_whitespace);
+    media == "application/json"
+        || media
+            .split_once('/')
+            .is_some_and(|(kind, sub)| token(kind) && sub.strip_suffix("+json").is_some_and(token))
+}
+
+/// The message `JSON.parse` throws for a body that is not JSON: V8's text
+/// for the failures below, else serde's. The schema validator answers it as
+/// `{ok: false, message}`.
+pub fn json_parse_message(bytes: &[u8], error: &serde_json::Error) -> String {
+    v8_parse_message(bytes).unwrap_or_else(|| error.to_string())
+}
+
+/// An object body's keys in body order, as `JSON.parse` keeps them (AJV names
+/// the first extra one); empty for any other value.
+pub fn object_keys_in_order(body: &Value, bytes: &[u8]) -> Vec<String> {
+    match body {
+        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
+            .map(|k| k.0)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// V8's `JSON.parse` message for the parse failures the production peer was
+/// captured answering (`captures/content-reads/CR-2-empty-body.json`,
+/// `CR-2-not-json.json`, `CR-2-invalid-token.json`); `None` for any other,
+/// which keeps serde's wording.
+fn v8_parse_message(bytes: &[u8]) -> Option<String> {
+    let source = std::str::from_utf8(bytes).ok()?;
+    let is_ws = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r');
+    let mut chars = source.char_indices().skip_while(|(_, c)| is_ws(*c));
+    let Some((_, first)) = chars.next() else {
+        return Some("Unexpected end of JSON input".into());
+    };
+    if first == '{' {
+        // `{` not followed by a property name or `}`: V8 names the position
+        // (UTF-16 units) of the offending character, or the end.
+        let (at, next) = match chars.find(|(_, c)| !is_ws(*c)) {
+            Some((at, c)) => (at, Some(c)),
+            None => (source.len(), None),
+        };
+        if matches!(next, Some('"' | '}')) {
+            return None;
+        }
+        let before = &source[..at];
+        let position = before.encode_utf16().count();
+        let line = before.matches('\n').count() + 1;
+        let column = before
+            .rsplit('\n')
+            .next()
+            .map_or(0, |l| l.encode_utf16().count())
+            + 1;
+        return Some(format!(
+            "Expected property name or '}}' in JSON at position {position} (line {line} column {column})"
+        ));
+    }
+    // A first character no JSON value starts with, in a source short enough
+    // that V8 quotes it whole (it quotes an excerpt from 21 characters on).
+    let starts_value = matches!(first, '[' | '"' | '-' | '0'..='9' | 't' | 'f' | 'n');
+    if !starts_value && source.encode_utf16().count() < 21 {
+        return Some(format!(
+            "Unexpected token '{first}', \"{source}\" is not valid JSON"
+        ));
+    }
+    None
+}
+
+/// Serializes a schema refusal with the key order upstream's validator
+/// writes: `ok,message,data`, and each error's
+/// `instancePath,schemaPath,keyword,params,message` (`CR-2-*.json`).
+pub fn ordered_refusal_json(value: &Value) -> String {
+    const ORDER: [&str; 7] = [
+        "ok",
+        "instancePath",
+        "schemaPath",
+        "keyword",
+        "params",
+        "message",
+        "data",
+    ];
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by_key(|k| ORDER.iter().position(|o| o == k).unwrap_or(ORDER.len()));
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
+                    format!(
+                        "{}:{}",
+                        Value::from(k.as_str()),
+                        ordered_refusal_json(&map[k])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", fields.join(","))
+        }
+        Value::Array(items) => {
+            let items: Vec<String> = items.iter().map(ordered_refusal_json).collect();
+            format!("[{}]", items.join(","))
+        }
+        other => other.to_string(),
+    }
+}
+
 /// The first AJV error of `oneOf` branch `branch` (`{key: string[1..=1000]}`,
-/// `required`, `additionalProperties: false`), in AJV's keyword order: type,
-/// required, additionalProperties, then the property's type, item count and
-/// items.
+/// `required`, `additionalProperties: false`), in AJV's keyword order.
 fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str) -> Option<Value> {
-    let error = |instance: String, schema: &str, keyword: &str, params: Value, message: String| {
+    array_property_error(
+        body,
+        keys,
+        &format!("oneOf/{branch}/"),
+        key,
+        MAX_IDS_OR_POINTERS,
+        |item| match item.as_str() {
+            None => Some(ItemError::not_a_string()),
+            Some("") => Some(ItemError {
+                keyword: "minLength",
+                params: json!({ "limit": 1 }),
+                message: "must NOT have fewer than 1 characters".into(),
+            }),
+            Some(_) => None,
+        },
+    )
+}
+
+/// Why AJV refuses one array item: the keyword under the property's
+/// `items`, its params and its message.
+pub struct ItemError {
+    pub keyword: &'static str,
+    pub params: Value,
+    pub message: String,
+}
+
+impl ItemError {
+    /// `items: {type: "string"}` refusing a non-string.
+    pub fn not_a_string() -> Self {
+        Self {
+            keyword: "type",
+            params: json!({ "type": "string" }),
+            message: "must be string".into(),
+        }
+    }
+}
+
+/// The first error AJV 8 (`allErrors: false`) reports for an object schema
+/// with one required array property `key` (`additionalProperties: false`,
+/// 1..=`max_items` items), in AJV's keyword order: type, required,
+/// additionalProperties, then the property's type, maxItems, minItems and the
+/// first item `item_error` refuses. `schema` is the schema's path under `#/`
+/// (empty at the root, `oneOf/<n>/` for a branch); `keys` are the body's keys
+/// in order ([`object_keys_in_order`]).
+pub fn array_property_error(
+    body: &Value,
+    keys: &[String],
+    schema: &str,
+    key: &str,
+    max_items: usize,
+    item_error: impl Fn(&Value) -> Option<ItemError>,
+) -> Option<Value> {
+    let error = |instance: String, path: &str, keyword: &str, params: Value, message: String| {
         Some(json!({
             "instancePath": instance,
-            "schemaPath": format!("#/oneOf/{branch}/{schema}"),
+            "schemaPath": format!("#/{schema}{path}"),
             "keyword": keyword,
             "params": params,
             "message": message,
@@ -174,13 +292,13 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must be array".into(),
         );
     };
-    if items.len() > MAX_IDS_OR_POINTERS {
+    if items.len() > max_items {
         return error(
             format!("/{key}"),
             &format!("{property}/maxItems"),
             "maxItems",
-            json!({ "limit": MAX_IDS_OR_POINTERS }),
-            format!("must NOT have more than {MAX_IDS_OR_POINTERS} items"),
+            json!({ "limit": max_items }),
+            format!("must NOT have more than {max_items} items"),
         );
     }
     if items.is_empty() {
@@ -192,26 +310,16 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must NOT have fewer than 1 items".into(),
         );
     }
-    items
-        .iter()
-        .enumerate()
-        .find_map(|(i, item)| match item.as_str() {
-            None => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/type"),
-                "type",
-                json!({ "type": "string" }),
-                "must be string".into(),
-            ),
-            Some("") => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/minLength"),
-                "minLength",
-                json!({ "limit": 1 }),
-                "must NOT have fewer than 1 characters".into(),
-            ),
-            Some(_) => None,
-        })
+    items.iter().enumerate().find_map(|(i, item)| {
+        let refused = item_error(item)?;
+        error(
+            format!("/{key}/{i}"),
+            &format!("{property}/items/{}", refused.keyword),
+            refused.keyword,
+            refused.params,
+            refused.message,
+        )
+    })
 }
 
 /// A JSON object's keys in body order, each once (where JSON.parse keeps a
@@ -231,9 +339,11 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
                 self,
                 mut map: A,
             ) -> Result<OrderedKeys, A::Error> {
+                // The set keeps a body of many distinct keys linear.
                 let mut keys: Vec<String> = Vec::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 while let Some((key, _)) = map.next_entry::<String, serde::de::IgnoredAny>()? {
-                    if !keys.contains(&key) {
+                    if seen.insert(key.clone()) {
                         keys.push(key);
                     }
                 }
@@ -248,107 +358,54 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
 mod tests {
     use super::*;
 
+    #[test]
+    fn json_content_types_follow_the_schema_validator() {
+        let ct = |v: &str| is_json_content_type(Some(v));
+        assert!(ct("application/json"));
+        assert!(ct("Application/JSON; charset=utf-8"));
+        assert!(ct("application/vnd.api+json"));
+        assert!(ct("text/x+json"));
+        assert!(ct("a/b+c+json"));
+        assert!(!ct("application/+json"));
+        assert!(!ct("/+json"));
+        assert!(!ct("a/b/c+json"));
+        assert!(!ct("a b/c+json"));
+        assert!(!ct("application/jsonfoo"));
+        assert!(!ct("text/plain"));
+        assert!(!ct("application/json-patch"));
+        assert!(!is_json_content_type(None));
+    }
+
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
     }
 
-    fn validate(
-        ids: Option<&[String]>,
-        pointers: Option<&[String]>,
-    ) -> Result<bool, SelectorError> {
-        validate_ids_or_pointers(ids, pointers, MAX_IDS_OR_POINTERS)
-    }
-
+    /// About 900k distinct keys, a 10 MiB body: the key dedup stays linear
+    /// and AJV's first extra key is still named.
     #[test]
-    fn accepts_ids_only() {
-        let ids = strings(&["a", "b"]);
-        assert!(validate(Some(&ids), None).unwrap());
-    }
-
-    #[test]
-    fn accepts_pointers_only() {
-        let ptrs = strings(&["0,0"]);
-        assert!(!validate(None, Some(&ptrs)).unwrap());
-    }
-
-    #[test]
-    fn rejects_both_present() {
-        let ids = strings(&["a"]);
-        let ptrs = strings(&["0,0"]);
+    fn many_distinct_keys_are_read_in_linear_time() {
+        let mut body = String::from("{");
+        for i in 0..900_000 {
+            body.push_str(&format!("\"a{i:07}\":0,"));
+        }
+        body.push_str("\"ids\":[\"x\"]}");
+        let started = std::time::Instant::now();
+        let Err(BodyRefusal::Schema(answer)) = active_entities_body(body.as_bytes()) else {
+            panic!("extra keys fail the schema");
+        };
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
         assert_eq!(
-            validate(Some(&ids), Some(&ptrs)),
-            Err(SelectorError::Malformed)
+            answer["data"][0]["params"]["additionalProperty"], "a0000000",
+            "{answer}"
         );
     }
 
     #[test]
-    fn rejects_neither_present() {
-        assert_eq!(validate(None, None), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn rejects_empty_ids_array() {
-        let empty: Vec<String> = Vec::new();
-        assert_eq!(validate(Some(&empty), None), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn rejects_empty_string_element_in_ids() {
-        let ids = strings(&["a", "", "c"]);
-        assert_eq!(validate(Some(&ids), None), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn rejects_empty_string_element_in_pointers() {
-        let ptrs = strings(&[""]);
-        assert_eq!(validate(None, Some(&ptrs)), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn rejects_nul_byte_element_in_ids() {
-        let ids = strings(&["a", "\0", "c"]);
-        assert_eq!(validate(Some(&ids), None), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn rejects_nul_byte_element_in_pointers() {
-        let ptrs = strings(&["0,0\0"]);
-        assert_eq!(validate(None, Some(&ptrs)), Err(SelectorError::Malformed));
-    }
-
-    #[test]
-    fn accepts_exactly_1000_ids() {
-        let ids: Vec<String> = (0..MAX_IDS_OR_POINTERS).map(|i| i.to_string()).collect();
-        assert_eq!(ids.len(), 1000);
-        assert!(validate(Some(&ids), None).unwrap());
-    }
-
-    #[test]
-    fn rejects_over_1000_ids() {
-        let ids: Vec<String> = (0..=MAX_IDS_OR_POINTERS).map(|i| i.to_string()).collect();
-        assert_eq!(ids.len(), 1001);
-        let err = validate(Some(&ids), None).unwrap_err();
-        assert_eq!(err, SelectorError::TooMany(1000));
+    fn too_many_carries_the_maximum() {
         assert_eq!(
-            err.into_app_error("x").to_string(),
+            too_many_ids_or_pointers().to_string(),
             "Too many ids or pointers; the maximum allowed is 1000"
         );
-    }
-
-    #[test]
-    fn rejects_over_1000_pointers() {
-        let ptrs: Vec<String> = (0..=MAX_IDS_OR_POINTERS).map(|i| i.to_string()).collect();
-        assert_eq!(
-            validate(None, Some(&ptrs)),
-            Err(SelectorError::TooMany(1000))
-        );
-    }
-
-    #[test]
-    fn malformed_selector_carries_the_endpoint_message() {
-        let err = SelectorError::Malformed.into_app_error(ACTIVE_ENTITIES_SELECTOR_MESSAGE);
-        assert_eq!(err.to_string(), ACTIVE_ENTITIES_SELECTOR_MESSAGE);
-        assert!(ACTIVE_ENTITIES_SELECTOR_MESSAGE.starts_with(ENTITIES_SELECTOR_MESSAGE));
     }
 
     fn schema_refusal(raw: &str) -> Value {
@@ -518,12 +575,42 @@ mod tests {
     }
 
     #[test]
-    fn active_entities_body_with_a_nul_element_is_the_selector_error() {
+    fn active_entities_body_with_a_nul_element_is_upstreams_500() {
         match active_entities_body(br#"{"ids":["a\u0000"]}"#) {
-            Err(BodyRefusal::Selector(e)) => {
-                assert_eq!(e.to_string(), ACTIVE_ENTITIES_SELECTOR_MESSAGE)
-            }
+            Err(BodyRefusal::NulElement) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    /// CR-2: V8's messages for the captured parse failures.
+    #[test]
+    fn parse_failures_answer_v8s_captured_messages() {
+        for (raw, message) in [
+            ("", "Unexpected end of JSON input"),
+            ("  ", "Unexpected end of JSON input"),
+            (
+                "{",
+                "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+            ),
+            (
+                "{\n x",
+                "Expected property name or '}' in JSON at position 3 (line 2 column 2)",
+            ),
+            ("hello", "Unexpected token 'h', \"hello\" is not valid JSON"),
+        ] {
+            assert_eq!(schema_refusal(raw)["message"], message, "{raw:?}");
+        }
+    }
+
+    /// CR-2: the refusal's keys in the captured order.
+    #[test]
+    fn refusals_keep_the_captured_key_order() {
+        let body = schema_refusal(r#"{"pointers":[]}"#);
+        let text = ordered_refusal_json(&body);
+        assert!(
+            text.starts_with(r##"{"ok":false,"message":"Invalid JSON body","data":[{"instancePath":"","schemaPath":"#/oneOf/0/required","keyword":"required","params":{"missingProperty":"ids"},"message":"must have required property 'ids'"}"##),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), body);
     }
 }

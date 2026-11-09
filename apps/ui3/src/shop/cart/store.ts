@@ -12,7 +12,7 @@
 
 import { useSyncExternalStore } from "react";
 
-import { assetKey, parseAssetId, type AssetId } from "../model/asset";
+import { assetKey, parseAssetId, type AssetId } from "@shop/model/asset";
 import {
   type CartLine,
   type CartLineDisplay,
@@ -20,11 +20,11 @@ import {
   type CartProvenance,
   type PurchaseOffer,
   type PurchaseState,
-} from "../model/purchase";
-import { decodePaymentMethod, decodePurchaseOffer, encodePurchaseOffer } from "../model/wire";
-import type { PaymentMethod } from "../model/settlement";
-import { applyEvent, newCheckout, type GroupEvent } from "./machine";
-import type { CartGroup } from "./partition";
+} from "@shop/model/purchase";
+import { decodePaymentMethod, decodePurchaseOffer, encodePurchaseOffer } from "@shop/model/wire";
+import type { PaymentMethod } from "@shop/model/settlement";
+import { applyEvent, newCheckout, type GroupEvent } from "@shop/cart/machine";
+import type { CartGroup } from "@shop/cart/partition";
 
 export type CartStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -120,6 +120,7 @@ function decodeLine(value: unknown): CartLine | null {
     provenance: (v.provenance as CartProvenance | undefined) ?? {},
     seen: v.seen ? decodePurchaseOffer(v.seen) : null,
     addedAt: typeof v.addedAt === "number" ? v.addedAt : 0,
+    ...(typeof v.available === "number" && Number.isFinite(v.available) ? { available: v.available } : {}),
   };
 }
 
@@ -225,7 +226,12 @@ export function createCartStore(opts: { storage?: () => CartStorage | null; now?
       const id = cartLineId(input.asset, listing);
       const existing = current().lines.find((l) => l.id === id);
       if (existing) {
-        if (isMint(existing)) store.setQuantity(id, existing.quantity + (input.quantity ?? 1), input.available);
+        if (isMint(existing)) {
+          store.setQuantity(id, existing.quantity + (input.quantity ?? 1), input.available);
+          // The newest stock the buyer saw is the drawer's cap from now on.
+          const available = input.available;
+          if (typeof available === "number" && available !== existing.available) update((lines) => lines.map((l) => (l.id === id ? { ...l, available } : l)));
+        }
         return current().lines.find((l) => l.id === id)!;
       }
       const line: CartLine = {
@@ -238,6 +244,7 @@ export function createCartStore(opts: { storage?: () => CartStorage | null; now?
         provenance: input.provenance ?? {},
         seen: input.seen ?? null,
         addedAt: now(),
+        ...(typeof input.available === "number" ? { available: input.available } : {}),
       };
       update((lines) => [...lines, line]);
       return line;

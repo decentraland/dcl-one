@@ -689,6 +689,64 @@ async fn tiered_grant_resolves_the_top_tier_or_the_requested_one() {
     assert_eq!(latest[0].tier_name.as_deref(), Some("Starter"));
 }
 
+async fn badge_notifications(pool: &PgPool, addr: &Address) -> Vec<Value> {
+    sqlx::query_scalar(
+        "SELECT metadata FROM social.notifications WHERE address = $1 AND type = 'badge_granted' ORDER BY metadata->>'id'",
+    )
+    .bind(addr)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_grant_notifies_once_per_badge_and_tier() {
+    let Some(state) = state(Settings {
+        public_asset_base_url: "https://cdn.example.org".into(),
+        ..Settings::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let (pool, addr) = (state.badges.pool().clone(), fresh_address());
+    for _ in 0..2 {
+        state
+            .badges
+            .grant_badge(&addr, "open_for_business", None, ACTOR)
+            .await
+            .unwrap();
+    }
+    state
+        .badges
+        .grant_badge(&addr, "walkabout", Some("walkabout-bronze"), ACTOR)
+        .await
+        .unwrap();
+    state
+        .badges
+        .grant_badge(&addr, "walkabout", Some("walkabout-platinum"), ACTOR)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        badge_notifications(&pool, &addr).await,
+        vec![
+            json!({
+                "id": "open_for_business",
+                "title": "New Badge Unlocked!",
+                "description": "Open for Business",
+                "image": "https://cdn.example.org/assets/open_for_business/2d/normal.png",
+            }),
+            json!({
+                "id": "walkabout",
+                "title": "New Badge Unlocked!",
+                "description": "Walkabout Bronze",
+                "image": "https://cdn.example.org/assets/walkabout/bronze/2d/normal.png",
+            }),
+        ],
+        "a re-grant and a refused grant add nothing"
+    );
+}
+
 #[tokio::test]
 async fn revoke_clears_both_tables_and_audits_once() {
     let Some(state) = state(Settings::default()).await else {

@@ -54,7 +54,7 @@ export const ConnectionStatus = ({
   <FigmaView
     as='div'
     views={connectionStatusViews}
-    defaultKey='variant:online'
+    component='ConnectionStatus'
     select={{
       values: { variant },
       booleans: {  },
@@ -62,7 +62,7 @@ export const ConnectionStatus = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

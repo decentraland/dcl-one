@@ -7,8 +7,7 @@ export const palette = {
     primaryDark2: '#d80029',
     primaryLight1: '#ff4a6c',
     primaryLight2: '#ff93a8',
-    primary20: 'rgba(255, 45, 85, 0.2)',
-    primaryBlueTest: '#0400ff'
+    primary20: 'rgba(255, 45, 85, 0.2)'
   },
   neutrals: {
     white: '#ffffff',

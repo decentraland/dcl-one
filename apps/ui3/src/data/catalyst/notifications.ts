@@ -27,18 +27,21 @@ export function parseNotifications(raw: unknown): Notification[] {
     rows,
     NotificationSchema,
     isUsableNotification,
-    (row) => ({ ...row, timestamp: Number(row.timestamp) }),
+    (row) => ({ ...row, address: row.address ?? "", timestamp: Number(row.timestamp) }),
   );
   out.sort((a, b) => b.timestamp - a.timestamp);
   return out;
 }
+
+/** The bell's page size: the server's cap (its default is 20). */
+const BELL_LIMIT = 50;
 
 export async function fetchLiveNotifications(
   opts: RequestOpts & { address?: string | null } = {},
 ): Promise<Notification[]> {
   const bridge = typeof window !== "undefined" ? window.dclBridge : undefined;
   if (bridge && typeof bridge.send === "function" && !opts.headers) {
-    const res = await signedFetch(`${serviceBase("notifications")}/notifications`, {
+    const res = await signedFetch(`${serviceBase("notifications")}/notifications?limit=${BELL_LIMIT}`, {
       method: "GET",
     });
     if (res.status !== 200) {
@@ -46,7 +49,11 @@ export async function fetchLiveNotifications(
     }
     return parseNotifications(JSON.parse(res.body));
   }
-  const raw = await getJSON("/notifications", { service: "notifications", ...opts });
+  const raw = await getJSON("/notifications", {
+    service: "notifications",
+    ...opts,
+    query: { limit: BELL_LIMIT, ...opts.query },
+  });
   return parseNotifications(raw);
 }
 

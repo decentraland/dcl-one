@@ -4,13 +4,14 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import type { ShopSigner } from "../api/signer";
 import { type OfferFetcher } from "../cart/revalidate";
 import { shopCart, type CartStore } from "../cart/store";
 import { shopChainReader, type ChainReader } from "./chain/rpc";
 import { liveResolvers, type SettlementResolvers } from "./purchase/cart";
 import type { RailContext } from "./purchase/rail";
+import { shopClient } from "../api/host";
 
 export type ShopServices = {
   client: ShopClient;

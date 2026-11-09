@@ -51,6 +51,17 @@ impl Wallet {
         ))
     }
 
+    /// Freeze the signer and auth chain for an in-flight request across account changes.
+    pub fn snapshot(&self) -> Self {
+        let read = self.0.blocking_read();
+        Self(Arc::new(AsyncRwLock::new(WalletInner {
+            inner: read.inner.clone(),
+            root_address: read.root_address,
+            delegates: read.delegates.clone(),
+            guest_account: read.guest_account,
+        })))
+    }
+
     pub fn disconnect(&mut self) {
         let mut write = self.0.try_write().unwrap();
         write.inner = None;
@@ -284,9 +295,107 @@ impl SignedLoginMeta {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod gateway_signing_tests {
+    use super::*;
+    use common::base_domain::{self, Service};
+
+    #[test]
+    fn engine_and_scene_sign_their_respective_paths() {
+        base_domain::set_gateway("https://gateway.example.test").unwrap();
+        let raw = base_domain::url(
+            Service::CommsGatekeeper,
+            "/Adapter/Mixed?case=Kept&search=two words",
+        );
+        let uri: Uri = reqwest::Url::parse(&raw).unwrap().as_str().parse().unwrap();
+        assert_eq!(uri.host(), Some("gateway.example.test"));
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([42; 32]);
+        async_std::task::block_on(async {
+            for path in [
+                "/social-api/v2/communities/../../../auth-api/x",
+                "/social-api/v2/communities/%2e%2E/%2e%2e/%2E%2e/auth-api/x",
+                "/social-api/v2/communities/id%2f..%2f..%2f..%2f..%2fauth-api/x",
+                "/social-api/v2/communities/id%5c..%5c..%5c..%5c..%5cauth-api/x",
+                "/outside/../social-api/x",
+            ] {
+                let attack = format!("https://gateway.example.test{path}");
+                assert!(
+                    sign_service_request("GET", &attack, &wallet, "{}".into())
+                        .await
+                        .is_err(),
+                    "{path}"
+                );
+            }
+
+            for (headers, path) in [
+                (
+                    sign_service_request("POST", &raw, &wallet, "{}".into())
+                        .await
+                        .unwrap(),
+                    "/adapter/mixed",
+                ),
+                (
+                    sign_service_request(
+                        "POST",
+                        "https://notifications.example.test/old/../Mixed Name?search=two words",
+                        &wallet,
+                        "{}".into(),
+                    )
+                    .await
+                    .unwrap(),
+                    "/mixed%20name",
+                ),
+                (
+                    sign_request("POST", &uri, &wallet, "{}".into())
+                        .await
+                        .unwrap(),
+                    "/comms-gatekeeper/adapter/mixed",
+                ),
+            ] {
+                let headers: std::collections::HashMap<_, _> = headers.into_iter().collect();
+                let link: ChainLink =
+                    serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+                assert_eq!(
+                    link.payload,
+                    format!("post:{path}:{}:{{}}", headers["x-identity-timestamp"])
+                );
+            }
+        })
+    }
+}
+
 pub async fn sign_request(
     method: &str,
     uri: &Uri,
+    wallet: &Wallet,
+    meta: String,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    sign_path(method, uri.path(), wallet, meta).await
+}
+
+/// Trusted engine/HUD request. Scene signing always uses exactly the path it supplied.
+pub async fn sign_service_request(
+    method: &str,
+    raw: &str,
+    wallet: &Wallet,
+    meta: String,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    // Gateway routing rejects ambiguous raw paths before URL normalization can erase them.
+    let original = common::base_domain::gateway_signed_path(raw)?;
+    let url = reqwest::Url::parse(raw)?;
+    sign_path(
+        method,
+        original.as_deref().unwrap_or_else(|| url.path()),
+        wallet,
+        meta,
+    )
+    .await
+}
+
+async fn sign_path(
+    method: &str,
+    path: &str,
     wallet: &Wallet,
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
@@ -298,7 +407,7 @@ pub async fn sign_request(
     let payload = format!(
         "{}:{}:{unix_time}:{meta}",
         method.to_lowercase(),
-        uri.path().to_lowercase()
+        path.to_lowercase()
     );
     let auth_chain = wallet.sign_message(payload).await?;
 
@@ -306,4 +415,24 @@ pub async fn sign_request(
     headers.push(("x-identity-timestamp".to_owned(), format!("{unix_time}")));
     headers.push(("x-identity-metadata".to_owned(), meta));
     Ok(headers)
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn signing_snapshot_keeps_its_account_after_switch_and_logout() {
+        let mut live = Wallet::default();
+        live.finalize_as_guest();
+        let original = live.address().unwrap();
+        let snapshot = live.snapshot();
+        live.finalize_as_guest();
+        assert_ne!(live.address(), Some(original));
+        live.disconnect();
+        let chain = async_std::task::block_on(snapshot.sign_message("login".into())).unwrap();
+        assert_eq!(chain.0[0].payload, format!("{original:#x}"));
+        assert_eq!(snapshot.address(), Some(original));
+        assert_eq!(live.address(), None);
+    }
 }

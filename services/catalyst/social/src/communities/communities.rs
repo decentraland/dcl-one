@@ -873,17 +873,16 @@ pub async fn update_community(
         }) || description.as_deref().is_some_and(|description| {
             current.is_some_and(|old| super::compliance::changed(description, &old.3))
         }) || thumbnail.is_some();
-    if content_changed {
-        if let Err(error) = state
+    if content_changed
+        && let Err(error) = state
             .validate_content(super::compliance::Content {
                 name: name.as_deref(),
                 description: description.as_deref(),
                 thumbnail: thumbnail.as_deref(),
             })
             .await
-        {
-            return error.into_response();
-        }
+    {
+        return error.into_response();
     }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
     try_resp!(map_db(
@@ -928,9 +927,6 @@ pub async fn update_community(
                 metadata: json!({"communityId":uuid.as_uuid(), "oldName":old_name,
                     "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,has_thumbnail,uuid)}),
             };
-            state
-                .publish_community_event(&event, &Audience::Members)
-                .await;
             notify(&state.pool, event, Audience::Members).await;
         });
     }
@@ -1181,18 +1177,8 @@ pub async fn delete_community(
         community_id: uuid,
         metadata,
     };
-    let violation_publish = violation
-        .as_ref()
-        .map(|event| state.publish_community_event(event, &Audience::One(&owner)));
-    let deleted_publish = state.publish_community_event(&deleted, &Audience::MembersButOwner);
     let updates = state.clone();
     tokio::spawn(async move {
-        if let Some(publish) = violation_publish {
-            publish.await;
-        }
-        deleted_publish.await;
-        // Source publishes connectivity deletion after both best-effort SNS
-        // broadcasts inside the same background helper.
         updates.community_deleted_update(uuid).await;
     });
     if let Some(event) = violation {

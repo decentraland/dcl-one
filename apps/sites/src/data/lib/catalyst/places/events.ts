@@ -130,7 +130,9 @@ async function fetchEventRows(
   params: FetchEventsParams,
   opts: GetOptions,
 ): Promise<{ rows: (Event | null)[]; total: number; copy: CopyStamp | null }> {
-  const raw = await getJSON<unknown>(eventsApiPath("get", "/api/events"), {
+  // `/v1/events`: the strict `/api/events` schema (upstream's `additionalProperties: false`)
+  // refuses `recurrent`, which this site sends; the v1 list keeps the same envelope.
+  const raw = await getJSON<unknown>(eventsApiPath("get", "/v1/events"), {
     ...opts,
     query: {
       list: params.list,

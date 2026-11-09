@@ -124,7 +124,7 @@ export const BlogSearchResultItem = ({
   <FigmaView
     as='button'
     views={blogSearchResultItemViews}
-    defaultKey='product:explorer'
+    component='BlogSearchResultItem'
     select={{
       values: { product },
       booleans: {  },
@@ -132,7 +132,7 @@ export const BlogSearchResultItem = ({
     }}
     slots={{ label, label2 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

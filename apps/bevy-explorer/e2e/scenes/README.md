@@ -10,7 +10,9 @@ dcl-one's CI (`../references`).
 The scenes were authored for one host scene that swapped bundles. Here every scene is a member of
 `dcl-workspace.json` at its own parcels, `12k,0` for its index `k` in that list (the widest scene
 spans three parcels, so none can see another), with the host's `skyboxConfig.fixedTime` of 43200
-(noon). Positions in a scene's source are scene-relative, so nothing else changed. The visual spec
+(noon). Positions in a scene's source are scene-relative, so nothing else changed but each scene's
+`tsconfig.json`, which extends the vendored SDK's `@dcl/sdk/types/tsconfig.ecs7.json` as
+`dcl-scene-cli init` writes it (the host's shared base file did not come along). The visual spec
 (`../specs/visual`) teleports to each scene's base parcel.
 
 Build them with `apps/dcl-scene-cli` (the vendored SDK toolchain, no npm):

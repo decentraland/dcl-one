@@ -4,7 +4,6 @@ use bevy::{
     asset::io::memory::{Dir, MemoryAssetReader},
     ecs::system::RunSystemOnce,
     math::FloatOrd,
-    prelude::*,
 };
 use common::{
     partition::{LoadPriority, PartitionData, Tier},

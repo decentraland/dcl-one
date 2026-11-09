@@ -920,7 +920,11 @@ async fn without_an_origin_or_a_renderer_the_sources_are_not_asked() {
     ));
     let (status, _, _, _) = get_image(&app, &format!("/entities/{}/face.png", fake_cid())).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(asked.load(Ordering::SeqCst), 0, "no fill without a source to draw from");
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "no fill without a source to draw from"
+    );
 }
 
 /// A sync source that knows no entity and answers after 2 s, and an origin

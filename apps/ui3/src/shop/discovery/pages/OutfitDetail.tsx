@@ -6,29 +6,32 @@ import { Link, useParams } from "react-router";
 
 import { isShopApiError } from "../../api/client";
 import { shopCart, useCart } from "../../cart/store";
-import { BASE_FEMALE, BASE_MALE, requiredShape } from "../../detail/lib/bodyShape";
+import { BASE_FEMALE, BASE_MALE, requiredShape } from "@shop/detail/lib/bodyShape";
 import { fetchEmoteClipUrl } from "../../detail/lib/emoteBase64";
 import { itemUrn } from "../../detail/lib/urn";
-import { assetKey } from "../../model/asset";
+import { assetKey } from "@shop/model/asset";
 import { SHOP_BASE } from "../../routes";
+import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchShopItems } from "../api";
-import { cardEligibility, cardPrice } from "../cardPrice";
+import { cardEligibility, cardPrice } from "@shop/discovery/cardPrice";
 import { assetOf, cartInputFor } from "../components/AssetCard";
 import Icon from "../components/Icon";
 import IndexNotice from "../components/IndexNotice";
 import PriceTag, { formatCreditsFull } from "../components/PriceTag";
 import { indexUnavailable } from "../freshness";
 import { useCreatorName, useSeo } from "../hooks";
-import { t } from "../intl";
-import type { CatalogItem } from "../lib/catalogItem";
+import { t } from "@shop/discovery/intl";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { categoryIcon, genderIcon } from "../lib/itemIcons";
 import { isWearable, playingEmote } from "../lib/outfit";
-import { rarityColor, rarityDescription, rarityLabel } from "../lib/rarity";
+import { rarityColor, rarityDescription, rarityLabel } from "@shop/discovery/lib/rarity";
 import { detailRouteFor } from "../lib/routes";
 import { useShopQuery } from "../query";
 import { classifyOutfitItem, fetchOutfit, isListingUnavailable, outfitItemKey, outfitRadialGradient, thumbnailUrl, type Outfit, type OutfitItemState } from "./outfits";
 import "./outfitdetail.css";
+import { listingTypeFor } from "@shop/market/access-rule";
+import { shopClient } from "../../api/host";
 
 export { fetchOutfit, type Outfit } from "./outfits";
 
@@ -90,7 +93,7 @@ export default function OutfitDetail() {
   }
   if (outfitQ.error) {
     return (
-      <div className="shop-page shop-outfit shop-outfit__empty" data-testid="outfit-error">
+      <div className="shop-page shop-outfit shop-outfit__empty" data-testid="outfit-detail-error">
         <p className="shop-outfit__notice" role="alert">
           <Icon name="warning-fill" size={16} />
           {COPY.generic}
@@ -103,7 +106,7 @@ export default function OutfitDetail() {
   }
   if (!outfit) {
     return (
-      <div className="shop-page shop-outfit" aria-busy="true" data-testid="outfit-loading">
+      <div className="shop-page shop-outfit" aria-busy="true" data-testid="outfit-detail-loading">
         <div className="shop-outfit__main">
           <div className="shop-outfit__preview">
             <span className="shop-outfit__skel" style={{ position: "absolute", inset: 0 }} aria-hidden />
@@ -212,9 +215,11 @@ function OutfitRow({ row, loading }: { row: ItemRow; loading: boolean }) {
 
 function OutfitContent({ outfit }: { outfit: Outfit }) {
   const { session, account } = useShopWallet();
+  // A resale is the Marketplace's (market/access.tsx): without it the outfit adds creators' primary sales only.
+  const marketplace = useMarketplace();
   const lines = useCart((s) => s.lines);
   const keys = useMemo(() => [...new Set(outfit.items.map(outfitItemKey))].sort(), [outfit]);
-  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { signal }), { staleMs: 60_000 });
+  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { client: shopClient(), signal }), { staleMs: 60_000 });
   const byKey = useMemo(() => new Map((itemsQ.data ?? []).map((item) => [item.id.toLowerCase(), item])), [itemsQ.data]);
   const loading = keys.length > 0 && itemsQ.isLoading && !itemsQ.data;
   const cartAssets = useMemo(() => new Set(lines.map((l) => assetKey(l.asset))), [lines]);
@@ -262,7 +267,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
     try {
       const live = await Promise.all(
         purchasable.map(async (item) => {
-          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1 });
+          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) }, { client: shopClient() });
           const fresh = page.items[0];
           return fresh && !isListingUnavailable(fresh) ? fresh : null;
         }),
@@ -296,7 +301,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
       </nav>
 
       <div className="shop-outfit__main">
-        <div className="shop-outfit__preview" data-testid="outfit-preview" style={{ background: outfitRadialGradient(outfit) }}>
+        <div className="shop-outfit__preview" data-testid="outfit-detail-preview" style={{ background: outfitRadialGradient(outfit) }}>
           {!show3d ? (
             thumb && !loading ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null
           ) : (
@@ -308,7 +313,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
 
         <div className="shop-outfit__info">
           <h1 className="shop-outfit__title">{outfit.name}</h1>
-          <p className="shop-outfit__meta" data-testid="outfit-meta">
+          <p className="shop-outfit__meta" data-testid="outfit-detail-meta">
             {COPY.itemsCount(outfit.items.length)}
           </p>
 
@@ -352,7 +357,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
                 {loading ? (
                   <span className="shop-outfit__skel" style={{ width: "100%", height: 52, borderRadius: 26 }} aria-hidden />
                 ) : (
-                  <button type="button" className="shop-outfit__cta" data-testid="add-look" onClick={() => void addOutfit()} disabled={adding || purchasable.length === 0} aria-busy={adding || undefined}>
+                  <button type="button" className="shop-outfit__cta" data-testid="outfit-detail-cta" onClick={() => void addOutfit()} disabled={adding || purchasable.length === 0} aria-busy={adding || undefined}>
                     {adding ? COPY.adding : purchasable.length > 0 ? COPY.addCount(purchasable.length) : inCartCount > 0 ? COPY.nothingToAdd : COPY.unavailable}
                     {!adding && purchasable.length > 0 && allCredits ? (
                       <span className="shop-outfit__cta-price">

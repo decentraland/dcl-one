@@ -48,6 +48,7 @@ def query(sql, database=url):
 record = {'args': sys.argv[1:], 'url': url, 'psql': psql, 'data': os.environ['PGDATA'],
           'listen': query('SHOW listen_addresses'), 'server': query('SHOW server_version_num'),
           'locks': query('SHOW max_locks_per_transaction'), 'threads': os.environ['RUST_TEST_THREADS'],
+          'target': os.environ.get('CARGO_TARGET_DIR'),
           'role': query('SELECT rolsuper AND rolcreatedb FROM pg_roles WHERE rolname=current_user'),
           'collation': query("SELECT EXISTS(SELECT 1 FROM pg_collation WHERE collname='en_US.utf8' AND collnamespace='pg_catalog'::regnamespace)", url.replace('/postgres?', '/template1?'))}
 Path(os.environ['RELEASE_CI_TEST_RECORD']).write_text(json.dumps(record))
@@ -73,6 +74,7 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
             self.assertNotEqual(result.returncode, 0, 'owned PostgreSQL must be stopped')
 
     def test_always_supplies_owned_database_and_psql_to_the_actual_release_target(self):
+        self.env['CARGO_TARGET_DIR'] = str(self.files / 'isolated-target')
         result = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         record = json.loads(self.record.read_text())
@@ -85,6 +87,7 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
         self.assertEqual(record['server'], '180006')
         self.assertEqual(record['locks'], '1024')
         self.assertEqual(record['threads'], '2')
+        self.assertEqual(record['target'], self.env['CARGO_TARGET_DIR'])
         self.assertEqual(record['role'], 't')
         self.assertEqual(record['collation'], 't')
         self.assert_owned_cluster_removed(record)
@@ -139,10 +142,32 @@ sys.exit(29)
                         'tooling/tests/test_social_voice_release_ci.py',
                         '.github/workflows/social-voice-release.yml'):
             self.assertEqual(workflow.count(f"- '{pattern}'"), 2, pattern)
-        self.assertIn('nix develop --no-update-lock-file --command bash tooling/social-voice-release-test.sh', workflow)
+        self.assertIn('nix develop .#ci --no-update-lock-file --command bash tooling/social-voice-release-test.sh', workflow)
         self.assertNotIn('continue-on-error', workflow)
         self.assertNotIn('secrets.', workflow)
         self.assertIn('permissions:\n  contents: read\n', workflow)
+
+    def test_workflow_isolates_release_cache_and_reserves_disk_before_nix(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn('CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-social-voice-release', workflow)
+        # Dependencies only, in the exact directory Cargo receives, under a key family of its own.
+        self.assertNotIn('actions/cache', workflow)
+        self.assertEqual(workflow.count('uses: Swatinem/rust-cache@'), 1)
+        self.assertIn('          workspaces: services/catalyst -> target-social-voice-release\n', workflow)
+        self.assertNotIn('            services/catalyst/target\n', workflow)
+        self.assertIn("          shared-key: social-voice-${{ hashFiles('flake.lock') }}\n", workflow)
+        self.assertIn("          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}\n", workflow)
+        self.assertIn('          cache-on-failure: true\n', workflow)
+        self.assertIn('          RUSTUP_HOME: /dev/null\n', workflow)
+        for family in ('foundation-dev-', 'shared-key: dev-tests', 'social-voice-release-nodebug'):
+            self.assertNotIn(family, workflow, 'no sharing with another cache family')
+        reserve = workflow.index('      - name: Reserve disk space')
+        self.assertLess(reserve, workflow.index('uses: cachix/install-nix-action@'))
+        self.assertLess(reserve, workflow.index('uses: Swatinem/rust-cache@'))
+        self.assertLess(workflow.index('Put the Nix Rust toolchain on PATH'), workflow.index('uses: Swatinem/rust-cache@'))
+        self.assertLess(workflow.index('uses: Swatinem/rust-cache@'), workflow.index('bash tooling/social-voice-release-test.sh'))
+        self.assertIn("        if: runner.os == 'Linux'\n", workflow)
+        self.assertIn('sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup', workflow)
 
 
 if __name__ == '__main__':

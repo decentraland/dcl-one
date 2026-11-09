@@ -1,4 +1,7 @@
 declare const styles: {
+  readonly "reset": string
+  readonly "foundations": string
+  readonly "components": string
   readonly "v0nroot": string
   readonly "v0n0": string
   readonly "w3": string
@@ -32,7 +35,6 @@ declare const styles: {
   readonly "v1n1_0_0_1": string
   readonly "v1n1_0_0_1_0": string
   readonly "v1n1_0_1": string
-  readonly "svg": string
   readonly "v2nroot": string
   readonly "v2n0": string
   readonly "v2n0_0": string

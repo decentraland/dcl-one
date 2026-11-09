@@ -1,11 +1,13 @@
 //! `/lambdas/contracts/servers`: the catalyst registry read from the
 //! `Catalyst` contract over `ETH_RPC_URL` (`catalystCount`, `catalystIds(i)`,
-//! `catalystById(id)`); `/lambdas/contracts/pois` (the POI list contract over
+//! `catalystById(id)`, read and decoded by `content::sync::dao`, which peer
+//! sync's `SYNC_FROM_DAO` reads too); `/lambdas/contracts/pois` (the POI list contract over
 //! the polygon endpoint, `RPC_ENDPOINT_POLYGON` or `TRADE_RPC_URLS` 137) and
 //! `/lambdas/contracts/denylisted-names` (the name denylist contract over
 //! `ETH_RPC_URL`): `size()`, then `get(i)` per entry. Each is cached for six
 //! hours with a one-minute back-off after a failed refresh (stale is still
-//! served); without its endpoint a list answers empty, as the old handlers
+//! served); a failure with nothing cached is lamb2's bare 500 (its LRU fetch
+//! rejects); without its endpoint a list answers empty, as the old handlers
 //! did. The old handler batched the calls through Multicall3 and fell back
 //! to one `eth_call` per entry; v2 keeps only the per-entry path (16
 //! concurrent), a few hundred calls every six hours. The
@@ -16,11 +18,12 @@ use std::time::{Duration, Instant};
 use alloy_primitives::Address;
 use axum::Json;
 use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::content::sync::dao;
 use crate::http::{RetryDecision, is_transient_status, read_body_capped, retry_with_backoff};
 use crate::shared::cache::TtlMap;
 
@@ -35,21 +38,18 @@ struct ContractAddrs {
 fn contracts_for(network: &str) -> ContractAddrs {
     match network {
         "sepolia" => ContractAddrs {
-            catalyst: "0x9b5091588a4bae0a5ea54a35af3c31f57a68ed37",
+            catalyst: dao::SEPOLIA_REGISTRY,
             name_denylist: "0x6082b0b10b0fe9040652e35acbf3a22fe6764f27",
             poi: "0x7a0fad6854de8df1245da952cd3ae7f6893154c1",
         },
         _ => ContractAddrs {
-            catalyst: "0x4a2f10076101650f40342885b99b6b101d83c486",
+            catalyst: dao::MAINNET_REGISTRY,
             name_denylist: "0x0c4c90a4f29872a2e9ef4c4be3d419792bca9a36",
             poi: "0xFEC09d5C192aaf7Ec7E2C89Cc8D3224138391B2E",
         },
     }
 }
 
-const SEL_CATALYST_COUNT: &str = "18becc10";
-const SEL_CATALYST_IDS: &str = "7b9b4f2c";
-const SEL_CATALYST_BY_ID: &str = "c9038ce9";
 const SEL_SIZE: &str = "949d225d";
 const SEL_GET: &str = "9507d39a";
 
@@ -214,61 +214,44 @@ async fn calls(
         .await
 }
 
-/// `ids` are the 64-hex-char catalyst ids, `records` the matching `catalystById` returns.
-fn servers_from_records(ids: &[String], records: Vec<Vec<u8>>) -> Result<Vec<Value>, String> {
-    let mut out = Vec::with_capacity(ids.len());
-    for (id, rec) in ids.iter().zip(records) {
-        if rec.len() < 96 {
-            return Err(format!(
-                "catalystById return too short: 0x{}",
-                hex::encode(&rec)
-            ));
-        }
-        let owner = to_checksum_address(&hex::encode(&rec[44..64]));
-        let domain = decode_string_at(&rec, 2)?;
-        if domain.starts_with("http://") {
-            continue;
-        }
-        let mut address = domain.clone();
-        if !address.starts_with("https://") {
-            address = format!("https://{address}");
-        }
-        out.push(json!({
-            "baseUrl": address.trim(),
-            "owner": owner,
-            "id": format!("0x{id}"),
-        }));
-    }
-    Ok(out)
+/// One `/lambdas/contracts/servers` entry, with lamb2's key order
+/// (`baseUrl`, `owner`, `id`, `captures/lambdas-profiles/LP-26-contracts-servers.json`);
+/// a `json!` object would sort the keys.
+#[derive(Debug, Serialize, Deserialize)]
+struct CatalystServer {
+    #[serde(rename = "baseUrl")]
+    base_url: String,
+    owner: String,
+    id: String,
+}
+
+/// The registry entries as lamb2 lists them: `http://` domains dropped, the
+/// owner EIP-55 checksummed, the id `0x`-prefixed.
+fn servers_from_catalysts(catalysts: Vec<dao::Catalyst>) -> Vec<CatalystServer> {
+    catalysts
+        .into_iter()
+        .filter_map(|c| {
+            Some(CatalystServer {
+                base_url: c.base_url()?,
+                owner: to_checksum_address(&hex::encode(c.owner)),
+                id: format!("0x{}", c.id),
+            })
+        })
+        .collect()
 }
 
 async fn fetch_servers(
     state: &MarketplaceState,
     rpc: &str,
     network: &str,
-) -> Result<Vec<Value>, String> {
-    let c = contracts_for(network);
-    let count_hex = eth_call(state, rpc, c.catalyst, SEL_CATALYST_COUNT).await?;
-    let count = decode_uint_word(&count_hex)?;
-
-    let id_calls = (0..count)
-        .map(|i| format!("{SEL_CATALYST_IDS}{}", encode_uint256(i)))
-        .collect();
-    let id_words = calls(state, rpc, c.catalyst, id_calls).await?;
-    let mut ids = Vec::with_capacity(id_words.len());
-    for word in &id_words {
-        if word.len() < 32 {
-            return Err(format!("bad catalystIds return: 0x{}", hex::encode(word)));
-        }
-        ids.push(hex::encode(&word[..32]));
-    }
-
-    let record_calls = ids
-        .iter()
-        .map(|id| format!("{SEL_CATALYST_BY_ID}{id}"))
-        .collect();
-    let records = calls(state, rpc, c.catalyst, record_calls).await?;
-    servers_from_records(&ids, records)
+) -> Result<Vec<CatalystServer>, String> {
+    let registry = contracts_for(network).catalyst;
+    let catalysts = dao::read_registry(|data: String| async move {
+        let hex = eth_call(state, rpc, registry, &data).await?;
+        hex_decode(strip0x(&hex)).map_err(|e| format!("bad hex: {e}"))
+    })
+    .await?;
+    Ok(servers_from_catalysts(catalysts))
 }
 
 /// A strings list contract: `size()`, then `get(i)` for every entry.
@@ -351,10 +334,10 @@ pub struct Caches {
     denylisted_names: Slot,
 }
 
-pub async fn contracts_servers(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_servers(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state.settings.eth_rpc_url.clone() else {
         tracing::debug!("ETH_RPC_URL is unset; /lambdas/contracts/servers answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let network = state.settings.eth_network.clone();
     let st = state.clone();
@@ -362,20 +345,22 @@ pub async fn contracts_servers(State(state): State<SharedState>) -> impl IntoRes
         .contracts
         .servers
         .get("servers", || async move {
-            fetch_servers(&st, &rpc, &network).await.map(Value::Array)
+            let servers = fetch_servers(&st, &rpc, &network).await?;
+            serde_json::to_value(servers).map_err(|e| e.to_string())
         })
         .await
+        .and_then(|v| serde_json::from_value::<Vec<CatalystServer>>(v).map_err(|e| e.to_string()))
     {
-        Ok(v) => Json(v),
+        Ok(servers) => Json(servers).into_response(),
         Err(e) => {
             tracing::error!("contracts/servers failed: {e}");
-            Json(json!([]))
+            super::lambdas_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/contracts/pois`: the POI contract's list, over the polygon endpoint.
-pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_pois(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state
         .settings
         .polygon_rpc_url
@@ -383,7 +368,7 @@ pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoRespon
         .or_else(|| state.chain_rpc_url(super::chain_walk::ChainNet::Matic))
     else {
         tracing::debug!("RPC_ENDPOINT_POLYGON is unset; /lambdas/contracts/pois answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let contract = contracts_for(&state.settings.eth_network).poi.to_string();
     let st = state.clone();
@@ -393,19 +378,19 @@ pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoRespon
             .map(|l| Value::Array(l.into_iter().map(Value::String).collect()))
     };
     match state.contracts.pois.get("pois", fetch).await {
-        Ok(v) => Json(v),
+        Ok(v) => Json(v).into_response(),
         Err(e) => {
             tracing::error!("contracts/pois failed: {e}");
-            Json(json!([]))
+            super::lambdas_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/contracts/denylisted-names`: the name denylist contract's list, over `ETH_RPC_URL`.
-pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state.settings.eth_rpc_url.clone() else {
         tracing::debug!("ETH_RPC_URL is unset; /lambdas/contracts/denylisted-names answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let contract = contracts_for(&state.settings.eth_network)
         .name_denylist
@@ -422,10 +407,10 @@ pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> imp
         .get("denylisted-names", fetch)
         .await
     {
-        Ok(v) => Json(v),
+        Ok(v) => Json(v).into_response(),
         Err(e) => {
             tracing::error!("contracts/denylisted-names failed: {e}");
-            Json(json!([]))
+            super::lambdas_internal_error()
         }
     }
 }
@@ -508,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn servers_from_records_keeps_https_and_skips_http() {
+    fn servers_from_catalysts_keeps_https_and_skips_http() {
         fn record(domain: &str) -> Vec<u8> {
             let mut rec = vec![0u8; 96];
             rec[44..64]
@@ -520,25 +505,32 @@ mod tests {
             rec
         }
         let ids: Vec<String> = ["11", "22", "33"].iter().map(|s| s.repeat(32)).collect();
-        let out = servers_from_records(
-            &ids,
-            vec![
-                record("peer.example "),
-                record("http://plain.example"),
-                record("https://secure.example"),
-            ],
-        )
-        .unwrap();
-        assert_eq!(out.len(), 2, "http:// entries are dropped");
-        assert_eq!(out[0]["baseUrl"], "https://peer.example");
-        assert_eq!(
-            out[0]["owner"],
-            "0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443"
+        let records = [
+            record("peer.example "),
+            record("http://plain.example"),
+            record("https://secure.example"),
+        ];
+        let out = servers_from_catalysts(
+            ids.iter()
+                .zip(&records)
+                .map(|(id, rec)| dao::decode_catalyst(id, rec).unwrap())
+                .collect(),
         );
-        assert_eq!(out[0]["id"], format!("0x{}", "11".repeat(32)));
-        assert_eq!(out[1]["baseUrl"], "https://secure.example");
-        assert_eq!(out[1]["id"], format!("0x{}", "33".repeat(32)));
-        assert!(servers_from_records(&ids[..1], vec![vec![0u8; 40]]).is_err());
+        assert_eq!(out.len(), 2, "http:// entries are dropped");
+        assert_eq!(out[0].base_url, "https://peer.example");
+        assert_eq!(out[0].owner, "0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443");
+        assert_eq!(out[0].id, format!("0x{}", "11".repeat(32)));
+        assert_eq!(out[1].base_url, "https://secure.example");
+        assert_eq!(out[1].id, format!("0x{}", "33".repeat(32)));
+        // lamb2's key order on the wire (`LP-26-contracts-servers.json`).
+        assert_eq!(
+            serde_json::to_string(&out[1]).unwrap(),
+            format!(
+                r#"{{"baseUrl":"https://secure.example","owner":"0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443","id":"0x{}"}}"#,
+                "33".repeat(32)
+            )
+        );
+        assert!(dao::decode_catalyst(&ids[0], &[0u8; 40]).is_err());
     }
 
     #[test]
@@ -554,10 +546,46 @@ mod tests {
     #[tokio::test]
     async fn a_private_rpc_endpoint_is_refused_before_any_call() {
         let state = crate::market::tests::support::state_without_db();
-        let err = eth_call(&state, "http://127.0.0.1:8545", "0x0", SEL_CATALYST_COUNT)
-            .await
-            .unwrap_err();
+        let err = eth_call(
+            &state,
+            "http://127.0.0.1:8545",
+            "0x0",
+            dao::SEL_CATALYST_COUNT,
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
+    }
+
+    /// A failure with nothing cached is lamb2's bare 500 (`catalysts.fetch`
+    /// rejects); without an endpoint the lists answer `[]`.
+    #[tokio::test]
+    async fn a_cold_failure_is_lamb2s_bare_500() {
+        use axum::http::StatusCode;
+        let rpc = Some("http://127.0.0.1:8545".to_string());
+        let state =
+            crate::market::tests::support::state_without_db_settings(crate::market::Settings {
+                eth_rpc_url: rpc.clone(),
+                polygon_rpc_url: rpc,
+                ..crate::market::Settings::for_tests()
+            });
+        for resp in [
+            contracts_servers(State(state.clone())).await,
+            contracts_pois(State(state.clone())).await,
+            contracts_denylisted_names(State(state)).await,
+        ] {
+            assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                json!({ "error": "Internal Server Error" })
+            );
+        }
+        let state = crate::market::tests::support::state_without_db();
+        let resp = contracts_denylisted_names(State(state)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

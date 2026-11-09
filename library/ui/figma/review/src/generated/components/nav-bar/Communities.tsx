@@ -92,7 +92,7 @@ export const Communities = ({
   <FigmaView
     as='div'
     views={communitiesViews}
-    defaultKey='default'
+    component='Communities'
     select={{
       values: {  },
       booleans: { stat },
@@ -100,7 +100,7 @@ export const Communities = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

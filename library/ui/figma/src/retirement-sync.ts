@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import type { App } from './app.js'
 import type { GenerateResult } from './generators/index.js'
 import { stageWorkspace, publishRetirement } from './guard/workspace-stage.js'
@@ -10,31 +9,12 @@ import type { Retirements } from './guard/retirements.js'
 import { diffFiles, writeFiles } from './sync.js'
 import { committedLedger, drainOrphans, ledgerBase, removeDrained } from './orphan-drain.js'
 import { writeReviewManifest } from './review-manifest.js'
-import { writePromotionManifest } from './promotion/manifest.js'
 
-async function refreshEvidence(root: string) {
-  const file = path.join(root, 'figma/review/public/dcl-ui-review/fidelity.json')
-  const text = await readIfExists(file)
-  if (text === undefined) return
-  // The signature script is loaded from this checkout, not from the stage: a staged copy cannot resolve
-  // the library's dependencies (yaml), which live in library/ui/node_modules. It hashes the staged files.
-  const modulePath = new URL('../review/scripts/review-signature.mjs', import.meta.url).href
-  const { reviewSignature } = (await import(modulePath)) as {
-    reviewSignature(root: string): Promise<string>
-  }
-  const data = JSON.parse(text)
-  const signature = await reviewSignature(path.join(root, 'figma/review'))
-  if (data.signature !== signature)
-    await writeFile(
-      file,
-      JSON.stringify({ ...data, signature, generatedAt: new Date().toISOString() }, null, 2) + '\n'
-    )
-}
 async function runRetirementSync(
   app: App,
   generated: GenerateResult,
   retirements: Retirements,
-  createApp: (cwd: string, file: string) => Promise<App>
+  createApp: (cwd: string, file: string, options: { unverifiedSnapshot: boolean }) => Promise<App>
 ) {
   const root = path.resolve(app.cwd, '..')
   const staged = await stageWorkspace(
@@ -42,7 +22,10 @@ async function runRetirementSync(
     app.configFile ?? path.join(app.cwd, 'figma.config.json')
   )
   try {
-    const stagedApp = await createApp(path.dirname(staged.configFile), staged.configFile)
+    // The stage copies a cache verified before staging but not its lock, so the copy is read unverified.
+    const stagedApp = await createApp(path.dirname(staged.configFile), staged.configFile, {
+      unverifiedSnapshot: true
+    })
     stagedApp.config.outDir = path.join(staged.stagedDir, 'figma/review/src/generated')
     stagedApp.config.snapshotDir = path.join(staged.stagedDir, 'figma/figma-snapshot')
     const retired = await applyRetirements(staged.stagedDir, retirements)
@@ -53,13 +36,6 @@ async function runRetirementSync(
     await writeFiles(stagedApp.resolveOutDir(), generated.files)
     const catalog = path.join(staged.stagedDir, 'figma/review/src/review/catalog.json')
     if ((await readIfExists(catalog)) !== undefined) await writeReviewManifest(stagedApp)
-    await refreshEvidence(staged.stagedDir)
-    if (
-      (await readIfExists(
-        path.join(staged.stagedDir, 'figma/review/src/review/promotion.json')
-      )) !== undefined
-    )
-      await writePromotionManifest(stagedApp)
     const pending = await pendingRetirements(staged.stagedDir, retirements)
     if (pending.length) throw new Error(`Retirements remain pending: ${pending.join(', ')}`)
     // Upstream compares against a materialized release-base commit (120e8f1, not imported: the library is

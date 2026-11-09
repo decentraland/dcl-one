@@ -1004,13 +1004,48 @@ pub(crate) fn parse_world_scenes(body: &Value) -> Vec<WorldScene> {
         .collect()
 }
 
+/// The page size `GET /world/{name}/scenes` caps at.
+const WORLD_SCENES_PAGE: usize = 100;
+
+/// `url` for the world scenes page starting at `offset`.
+pub(crate) fn world_scenes_page_url(url: &str, offset: usize) -> String {
+    format!("{url}?limit={WORLD_SCENES_PAGE}&offset={offset}")
+}
+
+/// Every page of a world scenes list as one `{scenes, total}` body: pages are
+/// read until `total` (a server without one answers in a single page).
+pub(crate) async fn all_world_scene_pages<E, F, Fut>(mut page: F) -> std::result::Result<Value, E>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<Value, E>>,
+{
+    let mut scenes: Vec<Value> = Vec::new();
+    loop {
+        let body = page(scenes.len()).await?;
+        let batch = body
+            .get("scenes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let empty = batch.is_empty();
+        scenes.extend(batch);
+        let total = body
+            .get("total")
+            .and_then(Value::as_u64)
+            .map_or(scenes.len(), |t| t as usize);
+        if empty || scenes.len() >= total {
+            return Ok(json!({ "scenes": scenes, "total": scenes.len() }));
+        }
+    }
+}
+
 async fn fetch_world_scenes(target: &str, world: &str) -> Result<Vec<WorldScene>> {
     let url = format!("{target}/world/{}/scenes", encode_segment(world));
-    let body = get_json(
-        &probe_client()?,
-        &url,
-        "parsing the world scenes list".to_string(),
-    )
+    let client = probe_client()?;
+    let body = all_world_scene_pages(|offset| {
+        let (client, url) = (&client, world_scenes_page_url(&url, offset));
+        async move { get_json(client, &url, "parsing the world scenes list".to_string()).await }
+    })
     .await?;
     Ok(parse_world_scenes(&body))
 }
@@ -1545,24 +1580,35 @@ fn parse_available(body: &str) -> Vec<String> {
 }
 
 /// The files that travel, and the split: a file whose hash the server
-/// holds is left out of the request. Borrowed when nothing stays, so the
-/// common case copies no bytes.
+/// holds is left out of the request, and each remaining hash travels once —
+/// the server refuses a form that names a part twice, and byte-identical
+/// paths share one hash. The entity still lists every path; the tally counts
+/// hashes, so its upload side is what travels. Borrowed when nothing is left
+/// out, so the common case copies no bytes.
 pub(crate) fn split_stored<'a>(
     files: &'a Files,
     have: &HashSet<String>,
 ) -> (Cow<'a, Files>, Reuse) {
+    let mut tallied = HashSet::new();
     let reuse = Reuse::tally(
         files
             .iter()
+            .filter(|(_, h, _)| tallied.insert(h.as_str()))
             .map(|(_, h, b)| (have.contains(h), b.len() as u64)),
     );
-    if reuse.reused_files == 0 {
+    let mut seen = HashSet::new();
+    let travels: Vec<bool> = files
+        .iter()
+        .map(|(_, hash, _)| !have.contains(hash) && seen.insert(hash.as_str()))
+        .collect();
+    if travels.iter().all(|t| *t) {
         return (Cow::Borrowed(files), reuse);
     }
     let send: Vec<(String, String, Vec<u8>)> = files
         .iter()
-        .filter(|(_, hash, _)| !have.contains(hash))
-        .cloned()
+        .zip(&travels)
+        .filter(|(_, t)| **t)
+        .map(|(f, _)| f.clone())
         .collect();
     (Cow::Owned(send), reuse)
 }
@@ -1896,6 +1942,40 @@ pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn world_scenes_are_read_page_by_page_up_to_the_total() {
+        let total = 250;
+        let mut offsets = Vec::new();
+        let body = all_world_scene_pages(|offset| {
+            offsets.push(offset);
+            let scenes: Vec<Value> = (offset..total.min(offset + WORLD_SCENES_PAGE))
+                .map(|i| json!({ "parcels": [format!("{i},0")] }))
+                .collect();
+            async move { Ok::<_, ()>(json!({ "scenes": scenes, "total": total })) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(offsets, vec![0, 100, 200]);
+        assert_eq!(parse_world_scenes(&body).len(), total);
+        assert_eq!(
+            world_scenes_page_url("https://w/world/a.dcl.eth/scenes", 200),
+            "https://w/world/a.dcl.eth/scenes?limit=100&offset=200"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_world_scenes_body_without_a_total_is_one_page() {
+        let mut calls = 0;
+        let body = all_world_scene_pages(|_| {
+            calls += 1;
+            async { Ok::<_, ()>(json!({ "scenes": [{ "parcels": ["0,0"] }] })) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(parse_world_scenes(&body).len(), 1);
+    }
+
     #[test]
     fn upload_headlines_name_the_scene_destination() {
         let world = |multi_scene| UploadDestination::World {
@@ -2021,7 +2101,8 @@ mod tests {
     /// is removed so it cannot route a deploy again.
     #[test]
     fn a_leftover_remembered_target_is_removed() {
-        let root = std::env::temp_dir().join(format!("dcl-scene-cli-forget-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("dcl-scene-cli-forget-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".dcl-one")).unwrap();
         let file = root.join(".dcl-one").join("deploy-target");
@@ -2358,6 +2439,63 @@ mod tests {
         let progress = UploadProgress::default();
         progress.begin(2, &send, reuse);
         assert_eq!(progress.snapshot().reuse, None, "nothing stayed home");
+    }
+
+    /// Byte-identical paths share a hash: the form carries it once, while
+    /// the entity still maps both paths to it.
+    #[test]
+    fn identical_files_travel_once_and_the_entity_keeps_both_paths() {
+        let bytes = b"same texture".to_vec();
+        let hash = dcl_auth::hash_bytes_v1(&bytes);
+        let other = b"other".to_vec();
+        let other_hash = dcl_auth::hash_bytes_v1(&other);
+        let files: Vec<(String, String, Vec<u8>)> = vec![
+            ("a.png".into(), hash.clone(), bytes.clone()),
+            ("copy/a.png".into(), hash.clone(), bytes.clone()),
+            ("b.bin".into(), other_hash.clone(), other.clone()),
+        ];
+        for have in [HashSet::new(), HashSet::from([other_hash.clone()])] {
+            let (send, reuse) = split_stored(&files, &have);
+            // The tally counts what travels, one per hash.
+            assert_eq!(reuse.upload_files, send.len(), "{have:?}");
+            assert_eq!(reuse.upload_bytes, payload_len(0, &send), "{have:?}");
+            assert_eq!(reuse.reused_files + reuse.upload_files, 2, "{have:?}");
+            let sent: Vec<&str> = send.iter().map(|(_, h, _)| h.as_str()).collect();
+            let mut unique = sent.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(sent.len(), unique.len(), "{sent:?}");
+            assert_eq!(sent.iter().filter(|h| **h == hash).count(), 1);
+            let (_, wire) = signed_parts(&send);
+            let text = String::from_utf8_lossy(&wire);
+            let part = format!("name=\"{hash}\"; filename=\"{hash}\"");
+            assert_eq!(
+                text.matches(&part).count(),
+                1,
+                "the shared hash travels once"
+            );
+        }
+        let prepared = crate::deploy::Prepared {
+            files: files.clone(),
+            pointers: vec!["0,0".into()],
+            metadata: dcl_scene_authoring::jsjson::JsValue::Object(vec![]),
+        };
+        let (_, entity) = crate::deploy::build_entity(&prepared, 1).unwrap();
+        let entity: Value = serde_json::from_slice(&entity).unwrap();
+        let content: Vec<(&str, &str)> = entity["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["file"].as_str().unwrap(), c["hash"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            content,
+            vec![
+                ("a.png", hash.as_str()),
+                ("copy/a.png", hash.as_str()),
+                ("b.bin", other_hash.as_str()),
+            ]
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { emptyRetirements, retirementsSchema, type Retirements } from './guard/retirements.js'
 import { sourceRetirements } from './retirement-selection.js'
 
-// Keyless by construction: the tool works on the one file FIGMA_FILE_KEY names, so retirements carry no
+// Keyless by construction: the tool works on the one file figma-design-system captures, so retirements carry no
 // file key and are never checked against one.
 describe('when loading retirement identities', () => {
   const records: Retirements = {

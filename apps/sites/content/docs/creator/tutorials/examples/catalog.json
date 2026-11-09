@@ -1,0 +1,2048 @@
+{
+	"schemaVersion": 2,
+	"categories": [
+		{
+			"id": "getting-started",
+			"name": "Start here",
+			"description": "Core SDK7 references and starting points for new scenes.",
+			"order": 1
+		},
+		{
+			"id": "published-games",
+			"name": "Published Games",
+			"description": "Released Decentraland scenes that demonstrate real-world mechanics.",
+			"order": 2
+		},
+		{
+			"id": "gameplay-interaction",
+			"name": "Gameplay and interaction",
+			"description": "Core gameplay mechanics and player interactions.",
+			"order": 3
+		},
+		{
+			"id": "ui-camera-player",
+			"name": "UI, camera, and player experience",
+			"description": "Interface, camera, and player-facing systems.",
+			"order": 4
+		},
+		{
+			"id": "multiplayer-data-services",
+			"name": "Multiplayer",
+			"description": "Multiplayer patterns and server-owned shared state.",
+			"order": 5
+		},
+		{
+			"id": "external-services",
+			"name": "External services",
+			"description": "Connecting scenes to external APIs, data sources, and third-party servers.",
+			"order": 6
+		},
+		{
+			"id": "audio-video-environment",
+			"name": "Audio, video, and environment",
+			"description": "Media, lighting, and environment controls.",
+			"order": 7
+		},
+		{
+			"id": "performance-scene-systems",
+			"name": "Performance and scene systems",
+			"description": "Asset loading and scene-level systems.",
+			"order": 8
+		},
+		{
+			"id": "scene-management-feedback",
+			"name": "Scene management and feedback",
+			"description": "Tools for managing scenes and collecting player feedback.",
+			"order": 9
+		},
+		{
+			"id": "rewards",
+			"name": "Rewards",
+			"description": "Scenes that give players wearables through Decentraland Rewards campaigns.",
+			"order": 10
+		}
+	],
+	"examples": [
+		{
+			"id": "shroom-zoom",
+			"name": "Shroom Zoom",
+			"description": "Platforming with trigger-activated bounce raycasts, player impulses, and collectible sprites that follow or orbit their owner.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"platformer",
+				"collectibles",
+				"triggers",
+				"raycast",
+				"physics",
+				"animation",
+				"sprites"
+			],
+			"developer": "CanessaDCL",
+			"maintainer": "CanessaDCL",
+			"maintenance": "community",
+			"source": "https://github.com/CanessaDCL/dcl-shroomzoom",
+			"realm": "shroomzoom.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Combine a nearby trigger with a precise contact check",
+					"description": "BounceTrigger callbacks enable raycasting while the player is inside a trigger and remove that system on exit. The raycast and bounce logic check downward hits against the configured mushroom entity and apply a player impulse near its surface.",
+					"context": "Read it alongside BounceZoom or BounceRegular for the scene's trigger dimensions and impulse settings.",
+					"tags": [
+						"triggers",
+						"collisions"
+					],
+					"references": [
+						{
+							"label": "BounceTrigger callbacks",
+							"url": "https://github.com/CanessaDCL/dcl-shroomzoom/blob/042968e3c13b5d1093d2922d5713570ad4cb0284/src/bounce/class.bounce.ts#L75-L101"
+						},
+						{
+							"label": "The raycast and bounce logic",
+							"url": "https://github.com/CanessaDCL/dcl-shroomzoom/blob/042968e3c13b5d1093d2922d5713570ad4cb0284/src/bounce/class.bounce.ts#L103-L164"
+						}
+					]
+				},
+				{
+					"title": "Turn collected items into an animated entourage",
+					"description": "Follower target helpers calculate offsets around the player and positions around an orbit. followSpritesSystem interpolates each sprite toward its target, switching to orbiting when the collection is complete and rotating sprites toward their owner.",
+					"context": "The scene's collection sets, follower entities, and per-player orbit timestamps supply the state for this visual behavior.",
+					"tags": [
+						"animation",
+						"movement"
+					],
+					"references": [
+						{
+							"label": "Follower target helpers",
+							"url": "https://github.com/CanessaDCL/dcl-shroomzoom/blob/042968e3c13b5d1093d2922d5713570ad4cb0284/src/spriteFollowers.ts#L400-L437"
+						},
+						{
+							"label": "followSpritesSystem",
+							"url": "https://github.com/CanessaDCL/dcl-shroomzoom/blob/042968e3c13b5d1093d2922d5713570ad4cb0284/src/spriteFollowers.ts#L678-L706"
+						}
+					]
+				}
+			],
+			"page": "./published-games/shroom-zoom.md",
+			"fileName": "published-games/shroom-zoom.md"
+		},
+		{
+			"id": "goal-legends",
+			"name": "Goal Legends",
+			"description": "Multiplayer penalty shootouts with server-run matches, persistent leaderboards, phase-driven cameras, and synchronized ball animations.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer",
+				"multiplayer-server",
+				"storage",
+				"leaderboard",
+				"camera",
+				"animation"
+			],
+			"developer": "carlosmu",
+			"maintainer": "carlosmu",
+			"maintenance": "community",
+			"source": "https://github.com/carlosmu/goal-legends-arena",
+			"realm": "goallegends.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "Apache-2.0 notice",
+				"url": "https://github.com/carlosmu/goal-legends-arena/blob/master/LICENCE"
+			},
+			"highlights": [
+				{
+					"title": "Switch cameras with match phases",
+					"description": "`initGameplayCamera` selects gameplay, winner, or standard cameras from the client match snapshot. The winner camera orbits a pivot, while spectators can choose a free camera during play.",
+					"context": "Follow this alongside `clientSnapshot`, the `GameState` enum, and the named scene camera pivot.",
+					"tags": [
+						"camera",
+						"game-state"
+					],
+					"references": [
+						{
+							"label": "`initGameplayCamera`",
+							"url": "https://github.com/carlosmu/goal-legends-arena/blob/5d42bba8f10ac2c3103a4e5804541c693e8528b3/src/client/gameplayCamera.ts#L109-L165"
+						}
+					]
+				},
+				{
+					"title": "Coordinate a prop animation with the game state",
+					"description": "`tickAnimationManager` starts a ball clip when the phase changes, chooses goal/save animations from the shot direction, and briefly hides the prop while changing clips. This path is specific to the bot kicker; human kickers carry the ball in their emotes.",
+					"context": "It depends on the scene's ball model and named animation clips.",
+					"tags": [
+						"animation",
+						"game-state"
+					],
+					"references": [
+						{
+							"label": "`tickAnimationManager`",
+							"url": "https://github.com/carlosmu/goal-legends-arena/blob/5d42bba8f10ac2c3103a4e5804541c693e8528b3/src/client/animationManager.ts#L78-L114"
+						}
+					]
+				}
+			],
+			"page": "./published-games/goal-legends.md",
+			"fileName": "published-games/goal-legends.md"
+		},
+		{
+			"id": "monster-recon",
+			"name": "Monster Recon",
+			"description": "Memory matching followed by trigger-based monster chases, with collectible progression, leaderboards, and custom bitmap text.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"collection",
+				"leaderboard",
+				"triggers",
+				"ui",
+				"sprites",
+				"animation"
+			],
+			"developer": "carlosmu",
+			"maintainer": "carlosmu",
+			"maintenance": "community",
+			"source": "https://github.com/carlosmu/dcl-monster-recon",
+			"realm": "monsterrecon.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Build a chase from scene markers and trigger areas",
+					"description": "`spawnHop` combines a bobbing tween, spherical trigger, sound, and billboard sprite at a selected marker. The catch handler checks that the entering entity is the local player before cleaning up and calling the reward callback.",
+					"context": "Read this with the marker names, sprite atlas, and callbacks supplied to `startPrizeChase`.",
+					"tags": [
+						"triggers",
+						"ai"
+					],
+					"references": [
+						{
+							"label": "`spawnHop`",
+							"url": "https://github.com/carlosmu/dcl-monster-recon/blob/eb0bc6fa87b9ebf98c8c068ebb9bba686a9467cb/src/prizeChase.ts#L216-L271"
+						},
+						{
+							"label": "catch handler",
+							"url": "https://github.com/carlosmu/dcl-monster-recon/blob/eb0bc6fa87b9ebf98c8c068ebb9bba686a9467cb/src/prizeChase.ts#L183-L214"
+						}
+					]
+				},
+				{
+					"title": "Render custom bitmap text in ReactEcs",
+					"description": "`BitmapTextLine` lays out individual glyph images using atlas UVs, glyph offsets, and kerning. The preceding measurement and wrapping helpers break text into lines by measured width.",
+					"context": "The renderer needs matching bitmap-font metrics and texture assets.",
+					"tags": [
+						"ui",
+						"text"
+					],
+					"references": [
+						{
+							"label": "`BitmapTextLine`",
+							"url": "https://github.com/carlosmu/dcl-monster-recon/blob/eb0bc6fa87b9ebf98c8c068ebb9bba686a9467cb/src/bitmapFont.tsx#L268-L327"
+						},
+						{
+							"label": "measurement and wrapping helpers",
+							"url": "https://github.com/carlosmu/dcl-monster-recon/blob/eb0bc6fa87b9ebf98c8c068ebb9bba686a9467cb/src/bitmapFont.tsx#L229-L266"
+						}
+					]
+				}
+			],
+			"page": "./published-games/monster-recon.md",
+			"fileName": "published-games/monster-recon.md"
+		},
+		{
+			"id": "prime-drive",
+			"name": "Prime Drive",
+			"description": "Three-lane racing with recycled scenery, distance-based record ghosts, and persistent leaderboard data.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer-server",
+				"leaderboard",
+				"storage",
+				"movement",
+				"performance"
+			],
+			"developer": "carlosmu",
+			"maintainer": "carlosmu",
+			"maintenance": "community",
+			"source": "https://github.com/carlosmu/dcl-prime-drive",
+			"realm": "primedrive.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Create a long race with recycled scenery",
+					"description": "`setWorldOffset` and `scrollTrack` move a shared world root sideways for lane changes and wrap road decorations back ahead after they pass the player. The bike stays in place while the scenery supplies the sense of movement.",
+					"context": "Read the ring builders and shared `TRACK`/`SPAWN` settings to understand spacing and wrap distances.",
+					"tags": [
+						"object-pooling",
+						"racing"
+					],
+					"references": [
+						{
+							"label": "`setWorldOffset` and `scrollTrack`",
+							"url": "https://github.com/carlosmu/dcl-prime-drive/blob/d3767141bc39ccef031e56ff9640592ecb349645/src/client/game/track.ts#L43-L92"
+						}
+					]
+				},
+				{
+					"title": "Show record ghosts relative to the player",
+					"description": "`updateGhosts` places ghost bikes from their distance gap, hides ghosts outside the viewing range, and smoothly moves them into lanes away from the player.",
+					"context": "This module consumes `GhostRunView` data; it displays supplied progress and does not itself record a replay.",
+					"tags": [
+						"replays",
+						"movement"
+					],
+					"references": [
+						{
+							"label": "`updateGhosts`",
+							"url": "https://github.com/carlosmu/dcl-prime-drive/blob/d3767141bc39ccef031e56ff9640592ecb349645/src/client/game/ghost.ts#L129-L183"
+						}
+					]
+				}
+			],
+			"page": "./published-games/prime-drive.md",
+			"fileName": "published-games/prime-drive.md"
+		},
+		{
+			"id": "the-fortune-teller",
+			"name": "The Fortune Teller",
+			"description": "Social fortune-telling with explicit conversation-state transitions and a pivot-based cinematic camera rig.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"social",
+				"multiplayer",
+				"dialogue",
+				"camera",
+				"cinematic"
+			],
+			"developer": "carlosmu",
+			"maintainer": "carlosmu",
+			"maintenance": "community",
+			"source": "https://github.com/carlosmu/circus_fortune_teller",
+			"realm": "fortunes.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Represent a reading as explicit state transitions",
+					"description": "The fortune state machine lists allowed steps from category and deck selection through the reveal. `tryTransition` checks the next step, updates the session, and notifies state-entry listeners.",
+					"context": "Read it with the session types and action handlers to see how a multi-step interaction is organized.",
+					"tags": [
+						"state-machine",
+						"dialogue"
+					],
+					"references": [
+						{
+							"label": "fortune state machine",
+							"url": "https://github.com/carlosmu/circus_fortune_teller/blob/f8db0c5630a03208d328a96737224e1293df60c7/src/fortuneFsm/machine.ts#L6-L60"
+						}
+					]
+				},
+				{
+					"title": "Build a camera rig around a scene object",
+					"description": "`ensureHostPivotRig` and `startHostCinematicCamera` parent a virtual camera to a pivot under the table, choose starting and ending angles from the player's side, and activate the camera.",
+					"context": "The rig depends on the table entity, configuration values, and update system in this module; those pieces explain how to frame an interaction in its scene context.",
+					"tags": [
+						"camera",
+						"transforms"
+					],
+					"references": [
+						{
+							"label": "`ensureHostPivotRig` and `startHostCinematicCamera`",
+							"url": "https://github.com/carlosmu/circus_fortune_teller/blob/f8db0c5630a03208d328a96737224e1293df60c7/src/cinematicCamera.ts#L141-L197"
+						}
+					]
+				}
+			],
+			"page": "./published-games/the-fortune-teller.md",
+			"fileName": "published-games/the-fortune-teller.md"
+		},
+		{
+			"id": "clean-the-club",
+			"name": "Clean The Club",
+			"description": "Cooperative nightclub cleanup with shared component polling and avatar-attached props that reflect carried items.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer",
+				"timed-rounds",
+				"avatars",
+				"performance",
+				"interaction"
+			],
+			"developer": "CleanTheClub",
+			"maintainer": "CleanTheClub",
+			"maintenance": "community",
+			"source": "https://github.com/CleanTheClub/CleanTheClub",
+			"realm": "cleantheclub.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "Apache-2.0",
+				"url": "https://github.com/CleanTheClub/CleanTheClub/blob/main/LICENSE"
+			},
+			"highlights": [
+				{
+					"title": "Share one component scan across several systems",
+					"description": "onClutterPoll gathers ClutterSync entries once per polling interval, builds an item-ID lookup, and passes the same snapshot to subscribers. Each consumer can do its own filtering and change detection.",
+					"context": "This is useful for studying how to avoid repeated ECS scans; it depends on the shared schema and phase-gate polling interval, and subscriptions belong in client initialization.",
+					"tags": [
+						"ecs",
+						"performance"
+					],
+					"references": [
+						{
+							"label": "onClutterPoll",
+							"url": "https://github.com/CleanTheClub/CleanTheClub/blob/8ffc6c1fa24ff0da22a1d82ecdf2f9ce72f47f73/src/client/clutterWatcher.ts#L15-L54"
+						}
+					]
+				},
+				{
+					"title": "Show another player's carried equipment",
+					"description": "updateRemoteCarry attaches a prop hierarchy to the other avatar's left hand, selects a model from the current gear or hauling state, and scales the bag by its fill fraction. It also removes the hierarchy when there is nothing to display.",
+					"context": "Read this with the carry message handlers, theme model lookup, and model-fit offsets: those provide the state and asset-specific positioning.",
+					"tags": [
+						"multiplayer",
+						"avatars"
+					],
+					"references": [
+						{
+							"label": "updateRemoteCarry",
+							"url": "https://github.com/CleanTheClub/CleanTheClub/blob/8ffc6c1fa24ff0da22a1d82ecdf2f9ce72f47f73/src/client/carrySystem.ts#L805-L846"
+						}
+					]
+				}
+			],
+			"page": "./published-games/clean-the-club.md",
+			"fileName": "published-games/clean-the-club.md"
+		},
+		{
+			"id": "astro-crew",
+			"name": "Astro Crew",
+			"description": "Cooperative spaceship combat with server-owned game state, persistent progression, turret cameras, and screen-edge objective markers.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer",
+				"multiplayer-server",
+				"progression",
+				"leaderboard",
+				"storage",
+				"camera",
+				"ui",
+				"combat"
+			],
+			"developer": "DansStuff",
+			"maintainer": "DansStuff",
+			"maintenance": "community",
+			"source": "https://github.com/DansStuff/AstroCrew",
+			"realm": "astrocrew.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Point players toward off-screen objectives",
+					"description": "edgePositionForBreach projects a breach direction onto the camera's horizontal axes, finds an edge of a rectangle, and clamps the icon inside the screen using the canvas aspect ratio. BreachIcon connects that position to a pulsing ReactEcs marker.",
+					"context": "Read it with the scene's breach positions, active-breach state, and UI constants.",
+					"tags": [
+						"ui",
+						"navigation"
+					],
+					"references": [
+						{
+							"label": "edgePositionForBreach",
+							"url": "https://github.com/DansStuff/AstroCrew/blob/dbe11b05be2a753b27b6d5dd866d0554ff73344f/src/ui/breachIcons.tsx#L27-L76"
+						},
+						{
+							"label": "BreachIcon",
+							"url": "https://github.com/DansStuff/AstroCrew/blob/dbe11b05be2a753b27b6d5dd866d0554ff73344f/src/ui/breachIcons.tsx#L78-L107"
+						}
+					]
+				},
+				{
+					"title": "Add camera shake that returns to the original pose",
+					"description": "shakeEntity records a base transform and combines overlapping shakes using intensity and remaining duration. CameraShakeSystem applies diminishing position and rotation offsets, then restores the base pose and removes the component.",
+					"context": "The effect uses the project's amplitude constants and must be registered as an ECS system.",
+					"tags": [
+						"camera",
+						"animation"
+					],
+					"references": [
+						{
+							"label": "shakeEntity",
+							"url": "https://github.com/DansStuff/AstroCrew/blob/dbe11b05be2a753b27b6d5dd866d0554ff73344f/src/effects/cameraShake.ts#L13-L47"
+						},
+						{
+							"label": "CameraShakeSystem",
+							"url": "https://github.com/DansStuff/AstroCrew/blob/dbe11b05be2a753b27b6d5dd866d0554ff73344f/src/effects/cameraShake.ts#L87-L121"
+						}
+					]
+				}
+			],
+			"page": "./published-games/astro-crew.md",
+			"fileName": "published-games/astro-crew.md"
+		},
+		{
+			"id": "cozy-farm",
+			"name": "Cozy Farm",
+			"description": "A social farming game with timed crop-growth stages, fertilizer modifiers, and repeated farms built from one entity hierarchy.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"social",
+				"progression",
+				"assets",
+				"scene"
+			],
+			"developer": "dcl-regenesislabs",
+			"maintainer": "dcl-regenesislabs",
+			"maintenance": "decentraland",
+			"source": "https://github.com/dcl-regenesislabs/cozy-farm",
+			"realm": "cozyfarm.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Turn elapsed time into crop growth stages",
+					"description": "`growthSystem` derives progress from a planting timestamp, adjusts the duration for tutorial crops and fertilizer, and swaps models only when a stage changes.",
+					"context": "Follow it alongside `PlotState`, `CROP_DATA`, and the model helpers in `game/actions` to see how simulation state drives visual feedback.",
+					"tags": [
+						"timing",
+						"game-state"
+					],
+					"references": [
+						{
+							"label": "`growthSystem`",
+							"url": "https://github.com/dcl-regenesislabs/cozy-farm/blob/440805a68d4d93a665c42cf17830735804b54a71/src/systems/growthSystem.ts#L62-L142"
+						}
+					]
+				},
+				{
+					"title": "Build multiple farms from one entity hierarchy",
+					"description": "`cloneEntityTree` recursively recreates a template's children, preserves local transforms, copies selected rendering components, and records each clone by name. This shows how repeated areas can share an authored layout.",
+					"context": "The helper expects the scene's child map and copies an explicit component list, so new component types need deliberate handling.",
+					"tags": [
+						"ecs",
+						"transforms"
+					],
+					"references": [
+						{
+							"label": "`cloneEntityTree`",
+							"url": "https://github.com/dcl-regenesislabs/cozy-farm/blob/440805a68d4d93a665c42cf17830735804b54a71/src/systems/farmInstances.ts#L127-L168"
+						}
+					]
+				}
+			],
+			"page": "./published-games/cozy-farm.md",
+			"fileName": "published-games/cozy-farm.md"
+		},
+		{
+			"id": "dead-surge",
+			"name": "Dead Surge",
+			"description": "Zombie survival with weapon progression, pooled reward text, and local enemy steering around other zombies and obstacles.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"combat",
+				"progression",
+				"movement",
+				"ui",
+				"performance"
+			],
+			"developer": "dcl-regenesislabs",
+			"maintainer": "dcl-regenesislabs",
+			"maintenance": "decentraland",
+			"source": "https://github.com/dcl-regenesislabs/dead-surge",
+			"realm": "deadsurge.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Reuse entities for floating reward text",
+					"description": "`spawnZcRewardTextAtPosition` and its pool initializer cycle through a fixed set of text entities. The `rewardTextSystem` makes them rise, face the camera, and fade before hiding them for reuse.",
+					"context": "Read the scene's `RewardTextComponent` and game-time updates with these functions to understand their lifetime tracking.",
+					"tags": [
+						"object-pooling",
+						"ui"
+					],
+					"references": [
+						{
+							"label": "`spawnZcRewardTextAtPosition` and its pool initializer",
+							"url": "https://github.com/dcl-regenesislabs/dead-surge/blob/4e967ba0590e0cdf7d6550ebbf56ea3b246a36dd/src/zombie.ts#L592-L640"
+						},
+						{
+							"label": "`rewardTextSystem`",
+							"url": "https://github.com/dcl-regenesislabs/dead-surge/blob/4e967ba0590e0cdf7d6550ebbf56ea3b246a36dd/src/zombie.ts#L815-L850"
+						}
+					]
+				},
+				{
+					"title": "Steer enemies around each other and simple obstacles",
+					"description": "`getZombieSeparationDirection` combines repulsion from nearby zombies. `resolveZombieMovePosition` tries the desired direction, a fallback, and individual movement axes against circular brick obstacles.",
+					"context": "This illustrates local steering; the behavior depends on the scene's movement entries, obstacle positions, and radius constants.",
+					"tags": [
+						"ai",
+						"movement"
+					],
+					"references": [
+						{
+							"label": "`getZombieSeparationDirection`",
+							"url": "https://github.com/dcl-regenesislabs/dead-surge/blob/4e967ba0590e0cdf7d6550ebbf56ea3b246a36dd/src/zombie.ts#L868-L896"
+						},
+						{
+							"label": "`resolveZombieMovePosition`",
+							"url": "https://github.com/dcl-regenesislabs/dead-surge/blob/4e967ba0590e0cdf7d6550ebbf56ea3b246a36dd/src/zombie.ts#L898-L939"
+						}
+					]
+				}
+			],
+			"page": "./published-games/dead-surge.md",
+			"fileName": "published-games/dead-surge.md"
+		},
+		{
+			"id": "kick-off",
+			"name": "Kick Off",
+			"description": "A World Cup prediction scene with charged ball kicks, immediate local motion feedback, and responsive schedule panels.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"seasonal",
+				"input",
+				"multiplayer",
+				"ui"
+			],
+			"developer": "dcl-regenesislabs",
+			"maintainer": "dcl-regenesislabs",
+			"maintenance": "decentraland",
+			"source": "https://github.com/dcl-regenesislabs/kickoff-2026",
+			"realm": "kickoff.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Connect a charged kick to immediate visual feedback",
+					"description": "The charge-and-release loop combines keyboard and mobile input, grows and recolors a charge bar, sends a kick message, and starts local ball motion. `releaseOptimistic` initializes that motion.",
+					"context": "Study it with the project's `prodeNet` room and ball message handlers to understand the relationship between input, feedback, and multiplayer messages.",
+					"tags": [
+						"input",
+						"feedback"
+					],
+					"references": [
+						{
+							"label": "charge-and-release loop",
+							"url": "https://github.com/dcl-regenesislabs/kickoff-2026/blob/1813434548c1c56d9eec46575cc001d2bbdcebfd/client/ball.ts#L491-L536"
+						},
+						{
+							"label": "`releaseOptimistic`",
+							"url": "https://github.com/dcl-regenesislabs/kickoff-2026/blob/1813434548c1c56d9eec46575cc001d2bbdcebfd/client/ball.ts#L155-L178"
+						}
+					]
+				},
+				{
+					"title": "Scale UI from a reference canvas",
+					"description": "`layoutScale` reads `UiCanvasInformation`, compares both dimensions with a 1920×1080 design space, clamps the result, and applies an additional mobile factor.",
+					"context": "It is a compact example of a shared layout helper; the limits and mobile factor are tuned for this project's panels.",
+					"tags": [
+						"ui",
+						"responsive-layout"
+					],
+					"references": [
+						{
+							"label": "`layoutScale`",
+							"url": "https://github.com/dcl-regenesislabs/kickoff-2026/blob/1813434548c1c56d9eec46575cc001d2bbdcebfd/schedule/responsive.ts#L1-L21"
+						}
+					]
+				}
+			],
+			"page": "./published-games/kick-off.md",
+			"fileName": "published-games/kick-off.md"
+		},
+		{
+			"id": "my-dear-pet",
+			"name": "My Dear Pet",
+			"description": "Pet collecting with acceleration and braking for movement, plus phase-offset animation of editor-placed eggs.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"collection",
+				"movement",
+				"animation"
+			],
+			"developer": "dcl-regenesislabs",
+			"maintainer": "dcl-regenesislabs",
+			"maintenance": "decentraland",
+			"source": "https://github.com/dcl-regenesislabs/marsh-colony",
+			"realm": "marshcolony.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Give moving pets acceleration and braking",
+					"description": "`petMotionStep` keeps a speed per entity, limits the target speed using the remaining stopping distance, and returns a frame-sized movement step. The caller still supplies the route and updates the transform.",
+					"context": "Read the arrival-distance, acceleration, and braking values in `shared/config` alongside this helper when studying its movement feel.",
+					"tags": [
+						"movement",
+						"animation"
+					],
+					"references": [
+						{
+							"label": "`petMotionStep`",
+							"url": "https://github.com/dcl-regenesislabs/marsh-colony/blob/55dea4d3e13b3d821aa20bd277fbc4e0bc920b6f/src/client/petMotion.ts#L9-L35"
+						}
+					]
+				},
+				{
+					"title": "Animate editor-placed props with different phases",
+					"description": "`setupEggShake` finds named egg entities, remembers their original rotations, and applies a small sine-wave rotation with a different phase for each egg. This adds variation while retaining each prop's authored orientation.",
+					"context": "It depends on the egg names generated from the Creator Hub scene.",
+					"tags": [
+						"animation",
+						"scene-editor"
+					],
+					"references": [
+						{
+							"label": "`setupEggShake`",
+							"url": "https://github.com/dcl-regenesislabs/marsh-colony/blob/55dea4d3e13b3d821aa20bd277fbc4e0bc920b6f/src/client/eggShake.ts#L29-L53"
+						}
+					]
+				}
+			],
+			"page": "./published-games/my-dear-pet.md",
+			"fileName": "published-games/my-dear-pet.md"
+		},
+		{
+			"id": "tower-of-madness",
+			"name": "Tower of Madness",
+			"description": "Timed platforming through changing tower sections, with asset preloading and a skippable camera tour of the level.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"platformer",
+				"timed-rounds",
+				"loading",
+				"assets",
+				"camera",
+				"cinematic"
+			],
+			"developer": "dcl-regenesislabs",
+			"maintainer": "dcl-regenesislabs",
+			"maintenance": "decentraland",
+			"source": "https://github.com/dcl-regenesislabs/towerofmadness",
+			"realm": "towerofmadness.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Preload the pieces of a changing level",
+					"description": "`setupChunkPreload` deduplicates the chunk asset paths and creates temporary GLTF entities. A system watches their loading states, removes entities after loading completes or fails, and unregisters itself when none remain.",
+					"context": "This illustrates managing a preload lifecycle; the asset list comes from `shared/chunks` and is specific to the tower.",
+					"tags": [
+						"loading",
+						"performance"
+					],
+					"references": [
+						{
+							"label": "`setupChunkPreload`",
+							"url": "https://github.com/dcl-regenesislabs/towerofmadness/blob/be318c6f0a287c15f3771f12f629b84de6cc18af/src/chunkPreload.ts#L22-L61"
+						}
+					]
+				},
+				{
+					"title": "Build a skippable camera tour around changing geometry",
+					"description": "`playCinematic` adjusts camera keyframes around the current start and end chunks, then selects a virtual camera. The update system interpolates position and look-at targets and supports holding a button to skip.",
+					"context": "Follow the chunk lookup helpers and `skipCinematic` to see how the tour finds its anchors and returns control to the player camera.",
+					"tags": [
+						"camera",
+						"procedural-generation"
+					],
+					"references": [
+						{
+							"label": "`playCinematic`",
+							"url": "https://github.com/dcl-regenesislabs/towerofmadness/blob/be318c6f0a287c15f3771f12f629b84de6cc18af/src/cinematicCamera.ts#L110-L209"
+						},
+						{
+							"label": "update system",
+							"url": "https://github.com/dcl-regenesislabs/towerofmadness/blob/be318c6f0a287c15f3771f12f629b84de6cc18af/src/cinematicCamera.ts#L286-L334"
+						}
+					]
+				}
+			],
+			"page": "./published-games/tower-of-madness.md",
+			"fileName": "published-games/tower-of-madness.md"
+		},
+		{
+			"id": "asset-loading",
+			"name": "Asset loading",
+			"description": "Loading scene assets on demand rather than all at once.",
+			"category": "performance-scene-systems",
+			"tags": [
+				"performance",
+				"loading",
+				"assets"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/88,-12-asset-load",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./performance-scene-systems/asset-loading.md",
+			"fileName": "performance-scene-systems/asset-loading.md"
+		},
+		{
+			"id": "audio-visualization",
+			"name": "Audio visualization",
+			"description": "Using live audio data to drive visual scene behaviour.",
+			"category": "audio-video-environment",
+			"tags": [
+				"audio",
+				"visualization",
+				"effects"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/88,-10-audio-visualization",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./audio-video-environment/audio-visualization.md",
+			"fileName": "audio-video-environment/audio-visualization.md"
+		},
+		{
+			"id": "clap-to-claim-dispenser",
+			"name": "Clap-to-claim dispenser",
+			"description": "A wearable dispenser that players claim by doing the clap emote in a trigger area.",
+			"category": "rewards",
+			"tags": [
+				"rewards",
+				"wearables",
+				"triggers",
+				"emotes"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/clap-claim-dispenser",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Arm a dispenser while the player stands in front of it",
+					"description": "Each dispenser stores its campaign in a `DispenserComponent`. A sphere `TriggerArea` in front of it sets `isActive` and shows a \"clap to claim\" toast on enter, and clears both on exit.",
+					"context": "The campaign ID and dispenser key come from `ClaimConfig` in `src/modules/claiming/claimConfig.ts`.",
+					"tags": [
+						"triggers",
+						"ui"
+					],
+					"references": [
+						{
+							"label": "`createDispenserWithWearable`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/clap-claim-dispenser/src/modules/dispensers.ts#L28-L89"
+						}
+					]
+				},
+				{
+					"title": "Claim when the player plays the clap emote",
+					"description": "`initClapToClaim` watches `AvatarEmoteCommand` on the player entity. When the emote is `clap`, it waits for the animation and claims from every dispenser that is currently active.",
+					"context": "The claim request and response handling follow the same Rewards flow as the reward claim dispenser example.",
+					"tags": [
+						"emotes",
+						"rewards"
+					],
+					"references": [
+						{
+							"label": "`initClapToClaim`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/clap-claim-dispenser/src/modules/clapToClaim.ts#L6-L33"
+						}
+					]
+				}
+			],
+			"page": "./rewards/clap-to-claim-dispenser.md",
+			"fileName": "rewards/clap-to-claim-dispenser.md"
+		},
+		{
+			"id": "spreadsheet-data",
+			"name": "Data from a spreadsheet",
+			"description": "Scene content driven by a Google Sheet, updated without redeploying.",
+			"category": "external-services",
+			"tags": [
+				"api",
+				"spreadsheet",
+				"video",
+				"wearables"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/Read_Spreadsheet_Scene",
+			"license": {
+				"status": "identified",
+				"name": "Apache-2.0",
+				"url": "https://github.com/decentraland/Read_Spreadsheet_Scene/blob/main/LICENSE"
+			},
+			"highlights": [
+				{
+					"title": "Read a published Google Sheet as JSON",
+					"description": "`getSpreadsheetData` requests the sheet through the Google Visualization endpoint (`gviz/tq?tqx=out:json`), strips the `setResponse(...)` wrapper, and turns each row into an object keyed by the column headers.",
+					"context": "The sheet must be shared so anyone with the link can view it. `gid` selects the tab and `headers=1` treats the first row as column names.",
+					"tags": [
+						"api",
+						"spreadsheet"
+					],
+					"references": [
+						{
+							"label": "`getSpreadsheetData`",
+							"url": "https://github.com/decentraland/Read_Spreadsheet_Scene/blob/57bb4086aed3054d69a74f33f20f2d86c4eb9bb6/src/scheduler.ts#L1-L47"
+						}
+					]
+				},
+				{
+					"title": "Apply a row to the scene",
+					"description": "`updateFromSpreadsheet` reads one row and updates a banner `TextShape`, replaces the screen's `VideoPlayer` source, swaps the wearable shown on the dispenser, and points the dispenser's click action at the row's purchase link.",
+					"context": "Column names such as `NowPlaying`, `VideoURL`, `WearableURN`, and `BuyURL` must match the sheet headers. Entities are looked up by the names given in the Creator Hub scene.",
+					"tags": [
+						"video",
+						"wearables"
+					],
+					"references": [
+						{
+							"label": "`updateFromSpreadsheet`",
+							"url": "https://github.com/decentraland/Read_Spreadsheet_Scene/blob/57bb4086aed3054d69a74f33f20f2d86c4eb9bb6/src/index.ts#L10-L64"
+						},
+						{
+							"label": "`createWearable`",
+							"url": "https://github.com/decentraland/Read_Spreadsheet_Scene/blob/57bb4086aed3054d69a74f33f20f2d86c4eb9bb6/src/index.ts#L100-L130"
+						}
+					]
+				},
+				{
+					"title": "Cycle through rows from a Creator Hub button",
+					"description": "`main` listens for the `Next` and `Previous` actions on the `Switch Artist` entity and wraps the row index around the downloaded data.",
+					"context": "Uses `getActionEvents` from `@dcl/asset-packs`, so the actions are configured on the entity in the Creator Hub.",
+					"tags": [
+						"interaction"
+					],
+					"references": [
+						{
+							"label": "`main`",
+							"url": "https://github.com/decentraland/Read_Spreadsheet_Scene/blob/57bb4086aed3054d69a74f33f20f2d86c4eb9bb6/src/index.ts#L69-L97"
+						}
+					]
+				}
+			],
+			"page": "./external-services/spreadsheet-data.md",
+			"fileName": "external-services/spreadsheet-data.md"
+		},
+		{
+			"id": "dynamic-lights",
+			"name": "Dynamic lights",
+			"description": "Changing lights at runtime.",
+			"category": "audio-video-environment",
+			"tags": [
+				"lighting",
+				"environment",
+				"effects"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/0,4-dynamic-lights",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./audio-video-environment/dynamic-lights.md",
+			"fileName": "audio-video-environment/dynamic-lights.md"
+		},
+		{
+			"id": "input-modifier",
+			"name": "Input modifier",
+			"description": "Changing or constraining player movement input in part of a scene.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"movement",
+				"input",
+				"player"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/0,1-input-modifier",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/input-modifier.md",
+			"fileName": "gameplay-interaction/input-modifier.md"
+		},
+		{
+			"id": "material-and-texture-gallery",
+			"name": "Material and texture gallery",
+			"description": "Material, texture, and GLTF node modifier patterns.",
+			"category": "performance-scene-systems",
+			"tags": [
+				"materials",
+				"textures",
+				"rendering"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/52,-52-testing-gallery",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./performance-scene-systems/material-and-texture-gallery.md",
+			"fileName": "performance-scene-systems/material-and-texture-gallery.md"
+		},
+		{
+			"id": "mini-games-library",
+			"name": "Mini Games library",
+			"description": "Player queues, scoreboards, and supporting logic for multiplayer mini games.",
+			"category": "multiplayer-data-services",
+			"tags": [
+				"multiplayer",
+				"scoreboard",
+				"game"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk-mini-games",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./multiplayer-data-services/mini-games-library.md",
+			"fileName": "multiplayer-data-services/mini-games-library.md"
+		},
+		{
+			"id": "modifier-areas",
+			"name": "Modifier areas",
+			"description": "Applying area-specific settings such as hiding player name tags.",
+			"category": "performance-scene-systems",
+			"tags": [
+				"player",
+				"areas",
+				"modifiers"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/9,99-modifier-areas",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./performance-scene-systems/modifier-areas.md",
+			"fileName": "performance-scene-systems/modifier-areas.md"
+		},
+		{
+			"id": "authoritative-server-leaderboard",
+			"name": "Multiplayer Server leaderboard",
+			"description": "A server-owned leaderboard that validates scores, stores totals, and broadcasts rankings.",
+			"category": "multiplayer-data-services",
+			"tags": [
+				"multiplayer",
+				"leaderboard",
+				"server",
+				"storage"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/90,-9-authoritative-server-leaderboard",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./multiplayer-data-services/authoritative-server-leaderboard.md",
+			"fileName": "multiplayer-data-services/authoritative-server-leaderboard.md"
+		},
+		{
+			"id": "particle-system",
+			"name": "Particle system",
+			"description": "Fire, smoke, sparks, snow, and other particle effects.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"particles",
+				"effects",
+				"visuals"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/0,7-particle-system",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/particle-system.md",
+			"fileName": "gameplay-interaction/particle-system.md"
+		},
+		{
+			"id": "pointer-lock-control",
+			"name": "Pointer lock control",
+			"description": "Capturing mouse input for custom controls.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"input",
+				"mouse",
+				"camera"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/31,20-pointer-lock-control",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/pointer-lock-control.md",
+			"fileName": "gameplay-interaction/pointer-lock-control.md"
+		},
+		{
+			"id": "raycasting-and-collider-layers",
+			"name": "Raycasting and collider layers",
+			"description": "Pointing at scene geometry and controlling which colliders react to a raycast.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"interaction",
+				"raycast",
+				"collision"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/77,-1-raycast-unit-tests",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/raycasting-and-collider-layers.md",
+			"fileName": "gameplay-interaction/raycasting-and-collider-layers.md"
+		},
+		{
+			"id": "reward-claim-dispenser",
+			"name": "Reward claim dispenser",
+			"description": "Wearable dispensers and airdrop crates that claim rewards from a Rewards campaign.",
+			"category": "rewards",
+			"tags": [
+				"rewards",
+				"wearables",
+				"captcha",
+				"ui"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/reward-claim",
+			"license": {
+				"status": "identified",
+				"name": "Apache-2.0",
+				"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/main/reward-claim/LICENSE"
+			},
+			"highlights": [
+				{
+					"title": "Request a reward with a signed fetch",
+					"description": "`claimToken` throttles repeated clicks, skips dispensers already claimed successfully in this session, and checks that the player has a wallet. `requestToken` then posts the dispenser key, the current catalyst, and the player's address to the Rewards server using `signedFetch`.",
+					"context": "Testing is on by default (`CONFIG_CLAIM_TESTING_ENABLED` in `src/config.ts`), which uses a bundled test campaign. To use your own, replace the placeholder campaign ID and dispenser key in `ClaimConfig` and turn testing off. See the Rewards getting-started guide for creating a campaign and dispenser.",
+					"tags": [
+						"rewards",
+						"api"
+					],
+					"references": [
+						{
+							"label": "`claimToken` and `requestToken`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/dispenser/claiming/claim.ts#L26-L99"
+						},
+						{
+							"label": "`ClaimConfig`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/dispenser/claiming/claimConfig.ts#L21-L34"
+						}
+					]
+				},
+				{
+					"title": "Map Rewards responses to player feedback",
+					"description": "`processResponse` shows a different dispenser UI for unavailable campaigns, out-of-stock dispensers, rewards already assigned, and successful claims. Uninitiated, disabled, and finished campaigns share one branch, which shows a not-started or ended screen only when the campaign config sets `startDate` or `endDate`, and a generic finished screen otherwise.",
+					"context": "The UI states are defined in `dispenserUi.tsx`. Campaign start and end dates are optional fields on the campaign config.",
+					"tags": [
+						"rewards",
+						"ui"
+					],
+					"references": [
+						{
+							"label": "`processResponse`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/dispenser/claiming/claim.ts#L101-L197"
+						}
+					]
+				},
+				{
+					"title": "Retry a claim with a captcha",
+					"description": "When the Rewards server asks for a captcha, `getCaptcha` fetches a captcha image and shows it in the dispenser UI. Submitting the answer calls `claimToken` again with the captcha ID and value.",
+					"context": "Whether a captcha is required is a setting of the dispenser in the Rewards dashboard.",
+					"tags": [
+						"captcha",
+						"rewards"
+					],
+					"references": [
+						{
+							"label": "`getCaptcha`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/dispenser/claiming/claim.ts#L209-L216"
+						},
+						{
+							"label": "Captcha submit button",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/dispenser/claiming/ui/dispenserUi.tsx#L640-L643"
+						}
+					]
+				},
+				{
+					"title": "Claim from an airdropped crate",
+					"description": "`randomCrateSpawn` drops a crate with a parachute at a random point in the stage area. `DropCrate` raycasts down to find the ground and tweens the crate onto it, and clicking the crate claims the reward and makes it vanish.",
+					"context": "The crate drop is triggered by the `Activate` action of a Creator Hub lever in `main`.",
+					"tags": [
+						"rewards",
+						"raycast",
+						"animation"
+					],
+					"references": [
+						{
+							"label": "`randomCrateSpawn` and `SpawnCrate`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/crate.ts#L40-L119"
+						},
+						{
+							"label": "`DropCrate`",
+							"url": "https://github.com/decentraland/sdk7-goerli-plaza/blob/54a07775ee340f0ce22eb23280ef0e9c35f5e386/reward-claim/src/crate.ts#L142-L189"
+						}
+					]
+				}
+			],
+			"page": "./rewards/reward-claim-dispenser.md",
+			"fileName": "rewards/reward-claim-dispenser.md"
+		},
+		{
+			"id": "playtest-feedback",
+			"name": "Scene Feedback",
+			"description": "Collect player ratings and comments during play or through a feedback button, kiosk, or area, with CSV results in scene Storage.",
+			"category": "scene-management-feedback",
+			"tags": [
+				"ui",
+				"multiplayer-server",
+				"storage"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/0,-1-scene-feedback",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./scene-management-feedback/playtest-feedback.md",
+			"fileName": "scene-management-feedback/playtest-feedback.md"
+		},
+		{
+			"id": "sdk7-scene-template",
+			"name": "SDK7 scene template",
+			"description": "A clean starting point for a new TypeScript SDK7 scene.",
+			"category": "getting-started",
+			"tags": [
+				"sdk7",
+				"scene"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-scene-template",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./getting-started/sdk7-scene-template.md",
+			"fileName": "getting-started/sdk7-scene-template.md"
+		},
+		{
+			"id": "skybox-control",
+			"name": "Skybox control",
+			"description": "Updating skybox time and transition settings from scene code.",
+			"category": "audio-video-environment",
+			"tags": [
+				"skybox",
+				"environment",
+				"lighting"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/2,1-skybox-sdk-scene-a",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./audio-video-environment/skybox-control.md",
+			"fileName": "audio-video-environment/skybox-control.md"
+		},
+		{
+			"id": "spectate-mode",
+			"name": "Spectate mode",
+			"description": "A spectator-style camera and player viewing flow.",
+			"category": "ui-camera-player",
+			"tags": [
+				"camera",
+				"spectator",
+				"player"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/33,20-spectate-mode",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./ui-camera-player/spectate-mode.md",
+			"fileName": "ui-camera-player/spectate-mode.md"
+		},
+		{
+			"id": "third-party-guest-book",
+			"name": "Third-party guest book",
+			"description": "A guest book backed by an external HTTP service.",
+			"category": "external-services",
+			"tags": [
+				"api",
+				"storage"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/guest-book-api",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./external-services/third-party-guest-book.md",
+			"fileName": "external-services/third-party-guest-book.md"
+		},
+		{
+			"id": "third-party-leaderboard",
+			"name": "Third-party leaderboard",
+			"description": "A persistent leaderboard backed by an external HTTP service.",
+			"category": "external-services",
+			"tags": [
+				"api",
+				"storage",
+				"leaderboard"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/leader-board",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./external-services/third-party-leaderboard.md",
+			"fileName": "external-services/third-party-leaderboard.md"
+		},
+		{
+			"id": "third-party-player-authentication",
+			"name": "Third-party player authentication",
+			"description": "Verifying player identity for requests sent to an external service.",
+			"category": "external-services",
+			"tags": [
+				"api",
+				"authentication",
+				"player"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/validate-player-authenticity",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./external-services/third-party-player-authentication.md",
+			"fileName": "external-services/third-party-player-authentication.md"
+		},
+		{
+			"id": "trigger-areas",
+			"name": "Trigger areas",
+			"description": "Detecting players entering and leaving areas, including collider-based triggers.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"interaction",
+				"triggers",
+				"collision"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/75,-9-trigger-areas",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/trigger-areas.md",
+			"fileName": "gameplay-interaction/trigger-areas.md"
+		},
+		{
+			"id": "ui-animations",
+			"name": "UI animations",
+			"description": "Animated UI elements, sprite sheets, and loading indicators.",
+			"category": "ui-camera-player",
+			"tags": [
+				"ui",
+				"animation",
+				"sprites"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/ui-animations",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./ui-camera-player/ui-animations.md",
+			"fileName": "ui-camera-player/ui-animations.md"
+		},
+		{
+			"id": "ui-safe-areas",
+			"name": "UI safe areas",
+			"description": "Positioning interface elements around screen insets and safe areas.",
+			"category": "ui-camera-player",
+			"tags": [
+				"ui",
+				"hud"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/81,-2-ui-screen-inset-area",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./ui-camera-player/ui-safe-areas.md",
+			"fileName": "ui-camera-player/ui-safe-areas.md"
+		},
+		{
+			"id": "video-streaming",
+			"name": "Video streaming",
+			"description": "Playing streamed video on a scene surface.",
+			"category": "audio-video-environment",
+			"tags": [
+				"video",
+				"streaming",
+				"media"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/video-streaming",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./audio-video-environment/video-streaming.md",
+			"fileName": "audio-video-environment/video-streaming.md"
+		},
+		{
+			"id": "virtual-cameras",
+			"name": "Virtual cameras",
+			"description": "Creating and switching to scene-defined cameras.",
+			"category": "ui-camera-player",
+			"tags": [
+				"camera",
+				"cinematic",
+				"controls"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/2,22-virtual-cameras",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./ui-camera-player/virtual-cameras.md",
+			"fileName": "ui-camera-player/virtual-cameras.md"
+		},
+		{
+			"id": "zombie-attack",
+			"name": "Zombie Attack",
+			"description": "A complete, playable game scene with enemies and scoring.",
+			"category": "gameplay-interaction",
+			"tags": [
+				"game",
+				"complete-scene",
+				"score"
+			],
+			"maintainer": "decentraland",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland/sdk7-goerli-plaza/tree/main/zombie-attack",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [],
+			"page": "./gameplay-interaction/zombie-attack.md",
+			"fileName": "gameplay-interaction/zombie-attack.md"
+		},
+		{
+			"id": "npc-toolkit",
+			"name": "NPC Toolkit",
+			"description": "Reusable NPC behaviours and dialogue UI for SDK7 scenes.",
+			"category": "ui-camera-player",
+			"tags": [
+				"npc",
+				"dialogue",
+				"ui"
+			],
+			"maintainer": "decentraland-scenes",
+			"maintenance": "decentraland",
+			"source": "https://github.com/decentraland-scenes/dcl-npc-toolkit",
+			"license": {
+				"status": "identified",
+				"name": "Apache-2.0",
+				"url": "https://github.com/decentraland-scenes/dcl-npc-toolkit/blob/main/LICENSE"
+			},
+			"highlights": [
+				{
+					"title": "Separate revealing dialogue from advancing it",
+					"description": "`handleDialogClick`, `rushText`, and `confirmText` first reveal the remaining characters if text is still typing. Subsequent input advances the script or selects a numeric dialogue branch, with callbacks for game actions.",
+					"context": "Read this alongside the toolkit's `Dialog` data and `npcDialogComponent` state to understand how UI input drives a conversation.",
+					"tags": [
+						"dialogue",
+						"ui"
+					],
+					"references": [
+						{
+							"label": "`handleDialogClick`, `rushText`, and `confirmText`",
+							"url": "https://github.com/decentraland-scenes/dcl-npc-toolkit/blob/60e327c67a126d92e47ecf8e7eda342ce1191076/src/dialog.ts#L489-L549"
+						}
+					]
+				},
+				{
+					"title": "Connect proximity and pointer input to an NPC interaction",
+					"description": "`addClickReactions` and `addTriggerArea` configure pointer callbacks and a child sphere trigger, with settings for click-only activation and continuing dialogue when the player walks away. `activate` and `endInteraction` coordinate the active NPC, cooldown, dialogue, and optional player-facing behavior.",
+					"context": "These functions rely on the toolkit's callback maps and tracking system.",
+					"tags": [
+						"triggers",
+						"input"
+					],
+					"references": [
+						{
+							"label": "`addClickReactions` and `addTriggerArea`",
+							"url": "https://github.com/decentraland-scenes/dcl-npc-toolkit/blob/60e327c67a126d92e47ecf8e7eda342ce1191076/src/npc.ts#L410-L531"
+						},
+						{
+							"label": "`activate` and `endInteraction`",
+							"url": "https://github.com/decentraland-scenes/dcl-npc-toolkit/blob/60e327c67a126d92e47ecf8e7eda342ce1191076/src/npc.ts#L769-L823"
+						}
+					]
+				}
+			],
+			"page": "./ui-camera-player/npc-toolkit.md",
+			"fileName": "ui-camera-player/npc-toolkit.md"
+		},
+		{
+			"id": "flag-tag",
+			"name": "Flag Tag",
+			"description": "Multiplayer keep-away with timed rounds, persistent leaderboards, pooled projectiles, and a proximity-based lighting budget.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"studio-made",
+				"multiplayer",
+				"multiplayer-server",
+				"leaderboard",
+				"timed-rounds",
+				"lighting",
+				"performance"
+			],
+			"developer": "iillee",
+			"maintainer": "iillee",
+			"maintenance": "community",
+			"source": "https://github.com/iillee/flagtag",
+			"realm": "flagtag.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Reuse projectile visuals by model variant",
+					"description": "The projectile pool pre-creates ten hidden entities for each boomerang color. Acquire and release helpers find an available entity and return it to its hidden position after stopping its sound.",
+					"context": "The flight code must position acquired entities and return them when finished; the pool relies on the project's boomerang assets and sound helper.",
+					"tags": [
+						"object-pooling",
+						"projectiles"
+					],
+					"references": [
+						{
+							"label": "The projectile pool",
+							"url": "https://github.com/iillee/flagtag/blob/d5d9c8fbf0f69eadb4d79c3ae4054e8947f256b6/src/systems/projectile/pool.ts#L11-L37"
+						},
+						{
+							"label": "Acquire and release helpers",
+							"url": "https://github.com/iillee/flagtag/blob/d5d9c8fbf0f69eadb4d79c3ae4054e8947f256b6/src/systems/projectile/pool.ts#L48-L66"
+						}
+					]
+				},
+				{
+					"title": "Limit active lights around the player",
+					"description": "proximityLightSystem checks periodically, selects the nearest lights with squared-distance comparisons and reusable arrays, and changes only lights whose active state differs. The scene caps the active set at eight and gates it through its day/night helper.",
+					"context": "Read the setup and constants in the same file to understand the world-position conversion and device-specific intensity settings.",
+					"tags": [
+						"lighting",
+						"performance"
+					],
+					"references": [
+						{
+							"label": "proximityLightSystem",
+							"url": "https://github.com/iillee/flagtag/blob/d5d9c8fbf0f69eadb4d79c3ae4054e8947f256b6/src/systems/proximityLights.ts#L109-L168"
+						}
+					]
+				}
+			],
+			"page": "./published-games/flag-tag.md",
+			"fileName": "published-games/flag-tag.md"
+		},
+		{
+			"id": "pigeon-deluxe",
+			"name": "Pigeon Deluxe",
+			"description": "Timed parcel delivery with pickup and drop-off areas, an avatar-mounted direction pointer, and scoring separated from delivery animation.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"community-made",
+				"timed-rounds",
+				"triggers",
+				"avatars",
+				"score"
+			],
+			"developer": "PepeGawd",
+			"maintainer": "PepeGawd",
+			"maintenance": "community",
+			"source": "https://github.com/PepeGawd/Pigeon-Deluxe",
+			"realm": "pigeondeluxe.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Point toward an objective while attached to an avatar",
+					"description": "`initParcelDirectionPointer` and its update system attach an arrow above the avatar's name tag, calculate the world-space direction to the active target, and convert that rotation into the parent's local space. Rotation advances using `dt`, so the arrow turns toward the objective over time.",
+					"context": "The target comes from the parcel system and the arrow uses the scene's `FaceDirection1.glb` asset.",
+					"tags": [
+						"navigation",
+						"avatars"
+					],
+					"references": [
+						{
+							"label": "`initParcelDirectionPointer` and its update system",
+							"url": "https://github.com/PepeGawd/Pigeon-Deluxe/blob/1c24bcb3c82d73dbb1aad8b1035f3f7edab5d315/src/Game/parcelDirectionPointer.ts#L26-L96"
+						}
+					]
+				},
+				{
+					"title": "Separate scoring from delivery animation",
+					"description": "`startNewRound` and `handleSpawnAreaEnter` assign pickup and delivery roles to pads, track whether a parcel is being carried, and award points and time as soon as the delivery pad is entered. The next round starts when the drop animation finishes.",
+					"context": "Read this with the scene's game timer and parcel-attachment helpers to see how gameplay state and visual feedback fit together.",
+					"tags": [
+						"scoring",
+						"animation"
+					],
+					"references": [
+						{
+							"label": "`startNewRound` and `handleSpawnAreaEnter`",
+							"url": "https://github.com/PepeGawd/Pigeon-Deluxe/blob/1c24bcb3c82d73dbb1aad8b1035f3f7edab5d315/src/Game/parcelCollectDeliver.ts#L363-L433"
+						}
+					]
+				}
+			],
+			"page": "./published-games/pigeon-deluxe.md",
+			"fileName": "published-games/pigeon-deluxe.md"
+		},
+		{
+			"id": "alien-scrapyard",
+			"name": "Alien Scrapyard",
+			"description": "Cooperative building rounds with data-defined construction puzzles and phase-driven cinematic cameras.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer",
+				"timed-rounds",
+				"camera",
+				"cinematic"
+			],
+			"developer": "procesista",
+			"maintainer": "procesista",
+			"maintenance": "community",
+			"source": "https://github.com/procesista/Alienscrap",
+			"realm": "alienscrapyard.dcl.eth",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Represent build puzzles as data",
+					"description": "Slot definitions describe the required part, position, scale, and label for each piece. Template helpers recenter and scale the layouts, expose a sequence of puzzles, and look up individual slots. This is useful for studying how to add new constructions through data.",
+					"context": "Read it alongside the shared scene-center and part-type constants.",
+					"tags": [
+						"data-driven",
+						"puzzles"
+					],
+					"references": [
+						{
+							"label": "Slot definitions",
+							"url": "https://github.com/procesista/Alienscrap/blob/be0b1b93580452f9cc778dc36554fe9354ee0ea2/src/shared/templates.ts#L3-L39"
+						},
+						{
+							"label": "Template helpers",
+							"url": "https://github.com/procesista/Alienscrap/blob/be0b1b93580452f9cc778dc36554fe9354ee0ea2/src/shared/templates.ts#L140-L184"
+						}
+					]
+				},
+				{
+					"title": "Tie a cinematic camera to round state",
+					"description": "The cinematic system activates shots for countdown and performance phases, handles players joining mid-round, and releases the camera when the snapshot is stale. The final update adds round-change and elapsed-time exits before moving the camera along its shot.",
+					"context": "The example depends on the client snapshot, shared timing constants, and HUD visibility helpers.",
+					"tags": [
+						"camera",
+						"game-state"
+					],
+					"references": [
+						{
+							"label": "The cinematic system",
+							"url": "https://github.com/procesista/Alienscrap/blob/be0b1b93580452f9cc778dc36554fe9354ee0ea2/src/client/cinematic.ts#L93-L129"
+						},
+						{
+							"label": "The final update",
+							"url": "https://github.com/procesista/Alienscrap/blob/be0b1b93580452f9cc778dc36554fe9354ee0ea2/src/client/cinematic.ts#L158-L176"
+						}
+					]
+				}
+			],
+			"page": "./published-games/alien-scrapyard.md",
+			"fileName": "published-games/alien-scrapyard.md"
+		},
+		{
+			"id": "fastlane-bowling",
+			"name": "Fastlane Bowling",
+			"description": "Multiplayer bowling with server-simulated physics, persistent progression, batched state updates, and mobile-scaled particle effects.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"studio-made",
+				"multiplayer",
+				"multiplayer-server",
+				"physics",
+				"progression",
+				"leaderboard",
+				"storage",
+				"particles"
+			],
+			"developer": "stom66",
+			"maintainer": "stom66",
+			"maintenance": "community",
+			"source": "https://github.com/stom66/dcl-bowling",
+			"realm": "stom.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "CC BY-NC-ND 4.0",
+				"url": "https://github.com/stom66/dcl-bowling/blob/main/LICENSE.md"
+			},
+			"highlights": [
+				{
+					"title": "Batch synchronized state changes into client events",
+					"description": "In `LaneWatcher.onLaneChanged`, a set collects changed lanes and schedules one flush. `flush` reads each lane's snapshot and emits state and phase-transition events. Follow this flow to understand how the scene connects synchronized components to client reactions.",
+					"context": "Read it alongside the project's `LaneStore` and event-bus definitions.",
+					"tags": [
+						"multiplayer",
+						"events"
+					],
+					"references": [
+						{
+							"label": "`LaneWatcher.onLaneChanged`",
+							"url": "https://github.com/stom66/dcl-bowling/blob/25c5a7f9152835c190d9d20fa18b6010d0c6ce50/dcl/src/client/laneWatcher.ts#L79-L90"
+						},
+						{
+							"label": "`flush`",
+							"url": "https://github.com/stom66/dcl-bowling/blob/25c5a7f9152835c190d9d20fa18b6010d0c6ce50/dcl/src/client/laneWatcher.ts#L132-L153"
+						}
+					]
+				},
+				{
+					"title": "Scale particle effects for mobile",
+					"description": "`getParticleRatio` and `scaleConfig` adjust emission rates, particle limits, and burst counts using a mobile ratio while preserving the original configuration. `spawn` applies that configuration to a new emitter, with optional parenting and timed cleanup.",
+					"context": "This is useful when studying how one effect configuration can serve different devices.",
+					"tags": [
+						"particles",
+						"performance"
+					],
+					"references": [
+						{
+							"label": "`getParticleRatio` and `scaleConfig`",
+							"url": "https://github.com/stom66/dcl-bowling/blob/25c5a7f9152835c190d9d20fa18b6010d0c6ce50/dcl/src/client/particleSpawner.ts#L176-L218"
+						},
+						{
+							"label": "`spawn`",
+							"url": "https://github.com/stom66/dcl-bowling/blob/25c5a7f9152835c190d9d20fa18b6010d0c6ce50/dcl/src/client/particleSpawner.ts#L91-L121"
+						}
+					]
+				}
+			],
+			"page": "./published-games/fastlane-bowling.md",
+			"fileName": "published-games/fastlane-bowling.md"
+		},
+		{
+			"id": "sky-chaser",
+			"name": "Sky Chaser",
+			"description": "Multiplayer package-catching rounds with persistent leaderboards, pooled projectiles, and pickup placement seeded from round state.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"studio-made",
+				"multiplayer",
+				"multiplayer-server",
+				"leaderboard",
+				"performance",
+				"timed-rounds"
+			],
+			"developer": "stom66",
+			"maintainer": "stom66",
+			"maintenance": "community",
+			"source": "https://github.com/stom66/dcl-sky-chaser",
+			"realm": "skychaser.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "CC BY-NC-ND 4.0",
+				"url": "https://github.com/stom66/dcl-sky-chaser/blob/main/LICENSE.md"
+			},
+			"highlights": [
+				{
+					"title": "Reuse projectile entities during play",
+					"description": "`fireProjectile` and `getIdleProjectile` reuse inactive projectiles, create new ones when the pool is exhausted, and update only active projectiles.",
+					"context": "Follow the project's `Projectile` class and event handlers for movement, collision responses, and round-end cleanup.",
+					"tags": [
+						"object-pooling",
+						"projectiles"
+					],
+					"references": [
+						{
+							"label": "`fireProjectile` and `getIdleProjectile`",
+							"url": "https://github.com/stom66/dcl-sky-chaser/blob/e546854d2a2634ca5e28635c8b9be124a173f6dc/dcl/src/client/projectileManager.ts#L76-L124"
+						}
+					]
+				},
+				{
+					"title": "Seed pickup placement from round state",
+					"description": "`onGameStart` and `getRandomPosition` use the round start time to initialize the project's random generator, then sample pickup distances and heights.",
+					"context": "Read the pickup configuration and component store alongside it: mobile limits and later pickup activity affect the sequence of random calls, so a shared seed alone does not guarantee identical layouts on every client.",
+					"tags": [
+						"multiplayer",
+						"randomness"
+					],
+					"references": [
+						{
+							"label": "`onGameStart` and `getRandomPosition`",
+							"url": "https://github.com/stom66/dcl-sky-chaser/blob/e546854d2a2634ca5e28635c8b9be124a173f6dc/dcl/src/client/spawners/pickupSpawner.ts#L115-L164"
+						}
+					]
+				}
+			],
+			"page": "./published-games/sky-chaser.md",
+			"fileName": "published-games/sky-chaser.md"
+		},
+		{
+			"id": "slay-the-steps",
+			"name": "Slay the Steps",
+			"description": "A multiplayer Festive Trail scene with custom avatars, Marketplace integration, a raycast-driven color wheel, and tracking cameras.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"studio-made",
+				"multiplayer",
+				"multiplayer-server",
+				"avatars",
+				"marketplace-api",
+				"ui",
+				"camera",
+				"raycast"
+			],
+			"developer": "stom66",
+			"maintainer": "stom66",
+			"maintenance": "community",
+			"source": "https://github.com/stom66/dcl-slay-the-steps",
+			"realm": "slaythesteps.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "CC BY-NC-ND 4.0",
+				"url": "https://github.com/stom66/dcl-slay-the-steps/blob/main/LICENSE.md"
+			},
+			"highlights": [
+				{
+					"title": "Turn a 3D pointer hit into a color selection",
+					"description": "`GetLocalMousePosition` raycasts from the camera and converts the hit into the wheel's local position. `SampleColorWheel` maps its angle and radius to hue and saturation, invokes a callback, and tints the value slider.",
+					"context": "The implementation uses the project's wheel meshes, HSV conversion helper, and material-node names.",
+					"tags": [
+						"input",
+						"ui"
+					],
+					"references": [
+						{
+							"label": "`GetLocalMousePosition`",
+							"url": "https://github.com/stom66/dcl-slay-the-steps/blob/9f6026c826fb61d25eeea6a98f22a4dd16b29a15/dcl/src/client/colorPickers.ts#L306-L335"
+						},
+						{
+							"label": "`SampleColorWheel`",
+							"url": "https://github.com/stom66/dcl-slay-the-steps/blob/9f6026c826fb61d25eeea6a98f22a4dd16b29a15/dcl/src/client/colorPickers.ts#L203-L238"
+						}
+					]
+				},
+				{
+					"title": "Track a moving target with a virtual camera",
+					"description": "The camera position system and tween chain periodically calculate a position relative to the player and target, then tween toward it. `TrackEntity` creates the camera with `lookAtEntity` and makes it active.",
+					"context": "Read `ResetCamera` and the game's event binding for the end of the tracking lifecycle.",
+					"tags": [
+						"camera",
+						"movement"
+					],
+					"references": [
+						{
+							"label": "camera position system and tween chain",
+							"url": "https://github.com/stom66/dcl-slay-the-steps/blob/9f6026c826fb61d25eeea6a98f22a4dd16b29a15/dcl/src/client/cameraController.ts#L46-L96"
+						},
+						{
+							"label": "`TrackEntity`",
+							"url": "https://github.com/stom66/dcl-slay-the-steps/blob/9f6026c826fb61d25eeea6a98f22a4dd16b29a15/dcl/src/client/cameraController.ts#L99-L137"
+						}
+					]
+				}
+			],
+			"page": "./published-games/slay-the-steps.md",
+			"fileName": "published-games/slay-the-steps.md"
+		},
+		{
+			"id": "bloom-garden",
+			"name": "Bloom Garden",
+			"description": "A cooperative garden with persistent plant state, server-clock offset estimation, and pooled petal animations.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"multiplayer",
+				"multiplayer-server",
+				"storage",
+				"leaderboard",
+				"animation",
+				"effects"
+			],
+			"developer": "TheLivingGarden",
+			"maintainer": "TheLivingGarden",
+			"maintenance": "community",
+			"source": "https://github.com/TheLivingGarden/TheLivingGarden/tree/main-main",
+			"realm": "bloomgarden.dcl.eth",
+			"license": {
+				"status": "identified",
+				"name": "MIT",
+				"url": "https://github.com/TheLivingGarden/TheLivingGarden/blob/main/LICENSE"
+			},
+			"highlights": [
+				{
+					"title": "Estimate the offset between server and client clocks",
+					"description": "The clock helper keeps five offset samples, rejects large deviations, and converts server timestamps into local time. The watering client feeds it timestamps received through the scene's message definitions.",
+					"context": "This illustrates a lightweight timing estimate; network transit time is included in the samples.",
+					"tags": [
+						"multiplayer",
+						"timing"
+					],
+					"references": [
+						{
+							"label": "The clock helper",
+							"url": "https://github.com/TheLivingGarden/TheLivingGarden/blob/b2c9a90791b1eed5c92a4ffadf6ac480d91510ea/src/shared/clockSync.ts#L3-L55"
+						},
+						{
+							"label": "The watering client",
+							"url": "https://github.com/TheLivingGarden/TheLivingGarden/blob/b2c9a90791b1eed5c92a4ffadf6ac480d91510ea/src/wateringSystem.ts#L1144-L1146"
+						}
+					]
+				},
+				{
+					"title": "Let temporary effects finish naturally",
+					"description": "The petal setup and controls create a reusable pool from the scene's named Petal model, then start or settle the effect. The update phases scale petals in, let them fall and rest, and shrink them before recycling. Study this when an effect should stop spawning while existing objects complete their animation.",
+					"context": "Placement depends on BLOOM_CENTER and the module's timing constants.",
+					"tags": [
+						"effects",
+						"entity-lifecycle"
+					],
+					"references": [
+						{
+							"label": "The petal setup and controls",
+							"url": "https://github.com/TheLivingGarden/TheLivingGarden/blob/b2c9a90791b1eed5c92a4ffadf6ac480d91510ea/src/petalSystem.ts#L119-L173"
+						},
+						{
+							"label": "The update phases",
+							"url": "https://github.com/TheLivingGarden/TheLivingGarden/blob/b2c9a90791b1eed5c92a4ffadf6ac480d91510ea/src/petalSystem.ts#L207-L310"
+						}
+					]
+				}
+			],
+			"page": "./published-games/bloom-garden.md",
+			"fileName": "published-games/bloom-garden.md"
+		},
+		{
+			"id": "slide-penguin",
+			"name": "Slide Penguin",
+			"description": "Penguin sliding with timed sweeping that modifies deceleration and scoring based on distance from the target.",
+			"category": "published-games",
+			"tags": [
+				"game",
+				"seasonal",
+				"platformer",
+				"input",
+				"movement",
+				"score"
+			],
+			"developer": "ToxSam",
+			"maintainer": "ToxSam",
+			"maintenance": "community",
+			"source": "https://github.com/ToxSam/SlidePenguin",
+			"position": "-140,101",
+			"license": {
+				"status": "unknown"
+			},
+			"highlights": [
+				{
+					"title": "Turn sweeping into a temporary movement modifier",
+					"description": "`handleSwipe` applies a cooldown to the deceleration reduction and records when that effect expires. `penguinMovementSystem` restores the base deceleration after that window, updates speed, and advances the transform using frame time.",
+					"context": "Follow the project's `PenguinMovement` and `SwipeBox` components and tuning constants to understand the connection between input and motion.",
+					"tags": [
+						"input",
+						"movement"
+					],
+					"references": [
+						{
+							"label": "`handleSwipe`",
+							"url": "https://github.com/ToxSam/SlidePenguin/blob/19978bf4ca9e793ce87cd5637efc1abf3a3b686c/src/systems.ts#L519-L598"
+						},
+						{
+							"label": "`penguinMovementSystem`",
+							"url": "https://github.com/ToxSam/SlidePenguin/blob/19978bf4ca9e793ce87cd5637efc1abf3a3b686c/src/systems.ts#L864-L913"
+						}
+					]
+				},
+				{
+					"title": "Score how close an object lands to a target",
+					"description": "`calculateDistance2D` and `calculateScore` ignore height, normalize horizontal distance against a maximum distance, and map it to a rounded score capped by `MAX_SCORE`.",
+					"context": "This small module is a useful starting point for understanding proximity scoring; its inputs are the final penguin position and target position.",
+					"tags": [
+						"scoring",
+						"distance"
+					],
+					"references": [
+						{
+							"label": "`calculateDistance2D` and `calculateScore`",
+							"url": "https://github.com/ToxSam/SlidePenguin/blob/19978bf4ca9e793ce87cd5637efc1abf3a3b686c/src/scoring.ts#L5-L39"
+						}
+					]
+				}
+			],
+			"page": "./published-games/slide-penguin.md",
+			"fileName": "published-games/slide-penguin.md"
+		}
+	]
+}

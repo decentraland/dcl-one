@@ -22,6 +22,7 @@ The assets listed in the `AssetLoad` component are downloaded and added to memor
 Some important considerations:
 
 - You can place the `AssetLoad` component on any entity (not just the RootEntity), and you can use it on as many entities as needed. This can be helpful to handle separate load states for different levels or regions of your scene.
+- **Keep each `AssetLoad` entity to about 40 paths.** Split a longer list across several entities. See [Split long lists across entities](#split-long-lists-across-entities).
 - The `AssetLoad` component is used to add assets to memory, not to remove them. Removing an asset from the list in `AssetLoad.create` will not free memory.
 - If an asset is used immediately when the scene loads (for example, a GLB model placed in the scene, or a background sound that plays continuously), there is no need to use the `AssetLoad` component, since it is already being downloaded. 
 - Be mindful when adding assets to `AssetLoad.create`, and only pre-load assets that are not required at scene startup to avoid unnecessary performance costs.
@@ -109,6 +110,39 @@ assetLoadLoadingStateSystem.registerAssetLoadLoadingStateEntity(
 
 > [!NOTE]
 > **💡 Tip**: You can add more assets to an existing `AssetLoad` component after creating it, for example in response to a player action. Use `AssetLoad.getOrCreateMutable()` to fetch the component and push new paths onto its `assets` array. The registered callback will also fire for these newly added assets as they download.
+
+
+### Split long lists across entities
+
+Give each `AssetLoad` entity **at most 40 paths**. Past roughly 50 assets on one entity, its callback stops firing and the remaining assets are never reported, with no error.
+
+The reason is a hard limit on how loading states are stored. The client appends one entry per state change per asset, usually `LOADING` and then `FINISHED`, into a set that holds 100 entries per entity. Once that set is full it stays at 100, and the SDK only calls your callback when the number of entries changes, so nothing else gets through.
+
+To pre-load more than 40 assets, split the list into batches and give each batch its own entity and its own callback:
+
+```ts
+import { AssetLoad, assetLoadLoadingStateSystem, engine } from '@dcl/sdk/ecs'
+
+const allAssets = [
+	'assets/models/tree.glb',
+	'assets/models/rock.glb',
+	// ...a long list
+]
+
+// One AssetLoad entity per batch of 40 paths
+for (let i = 0; i < allAssets.length; i += 40) {
+	const batchEntity = engine.addEntity()
+	AssetLoad.create(batchEntity, { assets: allAssets.slice(i, i + 40) })
+
+	assetLoadLoadingStateSystem.registerAssetLoadLoadingStateEntity(batchEntity, (assetLoadState) => {
+		console.log(assetLoadState.asset, assetLoadState.currentState)
+	})
+}
+```
+
+
+> [!NOTE]
+> **💡 Tip**: If your scene waits for every asset before it starts, put a timeout on that wait and log the paths you never heard back about. A named list is far easier to debug than a loading screen that never goes away.
 
 
 

@@ -1,0 +1,344 @@
+/* The design's Cart (CartDark): 380px, 16px in, the list and the total 46px apart. Line heights are the
+   design's "normal" for Inter (1.21) where it says so. */
+.cart {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 46px;
+  width: 380px;
+  padding: 16px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  pointer-events: auto;
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--white-10);
+}
+/* The design's h6 (20px, 1.6) in the row's 30px, the close button's height: the header is 40px with its rule. */
+.title {
+  margin: 0;
+  color: var(--pearl);
+  font-size: var(--type-20);
+  font-weight: var(--fw-medium);
+  line-height: 30px;
+}
+.close {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-shop-cart-close);
+  background: none;
+  cursor: pointer;
+}
+.close img {
+  display: block;
+}
+
+.empty {
+  margin: 0;
+  padding: 24px 0;
+  color: var(--pearl);
+  font-size: var(--type-14);
+  text-align: center;
+}
+
+/* Five cards, then the list scrolls; its thumb sits in the cart's right padding. */
+.listWrap {
+  position: relative;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 578px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar {
+  display: none;
+}
+.thumb {
+  right: -15px;
+}
+
+/* CartCard: the 106px tile, 12px on the text, 12px in from the right; lighter while hovered. */
+.card {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding-right: 12px;
+  border-radius: var(--r-md);
+  background: var(--white-10);
+}
+.card:hover,
+.card:focus-within {
+  background: var(--shop-card-hover);
+}
+/* The dialogs' 150px tile at the card's 106px (its corner radius 10.6px, as drawn). */
+.tileSlot {
+  position: relative;
+  flex: none;
+  width: 106px;
+  height: 106px;
+}
+.tile {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: scale(0.706667);
+  transform-origin: 0 0;
+}
+.txt {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-self: stretch;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 12px 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.row:first-child {
+  align-items: flex-start;
+}
+.about {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.creator {
+  max-width: 100%;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--white-10);
+  font-size: var(--type-13);
+  line-height: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Favourite and remove, shown while the card is hovered or holds the focus. */
+.hover {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  visibility: hidden;
+}
+.card:hover .hover,
+.card:focus-within .hover {
+  visibility: visible;
+}
+.action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-shop-cart-action);
+  background: var(--black-40);
+  cursor: pointer;
+}
+.action img {
+  display: block;
+  transform: translate(-0.54px, -0.54px);
+}
+.action:disabled {
+  cursor: default;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+}
+.step {
+  display: block;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.step img {
+  display: block;
+}
+.step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.quantity {
+  color: var(--white);
+  font-size: var(--type-14);
+  font-weight: var(--fw-medium);
+  line-height: 1.2;
+  text-align: center;
+}
+.price {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.111px;
+  padding: 3.111px;
+  border-radius: var(--r-shop-cart-price);
+  font-size: var(--type-shop-cart-price);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+/* The mark's 17.7×18.7 slot: the icon's 22.4px box, less its margins (the dialogs' mark at 0.78). */
+.mark {
+  position: relative;
+  flex: none;
+  width: 17.677px;
+  height: 18.664px;
+}
+.mark .markIcon {
+  position: absolute;
+  left: -2.423px;
+  top: -1.868px;
+}
+
+.foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 2px solid var(--white-10);
+}
+.total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 37px;
+}
+.totalLabel {
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+.totalPrice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-sm);
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+.totalMark {
+  position: relative;
+  flex: none;
+  width: 22.731px;
+  height: 24px;
+}
+.totalMark .totalMarkIcon {
+  position: absolute;
+  left: -3.116px;
+  top: -2.4px;
+}
+.checkout {
+  width: 100%;
+  height: 46px;
+  padding: 2px 29px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--brand);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.checkout:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+.checkout:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The design's Toast: 40px high, the check 10px in, the text 16px from the right edge. */
+.toast {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--pale-black);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: 0 4px 4px var(--black-10);
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  white-space: nowrap;
+}
+.toast img {
+  display: block;
+  flex: none;
+}
+
+/* The design's Badge: 16px, ruby in a 2px ring of the header's purple. */
+.badge {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 2px;
+  border: 2px solid var(--cart-badge-ring);
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: var(--text);
+  font-size: var(--type-10);
+  font-weight: var(--fw-semibold);
+  line-height: 12px;
+  pointer-events: none;
+}

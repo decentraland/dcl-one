@@ -188,7 +188,7 @@ export const CreditsButton = ({
   <FigmaView
     as='button'
     views={creditsButtonViews}
-    defaultKey='viewport:desktop'
+    component='CreditsButton'
     select={{
       values: { viewport },
       booleans: {  },
@@ -197,7 +197,7 @@ export const CreditsButton = ({
     slots={{ label }}
     forceState={forceState}
     disabled={disabled}
-    {...rest}
+    attributes={rest}
   />
 )
 

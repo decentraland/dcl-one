@@ -20,6 +20,8 @@ type ViewNode = {
   text?: string
   textRuns?: { text: string; css: CssBlock }[]
   slot?: string
+  // The Figma node id, when the capture records one. Text roles bind to it.
+  figmaId?: string
   icon?: {
     component: string
     props: Record<string, string | boolean>
@@ -57,6 +59,7 @@ const viewNodeSchema: z.ZodType<ViewNode> = z.lazy(() =>
     text: z.string().optional(),
     textRuns: z.array(z.object({ text: z.string(), css: cssBlockSchema })).optional(),
     slot: z.string().optional(),
+    figmaId: z.string().optional(),
     icon: z
       .object({
         component: z.string(),
@@ -122,6 +125,28 @@ const slotSpecSchema = z.object({
   default: z.string().optional()
 })
 
+// A text role is a named, typed public prop bound to captured text nodes by Figma node id
+// (components.<Figma name>.textRoles in figma.config.json). Each node also states its expected path of layer names,
+// from the variant root to the text, so a stale id fails generation instead of binding the wrong text. A count role
+// names the string role that labels it; that label replaces the accessible name of the nearest semantic action. A role
+// whose text sits under a semantic action with a link declares that link's prop name (href); it is never derived.
+const textRoleTypeSchema = z.enum(['string', 'count'])
+const textRoleSchema = z.object({
+  type: textRoleTypeSchema,
+  label: z.string().min(1).optional(),
+  href: z.string().min(1).optional(),
+  // Empty only for a label role, which carries the consumer's text and binds no captured layer.
+  nodes: z
+    .array(z.object({ nodeId: z.string().min(1), namePath: z.array(z.string()).min(1) }))
+    .default([])
+})
+const textRoleSpecSchema = z.object({
+  name: z.string(),
+  type: textRoleTypeSchema,
+  label: z.string().optional(),
+  href: z.string().optional()
+})
+
 const componentSpecSchema = z.object({
   name: z.string(),
   figmaName: z.string(),
@@ -133,12 +158,14 @@ const componentSpecSchema = z.object({
   tag: z.enum(['button', 'div']),
   props: z.array(propSpecSchema),
   slots: z.array(slotSpecSchema),
+  exposeTextSlots: z.boolean().optional(),
   views: z.array(viewSpecSchema),
   defaultKey: z.string(),
   needsManual: z.array(z.string()),
   notes: z.array(z.string()),
   size: z.object({ w: z.number(), h: z.number() }),
-  semantics: z.record(z.string(), semanticSchema).optional()
+  semantics: z.record(z.string(), semanticSchema).optional(),
+  textRoles: z.array(textRoleSpecSchema).optional()
 })
 
 type StateRule = z.infer<typeof stateRuleSchema>
@@ -147,8 +174,17 @@ type Loop = z.infer<typeof loopSchema>
 type ViewSpec = z.infer<typeof viewSpecSchema>
 type SlotSpec = z.infer<typeof slotSpecSchema>
 type ComponentSpec = z.infer<typeof componentSpecSchema>
+type TextRole = z.infer<typeof textRoleSchema>
+type TextRoleSpec = z.infer<typeof textRoleSpecSchema>
 
-export { componentSpecSchema, cssBlockSchema, semanticSchema, viewNodeSchema, viewSpecSchema }
+export {
+  componentSpecSchema,
+  cssBlockSchema,
+  semanticSchema,
+  textRoleSchema,
+  viewNodeSchema,
+  viewSpecSchema
+}
 export type {
   ComponentSpec,
   CssBlock,
@@ -157,6 +193,8 @@ export type {
   Semantic,
   SlotSpec,
   StateRule,
+  TextRole,
+  TextRoleSpec,
   ViewNode,
   ViewSpec
 }

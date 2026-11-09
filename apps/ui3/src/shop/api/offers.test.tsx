@@ -6,9 +6,9 @@ import { createDemo, DemoShell } from "../checkout/demo";
 import { ShopServicesProvider } from "../checkout/services";
 import { useCheckout } from "../checkout/useCheckout";
 import { useOffers, type OfferQuery } from "../detail/offers";
-import type { Session } from "../model/settlement";
-import { encodePurchaseOffer } from "../model/wire";
-import { BOOK, SIGNED_OUT, storeMint, web2, web3 } from "../payment/fixtures";
+import type { Session } from "@shop/model/settlement";
+import { encodePurchaseOffer } from "@shop/model/wire";
+import { BOOK, SIGNED_OUT, storeMint, web2, web3 } from "@shop/payment/fixtures";
 import { purchaseOfferSource } from "./offers";
 import { createShopClient } from "./shop";
 import type { ShopSigner, TransportRequest } from "./signer";
@@ -20,7 +20,7 @@ const wire = (session = web3(), item = 7n) => encodePurchaseOffer(offer(session,
 
 function setup(response: unknown, signer: ShopSigner | null | (() => ShopSigner | null) = null) {
   const log: TransportRequest[] = [];
-  const client = createShopClient({ base: "https://node.test", signer, transport: async request => {
+  const client = createShopClient({ base: "https://node.test", mode: "canonical", signer, transport: async request => {
     log.push(request);
     return { status: 200, body: JSON.stringify(response) };
   } });
@@ -102,7 +102,7 @@ describe("the default detail and cart quote connection", () => {
   it("detail uses the services client and cancels an old session's pending quote", async () => {
     const requests: TransportRequest[] = [];
     const pending: ((answer: { status: number; body: string }) => void)[] = [];
-    const client = createShopClient({ transport: request => {
+    const client = createShopClient({ base: "https://node.test", mode: "canonical", transport: request => {
       requests.push(request);
       return new Promise(resolve => pending.push(resolve));
     } });

@@ -14,18 +14,18 @@ const FIGMA_DESIGN_URL = 'https://www.figma' + '.com/design/'
 describe('parseFigmaUrl', () => {
   describe('when the url names the file through the placeholder', () => {
     it('should return the placeholder and the colon form of the node id', () => {
-      expect(parseFigmaUrl('<DCL_FIGMA_FILE>?node-id=14113-6739&p=f')).toEqual({
+      expect(parseFigmaUrl('<DCL_FIGMA_FILE>?node-id=20-1&p=f')).toEqual({
         fileKey: '<DCL_FIGMA_FILE>',
-        nodeId: '14113:6739'
+        nodeId: '20:1'
       })
     })
   })
 
   describe('when the url is a literal Figma URL', () => {
     it('should flag it without keeping the file key', () => {
-      expect(parseFigmaUrl(`${FIGMA_DESIGN_URL}AbC123/Some-Name?node-id=14113-6739&p=f`)).toEqual({
+      expect(parseFigmaUrl(`${FIGMA_DESIGN_URL}AbC123/Some-Name?node-id=20-1&p=f`)).toEqual({
         fileKey: 'literal-figma-url',
-        nodeId: '14113:6739'
+        nodeId: '20:1'
       })
     })
   })
@@ -44,7 +44,7 @@ describe('parseMappingSource', () => {
       const mapping = await readMappingFile(buttonMapping)
 
       expect(mapping.issues).toEqual([])
-      expect(mapping.figma).toEqual({ fileKey: '<DCL_FIGMA_FILE>', nodeId: '14113:6739' })
+      expect(mapping.figma).toEqual({ fileKey: '<DCL_FIGMA_FILE>', nodeId: '20:1' })
       expect(mapping.header).toMatchObject({
         component: 'Button',
         contract: '1',
@@ -86,5 +86,27 @@ describe('parseMappingSource', () => {
       expect(mapping.figma).toBeUndefined()
       expect(mapping.issues).toHaveLength(1)
     })
+  })
+})
+
+describe('when a text placeholder is inside a JSX JavaScript expression', () => {
+  it('should reject the unsupported context instead of emitting entity text in JavaScript', () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</Button>',
+      " aria-label={'${label}'}>Label</Button>"
+    )
+    expect(
+      parseMappingSource(source, 'Button.figma.ts').issues.map((issue) => issue.code)
+    ).toContain('unsupported-construct')
+  })
+})
+
+describe('when a text placeholder follows a literal brace in a quoted JSX attribute', () => {
+  it('should retain the supported JSX string context', () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</Button>',
+      ' title="{${label}}">Label</Button>'
+    )
+    expect(parseMappingSource(source, 'Button.figma.ts').issues).toEqual([])
   })
 })

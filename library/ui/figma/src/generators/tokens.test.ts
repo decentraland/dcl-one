@@ -1,3 +1,4 @@
+import { generateTokens } from './tokens.js'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { snapshotSource } from '../../test/snapshot.js'
 import { generateAll } from './index.js'
@@ -13,14 +14,29 @@ describe('generateTokens', () => {
     files = new Map(result.files.map((file: GeneratedFile) => [file.path, file.content]))
   })
 
+  describe('when placing the foundations in the cascade', () => {
+    it('should put the tokens and text styles in the foundations layer, after the full layer order', () => {
+      for (const path of ['tokens/tokens.css', 'tokens/text-styles.module.css']) {
+        const css = files.get(path)!
+        expect(css).toContain(
+          '@layer dcl.reset, dcl.foundations, dcl.components;\n\n@layer dcl.foundations {\n'
+        )
+        expect(css.indexOf('@layer dcl.reset, dcl.foundations, dcl.components;')).toBeLessThan(
+          css.indexOf('{')
+        )
+        expect(css.trimEnd().endsWith('}')).toBe(true)
+      }
+    })
+  })
+
   describe('when generating the CSS variables', () => {
     it('should keep semantic tokens as references to primitives', () => {
-      expect(files.get('tokens/tokens.css')).toContain('--dcl-bg-page: var(--dcl-neutrals-shadow);')
+      expect(files.get('tokens/tokens.css')).toContain('--dcl-bg-page: var(--dcl-neutral-dark);')
     })
 
     it('should render transparent primitives as rgba', () => {
       expect(files.get('tokens/tokens.css')).toContain(
-        '--dcl-transparencies-white-10: rgba(255, 255, 255, 0.1);'
+        '--dcl-alpha-white-10: rgba(255, 255, 255, 0.1);'
       )
     })
 
@@ -71,7 +87,8 @@ describe('generateTokens', () => {
         (m) => m[1]!
       )
 
-      expect(referenced.length).toBeGreaterThan(150)
+      // Every Primitives, Semantic, Spacing and Layout variable but the breakpoint, plus both gradients.
+      expect(referenced.length).toBe(29)
       expect(referenced.filter((name) => !defined.has(name))).toEqual([])
     })
 
@@ -80,7 +97,7 @@ describe('generateTokens', () => {
 
       expect(theme).toContain("marginX: 'var(--dcl-layout-margin-x)'")
       expect(theme).toContain("labelSmCaps: 'var(--dcl-font-size-label-sm-caps)'")
-      expect(theme).toContain("lightRainbow: 'var(--dcl-gradient-light-rainbow)'")
+      expect(theme).toContain("sunset: 'var(--dcl-gradient-sunset)'")
     })
 
     it('should expose CSS variable references only', () => {
@@ -110,5 +127,31 @@ describe('generateTokens', () => {
 
       await expect(generateAll(broken, context)).rejects.toThrow('CSS variable collision')
     })
+  })
+})
+
+describe('when a Figma font family contains CSS syntax', () => {
+  it('should keep quotes and newlines inside the font family string', async () => {
+    const files = generateTokens(
+      {
+        collections: await snapshotSource().getTokenCollections(),
+        gradients: [],
+        textStyles: [
+          {
+            name: 'body',
+            fontFamily: "A'; color:red;/*\nB",
+            fontStyle: 'Regular',
+            fontSize: 16,
+            lineHeightPercent: 150,
+            letterSpacingPx: 0,
+            textCase: 'ORIGINAL'
+          }
+        ]
+      },
+      {}
+    )
+    const css = files.find((file) => file.path === 'tokens/text-styles.module.css')!.content
+    expect(css).toContain("font-family: 'A\\27 ; color:red;/*\\a B', sans-serif;")
+    expect(css).not.toContain("A'; color:red")
   })
 })

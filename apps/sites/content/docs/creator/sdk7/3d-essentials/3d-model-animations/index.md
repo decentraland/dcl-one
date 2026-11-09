@@ -8,7 +8,7 @@ Most 3D model animations are [_skeletal animations_](https://en.wikipedia.org/wi
 
 As an alternative, _vertex animations_ animate a model without the need of a skeleton. These animations specify the position of each vertex in the model directly. Decentraland supports these animations as well.
 
-See [Animations](https://github.com/decentraland/docs-creator/blob/main/creator/3d-modeling/animations/README.md) for details on how to create animations for a 3D model. Read [Shape components](/docs/creator/sdk7/3d-essentials/shape-components/) for instructions on how to import a 3D model to a scene.
+See [Animations](https://github.com/decentraland/docs/blob/main/creator/3d-modeling/animations.md) for details on how to create animations for a 3D model. Read [Shape components](/docs/creator/sdk7/3d-essentials/shape-components/) for instructions on how to import a 3D model to a scene.
 
 
 > [!NOTE]
@@ -68,9 +68,9 @@ Each `state` object keeps track of if an animation is currently playing.
 
 > [!WARNING]
 > **📔 Note**: The `Animator` component must be imported via
-> 
+>
 > > `import { Animator } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -214,7 +214,7 @@ engine.addSystem(() => {
 
 > [!WARNING]
 > **📔 Note**: When polling the animation state every frame, always read it through `Animator.get()` (read-only). Don't use `Animator.getClip()` or `Animator.getMutable()` for polling: these return a mutable version of the component, which marks it as changed on every frame and causes unnecessary synchronization work.
-> 
+>
 > The `playing` property is only flipped by the engine when the animation ends by itself. Looping animations play until stopped, so they never flip the property on their own, and animations with `speed` set to 0 never finish.
 
 

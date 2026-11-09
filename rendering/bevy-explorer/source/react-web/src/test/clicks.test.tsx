@@ -6,7 +6,7 @@ import { Chat } from '../features/chat/Chat'
 import { FriendsPanel } from '../features/friends/FriendsPanel'
 import { EmotesWheel } from '../features/emotes/EmotesWheel'
 import type { EngineSession, FriendsState } from '../features/session/useEngineSession'
-import { fakeSession } from './harness'
+import { renderSettled, fakeSession } from './harness'
 import { openFriendRequest } from '../features/friends/FriendRequestPopup'
 
 vi.mock('../features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
@@ -30,22 +30,22 @@ describe('sidebar clicks', () => {
 
   it.each(cases)('clicking %s triggers its session action', async (name, pick) => {
     const s = fakeSession()
-    render(<Sidebar session={s} />)
+    await renderSettled(<Sidebar session={s} />)
     await userEvent.click(screen.getByRole('button', { name }))
     expect(vi.mocked(pick(s))).toHaveBeenCalledTimes(1)
   })
 
-  it('lists the reference rail, in order (Map lives in the menu, not the rail)', () => {
-    render(<Sidebar session={fakeSession()} />)
+  it('lists the reference rail, in order (Map lives in the menu, not the rail)', async () => {
+    await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
     expect(labels).toEqual([
-      'Sidebar settings', 'Profile', 'Notifications', 'Events', 'Places', 'Communities', 'Backpack', 'Shop', 'Gallery', 'Settings',
+      'Sidebar settings', 'Profile', 'Notifications', 'Events', 'Places', 'Communities', 'Backpack', 'Shop', 'Camera', 'Gallery', 'Settings',
       'Help & Support', 'Report a bug', 'Nearby Voice', 'Skybox', 'Scene permissions', 'Emotes', 'Friends', 'Chat'
     ])
   })
 
   it('the "..." panel closes on an outside click', async () => {
-    render(<Sidebar session={fakeSession()} />)
+    await renderSettled(<Sidebar session={fakeSession()} />)
     await userEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
     await userEvent.click(screen.getByRole('switch', { name: 'Auto-hide sidebar' }))
     expect(screen.getByRole('dialog', { name: 'Sidebar settings' })).toBeInTheDocument()
@@ -53,8 +53,8 @@ describe('sidebar clicks', () => {
     expect(screen.queryByRole('dialog', { name: 'Sidebar settings' })).toBeNull()
   })
 
-  it('every rail button has a tooltip naming it', () => {
-    render(<Sidebar session={fakeSession()} />)
+  it('every rail button has a tooltip naming it', async () => {
+    await renderSettled(<Sidebar session={fakeSession()} />)
     for (const b of screen.getAllByRole('button')) {
       const label = b.getAttribute('aria-label') ?? ''
       if (label === 'Sidebar settings') continue
@@ -65,24 +65,24 @@ describe('sidebar clicks', () => {
   it('Profile opens the passport (onViewProfile) when provided, not the small panel', async () => {
     const s = fakeSession()
     const onViewProfile = vi.fn()
-    render(<Sidebar session={s} onViewProfile={onViewProfile} />)
+    await renderSettled(<Sidebar session={s} onViewProfile={onViewProfile} />)
     await userEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onViewProfile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(s.profile.toggle)).not.toHaveBeenCalled()
   })
 
-  it('Profile shows the player avatar once the profile has loaded', () => {
+  it('Profile shows the player avatar once the profile has loaded', async () => {
     const s = fakeSession()
     s.profile.data = { address: '0xabc', name: 'Mojito', picture: 'https://example.com/face.png', hasClaimedName: true, isGuest: false }
-    render(<Sidebar session={s} />)
+    await renderSettled(<Sidebar session={s} />)
     const button = screen.getByRole('button', { name: 'Profile' })
     expect(button.querySelector('img')).toHaveAttribute('src', 'https://example.com/face.png')
   })
 
-  it('Profile keeps the generic icon while the profile is loading', () => {
+  it('Profile keeps the generic icon while the profile is loading', async () => {
     const s = fakeSession()
     s.profile.data = null
-    render(<Sidebar session={s} />)
+    await renderSettled(<Sidebar session={s} />)
     expect(screen.getByRole('button', { name: 'Profile' }).querySelector('img')).toBeNull()
   })
 })
@@ -90,14 +90,14 @@ describe('sidebar clicks', () => {
 describe('chat input', () => {
   it('typing a message and pressing Enter sends it', async () => {
     const s = fakeSession()
-    render(<Chat chat={s.chat} />)
+    await renderSettled(<Chat chat={s.chat} />)
     await userEvent.type(screen.getByRole('textbox'), 'gm frens{Enter}')
     expect(vi.mocked(s.chat.send)).toHaveBeenCalledWith('gm frens')
   })
 
   it('does not send an empty message', async () => {
     const s = fakeSession()
-    render(<Chat chat={s.chat} />)
+    await renderSettled(<Chat chat={s.chat} />)
     await userEvent.type(screen.getByRole('textbox'), '{Enter}')
     expect(vi.mocked(s.chat.send)).not.toHaveBeenCalled()
   })
@@ -145,7 +145,7 @@ describe('emotes wheel clicks', () => {
   it('close button toggles the wheel', async () => {
     const s = fakeSession()
     s.emotes = { ...s.emotes, open: true, toggle: vi.fn() }
-    render(<EmotesWheel emotes={s.emotes} />)
+    await renderSettled(<EmotesWheel emotes={s.emotes} />)
     await userEvent.click(screen.getByRole('button', { name: 'Close emotes' }))
     expect(vi.mocked(s.emotes.toggle)).toHaveBeenCalled()
   })

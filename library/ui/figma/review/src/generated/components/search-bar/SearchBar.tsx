@@ -2818,7 +2818,7 @@ export const SearchBar = ({
   <FigmaView
     as='div'
     views={searchBarViews}
-    defaultKey='state:default|product:web'
+    component='SearchBar'
     select={{
       values: { state, product },
       booleans: {  },
@@ -2826,7 +2826,7 @@ export const SearchBar = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11, label12, label13, label14, label15, label16, label17, label18, label19, label20 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

@@ -116,14 +116,6 @@
   vertical-align: top;
 }
 
-.overlay {
-  position: absolute;
-  max-width: none;
-  pointer-events: none;
-}
-.single {
-  grid-template-columns: minmax(0, 1fr);
-}
 .source {
   width: max-content;
   min-width: 100%;

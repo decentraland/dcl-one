@@ -17,22 +17,8 @@ import { readMaterialized } from '../src/lfs.js'
 const repoRoot = path.resolve(import.meta.dirname, '../../../..')
 const PUBLIC_ASSETS = 'library/ui/components/assets/'
 const EXPIRY = 'NavBar re-promotion'
-// The 12 promoted NavBar assets under the owner-approved exception (2026-11-05). Changing this
-// list is a scope decision, not a test fix.
-const APPROVED_PUBLIC_EXCEPTIONS = [
-  '0886c7d40950c9a7',
-  '3023edf85b3bab58',
-  '523aac540e546219',
-  '589c0681b487153c',
-  '5df3df6b019f8118',
-  '6f1c138e8a8c60bd',
-  '8218c632450e04b7',
-  'cf8b481908129a80',
-  'da791d852e6d2301',
-  'e87adb7fc934e850',
-  'fe70a79acdfc2ebd',
-  'fec6d1ff7dec2e07'
-].map((name) => `${PUBLIC_ASSETS}${name}.svg`)
+// NavBar re-promotion retired every public image metadata exception.
+const APPROVED_PUBLIC_EXCEPTIONS = [].map((name) => `${PUBLIC_ASSETS}${name}.svg`)
 
 // Tracked files plus new, not-ignored ones, so the gate also holds before a change is committed.
 const files = execFileSync(
@@ -80,13 +66,13 @@ describe('image metadata gate', () => {
       }
     }
 
-    expect(files.some((file) => file.startsWith(PUBLIC_ASSETS))).toBe(true)
     expect(gateProblems(found, await allowlist(), PUBLIC_ASSETS)).toEqual([])
     expect(undercounted).toEqual([])
   }, 180_000)
 
-  it('should allow exactly the 12 owner-approved public NavBar assets, each with a reason and an expiry', async () => {
+  it('should retain no public NavBar metadata exceptions after re-promotion', async () => {
     const allow = await allowlist()
+    expect(APPROVED_PUBLIC_EXCEPTIONS).toEqual([])
 
     // The exact approved set, not a count: a substituted or duplicated path fails here.
     expect(allow.files.map((entry) => entry.path)).toEqual(APPROVED_PUBLIC_EXCEPTIONS)

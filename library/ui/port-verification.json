@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "lockHash": "23e42089034bf7f6f7b1eca717215d0ca8c1d347af3c8a2047f9476efbe79cc6",
+  "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "figmaTree": "416b84cd0b5d7a7af0736e150db8e2c9a3da88f2",
+  "checks": {
+    "fetch-source": {
+      "result": "pass",
+      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
+    },
+    "deviations": {
+      "result": "pass",
+      "detail": "438 ported files and 39 public foundation files match pinned bytes and origins"
+    },
+    "diff": {
+      "result": "pass",
+      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
+    },
+    "check-mappings": {
+      "result": "pass",
+      "detail": "ok true, 1 public mapping checked with zero diagnostics"
+    },
+    "review-manifest": {
+      "result": "pass",
+      "detail": "46 components and 561 variants, catalog unchanged"
+    },
+    "navbar-bounds": {
+      "result": "pass",
+      "detail": "19 of 19 targeted navbar bounds checks pass"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "39 foundation files reproduced, repeat unchanged, 10 component plan files match public bytes"
+    }
+  }
+}

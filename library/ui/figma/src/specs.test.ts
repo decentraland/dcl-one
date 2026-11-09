@@ -1,8 +1,8 @@
 import { addInventoryPages } from './generation-inventory.js'
 import { rawComponentPageSchema } from './ir/raw-components.js'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadConfig, type FigmaConfig } from './config.js'
-import { projectRoot, snapshotSource } from '../test/snapshot.js'
+import type { FigmaConfig } from './config.js'
+import { snapshotSource, testConfig } from '../test/snapshot.js'
 import type { FigmaSource } from './sources/types.js'
 import { loadSpecsFromSource } from './specs.js'
 
@@ -11,7 +11,7 @@ describe('when generating from committed inventory', () => {
   let source: FigmaSource
   let state: Awaited<ReturnType<NonNullable<FigmaSource['getSyncState']>>>
   beforeEach(async () => {
-    config = await loadConfig(projectRoot)
+    config = await testConfig()
     source = snapshotSource()
     state = await source.getSyncState!()
     source.getSyncState = async () => state
@@ -19,28 +19,28 @@ describe('when generating from committed inventory', () => {
   it('should preserve the intentional Review scope', async () => {
     expect(
       await loadSpecsFromSource(source, config).then(({ specs }) => ({
-        modals: specs.filter((spec) => spec.page === 'Modals').map((spec) => spec.figmaId),
-        hasButtons: specs.some((spec) => spec.page === 'Buttons')
+        dialogs: specs.filter((spec) => spec.page === 'Demo Dialogs').map((spec) => spec.figmaId),
+        hasControls: specs.some((spec) => spec.page === 'Demo Controls')
       }))
-    ).toEqual({ modals: ['15906:10331'], hasButtons: false })
+    ).toEqual({ dialogs: ['30:1'], hasControls: false })
   })
   describe.each([false, null] as const)('and readiness becomes %s', (ready) => {
     beforeEach(() => {
-      state!.pages.find((page) => page.name === 'Nav bar')!.ready = ready
+      state!.pages.find((page) => page.name === 'Demo Nav')!.ready = ready
     })
     it('should retain the frozen page output', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Nav bar')
+        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Demo Nav')
       ).toBe(true)
     })
   })
   describe('and the page display name changes', () => {
     beforeEach(() => {
-      state!.pages.find((page) => page.name === 'Nav bar')!.name = 'Navigation ✅'
+      state!.pages.find((page) => page.name === 'Demo Nav')!.name = 'Demo Navigation ✅'
     })
     it('should retain the output name and selection', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Nav bar')
+        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Demo Nav')
       ).toBe(true)
     })
   })
@@ -50,7 +50,7 @@ describe('when generating from committed inventory', () => {
     })
     it('should preserve inventory selection', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Nav bar')
+        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Demo Nav')
       ).toBe(true)
     })
   })
@@ -60,48 +60,50 @@ describe('when generating from committed inventory', () => {
     })
     it('should still use committed publication inventory', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Buttons')
+        (await loadSpecsFromSource(source, config)).specs.some(
+          (spec) => spec.page === 'Demo Controls'
+        )
       ).toBe(false)
     })
   })
   describe('and promotion is requested', () => {
-    it('should keep ShopModals exclusively in Review', async () => {
+    it('should keep the Review exception exclusively in Review', async () => {
       expect(
         (await loadSpecsFromSource(source, config, 'review')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(true)
       expect(
         (await loadSpecsFromSource(source, config, 'promotion')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(false)
     })
   })
-  describe('and Modals becomes ready without a new capture', () => {
+  describe('and the exception page becomes ready without a new capture', () => {
     beforeEach(() => {
-      state!.pages.find((page) => page.id === '8698:2193')!.ready = true
+      state!.pages.find((page) => page.id === '10:8')!.ready = true
     })
-    it('should keep ShopModals out of promotion without captured inventory', async () => {
+    it('should keep the exception out of promotion without captured inventory', async () => {
       expect(
         (await loadSpecsFromSource(source, config, 'promotion')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(false)
     })
   })
-  describe('and the ready Modals page is captured into promotion inventory', () => {
+  describe('and the ready exception page is captured into promotion inventory', () => {
     beforeEach(async () => {
       const inventory = await source.getGenerationInventory!()
-      const captured = addInventoryPages(inventory!, ['8698:2193'], {
-        '8698:2193': ['15906:10331']
+      const captured = addInventoryPages(inventory!, ['10:8'], {
+        '10:8': ['30:1']
       })
       source.getGenerationInventory = async () => captured
     })
-    it('should admit ShopModals through the captured promotion scope', async () => {
+    it('should admit the exception through the captured promotion scope', async () => {
       expect(
         (await loadSpecsFromSource(source, config, 'promotion')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(true)
     })
@@ -110,19 +112,19 @@ describe('when generating from committed inventory', () => {
     beforeEach(() => {
       config.selection!.readyOnly = false
       config.pages = Object.fromEntries(
-        Object.entries(config.pages).filter(([, page]) => page.id === '8698:2193')
+        Object.entries(config.pages).filter(([, page]) => page.id === '10:8')
       )
       source.getGenerationInventory = async () => undefined
     })
     it('should not treat the Review exception as promotion authorization', async () => {
       expect(
         (await loadSpecsFromSource(source, config, 'review')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(true)
       expect(
         (await loadSpecsFromSource(source, config, 'promotion')).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
+          (spec) => spec.figmaId === '30:1'
         )
       ).toBe(false)
     })
@@ -166,7 +168,7 @@ describe('when generating from committed inventory', () => {
       const inventory = await source.getGenerationInventory!()
       source.getGenerationInventory = async () => ({
         ...inventory!,
-        review: [{ pageId: '8698:2193', componentIds: ['missing'] }],
+        review: [{ pageId: '10:8', componentIds: ['missing'] }],
         promotion: []
       })
     })
@@ -182,9 +184,9 @@ describe('when generating from committed inventory', () => {
         schema: 1,
         retired: [
           {
-            pageId: '8698:2193',
-            componentId: '15906:10331',
-            name: 'ShopModals',
+            pageId: '10:8',
+            componentId: '30:1',
+            name: 'Dialog',
             reason: 'Retired by developer',
             owned: [],
             sharedExclusions: []
@@ -194,9 +196,7 @@ describe('when generating from committed inventory', () => {
     })
     it('should exclude it despite the Review inventory entry', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some(
-          (spec) => spec.figmaId === '15906:10331'
-        )
+        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.figmaId === '30:1')
       ).toBe(false)
     })
   })
@@ -206,8 +206,8 @@ describe('when generating from committed inventory', () => {
         schema: 1,
         retired: [
           {
-            pageId: '8711:15316',
-            name: 'Nav bar',
+            pageId: '10:7',
+            name: 'Demo Nav',
             reason: 'Retired by developer',
             owned: [],
             sharedExclusions: []
@@ -217,12 +217,12 @@ describe('when generating from committed inventory', () => {
     })
     it('should exclude its output despite readiness and inventory', async () => {
       expect(
-        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Nav bar')
+        (await loadSpecsFromSource(source, config)).specs.some((spec) => spec.page === 'Demo Nav')
       ).toBe(false)
     })
   })
 
-  describe('and a retired duplicate was removed from its snapshot', () => {
+  describe('and a duplicate has a permanent retirement record', () => {
     beforeEach(() => {
       config.pages = { '1:1': { id: '1:1', name: 'Page', kind: 'components' } }
       source.getGenerationInventory = async () => ({
@@ -264,6 +264,84 @@ describe('when generating from committed inventory', () => {
             sharedExclusions: []
           }
         ]
+      })
+    })
+    describe('and the pinned cache still contains the retired duplicate', () => {
+      beforeEach(() => {
+        const getPage = source.getComponentPageById!
+        source.getComponentPageById = async (id) => {
+          const data = await getPage(id)
+          if (!data) throw new Error('Missing fixture capture')
+          const survivor = data.components[0]!
+          return {
+            ...data,
+            components: [
+              { ...survivor, id: '2:1', base: { ...survivor.base, id: '2:1' } },
+              survivor
+            ]
+          }
+        }
+      })
+      it.each(['review', 'promotion'] as const)(
+        'should preserve the surviving public name without collisions in %s',
+        async (scope) => {
+          expect(
+            await loadSpecsFromSource(source, config, scope).then(({ specs, nameCollisions }) => ({
+              specs: specs.map(({ name, figmaId }) => ({ name, figmaId })),
+              nameCollisions
+            }))
+          ).toEqual({ specs: [{ name: 'Control2', figmaId: '2:2' }], nameCollisions: [] })
+        }
+      )
+      describe('and the retired component has an excluded primitive binding', () => {
+        beforeEach(() => {
+          config.excludedPrimitives = ['Primitives/Primary/Primary blue TEST']
+          const getCollections = source.getTokenCollections.bind(source)
+          source.getTokenCollections = async () =>
+            (await getCollections()).map((collection) =>
+              collection.name === 'Primitives'
+                ? {
+                    ...collection,
+                    variables: [
+                      ...collection.variables,
+                      {
+                        name: 'Primary/Primary blue TEST',
+                        type: 'COLOR',
+                        values: { Value: { hex: '#0400ff', alpha: 1 } }
+                      }
+                    ]
+                  }
+                : collection
+            )
+          const getPage = source.getComponentPageById!
+          source.getComponentPageById = async (id) => {
+            const data = await getPage(id)
+            if (!data) throw new Error('Missing fixture capture')
+            return {
+              ...data,
+              components: data.components.map((component) =>
+                component.id === '2:1'
+                  ? {
+                      ...component,
+                      name: 'RetiredControl',
+                      base: {
+                        ...component.base,
+                        tree: {
+                          ...component.base.tree,
+                          fills: [{ type: 'SOLID', token: 'Primitives/Primary/Primary blue TEST' }]
+                        }
+                      }
+                    }
+                  : component
+              )
+            }
+          }
+        })
+        it('should generate the survivor without validating the retired binding', async () => {
+          await expect(
+            loadSpecsFromSource(source, config).then(({ specs }) => specs.map((spec) => spec.name))
+          ).resolves.toEqual(['Control2'])
+        })
       })
     })
     describe('and the duplicate was on an earlier retired page', () => {

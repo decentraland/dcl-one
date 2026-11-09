@@ -56,13 +56,13 @@ describe('fileMetadata', () => {
   describe('when a captured component page plants the chunk in each location ingest sanitizes', () => {
     const page = async () => {
       const raw = JSON.parse(
-        await readFile(path.join(snapshotDir, 'components', 'Cursor.json'), 'utf8')
+        await readFile(path.join(snapshotDir, 'components', 'Demo Cursors.json'), 'utf8')
       )
-      // The frozen fixture keeps its own metadata; start clean so only the planted chunk is found.
+      // Start from a clean page so only the planted chunk is found.
       return stripImageMetadata(rawComponentPageSchema.parse(raw))
     }
     const write = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2))
-    const file = 'library/ui/figma/figma-snapshot/components/Cursor.json'
+    const file = 'library/ui/figma/figma-snapshot/components/Demo Cursors.json'
 
     it.each([
       [
@@ -222,7 +222,9 @@ describe('escaped JSON', () => {
   it('should find both escapes in a captured component page parsed by the ingest schema', async () => {
     const clean = stripImageMetadata(
       rawComponentPageSchema.parse(
-        JSON.parse(await readFile(path.join(snapshotDir, 'components', 'Cursor.json'), 'utf8'))
+        JSON.parse(
+          await readFile(path.join(snapshotDir, 'components', 'Demo Cursors.json'), 'utf8')
+        )
       )
     )
     const tree = clean.components[0]!.base.tree as unknown as Record<string, unknown>
@@ -244,7 +246,10 @@ describe('escaped JSON', () => {
     expect(text).toContain('\\u0070ng')
 
     expect(
-      fileMetadata('library/ui/figma/figma-snapshot/components/Cursor.json', Buffer.from(text))
+      fileMetadata(
+        'library/ui/figma/figma-snapshot/components/Demo Cursors.json',
+        Buffer.from(text)
+      )
     ).toEqual({
       tEXt: 2,
       eXIf: 2

@@ -40,13 +40,17 @@ use crate::{
 };
 
 const INBOUND_RATE_WINDOW_SECS: f64 = 1.0;
-const MAX_MESSAGES_PER_WINDOW: usize = 300;
+pub(crate) const MAX_MESSAGES_PER_WINDOW: usize = 300;
 const GRACE_PERIOD: f32 = 3.;
 
+/// Windows beyond which idle ones are dropped on the next check: keys that no participant
+/// entity owns (community authors, keyed `community:<wallet>`) are not evicted any other way.
+const MAX_RATE_WINDOWS: usize = 1024;
+
 // Per-peer sliding-window rate limit; entries are evicted when the participant entity is removed
-// or an unannounced sender is retired, which bounds the map by the senders the rooms know about.
-// Keyed per room as well as identity so the same identity string in two rooms (island + scene)
-// can't share a window.
+// or an unannounced sender is retired, which bounds the map by the senders the rooms know about,
+// and idle windows are swept once the map outgrows `MAX_RATE_WINDOWS`. Keyed per room as well as
+// identity so the same identity string in two rooms (island + scene) can't share a window.
 #[derive(Resource, Default)]
 pub(crate) struct InboundRateLimiter {
     windows: HashMap<(Entity, String), VecDeque<f64>>,
@@ -56,6 +60,10 @@ impl InboundRateLimiter {
     pub(crate) fn allow(&mut self, room: Entity, identity: &str, now: f64) -> bool {
         let cutoff = now - INBOUND_RATE_WINDOW_SECS;
 
+        if self.windows.len() >= MAX_RATE_WINDOWS {
+            self.windows
+                .retain(|_, times| times.back().is_some_and(|&t| t >= cutoff));
+        }
         let times = self.windows.entry((room, identity.to_owned())).or_default();
         while times.front().is_some_and(|&t| t < cutoff) {
             times.pop_front();
@@ -78,7 +86,6 @@ impl Plugin for LivekitParticipantPlugin {
         app.add_observer(participant_entity_removed);
         app.add_observer(participant_connection_quality_changed);
         app.add_observer(participant_payload);
-        app.add_observer(participant_metadata_changed);
         app.add_observer(active_speakers_changed);
         app.add_observer(is_now_speaking);
         app.add_observer(is_no_longer_speaking);
@@ -136,9 +143,8 @@ fn participant_connected(
     }
 
     // Register presence explicitly. Membership is otherwise implied by a `PlayerUpdate` arriving,
-    // and the only one this path used to emit was the metadata message below — which is skipped
-    // when the token carries no metadata, so a peer whose avatar state rides Pulse could sit in the
-    // room without ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
+    // and a peer whose avatar state rides Pulse sends none here, so it could sit in the room without
+    // ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
     if !is_local {
         if let Some(address) = participant.identity().as_str().as_h160() {
             let transport_id = *room_entity;
@@ -430,46 +436,6 @@ fn retire_unannounced_participants(
     }
 }
 
-fn participant_metadata_changed(
-    trigger: Trigger<ParticipantMetadataChanged>,
-    transport_senders: crate::global_crdt::TransportSenders,
-    mut player_update_tasks: PlayerUpdateTasksMut,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    let ParticipantMetadataChanged { room, participant } = trigger.event();
-
-    let meta = participant.metadata();
-    if !meta.is_empty() {
-        debug!(
-            "Metadata of {} ({}) changed.",
-            participant.sid(),
-            participant.identity()
-        );
-        if let Some(address) = participant.identity().as_str().as_h160() {
-            let room = *room;
-            let Some(sender) = transport_senders.get(room) else {
-                return;
-            };
-            let task = livekit_runtime.spawn(async move {
-                sender
-                    .send(
-                        PlayerUpdate {
-                            transport_id: room,
-                            message: PlayerMessage::MetaData(meta),
-                            address,
-                        }
-                        .into(),
-                    )
-                    .await
-            });
-            player_update_tasks.push(PlayerUpdateTask {
-                runtime: (*livekit_runtime).clone(),
-                task,
-            });
-        }
-    }
-}
-
 fn active_speakers_changed(
     trigger: Trigger<ActiveSpeakersChanged>,
     mut commands: Commands,
@@ -649,6 +615,21 @@ fn verify_active_speaker_grace_period(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_rate_windows_are_swept_once_the_map_is_full() {
+        let mut limiter = InboundRateLimiter::default();
+        let room = Entity::from_raw(1);
+        for i in 0..MAX_RATE_WINDOWS {
+            assert!(limiter.allow(room, &format!("community:0x{i:040x}"), 0.0));
+        }
+        assert_eq!(limiter.windows.len(), MAX_RATE_WINDOWS);
+        // a message well after the window: every idle entry goes, the live one stays
+        assert!(limiter.allow(room, "community:0xlive", 10.0));
+        assert_eq!(limiter.windows.len(), 1);
+        assert!(limiter.allow(room, "community:0xlive", 10.5));
+        assert_eq!(limiter.windows.len(), 1);
+    }
 
     #[test]
     fn a_room_falling_silent_preserves_other_rooms_speakers() {

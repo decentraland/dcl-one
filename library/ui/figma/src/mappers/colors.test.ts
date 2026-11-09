@@ -22,10 +22,10 @@ describe('ColorResolver', () => {
     it('should reference the CSS variable and never the raw hex', async () => {
       const colors = await resolver()
 
-      expect(colors.resolve({ hex: '#fcfcfc', token: 'Primitives/Neutrals/Snow' })).toEqual({
-        css: 'var(--dcl-neutrals-snow)',
+      expect(colors.resolve({ hex: '#fcfcfc', token: 'Primitives/Neutral/White' })).toEqual({
+        css: 'var(--dcl-neutral-white)',
         via: 'token',
-        token: 'Primitives/Neutrals/Snow'
+        token: 'Primitives/Neutral/White'
       })
     })
 
@@ -35,10 +35,10 @@ describe('ColorResolver', () => {
       const result = colors.resolve({
         hex: '#ffffff',
         opacity: 0.1,
-        token: 'Primitives/Transparencies/White 10'
+        token: 'Primitives/Alpha/White 10'
       })
 
-      expect(result.css).toBe('var(--dcl-transparencies-white-10)')
+      expect(result.css).toBe('var(--dcl-alpha-white-10)')
     })
 
     it('should mix in the paint opacity when it differs from an opaque token', async () => {
@@ -47,10 +47,10 @@ describe('ColorResolver', () => {
       const result = colors.resolve({
         hex: '#fcfcfc',
         opacity: 0.5,
-        token: 'Primitives/Neutrals/Snow'
+        token: 'Primitives/Neutral/White'
       })
 
-      expect(result.css).toBe('color-mix(in srgb, var(--dcl-neutrals-snow) 50%, transparent)')
+      expect(result.css).toBe('color-mix(in srgb, var(--dcl-neutral-white) 50%, transparent)')
     })
   })
 
@@ -59,7 +59,7 @@ describe('ColorResolver', () => {
       const colors = await resolver()
 
       expect(colors.resolve({ hex: '#cfcdd4' })).toMatchObject({
-        css: 'var(--dcl-neutrals-gray)',
+        css: 'var(--dcl-neutral-gray)',
         via: 'value-match'
       })
     })

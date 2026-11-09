@@ -9,8 +9,8 @@ import { Link, useNavigate } from "react-router";
 
 import ManaMark from "../../../atoms/ManaMark";
 import Modal from "../../../components/Modal";
-import { isPolygon, type ChainId } from "../../model/chain";
-import { formatMana } from "../../model/money";
+import { isPolygon, type ChainId } from "@shop/model/chain";
+import { formatMana } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { fetchLegacyOrders } from "../../market/lib/api";
@@ -23,7 +23,6 @@ import { listingLabel } from "../../market/components/AssetTile";
 import { TokenFrame, useIsOwner, WithRouteToken, type TokenRecord } from "../../market/components/TokenAction";
 import { postListingWithRetry } from "../lib/import";
 import { patchManageCaches } from "../lib/manage-cache";
-import { useShopCapabilities } from "../lib/featureFlags";
 import { MarketSignIn } from "./SellerSignIn";
 import "./sellerpages.css";
 
@@ -217,7 +216,6 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
 
 export function TokenSellView({ token }: { token: TokenRecord }) {
   const owner = useIsOwner(token);
-  const caps = useShopCapabilities();
   const relist = token.isOnSale;
   return (
     <TokenFrame
@@ -233,11 +231,8 @@ export function TokenSellView({ token }: { token: TokenRecord }) {
         <p role="alert" data-testid="shop-not-owner">
           You are not the owner of <b>{token.name}</b>.
         </p>
-      ) : !caps.secondarySales ? (
-        <p role="status" data-testid="shop-resales-off">
-          This Shop does not list resales right now.
-        </p>
       ) : (
+        // Reached only through the Marketplace's gate (market/access.tsx), which needs the node's resales on.
         <WalletGate what="Listing an item">
           <SellForm token={token} />
         </WalletGate>

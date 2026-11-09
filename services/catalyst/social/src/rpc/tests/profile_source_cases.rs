@@ -133,7 +133,7 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                 sqlx::query("INSERT INTO social.blocks(blocker_address,blocked_address,blocked_at) VALUES($1,$2,to_timestamp(0))")
                     .bind(me).bind(owner).execute(&pool).await.unwrap();
             }
-            let pctx = procedure_ctx(&ctx, me, 5701);
+            let pctx = procedure_ctx(ctx, me, 5701);
             let pagination = Some(Pagination {
                 limit: 100,
                 offset: 0,
@@ -259,7 +259,7 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                             },
                         )),
                     },
-                    procedure_ctx(&ctx, owner, 5702),
+                    procedure_ctx(ctx, owner, 5702),
                 )
                 .await
                 .unwrap();

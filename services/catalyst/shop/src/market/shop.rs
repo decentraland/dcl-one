@@ -23,6 +23,7 @@
 //! until a build exists (`personalized: false`). Coupons are stored and
 //! served by `/v1/coupons` (`coupons`).
 
+use crate::types::ManaUsdRate;
 use std::collections::HashMap;
 
 use axum::Json;
@@ -1128,7 +1129,7 @@ fn append_unified_filters(
 /// The chains this deployment sells on, each (chain, marketplace, coupon
 /// manager) pairing of them: a coupon is redeemable only by the marketplace
 /// version its manager is wired into, on the chain it was signed for.
-fn coupon_pairings() -> Vec<(i64, String, String)> {
+pub(crate) fn coupon_pairings() -> Vec<(i64, String, String)> {
     use super::listings::{offchain_marketplace_v2, offchain_marketplace_v3};
     use crate::coupons::contracts::{CouponMarketplace, coupon_contracts};
     let served = [
@@ -1187,9 +1188,10 @@ fn coupon_join() -> String {
              AND {paired} \
              AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
              AND lower(mv.contract_address) = ANY(c.collections) \
+             AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
              AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
-           ORDER BY c.discount_ppm DESC, c.expires_at ASC \
+           ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
            LIMIT 1 \
          ) cp ON true"
     )
@@ -1266,7 +1268,7 @@ fn unified_branch(
 }
 
 /// The branches the request's `source` keeps, joined by UNION ALL.
-fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: f64) -> String {
+fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
     let rate_p = (filters.source != Some(UnifiedSource::Native))
         .then(|| b.bind_string(rate_to_numeric_string(rate)));
     let branches = [
@@ -1456,7 +1458,7 @@ pub fn build_importable_listings_sql(
 
 pub fn build_unified_listings_sql(
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1482,7 +1484,7 @@ pub fn build_unified_listings_sql(
 /// The UNION collapsed to one representative row per item: primary before
 /// secondary, native before legacy, cheapest, trade before store; with the
 /// per-item `listing_count` window. Callers wrap it as `d`.
-fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: f64) -> String {
+fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
     let inner = unified_inner(b, f, rate);
     format!(
         "SELECT DISTINCT ON (f.contract_address, f.item_id) f.*, CEIL(f.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
@@ -1495,7 +1497,7 @@ fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: f64) -> S
 
 pub fn build_unified_items_sql(
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1511,7 +1513,7 @@ pub fn build_unified_items_sql(
 pub fn build_items_by_ids_sql(
     ids: &[String],
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1569,7 +1571,7 @@ pub fn build_related_items_sql(
     reference_rarity: Option<&str>,
     first: Option<i64>,
     rail: &RelatedItemsFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1865,7 +1867,7 @@ pub async fn importable_listings(
 pub async fn unified_listings(
     state: &MarketplaceState,
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
     let rows = fetch(state, build_unified_listings_sql(f, rate, since(state))).await?;
     Ok((
@@ -1877,7 +1879,7 @@ pub async fn unified_listings(
 pub async fn unified_items(
     state: &MarketplaceState,
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
     let rows = fetch(state, build_unified_items_sql(f, rate, since(state))).await?;
     Ok((rows.iter().map(map_unified_item).collect(), total_of(&rows)))
@@ -1887,7 +1889,7 @@ pub async fn items_by_ids(
     state: &MarketplaceState,
     ids: &[String],
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<UnifiedItem>, ApiError> {
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -1919,7 +1921,7 @@ pub async fn related_items(
     item_id: &str,
     first: Option<i64>,
     rail: &RelatedItemsFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<UnifiedItem>, ApiError> {
     let Some(reference) = reference_item(state, contract_address, item_id).await? else {
         return Ok(Vec::new());
@@ -2025,7 +2027,7 @@ pub async fn trending_items(
     first: Option<i64>,
     days: Option<i64>,
     filters: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<TrendingItem>, Response> {
     let first = trending_clamp_first(first);
     let days = trending_clamp_days(days);
@@ -2562,7 +2564,7 @@ async fn personal_rows(
     p: &Params<'_>,
     verified: Option<&str>,
     filters: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     limit: usize,
 ) -> Result<Vec<SuggestedItem>, ApiError> {
     let wallet = p
@@ -3200,7 +3202,7 @@ mod tests {
         );
         let unified = build_unified_items_sql(
             &parse_unified_filters(&pairs(&[("groupBy", "item")])),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert_eq!(
@@ -3220,7 +3222,7 @@ mod tests {
         );
         let native = build_unified_listings_sql(
             &parse_unified_filters(&pairs(&[("source", "native")])),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert!(
@@ -3243,7 +3245,7 @@ mod tests {
             Some("rare"),
             None,
             &RelatedItemsFilters::default(),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert!(

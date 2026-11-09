@@ -11,6 +11,8 @@ const placeFiles = [
   `${SNAP}/components/Places.json`,
   'components/places/PlaceCard.tsx'
 ]
+// The capture cache is pinned input: the record names its page there as identity, and nothing removes it.
+const placeOutputs = placeFiles.filter((file) => !file.startsWith(`${SNAP}/`))
 const records = (
   owned: string[],
   extra: Partial<Retirements['retired'][number]> = {}
@@ -45,11 +47,13 @@ describe('apply retirements', () => {
     )
 
   describe('when the record owns its page artifacts', () => {
-    it('should delete only those files', async () => {
+    it('should delete only those files and leave the capture cache untouched', async () => {
+      const capture = await readFile(path.join(root, `${SNAP}/components/Places.json`))
       const deleted = await applyRetirements(root, records(placeFiles))
 
-      expect(deleted.sort()).toEqual([...placeFiles].sort())
+      expect(deleted.sort()).toEqual([...placeOutputs].sort())
       expect(await exists(placeFiles[0]!)).toBe(false)
+      expect(await readFile(path.join(root, `${SNAP}/components/Places.json`))).toEqual(capture)
       expect(await exists(`${GEN}/components/buttons/Button.tsx`)).toBe(true)
     })
 
@@ -61,7 +65,7 @@ describe('apply retirements', () => {
 
     it('should report the files as pending until they are applied', async () => {
       expect((await pendingRetirements(root, records(placeFiles))).sort()).toEqual(
-        [...placeFiles].sort()
+        [...placeOutputs].sort()
       )
 
       await applyRetirements(root, records(placeFiles))
@@ -74,7 +78,7 @@ describe('apply retirements', () => {
       try {
         await cp(root, copy, { recursive: true })
 
-        expect(await applyRetirements(copy, records(placeFiles))).toHaveLength(3)
+        expect(await applyRetirements(copy, records(placeFiles))).toHaveLength(placeOutputs.length)
       } finally {
         await rm(copy, { recursive: true, force: true })
       }

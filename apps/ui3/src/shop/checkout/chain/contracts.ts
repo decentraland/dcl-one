@@ -1,7 +1,8 @@
 // from: decentraland-transactions@3.3.0:src/contracts/{bid,bidV2,rentals,manaToken,collectionStore,creditsManager,offChainMarketplace,offChainMarketplaceV2,offChainMarketplaceV3,couponManagerV2,couponManagerV3,erc721CollectionV2,marketplaceV2}.ts
 //       (the version shop@94584a5c's app/package-lock.json resolves), cross-checked with docs/shop/CONTRACTS.md "Addresses"
-import { evmAddress, type EvmAddress } from "../../model/address";
-import { CHAIN, type ChainId } from "../../model/chain";
+import { evmAddress, type EvmAddress } from "@shop/model/address";
+import { CHAIN, type ChainId } from "@shop/model/chain";
+import { configuredCreditsManager } from "./config";
 
 export type MetaTxStyle = "functionData" | "functionSignature";
 
@@ -126,8 +127,27 @@ const BOOK: Record<number, ChainContracts> = {
 
 export const COLLECTION_V2_DOMAIN = { name: "Decentraland Collection", version: "2" } as const;
 
+/**
+ * A chain's contracts. The CreditsManager is the deployment's own when the build names one for this chain
+ * (`configuredCreditsManager`; same contract, so same EIP-712 domain): it is the manager the server signs
+ * credits for, the only one a credit may be spent through, and so the spender of a combined purchase's MANA.
+ */
 export function chainContracts(chainId: ChainId): ChainContracts | null {
-  return BOOK[chainId] ?? null;
+  const book = BOOK[chainId] ?? null;
+  const manager = configuredCreditsManager(chainId);
+  if (!book?.creditsManager || !manager) return book;
+  return { ...book, creditsManager: { ...book.creditsManager, address: evmAddress(manager) } };
+}
+
+/**
+ * The chain's registry CreditsManager when the build names another one: listed so approvals made to it
+ * still show their spender and can be revoked, never spent through.
+ */
+export function replacedCreditsManager(chainId: ChainId): ContractInfo | null {
+  const registry = BOOK[chainId]?.creditsManager ?? null;
+  const current = chainContracts(chainId)?.creditsManager ?? null;
+  if (!registry || !current || current.address === registry.address) return null;
+  return { ...registry, label: `${registry.label} (previous)` };
 }
 
 export function requireContracts(chainId: ChainId): ChainContracts {
@@ -137,10 +157,17 @@ export function requireContracts(chainId: ChainId): ChainContracts {
 }
 
 export function allContracts(): ContractInfo[] {
-  return Object.values(BOOK).flatMap((b) =>
-    [b.mana, b.creditsManager, b.collectionStore, b.legacyMarketplace, b.bids, b.rentals, ...b.offChainMarketplaces].filter(
-      (x): x is ContractInfo => x !== null,
-    ),
+  return Object.values(BOOK).map((entry) => requireContracts(entry.chainId)).flatMap((b) =>
+    [
+      b.mana,
+      b.creditsManager,
+      replacedCreditsManager(b.chainId),
+      b.collectionStore,
+      b.legacyMarketplace,
+      b.bids,
+      b.rentals,
+      ...b.offChainMarketplaces,
+    ].filter((x): x is ContractInfo => x !== null),
   );
 }
 

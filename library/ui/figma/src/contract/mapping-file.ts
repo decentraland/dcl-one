@@ -1,3 +1,4 @@
+import ts from 'typescript'
 import { readFile } from 'node:fs/promises'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
 
@@ -58,7 +59,7 @@ function parseHeader(source: string): ParsedMapping['header'] {
 }
 
 // Mappings never carry the private Figma file key. Their url names the file through this
-// placeholder, which Code Connect resolves from FIGMA_FILE_KEY at publish time only
+// placeholder, which Code Connect resolves at publish time only, outside this tree's code
 // (documentUrlSubstitutions).
 const FIGMA_FILE_PLACEHOLDER = '<DCL_FIGMA_FILE>'
 const LITERAL_FIGMA_URL = 'literal-figma-url'
@@ -218,11 +219,42 @@ function parseMappingSource(raw: string, file: string): ParsedMapping {
     )
   }
 
+  const locals = parseLocals(source, file, issues)
+  const substitutions = [...(example ?? '').matchAll(/\$\{([^}]+)\}/g)]
+  const template = (example ?? '').replace(/\$\{[^}]+\}/g, (match) => 'X'.repeat(match.length))
+  const syntax = ts.createSourceFile(
+    'usage.tsx',
+    template,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  for (const match of substitutions) {
+    const local = locals.find((item) => item.local === match[1]!.trim())
+    if (!local || (local.kind !== 'text' && local.kind !== 'string')) continue
+    const owner = (node: ts.Node): ts.Node | undefined => {
+      if (node.getStart(syntax) > match.index || node.end < match.index + match[0].length)
+        return undefined
+      return ts.forEachChild(node, owner) ?? node
+    }
+    const node = owner(syntax)
+    if (
+      !node ||
+      !(ts.isJsxText(node) || (ts.isStringLiteral(node) && ts.isJsxAttribute(node.parent)))
+    )
+      issues.push(
+        diagnostic(
+          'unsupported-construct',
+          'error',
+          `${file}: text placeholders are supported only in JSX text or quoted attributes, not JavaScript expressions`
+        )
+      )
+  }
   return {
     file,
     header,
     figma,
-    locals: parseLocals(source, file, issues),
+    locals,
     example,
     imports,
     id,

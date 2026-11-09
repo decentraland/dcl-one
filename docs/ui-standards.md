@@ -28,8 +28,7 @@ guessing. The first standard defined here is styling.
 
 ## Relation to the contributor guides
 
-The current contributor guides reflect the standards in production. This
-document defines the new standards for One.
+The current contributor guides reflect the standards in production. This document defines the new standards for One. State, data fetching and structure are in [web app architecture standards](web-app-standards.md), and tests in [frontend testing standards](frontend-testing.md).
 
 ## Styling: CSS Modules
 
@@ -144,9 +143,7 @@ values to pass arbitrary colours or palette values from props.
 
 ### Responsive, themes and portals
 
-- Use the breakpoint definitions in `library/ui` foundations once implemented
-  and adopted; retain each surface's breakpoints until then. CSS custom
-  properties cannot be used directly in media conditions.
+- Use the breakpoint definitions in `library/ui` foundations once adopted; retain each surface's breakpoints until then. CSS custom properties cannot be used directly in media conditions.
 - Select themes through the shared semantic token mechanism. The supported
   themes and the selection mechanism's details remain to be defined.
 - Carry the required theme scope into portal content rendered outside its
@@ -199,10 +196,10 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
-Until `library/ui` is implemented, Sites already imports `apps/ui3` source
-through the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3`
-component that Sites imports is used by more than one app. Verify a change to
-it in every app that imports it.
+Until `library/ui` is implemented, Sites imports some UI source through the
+`@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
+actual importing surfaces of a component before assuming it has more than one
+consumer, and verify a change to it in every app that imports it.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.
@@ -220,12 +217,7 @@ it in every app that imports it.
 
 ## Shared UI: `library/ui`
 
-The structure and integration below define the target for the shared UI. Its
-foundations, runtime components and consumer integration still need to be
-implemented; the component template is available now. Keep each surface's
-existing tokens and components until its integration has been reviewed. The
-decision is recorded in the
-[shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
+The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Runtime component and consumer integration are separate work. Keep each surface's existing tokens and components until its integration has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 
@@ -260,8 +252,8 @@ library/ui/
       Button.figma.ts   Figma mapping, read by the tooling only
   apps/
     <app>/              app-specific UI: components and styles used by one app
-  index.ts              public exports: components and their prop types
-  figma/                Node-only Figma MCP server and CLI, config, snapshots
+  index.ts              public foundation exports; components when installed
+  figma/                Node-only Figma MCP server and CLI, config, verified cache
 ```
 
 - **Foundations:** expose shared tokens as CSS custom properties and typed
@@ -328,13 +320,11 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { Button } from '<shared-ui>'
+import { theme } from '@dcl/one-ui'
+import '@dcl/one-ui/foundations.css'
 ```
 
-`<shared-ui>` is a placeholder; the shared library's import name remains to be
-selected. Each consumer resolves it consistently in TypeScript and its build,
-allows access to shared sources and deduplicates React and React DOM. Assets
-must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.

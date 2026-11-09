@@ -6,8 +6,6 @@ import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '.
 import type { MatrixCase } from '../../../components/StateMatrix'
 
 export type NavMenuDropdownProps = {
-  state?: 'default' | 'open'
-  tab?: 'whatsOn' | 'shop' | 'create' | 'learn'
   label?: ReactNode
   label2?: ReactNode
   label3?: ReactNode
@@ -16,7 +14,15 @@ export type NavMenuDropdownProps = {
   label6?: ReactNode
   label7?: ReactNode
   forceState?: ForcedState
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+} & (
+  | { state?: "default"; tab?: "whatsOn" }
+  | { state?: "default"; tab: "shop" }
+  | { state?: "default"; tab: "create" }
+  | { state?: "default"; tab: "learn" }
+  | { state: "open"; tab: "shop" }
+  | { state: "open"; tab: "create" }
+  | { state: "open"; tab: "learn" }
+) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navMenuDropdownViews: Record<string, ViewNode> = {
   'state:default|tab:whatsOn': {
@@ -411,7 +417,7 @@ export const NavMenuDropdown = ({
   <FigmaView
     as='button'
     views={navMenuDropdownViews}
-    defaultKey='state:default|tab:whatsOn'
+    component='NavMenuDropdown'
     select={{
       values: { state, tab },
       booleans: {  },
@@ -419,7 +425,7 @@ export const NavMenuDropdown = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

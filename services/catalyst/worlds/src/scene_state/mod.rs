@@ -91,7 +91,7 @@ use crate::comms::world_identity::{Parcel, SceneId, WorldName, is_world_realm_na
 use crate::core::{Revocation, RevocationSink};
 use crate::http::{HttpClientCfg, Outbound};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::policy::Policy;
+use crate::policy::{AccessGrant, Policy};
 use crate::shared::cors;
 use crate::shared::nul_guard;
 use catalyst_storage::Storage;
@@ -460,6 +460,7 @@ impl Settings {
 }
 
 pub struct SceneHostState {
+    pub(crate) secret_max_attempts: u32,
     pub pool: PgPool,
     pub storage: Arc<Storage>,
     /// The permission core: admission and re-admission of every socket.
@@ -483,6 +484,11 @@ pub struct SceneHostState {
 pub type SharedState = Arc<SceneHostState>;
 
 impl SceneHostState {
+    pub fn with_secret_max_attempts(mut self, max: u32) -> Self {
+        self.secret_max_attempts = max.max(1);
+        self
+    }
+
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
@@ -504,6 +510,8 @@ impl SceneHostState {
             fetch_http = fetch_http.allowing_private_hosts();
         }
         Ok(Self {
+            secret_max_attempts:
+                crate::comms::gatekeeper::admission::world_mint::DEFAULT_SHARED_SECRET_MAX_ATTEMPTS,
             pool,
             storage,
             policy,
@@ -597,8 +605,14 @@ impl SceneHostState {
                 let Ok(address) = crate::shared::identity::Address::parse(&client.address) else {
                     continue;
                 };
-                let prior = if void_secrets { None } else { client.grant };
+                let prior = client
+                    .grant
+                    .filter(|g| !void_secrets || *g != AccessGrant::SharedSecret);
                 if let Err(reason) = ws::admit(self, &scene, &address, None, prior, now).await {
+                    if let ws::AdmissionRefused::Undetermined(why) = &reason {
+                        tracing::warn!(scene = %scene.identity.key, %address, %why, "admission undetermined; client kept");
+                        continue;
+                    }
                     tracing::info!(scene = %scene.identity.key, %address, %reason, "admission revoked; closing the socket");
                     scene.remove_client(client.index);
                     kicked += 1;
@@ -649,6 +663,11 @@ impl SceneHostState {
                 };
                 match ws::admit(self, &scene, &address, None, client.grant, now).await {
                     Ok(_) => {}
+                    // An authority or store fault keeps the client, as the comms re-admit does.
+                    Err(ws::AdmissionRefused::Undetermined(why)) => {
+                        tracing::warn!(scene = %key, %address, %why, "admission undetermined; client kept");
+                        summary.errors += 1;
+                    }
                     Err(reason) => {
                         tracing::info!(scene = %key, %address, %reason, "admission revoked; closing the socket");
                         scene.remove_client(client.index);
@@ -700,6 +719,7 @@ impl RevocationSink for SceneHostState {
         let kicked = match revocation {
             Revocation::Address { world, address } => self.kick_from_world(world, address),
             Revocation::AccessSetting { world } => self.readmit_world(world, true).await,
+            Revocation::AccessRecheck { world } => self.readmit_world(world, false).await,
             Revocation::Platform { address } => self.kick_address(address),
         };
         tracing::info!(?revocation, kicked, "scene host applied the revocation");

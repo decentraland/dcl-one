@@ -4,7 +4,7 @@
 
 Decentraland is now available on mobile. Players can explore your scenes from iOS and Android devices, in addition to the desktop client and the web. As a creator, you can adapt your scenes so they look great and play well on touch-based devices.
 
-![Decentraland mobile app — Genesis City](/docs/mobile-app-screenshot.webp)
+![Decentraland mobile app — Genesis City](/docs/creator/.gitbook/assets/mobile-app-screenshot.webp)
 
 
 
@@ -47,5 +47,5 @@ Before publishing a scene that should work well on mobile, make sure that:
 * [ ] You have previewed the scene on a real device — see [Preview your scene on mobile](/docs/creator/build-for-mobile/develop/preview-on-mobile/).
 * [ ] All critical UI elements stay inside the [mobile safe area](/docs/creator/build-for-mobile/develop/safe-area/).
 * [ ] Your UI is sized large enough for touch — follow the [UI best practices](/docs/creator/build-for-mobile/develop/ui-best-practices/).
-* [ ] Key actions are not bound to `IA_ACTION_3`–`IA_ACTION_6` (the `1`/`2`/`3`/`4` keys), which are not easily reachable on mobile — see [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
+* [ ] Key actions are not bound to `IA_SECONDARY` or `IA_ACTION_3`–`IA_ACTION_6` (the `F` and `1`/`2`/`3`/`4` keys), whose buttons are hidden by default on mobile, unless your scene shows them — see [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
 * [ ] Your scene's [Performance](/docs/creator/build-for-mobile/develop/optimize-performance/) is above 90% on the High Graphics Profile on a mid-range phone — see [Hardware Requirements](/docs/creator/build-for-mobile/mobile-client/hardware-requirements/) for reference devices.

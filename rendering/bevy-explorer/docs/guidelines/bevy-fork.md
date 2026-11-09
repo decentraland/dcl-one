@@ -1,11 +1,13 @@
 # The bevy fork
 
-bevy-explorer builds against [`robtfm/bevy`, branch `release-0.16-dcl`](https://github.com/robtfm/bevy/tree/release-0.16-dcl): upstream bevy 0.16.1 plus
-our changes. Bugfix-only forks of other crates exist too (see the workspace `Cargo.toml`); this
-page is only about bevy, because that is where behaviour differs from stock and where a reader
-who knows bevy will otherwise be wrong.
+bevy-explorer builds bevy from `rendering/bevy-explorer/bevy`: upstream bevy 0.16.1 plus our
+changes, vendored from [`robtfm/bevy`, branch `release-0.16-dcl`](https://github.com/robtfm/bevy/tree/release-0.16-dcl)
+at `dac1ac9` (102 commits on top of `v0.16.1`; see the
+[ADR](../../../../docs/adr/2026-11-05-explorer-vendored-bevy.md)). Bugfix-only forks of other
+crates exist too (see the workspace `Cargo.toml`); this page is only about bevy, because that is
+where behaviour differs from stock and where a reader who knows bevy will otherwise be wrong.
 
-If a change belongs in bevy, make it in the fork. Commits marked **throwaway** are 0.16
+If a change belongs in bevy, make it in the vendored tree. Changes marked **throwaway** are 0.16
 adaptations of work that is already upstream in a later bevy and are dropped, not ported,
 on any migration.
 
@@ -137,6 +139,11 @@ across workers:
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key
   events, so a modifier swallowed by an OS chord doesn't stick; `UpdateMode::Reactive` timing
   fix.
+- `WorldId::new` takes `try_update` behind `target_has_atomic = "ptr"` with the `fetch_update`
+  fallback (upstream #26020, **throwaway**); `try_update` needs Rust 1.95, so `bevy`, `bevy_ecs`
+  and `bevy_input_focus` declare `rust-version = "1.95.0"`. The native builds pin 1.99.1 and the
+  web build pins `nightly-2026-04-15` (`apps/bevy-explorer/build-web.py`, `source/justfile`); both
+  are above that floor.
 
 ## UI
 
@@ -153,15 +160,37 @@ across workers:
 - Fixes with no API surface: unicode asset paths, skin buffer growth, missing cascades panic,
   bad vertices for a frame on second mesh load, sparse index warning.
 
-## Working on the fork locally
+## Changing bevy
 
-- Point the workspace at a checkout with the commented-out path patches at the bottom of
-  `Cargo.toml`. You need **both** blocks, `[patch.crates-io]` and
-  `[patch."https://github.com/robtfm/bevy"]`, or half the graph resolves to the git copy and
-  types don't unify. Every bevy subcrate is listed because ecosystem crates reference them
-  directly.
-- Never share a `target/` directory between two checkouts that patch differently.
+- Edit `rendering/bevy-explorer/bevy` in place, in an ordinary PR, and update this page in the
+  same PR. This repository is the source of truth; the fork branch stays frozen at `dac1ac9`.
+- The import left out `assets/` (example assets), the symlink `examples/wasm/assets` into it, and
+  the fork's `.gitattributes`. The root `.gitattributes` sets `-text` for the tree, so its bytes
+  stay exact on every platform.
+- `source/Cargo.toml` points both patch tables at the tree. `[patch.crates-io]` lists each bevy
+  subcrate an ecosystem crate names by crates.io version (18 today);
+  `[patch."https://github.com/robtfm/bevy"]` catches `bevy_dui`, `bevy_ecss` and `boimp`, which
+  name the former fork by git. With `Cargo.lock` nothing fetches the fork. A resolve without it
+  reads the branch once, so the branch has to stay fetchable while those crates name it.
+- The tree is not a workspace member, so the explorer's Clippy and Rustfmt gates never reach it.
+  Cargo doesn't cap a path dependency's rustc warnings as it did the git dependency's: the
+  vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
+  `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16); other warnings stay visible.
+  Don't run Clippy inside bevy's own workspace: its code predates this toolchain's lints.
+  A warning the pinned toolchain raises in the tree is fixed at its site when the fix is
+  local (an import our edits left unused, a deprecated `core::f32` constant, a derived
+  `PartialEq` over a function pointer), so a build log only shows what is new.
+- Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
+  `git format-patch -1 --stdout <sha> | git apply -3 --directory=rendering/bevy-explorer/bevy`.
+  Name the upstream PR on this page, as the entries above do.
+- Our delta over upstream, for a migration: `git fetch https://github.com/bevyengine/bevy tag v0.16.1`,
+  then `git diff v0.16.1^{tree} HEAD:rendering/bevy-explorer/bevy` (the import's omissions show
+  as deletions).
+- CI reuses cached Bevy and engine builds until their inputs change: Cargo would otherwise rebuild a path
+  dependency after every checkout, since a checkout makes every file new.
+  `tooling/bevy-mtimes.py` records tracked Bevy, engine and protocol files' blob ids and times with
+  the cache and gives
+  unchanged files their times back; every job that caches the explorer's target runs it.
+- Never share a `target/` directory with a checkout that builds a different bevy.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).
-- A fork change ships as a push to the fork branch plus a lockfile bump PR here. The PR
-  description names the fork commit and what it carries.

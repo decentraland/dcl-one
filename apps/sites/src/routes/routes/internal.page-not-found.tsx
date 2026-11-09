@@ -1,5 +1,5 @@
 import { ensureSid } from "@/core/lib/telemetry/session";
-import { track } from "@/core/lib/telemetry/track";
+import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/internal.page-not-found";
 
@@ -40,8 +40,8 @@ export async function action({ request }: Route.ActionArgs) {
     track(
       "page_not_found",
       {
-        path,
-        referrer: clip(r.referrer),
+        path: withoutSensitiveParams(path),
+        referrer: withoutSensitiveParams(clip(r.referrer)),
         spa: true,
         ua: request.headers.get("user-agent") ?? "",
       },

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import {
   BUTTONS,
@@ -16,30 +16,78 @@ import { checkScope } from './check-scope.js'
 import { LEDGER } from './consumers.js'
 import { listFiles, toPosix } from './fs-safe.js'
 import { emptyRetirements } from './retirements.js'
-import { GUARDED_DIRECTORIES, GUARDED_FILES, buildOwnership, ownerOf } from './ownership.js'
+import {
+  GENERATED,
+  GUARDED_DIRECTORIES,
+  GUARDED_FILES,
+  buildOwnership,
+  ownerOf
+} from './ownership.js'
+import { createApp, runSync } from '../app.js'
+import { copySnapshot, testConfigFile } from '../../test/snapshot.js'
 
 const repoRoot = path.resolve(import.meta.dirname, '../../..')
 
-describe('ownership of the committed tree', () => {
-  it('should identify managed artifacts while leaving orphaned legacy evidence unowned', async () => {
-    const ownership = await buildOwnership(repoRoot)
-    const files: string[] = [...GUARDED_FILES]
-    for (const directory of GUARDED_DIRECTORIES)
-      for (const file of await listFiles(path.join(repoRoot, directory)))
-        files.push(toPosix(path.relative(repoRoot, file)))
+const unownedFiles = async (root: string) => {
+  const ownership = await buildOwnership(root)
+  const files: string[] = [...GUARDED_FILES]
+  for (const directory of GUARDED_DIRECTORIES)
+    for (const file of await listFiles(path.join(root, directory)))
+      files.push(toPosix(path.relative(root, file)))
+  return files.filter(
+    (file) => path.basename(file) !== '.gitkeep' && ownerOf(ownership, file) === null
+  )
+}
 
-    const unowned = files.filter(
-      (file) => path.basename(file) !== '.gitkeep' && ownerOf(ownership, file) === null
+// The committed Review is generated from the capture, which only maintainers materialize; a tree generated
+// from the synthetic snapshot stands in for it.
+describe('ownership of a generated tree', () => {
+  let root: string
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(os.tmpdir(), 'ownership-tree-'))
+    const figma = path.join(root, 'figma')
+    await mkdir(figma, { recursive: true })
+    await copySnapshot(path.join(figma, 'figma-snapshot'))
+    const config = JSON.parse(await readFile(testConfigFile, 'utf8'))
+    await writeFile(
+      path.join(figma, 'figma.config.json'),
+      JSON.stringify({ ...config, snapshotDir: 'figma-snapshot', outDir: `../${GENERATED}` })
     )
-
-    expect(unowned).toHaveLength(124)
-    expect(
-      unowned.every((file) =>
-        /^figma\/review\/public\/dcl-ui-review\/(references|renders)\/[^/]+\.png$/.test(file)
-      )
-    ).toBe(true)
+    await runSync(
+      await createApp(figma, path.join(figma, 'figma.config.json'), { unverifiedSnapshot: true }),
+      {
+        source: 'snapshot',
+        developer: true
+      }
+    )
+  }, 60_000)
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
   })
 
+  it('should own every generated and captured artifact', async () => {
+    const generated = await listFiles(path.join(root, GENERATED))
+
+    expect(generated.length).toBeGreaterThan(0)
+    expect(await unownedFiles(root)).toEqual([])
+  })
+
+  // The Review publishes no Figma evidence: a PNG anywhere under public/dcl-ui-review, including the old
+  // references/, renders/ and icons/ folders, belongs to nothing.
+  it.each([
+    'figma/review/public/dcl-ui-review/planted.png',
+    'figma/review/public/dcl-ui-review/references/live-1-1.png',
+    'figma/review/public/dcl-ui-review/renders/Button-0.png',
+    'figma/review/public/dcl-ui-review/icons/1-1.png'
+  ])('should leave a PNG planted at %s unowned', async (planted) => {
+    await mkdir(path.dirname(path.join(root, planted)), { recursive: true })
+    await writeFile(path.join(root, planted), 'not a managed file')
+
+    expect(await unownedFiles(root)).toEqual([planted])
+  })
+})
+
+describe('ownership of the committed tree', () => {
   it('should pass an automated run that changed nothing', async () => {
     const result = await checkScope({
       baseDir: repoRoot,
@@ -111,7 +159,7 @@ describe('when display metadata disagrees with stable ownership', () => {
     expect(ownerOf(ownership, `${SNAP}/components/External.json`)).toEqual({ pageId: 'external' })
   })
   it.each([false, true])(
-    'should freeze unowned evidence even with a new staged identity claim: %s',
+    'should freeze an unowned public PNG even with a new staged identity claim: %s',
     async (claimed) => {
       await put(root, `${SNAP}/components/Other.json`, {
         page: { id: '9:1', name: 'Other' },
@@ -132,9 +180,6 @@ describe('when display metadata disagrees with stable ownership', () => {
               { name: 'Orphan', page: 'Other', id: '9:2', file: 'other/Orphan', variants: [] }
             ])
           )
-          await put(staged, 'figma/review/public/dcl-ui-review/fidelity.json', {
-            cases: { 'Orphan-0': { sourceId: '9:2', image: '/dcl-ui-review/renders/Orphan-0.png' } }
-          })
         }
         expect(ownerOf(await buildOwnership(root), file)).toBeNull()
         const result = await checkScope({
@@ -154,6 +199,29 @@ describe('when display metadata disagrees with stable ownership', () => {
       }
     }
   )
+  it('should reject a PNG a pull request plants under public/dcl-ui-review', async () => {
+    const file = 'figma/review/public/dcl-ui-review/renders/Button-0.png'
+    const staged = await mkdtemp(path.join(os.tmpdir(), 'planted-png-'))
+    try {
+      await cp(root, staged, { recursive: true })
+      await put(staged, file, 'planted')
+      const result = await checkScope({
+        baseDir: root,
+        stagedDir: staged,
+        capturedPageIds: [BUTTONS, PLACES],
+        runKind: 'automated',
+        stage: 'complete',
+        retirements: emptyRetirements()
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.violations).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: file, owner: null })])
+      )
+    } finally {
+      await rm(staged, { recursive: true, force: true })
+    }
+  })
   it('should not claim foreign files merely sharing a generated module prefix', async () => {
     const ownership = await buildOwnership(root)
     expect(ownerOf(ownership, `${GEN}/components/buttons/Button.custom.tsx`)).toBeNull()

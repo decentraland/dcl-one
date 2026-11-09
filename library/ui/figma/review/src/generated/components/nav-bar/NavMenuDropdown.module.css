@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -43,7 +46,6 @@ box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 5.33px;
 padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-24) var(--dcl-space-16);
 width: 96.33px;
 height: 72px;
@@ -79,7 +81,6 @@ box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 5.33px;
 padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-24) var(--dcl-space-16);
 width: 108.33px;
 height: 72px;
@@ -115,7 +116,6 @@ box-sizing: border-box;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: 5.33px;
 padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-24) var(--dcl-space-16);
 width: 100.33px;
 height: 72px;
@@ -166,6 +166,7 @@ flex-direction: row;
 justify-content: space-between;
 align-items: center;
 align-self: stretch;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -200,6 +201,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -227,6 +229,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -254,6 +257,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -281,6 +285,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -308,6 +313,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -332,9 +338,9 @@ display: flex;
 flex-direction: row;
 justify-content: space-between;
 align-items: center;
-gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -374,6 +380,7 @@ flex-direction: row;
 justify-content: space-between;
 align-items: center;
 align-self: stretch;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -408,6 +415,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -435,6 +443,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -462,6 +471,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -501,6 +511,7 @@ flex-direction: row;
 justify-content: space-between;
 align-items: center;
 align-self: stretch;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -535,6 +546,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -562,6 +574,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -589,6 +602,7 @@ align-items: center;
 gap: var(--dcl-space-4);
 padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
 align-self: stretch;
+flex-shrink: 0;
 border-radius: var(--dcl-radius-md);
 opacity: 1;
 }
@@ -605,4 +619,5 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 24px;
 opacity: 1;
+}
 }

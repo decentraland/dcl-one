@@ -1,5 +1,8 @@
 {
   "snapshotDir": "figma-snapshot",
+  "snapshotLock": "../upstream.lock.json",
+  "imageFills": "placeholder",
+  "excludedPrimitives": ["Primitives/Primary/Primary blue TEST"],
   "outDir": "review/src/generated",
   "pages": {
     "1:5238": {
@@ -265,6 +268,7 @@
       }
     },
     "NavBar": {
+      "exposeTextSlots": false,
       "semantics": {
         "@root": {
           "role": "navigation",

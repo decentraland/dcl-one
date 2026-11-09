@@ -29,17 +29,33 @@ function viewKey(selection: Selection, dropped = 0): string {
   return parts.join('|') || 'default'
 }
 
-// A variant combination that Figma never drew (for example "selected" + "disabled") falls back to the
-// closest drawn one by dropping flags from the end, then to the component's default view.
-function pickView<T>(views: Record<string, T>, defaultKey: string, selection: Selection): T {
+function describeSelection(selection: Selection): string {
+  const axes = [
+    ...Object.entries(selection.values).map(([name, value]) => `${name}=${JSON.stringify(value)}`),
+    ...Object.entries(selection.booleans).map(([name, on]) => `${name}=${JSON.stringify(on)}`)
+  ]
+  return axes.join(', ') || 'no variant axes'
+}
+
+// Interaction flags Figma did not draw in combination (for example "selected" + "disabled") fall back to the
+// closest drawn view by dropping flags from the end. Any other selection Figma never drew throws, in every
+// environment and during server rendering. The generator types a sparse component's axes as a union of the drawn
+// combinations (its variant contract) and only emits defaults that are drawn, so only an untyped caller (plain JS,
+// spread props) reaches here; rendering another view would silently change the viewport, state or theme asked for.
+function pickView<T>(
+  views: Record<string, T>,
+  selection: Selection,
+  component = 'A generated component'
+): T {
+  // A boolean axis is true or false; any other value (a string from an untyped caller) selects nothing drawn.
+  if (Object.values(selection.booleans).some((on) => typeof on !== 'boolean'))
+    throw new Error(`${component} has no captured view for ${describeSelection(selection)}`)
   const flagCount = FLAG_ORDER.filter((flag) => selection.flags[flag]).length
   for (let dropped = 0; dropped <= flagCount; dropped += 1) {
     const view = views[viewKey(selection, dropped)]
     if (view) return view
   }
-  const fallback = views[defaultKey] ?? Object.values(views)[0]
-  if (!fallback) throw new Error('A generated component must have at least one view')
-  return fallback
+  throw new Error(`${component} has no captured view for ${describeSelection(selection)}`)
 }
 
 export { pickView, registerComponent, registry, viewKey }

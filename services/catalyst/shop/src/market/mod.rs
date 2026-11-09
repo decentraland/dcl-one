@@ -62,11 +62,13 @@ pub mod chain_walk;
 pub mod collections;
 pub mod contracts;
 pub mod definitions;
+pub mod features;
 pub mod federation;
 pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
 pub mod lambdas_explorer;
+pub mod lambdas_http;
 pub mod lambdas_land;
 pub mod listings;
 pub mod lists;
@@ -75,6 +77,7 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
+pub mod notice_cursor;
 pub mod nfts;
 pub mod orders;
 pub mod owners;
@@ -83,13 +86,18 @@ pub mod profiles;
 pub mod rankings;
 pub mod readers;
 pub mod rentals;
+pub mod royalty_notices;
+pub mod sale_notices;
 pub mod sales;
+pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
 pub mod wire;
@@ -111,7 +119,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -155,6 +163,10 @@ pub struct Upstreams {
     /// `NFT_WORKER_BASE_URL`: the NFT ownership indexer the old lambdas asked
     /// for an owner's third-party holdings; unset, they are read from the chain.
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer lists escrow grants.
+    pub explorer_escrow_grants_enabled: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: the wearables catalogue's extended filters.
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -179,6 +191,14 @@ pub struct Settings {
     pub third_party_registry_subgraph_url: Option<String>,
     /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
+    /// items include this node's active escrow grants (`shop.usage_grants`);
+    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    pub explorer_escrow_grants: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
+    /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
+    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -222,6 +242,8 @@ pub struct MarketSettings {
     /// The chain indexes (`nft`, `trade_events`), the neighbours job and the
     /// coupon state reader (`chain_walk::IndexSettings`; every default off).
     pub indexes: chain_walk::IndexSettings,
+    /// The tip forward's thresholds and pending cap.
+    pub tips: tips::TipSettings,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -244,6 +266,7 @@ impl std::fmt::Debug for MarketSettings {
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
+            .field("tips", &self.tips)
             .finish_non_exhaustive()
     }
 }
@@ -259,6 +282,7 @@ impl Default for MarketSettings {
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         }
     }
 }
@@ -302,12 +326,19 @@ impl MarketSettings {
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         })
     }
 
     /// The chain indexes' knobs (`main.rs` fills them from `Config`).
     pub fn with_indexes(mut self, indexes: chain_walk::IndexSettings) -> Self {
         self.indexes = indexes;
+        self
+    }
+
+    /// The tip forward's knobs (`main.rs` fills them from `Config`).
+    pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
+        self.tips = tips;
         self
     }
 }
@@ -377,6 +408,8 @@ impl Settings {
             })
             .transpose()?,
             nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
+            explorer_escrow_grants: upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions: upstreams.lambdas_catalog_extensions_enabled,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -435,6 +468,8 @@ impl Settings {
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
             nft_worker_base_url: None,
+            explorer_escrow_grants: true,
+            lambdas_catalog_extensions: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),
@@ -478,9 +513,17 @@ pub struct MarketplaceState {
     pub(crate) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     /// `READ_THROUGH_ENABLED`: a profile this node does not hold is asked of the sync sources.
     pub(crate) read_through: Option<Arc<crate::content::read_through::ReadThrough>>,
+    /// The store's moderation projection (`content::Denylist`): every read of
+    /// active entities here leaves the listed ones out, as lamb2 reading the
+    /// content server's filtered `/entities/active` does.
+    pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
+    pub(crate) dapps_flags: Arc<features::DappsFlags>,
+    /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
+    pub(crate) flags_source: features::Source,
     /// The chain index's loopback switch: a test that flips it admits a
     /// loopback fake upstream for the shop's calls and the subgraph readers.
     #[cfg(test)]
@@ -514,7 +557,10 @@ impl MarketplaceState {
             explorer_cache: lambdas_explorer::explorer_cache(),
             eip1654: None,
             read_through: None,
+            denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
+            dapps_flags: Arc::new(features::DappsFlags::new()),
+            flags_source: features::Source::default(),
             settings,
         }
     }
@@ -525,6 +571,13 @@ impl MarketplaceState {
         eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     ) -> Self {
         self.eip1654 = eip1654;
+        self
+    }
+
+    /// Attaches the store's denylist (`Storage::denylist`), which the active
+    /// entity reads honour; without it nothing is hidden.
+    pub fn with_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.denylist = denylist;
         self
     }
 
@@ -605,8 +658,19 @@ impl MarketplaceState {
     }
 
     pub fn spawn_api_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        features::spawn_job(self, jobs);
         crate::coupons::spawn_job(self, jobs);
         federation::spawn_job(self, jobs);
+        tips::spawn_job(self, jobs);
+        sale_notices::spawn(self, jobs);
+        royalty_notices::spawn(
+            self.pool.clone(),
+            self.settings.market.marketplace_base_url.clone(),
+            self.settings.market.indexes.nft_enabled,
+            jobs,
+        );
+        transfer_notices::spawn(self, jobs);
+        crate::rentals::notices::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on
@@ -616,13 +680,23 @@ impl MarketplaceState {
         self.rpc_url_for(net, net.chain_id())
     }
 
-    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
-    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
-    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    /// The endpoint the settlement venues of `chain_id` (1, 137, or the
+    /// testnet book's 80002) are read over. Their addresses are mainnet's, so
+    /// off mainnet `ETH_RPC_URL`, which serves `ETH_NETWORK`, does not stand
+    /// in for chain 1. Amoy reads only its own `TRADE_RPC_URLS` entry: no
+    /// other chain's endpoint stands in for it.
     pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
         let net = match chain_id {
             1 => chain_walk::ChainNet::Ethereum,
             137 => chain_walk::ChainNet::Matic,
+            80002 => {
+                return self
+                    .settings
+                    .market
+                    .trade_rpc_urls
+                    .for_chain(80002)
+                    .map(str::to_string);
+            }
             _ => return None,
         };
         if self.settings.eth_network.trim() != "mainnet" {
@@ -659,7 +733,7 @@ impl MarketplaceState {
 
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
-async fn ensure_chain(
+pub(crate) async fn ensure_chain(
     rpc: &crate::land_authz::indexer::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {
@@ -676,11 +750,13 @@ async fn ensure_chain(
     Ok(())
 }
 
-/// Attaches `nft-index` and `trade-events-index` when their switches are on:
-/// one periodic job each, a pass walking both networks in turn (the budget is
-/// per network), the nft walk of a network waiting for the collections
-/// mirror's first complete pass (its address set).
+/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
+/// when their switches are on: one periodic job each, a pass walking both
+/// networks in turn (the budget is per network), the nft walk of a network
+/// waiting for the collections mirror's first complete pass (its address
+/// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
 fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
+    sales_index::spawn_job(state, jobs);
     let settings = state.settings.market.indexes.clone();
     for (enabled, name) in [
         (
@@ -847,7 +923,8 @@ impl AssetKey {
 }
 
 pub use crate::shared::http_util::{
-    bad_request, internal_server_error, lambdas_error, not_found, service_unavailable,
+    bad_request, internal_server_error, lambdas_error, lambdas_internal_error, not_found,
+    service_unavailable,
 };
 pub use crate::shared::identity::is_valid_eth_address;
 pub use crate::shared::upstream::check_upstream;
@@ -862,6 +939,7 @@ async fn get_index_status(
         "nft": nft_index::status(&state.pool).await,
         "tradeEvents": trade_events::status(&state.pool).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
+        "sales": sales_index::status(&state.pool).await,
         "neighbours": neighbours::status(&state.pool).await,
     }))
 }
@@ -876,15 +954,20 @@ async fn lambdas_status(
     }))
 }
 
-/// The routes this module serves, with the lambdas' own CORS, NUL guard and
-/// request timeout: `main.rs` merges it into the content router, whose
-/// layers cover only the routes it built itself.
+/// The routes this module serves, with lamb2's CORS and the gateway's 404
+/// under `/lambdas/` ([`lambdas_http`]), the NUL guard and the request
+/// timeout: `main.rs` merges it into the content router, whose layers cover
+/// only the routes it built itself.
 pub fn router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
         .route(
             "/lambdas/profiles",
             post(profiles::profiles).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route(
+            "/lambdas/profiles/metadata",
+            post(profiles::profiles_metadata).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/profiles/{id}", get(profiles::profile_by_id))
         .route("/lambdas/profile/{id}", get(profiles::profile_alias))
@@ -977,12 +1060,13 @@ pub fn router(state: SharedState) -> Router {
             post(lambdas_crypto::validate_signature).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/status", get(lambdas_status))
+        .route("/lambdas/{*rest}", any(lambdas_http::not_found))
         .route("/v1/trades", get(trades::get_trades))
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
         .route("/v1/trades/{id}", get(trades::get_trade))
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware));
+        .layer(axum::middleware::from_fn(lambdas_http::cors_middleware));
     if let Some(timeout) = request_timeout {
         app = app.layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

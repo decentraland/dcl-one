@@ -30,9 +30,9 @@ checking its licence and provenance.
    is animated, what is gated, what cleans it up, and which other systems branch on it
    (nametags, visibility, tests).
 3. **Keep Unity's numbers and names.** Durations, offsets, thresholds and colours go in as
-   Unity has them, with the Unity file named in a doc comment or the PR description. A changed
-   number is a divergence (step 7), never a tweak made in passing. Read the `.mat` too: it can
-   override the `.shader` defaults.
+   Unity has them, with the Unity file named in the PR description, never in a code comment
+   ([contributing](contributing.md#the-diff)). A changed number is a divergence (step 7), never a
+   tweak made in passing. Read the `.mat` too: it can override the `.shader` defaults.
 4. **Map each Unity piece to its shape here** (tables below), reading the crate that owns the
    area and its guideline page before choosing. No new schedule sets, no side maps, no
    per-frame respawns.
@@ -64,6 +64,8 @@ checking its licence and provenance.
 | A prefab child `GameObject` with a serialised renderer | An embedded asset under `crates/assets/src/assets/<kind>/` (every file there is embedded; path `embedded://<kind>/<file>`), loaded in a `Startup` system into a resource and spawned under the entity with `SceneSpawner::spawn_as_child` |
 | A feature flag plus an `--arg` | A `GraphicsSettings` field in `crates/common/src/structs.rs` with a default, an `EnumAppSetting` in `crates/system_bridge/src/settings/`, registered in `settings/mod.rs`; the HUD lists it on its own. A launch-time switch is a `LaunchOptions` field; a web-only one is a page param ([recipes](recipes.md#a-new-engine-parameter)) |
 | `Profile.UserNameColor` | `comms::profile::UserProfile::name_color()` |
+| `IProfileRepository.GetCompactAsync`, `ProfileTier.Kind.Compact` | `comms::profile::ProfileManager::get_compact` (`common::profile::CompactProfile`); `get_data` is the full tier |
+| `SelfProfile.UpdateProfileAsync`'s revert, `ProfilePropagated` after the save | `comms::profile::CurrentUserProfile::revert_to`; peers hear `peer_profile()`, a version once it deploys |
 | Skipping `CharacterPreviewComponent` and SDK avatars | `Or<(With<ForeignPlayer>, With<PrimaryUser>)>`: excludes scene `AvatarShape` NPCs and photo-booth previews |
 | `AvatarBase` anchor points, `GetAdaptiveNametagPosition` | `AttachPoints`; `crates/avatar/src/dynamic_nametag.rs` |
 | PlayMode tests | `#[test]` on the plain state struct; headless asset tests; `#[ignore]`d GPU tests |
@@ -103,6 +105,8 @@ pipeline-compile test each have a recipe in [recipes](recipes.md).
 - Designing from the C# alone and getting the rendered thing wrong: static where Unity is
   skinned, a pass the shader does not have, a material the renderer does not carry.
 - Rounding Unity's constants or widening a range without naming it as a divergence.
+- Citing a Unity file, type or constant in a code comment. Name it in the PR description, and
+  give the code's own reason in the comment.
 - Testing only the transition's happy path, not the rebuilds, despawns and setting toggles
   that can land mid-way.
 - Per-avatar material properties on a shared, cached material: breaks the cache and the

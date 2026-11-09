@@ -45,7 +45,7 @@ describe('when reading the committed orphan ledger', () => {
     const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args])
     // A stand-in for Git LFS: the committed blob differs from the working file until smudged.
     git('config', 'filter.encoded.clean', 'base64')
-    git('config', 'filter.encoded.smudge', 'base64 --decode')
+    git('config', 'filter.encoded.smudge', 'base64 -d')
     await writeFile(path.join(repo, '.gitattributes'), `library/ui/${LEDGER} filter=encoded\n`)
     await writeFile(
       path.join(repo, 'library/ui', LEDGER),

@@ -1,5 +1,5 @@
 import type { ExpandedVariant } from '../capture/expand-variants.js'
-import { camelCase } from '../generators/naming.js'
+import { assertIdentifier, camelCase } from '../generators/naming.js'
 import type { RawComponent } from '../ir/raw-components.js'
 
 type Flags = { selected: boolean; disabled: boolean; loading: boolean }
@@ -138,7 +138,10 @@ const NUMBERED_FLAGS: Record<number, FlagName[]> = {
 }
 
 function propName(figmaName: string, options: VariantOptions, used: Set<string>): string {
+  // A name the configuration states is used as written, so it must already be a valid binding; a derived name is
+  // adjusted below instead.
   const configured = options.propNames?.[figmaName]
+  if (configured !== undefined) assertIdentifier(configured)
   let base = configured ?? (isGenericName(figmaName) ? 'variant' : camelWords(figmaName))
   if (!base) base = 'variant'
   if (RESERVED.has(base)) base = `${base}Value`
@@ -200,7 +203,9 @@ function mapVariants(
     enumNames.set(name, { prop, fallback: result.fallback, boolean: isBoolean })
     if (isBoolean) {
       const onValue = values.find((value) => YES.has(value.toLowerCase()))!
-      const named = options.propNames?.[name] ?? (isGenericName(name) ? 'checked' : prop)
+      const configuredBoolean = options.propNames?.[name]
+      if (configuredBoolean !== undefined) assertIdentifier(configuredBoolean)
+      const named = configuredBoolean ?? (isGenericName(name) ? 'checked' : prop)
       enumNames.set(name, { prop: named, fallback: result.fallback, boolean: true })
       used.delete(prop)
       used.add(named)

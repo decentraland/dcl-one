@@ -36,13 +36,29 @@ struct Host {
 }
 
 async fn host(js: bool) -> Option<Host> {
+    host_with(js, None).await
+}
+
+/// A host whose names reader refuses every connection.
+async fn host_with_names_down() -> Option<Host> {
+    let settings = crate::chain_index::IndexSettings {
+        marketplace_subgraph_url: Some("http://127.0.0.1:1/subgraph".to_string()),
+        eth_network: "mainnet".to_string(),
+        ..Default::default()
+    };
+    let index = crate::chain_index::ChainIndex::new(crate::http::Outbound::for_tests(), settings);
+    index.allow_loopback_for_tests();
+    host_with(false, Some(Arc::new(index))).await
+}
+
+async fn host_with(js: bool, names: Option<Arc<crate::chain_index::ChainIndex>>) -> Option<Host> {
     let pool = crate::db::scratch::pool(4).await?;
     let tmp = std::env::temp_dir().join(format!("catalyst-scene-host-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
     let policy = Arc::new(Policy::new(
         pool.clone(),
         PersonalWorldsPolicy::disabled(),
-        None,
+        names,
     ));
     let raw = RawSettings {
         disable_js_runtime: !js,
@@ -401,6 +417,200 @@ async fn closed(ws: &mut Ws) -> bool {
     }
 }
 
+/// With the name authority down, re-admission keeps a client whose answer
+/// depends on it (the stored owner) and still removes a refused stranger.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authority_outage_keeps_undetermined_clients_through_the_sweep() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let key = || format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let (owner_key, stranger_key) = (key(), key());
+    let owner = Address::parse(&Wallet::from_hex(&owner_key).unwrap().address()).unwrap();
+    let world = world_name();
+    seed_world(
+        &h.state.pool,
+        &world,
+        Some(&owner),
+        AccessType::Unrestricted,
+    )
+    .await;
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOut1",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    let (_owner_ws, _) = join(addr, &world, &owner_key, "{}").await.expect("open");
+    let (mut stranger_ws, _) = join(addr, &world, &stranger_key, "{}").await.expect("open");
+    let scene = h.state.scenes.get(world.key()).unwrap();
+    assert_eq!(scene.clients().len(), 2);
+
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.state.sweep().await,
+        SweepSummary {
+            kicked: 1,
+            errors: 1,
+            ..Default::default()
+        }
+    );
+    assert!(closed(&mut stranger_ws).await);
+    let left: Vec<Address> = scene
+        .clients()
+        .iter()
+        .map(|c| Address::parse(&c.address).unwrap())
+        .collect();
+    assert_eq!(left, vec![owner]);
+    assert_eq!(h.state.readmit_world(&world, true).await, 0);
+    assert_eq!(scene.clients().len(), 1);
+}
+
+/// With the name authority down, a client admitted by the shared secret is
+/// carried by its grant, and a new holder connected as owner (`worlds.owner`
+/// still the previous holder) is undetermined; a rotated secret still voids
+/// the secret grant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let previous = Address::parse("0x3333333333333333333333333333333333333333").unwrap();
+    let holder = Address::parse("0x4444444444444444444444444444444444444444").unwrap();
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner, access_type, access_secret_hash) VALUES ($1, $2, 'shared-secret', $3)")
+        .bind(world.key())
+        .bind(&previous)
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOut2",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    let (mut visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+        .await
+        .expect("the secret admits without asking the authority");
+    let scene = h.state.scenes.get(world.key()).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    scene.add_client_admitted(
+        holder.as_str().to_string(),
+        tx,
+        Some(crate::policy::AccessGrant::Owner),
+    );
+    assert_eq!(scene.clients().len(), 2);
+
+    assert_eq!(
+        h.state.sweep().await,
+        SweepSummary {
+            errors: 1,
+            ..Default::default()
+        },
+        "the secret client is carried; the owner-admitted holder is undetermined"
+    );
+    assert_eq!(scene.clients().len(), 2);
+    assert_eq!(h.state.readmit_world(&world, false).await, 0);
+    assert_eq!(h.state.readmit_world(&world, true).await, 1);
+    assert!(closed(&mut visitor_ws).await);
+    let left: Vec<String> = scene.clients().iter().map(|c| c.address.clone()).collect();
+    assert_eq!(left, vec![holder.as_str().to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stored_owner_can_join_with_a_valid_secret_during_an_authority_outage() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let previous = Address::parse(&Wallet::from_hex(&visitor_key).unwrap().address()).unwrap();
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner, access_type, access_secret_hash) VALUES ($1, $2, 'shared-secret', $3)")
+        .bind(world.key())
+        .bind(&previous)
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOwnerOutage",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    // The stored owner cannot establish independent ownership during the outage.
+    // A wrong secret remains denied; a valid one retries the full policy under budget.
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"wrong"}"#)
+            .await
+            .is_none()
+    );
+    // Authority errors may refund a reservation. Fill the caller's budget
+    // explicitly, then prove this fallback cannot bypass it with a valid secret.
+    let throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &h.state.pool,
+        max_attempts: h.state.secret_max_attempts,
+        world: world.key(),
+        subject: previous.as_str(),
+    };
+    let now = chrono::Utc::now().naive_utc();
+    for _ in 0..h.state.secret_max_attempts {
+        let _ = throttle.reserve(now).await.unwrap();
+    }
+    assert!(throttle.reserve(now).await.unwrap().is_none());
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+            .await
+            .is_none(),
+        "a valid secret cannot bypass the exhausted caller budget during an authority outage"
+    );
+    assert!(
+        h.state
+            .scenes
+            .get(world.key())
+            .unwrap()
+            .clients()
+            .is_empty()
+    );
+    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1 AND subject=$2")
+        .bind(world.key())
+        .bind(previous.as_str())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let (_visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+        .await
+        .expect("the secret admits without asking the authority");
+    assert_eq!(h.state.scenes.get(world.key()).unwrap().clients().len(), 1);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_socket_admits_by_policy_and_the_sweep_enforces_revocation_and_redeploy() {
     let Some(h) = host(false).await else { return };
@@ -731,9 +941,17 @@ async fn a_shared_secret_world_reads_the_secret_from_the_signed_metadata() {
             .await
             .is_none()
     );
+    assert!(
+        join(addr, &world, VISITOR_KEY, r#"{"secret":"new words"}"#)
+            .await
+            .is_none(),
+        "three wrong guesses share the caller budget even after a correct secret"
+    );
+    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1")
+        .bind(world.key()).execute(&h.state.pool).await.unwrap();
     let (mut ws, _) = join(addr, &world, VISITOR_KEY, r#"{"secret":"new words"}"#)
         .await
-        .expect("the new secret admits");
+        .expect("the new secret admits after the charged window expires");
     assert_eq!(
         h.state.sweep().await,
         SweepSummary::default(),

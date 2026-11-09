@@ -69,7 +69,8 @@ function renderSemantic(
   semantic: Semantic,
   { key, ...attributes }: { key: string; className: string; 'data-n': string },
   children: ReactNode,
-  props: SemanticProps
+  props: SemanticProps,
+  label = semantic.label
 ): ReactNode {
   let element: ReactNode
   if (semantic.role === 'navigation')
@@ -91,7 +92,7 @@ function renderSemantic(
     const action = {
       ...attributes,
       className: `${attributes.className} ${styles.action} ${styles.semanticAction}`,
-      'aria-label': semantic.label
+      'aria-label': label
     }
     if (typeof href === 'string')
       element = (
@@ -116,14 +117,25 @@ function renderSemantic(
   )
 }
 
+// The consumer's label for a count shown inside this node, which then names the node's action.
+function countLabel(node: ViewNode, countLabels: Record<string, string>): string | undefined {
+  if (node.slot && countLabels[node.slot]) return countLabels[node.slot]
+  for (const child of node.children ?? []) {
+    const label = countLabel(child, countLabels)
+    if (label) return label
+  }
+}
+
 function renderNode(
   node: ViewNode,
   slots: Record<string, ReactNode>,
   interaction: React.ContextType<typeof FigmaInteractions>,
-  semanticProps: SemanticProps = {}
+  semanticProps: SemanticProps = {},
+  countLabels: Record<string, string> = {}
 ): ReactNode {
+  // The key is passed on its own: React rejects a key spread into JSX inside a props object.
+  const key = node.path || 'root'
   const common = {
-    key: node.path || 'root',
     className: `${styles.node} ${node.className}`,
     'data-n': node.path
   }
@@ -139,14 +151,16 @@ function renderNode(
         child.name === 'general/hide-ui'
     )
     return (
-      <div {...common}>
-        {leading?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+      <div key={key} {...common}>
+        {leading?.map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
         <span key="native-field" className={styles.fieldControl}>
           {cloneElement(interaction.field.control, {
             className: `${text?.className ?? ''} ${interaction.field.control.props.className ?? ''}`
           })}
         </span>
-        {trailing?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+        {trailing?.map((child) =>
+          renderNode(child, slots, interaction, semanticProps, countLabels)
+        )}
       </div>
     )
   }
@@ -161,6 +175,7 @@ function renderNode(
   if (action)
     return (
       <button
+        key={key}
         {...common}
         className={`${common.className} ${styles.action}`}
         type="button"
@@ -168,21 +183,26 @@ function renderNode(
         aria-pressed={action.pressed}
         onClick={action.onActivate}
       >
-        {node.children?.map((child) => renderNode(child, slots, null, semanticProps))}
+        {node.children?.map((child) => renderNode(child, slots, null, semanticProps, countLabels))}
       </button>
     )
   if (node.semantic && node.kind === 'box')
     return renderSemantic(
       node.semantic,
-      common,
-      node.children?.map((child) => renderNode(child, slots, interaction, semanticProps)),
-      semanticProps
+      { key, ...common },
+      node.children?.map((child) =>
+        renderNode(child, slots, interaction, semanticProps, countLabels)
+      ),
+      semanticProps,
+      node.semantic.role === 'action'
+        ? (countLabel(node, countLabels) ?? node.semantic.label)
+        : undefined
     )
   const override = node.slot ? slots[node.slot] : undefined
   switch (node.kind) {
     case 'text':
       return (
-        <span {...common}>
+        <span key={key} {...common}>
           {override ??
             (node.textRuns
               ? node.textRuns.map((run, index) => (
@@ -196,7 +216,7 @@ function renderNode(
     case 'icon': {
       const Icon = node.icon ? iconComponents[node.icon.component] : undefined
       return (
-        <span {...common}>
+        <span key={key} {...common}>
           {override ??
             (Icon && node.icon ? <Icon size={node.icon.size} {...node.icon.props} /> : null)}
         </span>
@@ -204,49 +224,121 @@ function renderNode(
     }
     case 'ref': {
       const Component = node.ref ? registry.get(node.ref.component) : undefined
-      return <div {...common}>{Component ? <Component {...node.ref?.props} /> : null}</div>
+      return (
+        <div key={key} {...common}>
+          {Component ? <Component {...node.ref?.props} /> : null}
+        </div>
+      )
     }
     case 'glyph':
       return (
-        <div {...common} title={`${node.glyph?.name ?? node.name}: ${node.glyph?.reason ?? ''}`} />
+        <div
+          key={key}
+          {...common}
+          title={`${node.glyph?.name ?? node.name}: ${node.glyph?.reason ?? ''}`}
+        />
       )
     default:
       return (
-        <div {...common} role={interaction?.tabList === node.name ? 'tablist' : undefined}>
-          {node.children?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+        <div
+          key={key}
+          {...common}
+          role={interaction?.tabList === node.name ? 'tablist' : undefined}
+        >
+          {node.children?.map((child) =>
+            renderNode(child, slots, interaction, semanticProps, countLabels)
+          )}
         </div>
       )
   }
 }
 
+type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
+
+// The runtime's own parameter names. A generated component already keeps a caller from overriding them (its props
+// arrive only as `attributes`); an untyped caller can still pass one, so it is dropped here instead of reaching the DOM
+// as an attribute. Public props (forceState, disabled, className, style, handlers, aria-*, data-*, ref) are untouched.
+// The list is the runtime's: the installed library carries this file without the generator.
+const RESERVED_PROPS: ReadonlySet<string> = new Set([
+  'as',
+  'attributes',
+  'component',
+  'counts',
+  'defaultKey',
+  'select',
+  'semanticProps',
+  'slots',
+  'suppressed',
+  'views'
+])
+
+// Everything except `attributes` comes from the generated component. The caller's own props arrive only through
+// `attributes`, so no prop a caller passes can replace the generated configuration.
+// A count must be a non-negative integer and comes with its label; the label replaces the action's accessible name,
+// so it has to say the count itself (for example "12 notifications").
+function resolveCounts(
+  slots: Record<string, ReactNode>,
+  counts: Record<string, string | undefined>,
+  component = 'A generated component'
+): Record<string, string> {
+  const labels: Record<string, string> = {}
+  for (const [role, label] of Object.entries(counts)) {
+    const value = slots[role]
+    if (value === undefined) continue
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0)
+      throw new Error(
+        `${component}: ${role} must be a non-negative integer, got ${JSON.stringify(value)}`
+      )
+    if (typeof label !== 'string' || !label.trim())
+      throw new Error(`${component}: ${role} needs a non-empty accessible label`)
+    labels[role] = label
+  }
+  return labels
+}
+
 type FigmaViewProps = {
   as?: 'button' | 'div'
   views: Record<string, ViewNode>
-  defaultKey: string
   select: Selection
   slots: Record<string, ReactNode>
   forceState?: ForcedState
   disabled?: boolean
   // Values for the href/onActivate props a component's opt-in semantics declare.
   semanticProps?: SemanticProps
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+  // The component's name, for the error an uncaptured variant selection raises.
+  component?: string
+  // Count text roles and the label each takes (the consumer's accessible text, which carries the count).
+  counts?: Record<string, string | undefined>
+  // The caller's remaining props, forwarded to the root element.
+  attributes?: Attributes
+  // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass them
+  // inside `attributes`, so they are dropped before the DOM.
+  suppressed?: readonly string[]
+}
 
 function FigmaView({
   as: Tag = 'div',
   views,
-  defaultKey,
   select,
   slots,
   forceState,
   disabled,
   semanticProps = {},
-  className,
-  ...rest
+  component,
+  counts = {},
+  attributes = {},
+  suppressed = []
 }: FigmaViewProps) {
   const interaction = useContext(FigmaInteractions)
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)
-  const view = pickView(views, defaultKey, select)
+  const { className, ...rest } = Object.fromEntries(
+    Object.entries(attributes).filter(
+      ([name]) => !suppressed.includes(name) && !RESERVED_PROPS.has(name)
+    )
+  ) as Attributes
+  const view = pickView(views, select, component)
+  const countLabels = resolveCounts(slots, counts, component)
   const disclosure = interaction?.disclosure
   useEffect(() => {
     if (!disclosure?.open) return
@@ -294,11 +386,11 @@ function FigmaView({
         >
           {view.children
             ?.slice(0, disclosure.headerCount)
-            .map((child) => renderNode(child, slots, null, semanticProps))}
+            .map((child) => renderNode(child, slots, null, semanticProps, countLabels))}
         </button>
         {view.children
           ?.slice(disclosure.headerCount)
-          .map((child) => renderNode(child, slots, interaction, semanticProps))}
+          .map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
       </div>
     )
   // A root navigation landmark replaces the default div; button roots keep their element.
@@ -314,7 +406,9 @@ function FigmaView({
         ? { type: 'button', disabled }
         : { 'aria-disabled': disabled || undefined })}
     >
-      {view.children?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+      {view.children?.map((child) =>
+        renderNode(child, slots, interaction, semanticProps, countLabels)
+      )}
     </Root>
   )
 }

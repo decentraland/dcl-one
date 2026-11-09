@@ -56,6 +56,10 @@ async function openOwnPassport(explorer: Explorer): Promise<void> {
   await explorer.hud.wait(PASSPORT, { timeoutMs: READY_TIMEOUT_MS })
   // The edit controls arrive with the session's profile.
   await explorer.hud.wait({ name: 'Edit name', role: 'button' }, { timeoutMs: READY_TIMEOUT_MS })
+  // The passport shows the identity first and fetches the rest as it opens (the bio, the links,
+  // the equipped items): a bio read before that lands is the identity's empty one. The Equipped
+  // Wearables module comes with it.
+  await explorer.hud.wait(EQUIPPED_WEARABLES, { timeoutMs: READY_TIMEOUT_MS })
 }
 
 async function closePassport(explorer: Explorer): Promise<void> {
@@ -71,6 +75,8 @@ async function renameUser(explorer: Explorer, name: string): Promise<void> {
   const typed = await hud.fill(USERNAME_FIELD, name)
   assert.equal(typed.value, name, `the Username field should hold "${name}" after typing`)
   await hud.wait(SAVE, { state: 'enabled', timeoutMs: 5_000 })
+  // a save is a profile deployment, and the one before it may be seconds old
+  await explorer.profileDeployWindow()
   await hud.click(SAVE)
   await hud.waitHidden(USERNAME_FIELD, READY_TIMEOUT_MS)
   await until(() => explorer.userData(), (data) => baseOf(data.name) === name, { timeoutMs: 15_000, what: `the profile name to read "${name}"` })
@@ -98,6 +104,8 @@ async function saveBio(explorer: Explorer, text: string): Promise<void> {
   const typed = await hud.fill(BIO_FIELD, text)
   assert.equal(typed.value, text, 'the About me field should hold the typed bio')
   await hud.wait(SAVE, { state: 'enabled', timeoutMs: 5_000 })
+  // a save is a profile deployment, and the one before it may be seconds old
+  await explorer.profileDeployWindow()
   await hud.click(SAVE)
   await hud.waitHidden(BIO_FIELD, READY_TIMEOUT_MS)
   await until(() => explorer.profileVersion(), (version) => version > before, { timeoutMs: 15_000, what: 'the profile version to grow after the bio was saved' })
@@ -120,6 +128,7 @@ scenario('the own passport shows its header controls and its About and Equipped 
     { name: 'Copy name', role: 'button' },
     { name: 'Copy address', role: 'button' },
     { name: 'OVERVIEW', role: 'tab' },
+    { name: 'CREATIONS', role: 'tab' },
     { name: 'Edit profile', role: 'button' }
   ] satisfies Selector[]) {
     assert.ok(await explorer.hud.isVisible(control), `the passport should show its ${control.name} ${control.role}`)

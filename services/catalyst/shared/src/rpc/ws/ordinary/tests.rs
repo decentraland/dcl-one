@@ -20,7 +20,8 @@ fn config(value: &Value) -> OrdinaryQueueConfig {
         max_backoff_delay_ms: number("max_backoff_delay_ms", default.max_backoff_delay_ms),
     }
 }
-fn poll_futures(futures: &mut BTreeMap<u64, (oneshot::Receiver<Result<(), String>>, String)>) {
+type Completions = BTreeMap<u64, (oneshot::Receiver<Result<(), String>>, String)>;
+fn poll_futures(futures: &mut Completions) {
     for (receiver, state) in futures.values_mut() {
         if state != "pending" {
             continue;

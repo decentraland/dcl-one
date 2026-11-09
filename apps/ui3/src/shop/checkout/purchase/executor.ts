@@ -18,11 +18,11 @@
 import type { Hex } from "viem";
 
 import { insufficientCredits, isShopApiError, creditsDisabled, tooManyLiveCredits } from "../../api/client";
-import type { CreditBatchAuthorization } from "../../api/types";
-import { prepareResume, resumePlan, type GroupEvent } from "../../cart/machine";
-import type { CartGroup } from "../../cart/partition";
+import type { CreditBatchAuthorization } from "@shop/api/types";
+import { prepareResume, resumePlan, type GroupEvent } from "@shop/cart/machine";
+import type { CartGroup } from "@shop/cart/partition";
 import type { CartStore } from "../../cart/store";
-import type { GroupFailure, GroupProgress, PurchaseState } from "../../model/purchase";
+import type { GroupFailure, GroupProgress, PurchaseState } from "@shop/model/purchase";
 import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases } from "../../credits/credits";
 import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
@@ -37,7 +37,7 @@ import { buyManyWithCredits, groupPurchases, type AnyPurchase } from "./credits"
 import { buyManyGasless, isSettlementPending, waitForSettlement } from "./gasless";
 import { acceptPayingMana, manaSpenderFor, mintPayingMana, purchaseFor, type MintToBuy } from "./mana";
 import type { RailContext } from "./rail";
-import { createSpendGuard, type SpendGuard } from "./spend-guard";
+import { createSpendGuard, type SpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending, isMetaTxReverted } from "./tx-confirm";
 
 export type ApprovalRequest = { auth: ShopAuthorization; index: number; total: number; requiredWei: bigint; keyId: string };
@@ -174,7 +174,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     guard.submitFinished(creditId);
     if (isRevertedTxError(e) && txHash) {
       guard.reverted(txHash);
-      const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain. Nothing was bought and your Credits were returned." };
+      const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain and nothing was bought. The Credits held for it are released once the authorization expires and that is confirmed on chain." };
       dispatchSafe(store, keyId, { type: "failed", failure });
       return { status: "failed", failure, released: await release(deps, [creditId]) };
     }

@@ -21,12 +21,11 @@ describe('when resolving component and shared-asset ownership', () => {
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
   })
-  it('should identify the same component across modules, mappings, PNGs, snapshot entries and public exports', () => {
+  it('should identify the same component across modules, mappings, snapshot entries and public exports', () => {
     for (const file of [
       `${GEN}/page/First.tsx`,
       `${GEN}/page/First.module.css`,
       `${LIB}/page/First.figma.ts`,
-      'figma/review/public/dcl-ui-review/references/live-2-1.png',
       `${SNAP}/components/Page.json#component:2:1`,
       `${SNAP}/components/Page.json#variant:2:1`,
       `${GEN}/manifest.ts#component:First`,
@@ -55,7 +54,7 @@ describe('when resolving component and shared-asset ownership', () => {
     }
   })
   it('should remove only the retired user from shared-asset ownership after cleanup', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     ownership = await buildOwnership(root)
     expect(ownerOf(ownership, shared)).toEqual({

@@ -329,3 +329,51 @@ describe('checkMappings', () => {
     })
   })
 })
+
+describe('when an example places a text local inside a JS expression', () => {
+  it('should reject it instead of rendering entity-escaped text as code', async () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</',
+      ">{'${label}'}</"
+    )
+    const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': source } })
+    const result = await resolveComponent(
+      context(mappingRoot, {
+        figmaSets: [
+          { ...buttonSet, properties: { ...buttonSet.properties, Label: { type: 'TEXT' } } }
+        ]
+      }),
+      { nodeId: '1:1', texts: { Label: "Don't" } }
+    )
+    expect(result.ok).toBe(false)
+    expect(JSON.stringify(result.ok ? [] : result.errors)).toContain(
+      'text placeholders are supported only in JSX text or quoted attributes, not JavaScript expressions'
+    )
+  })
+})
+
+describe('when captured text contains JSX syntax', () => {
+  it('should emit text as a string expression instead of executable JSX', async () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</',
+      '>${label}</'
+    )
+    const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': source } })
+    const text = 'Pay {total} < b "quoted"'
+    const result = await resolveComponent(
+      context(mappingRoot, {
+        figmaSets: [
+          { ...buttonSet, properties: { ...buttonSet.properties, Label: { type: 'TEXT' } } }
+        ]
+      }),
+      {
+        nodeId: '1:1',
+        texts: { Label: text }
+      }
+    )
+    expect(result.ok ? [] : result.errors).toEqual([])
+    expect(result.ok && result.resolved.usage).toContain(
+      'Pay &#123;total&#125; &lt; b &quot;quoted&quot;'
+    )
+  })
+})

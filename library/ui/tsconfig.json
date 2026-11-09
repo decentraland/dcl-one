@@ -19,7 +19,6 @@
     "css-modules.d.ts",
     "components",
     "foundations",
-    "apps",
     "templates",
     "test",
     "vitest.config.ts"

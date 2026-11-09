@@ -28,6 +28,15 @@ function applyPatch(root: RawNode, patch: RawPatch): RawNode {
   return root
 }
 
+// A partial variant starts from the base tree, whose node ids belong to the base variant: they are dropped, so a
+// variant node has an id only when its own patch sets one (set.id) or brings a node (replace). A node without an id
+// has unknown provenance, which is not an error unless a text role points at it.
+function withoutIds(node: RawNode): RawNode {
+  delete node.id
+  node.children?.forEach(withoutIds)
+  return node
+}
+
 function expandVariants(component: RawComponent): ExpandedVariant[] {
   const { base, others } = component
   return [
@@ -36,7 +45,7 @@ function expandVariants(component: RawComponent): ExpandedVariant[] {
       id: variant.id,
       name: variant.name,
       props: variant.props,
-      tree: variant.patches.reduce(applyPatch, structuredClone(base.tree))
+      tree: variant.patches.reduce(applyPatch, withoutIds(structuredClone(base.tree)))
     }))
   ]
 }
