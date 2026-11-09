@@ -2,22 +2,23 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCollectionItems, type CollectionSummary } from "../api";
 import { useCreatorProfile } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
-import type { CatalogItem } from "../lib/catalogItem";
-import { rarityMedia } from "../lib/rarity";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { useShopQuery } from "../query";
 import "./collectioncard.css";
+import { shopClient } from "../../api/host";
 
 const MOSAIC_COUNT = 4;
 
 /** upstream's useCollectionPreview: a collection's first items, one request per collection for its mosaic and count. */
 export function useCollectionPreview(contractAddress: string, enabled = true) {
-  return useShopQuery(enabled ? ["collection-preview", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: MOSAIC_COUNT }, { signal }), {
+  return useShopQuery(enabled ? ["collection-preview", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: MOSAIC_COUNT }, { client: shopClient(), signal }), {
     staleMs: 5 * 60_000,
   });
 }

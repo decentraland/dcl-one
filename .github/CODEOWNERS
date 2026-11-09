@@ -87,6 +87,7 @@
 
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications
+/library/shop/ @decentraland/web-applications
 /apps/sites/src/routes/shop/ @decentraland/web-applications
 /tooling/shop-parity/ @decentraland/web-applications
 /tooling/shop-trade-journey/ @decentraland/web-applications
@@ -131,3 +132,12 @@
 
 # documentation
 /docs/ @decentraland/infra
+
+# ui-provenance
+/library/ui/upstream.lock.json @decentraland/web-applications
+/library/ui/port-verification.json @decentraland/web-applications
+/library/ui/figma/lock-digests.mjs @decentraland/web-applications
+/library/ui/figma/port-verification.mjs @decentraland/web-applications
+
+# ui-library-workflow
+/.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra

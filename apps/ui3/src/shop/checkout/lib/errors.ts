@@ -5,7 +5,7 @@
 
 import { isShopApiError } from "../../api/client";
 import { chainLabel, isWalletUnauthorizedError, isWrongNetworkError } from "./network";
-import { CURRENCY } from "./currency";
+import { CURRENCY } from "@shop/checkout/lib/currency";
 
 type ErrLike = { code?: unknown; status?: number; message?: string; name?: string };
 

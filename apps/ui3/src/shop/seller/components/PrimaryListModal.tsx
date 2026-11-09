@@ -10,8 +10,8 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
-import type { ChainId } from "../../model/chain";
-import { CENTS_PER_CREDIT, formatUsd, usdCents } from "../../model/money";
+import type { ChainId } from "@shop/model/chain";
+import { CENTS_PER_CREDIT, formatUsd, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import { createPrimaryUsdPeggedListing, ensureMinter } from "../../market/lib/trades";

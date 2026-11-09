@@ -7,8 +7,8 @@
 
 import { http, HttpResponse } from "msw";
 
-import { chargeForQuote, usdCents } from "../model/money";
-import { ENDPOINTS } from "./endpoints";
+import { chargeForQuote, usdCents } from "@shop/model/money";
+import { ENDPOINTS } from "@shop/api/endpoints";
 import type { ShopTransport, TransportRequest } from "./signer";
 import wire from "./fixtures/credits-wire.json";
 

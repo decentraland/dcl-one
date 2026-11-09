@@ -3,11 +3,11 @@ import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from "vitest";
 
 import salesEmptyArt from "../../components/empty-art/sales-empty.svg?url";
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { resetArchivedBidsForTests } from "../store/archivedBids";
 import { FIXTURE_NOW, LEGACY_BID_ROW, MADE_BIDS, MANA, nftRow, OWNED_NAMES, OWNED_WEARABLES, RECEIVED_BIDS } from "../fixtures";
-import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "../lib/contracts";
+import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "@shop/market/lib/contracts";
 import { fakeChain, fakeWallet, type FakeRoute } from "../testing";
 import { mountShop } from "../testHarness";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";

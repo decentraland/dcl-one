@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 // DOMAIN: the page's half of the performance harness's browser stream — the offset protocol
 // the engine's CSV and log bytes travel by (deploy/web/engine/perf_stream.js; the engine half is
 // crates/perf_output, the server the harness's browser leg). A fake server stands in for it.
@@ -268,6 +269,7 @@ describe('the offset protocol', () => {
   })
 
   it('ends the run even when a stream could not be sent', async () => {
+    expectConsoleOutput('error', [['[perf stream] gave up sending https://play.example/__perf/change_build_1/log at byte 0']])
     const server = fakeServer()
     server.failNext('/log', 1000)
     const s = stream(server)

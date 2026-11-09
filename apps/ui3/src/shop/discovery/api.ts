@@ -4,26 +4,26 @@
 //       webapp/src/modules/{account,collection,contract,item,nft}/actions.ts (the FETCH_* reads)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
-import type { QueryParams } from "../../data/catalyst/client";
 import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
 import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import { shopFlags } from "./flags";
 import { readFreshness, type IndexFreshness } from "./freshness";
 import { catalogCategoryParams } from "./lib/categories";
-import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
+import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "@shop/discovery/lib/catalogItem";
+import type { QueryParams } from "../api/client";
 
-export type Opts = { client?: ShopClient; signal?: AbortSignal };
+export type Opts = { client: ShopClient; signal?: AbortSignal };
 export type PageMeta = { freshness: IndexFreshness | null };
 export type ItemsPage<T = CatalogItem> = { items: T[]; total: number; meta: PageMeta };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-function c(opts?: Opts): ShopClient {
-  return opts?.client ?? shopClient();
+function c(opts: Opts): ShopClient {
+  return opts.client;
 }
 
-function o(opts?: Opts) {
+function o(opts: Opts) {
   return opts?.signal ? { signal: opts.signal } : undefined;
 }
 
@@ -180,7 +180,7 @@ function shopQuery(params: ShopListingFilters): QueryParams {
 
 export async function fetchShopListingsRaw(
   params: ShopListingFilters,
-  opts?: Opts,
+  opts: Opts,
 ): Promise<{ listings: ShopListingRaw[]; total: number; creatorSalesLive: boolean; meta: PageMeta }> {
   const json = await c(opts).catalog.shop<DataTotal<ShopListingRaw>>(shopQuery(params), o(opts));
   return { listings: json.data ?? [], total: json.total ?? 0, creatorSalesLive: shopFlags().creatorSales, meta: { freshness: readFreshness(json) } };
@@ -188,7 +188,7 @@ export async function fetchShopListingsRaw(
 
 type PeggedPrice = { priceCredits: number; tradeId?: string; compareAtCredits?: number; saleEndsAt?: number };
 
-async function peggedPrices(scope: { contractAddress: string } | { creator: string }, keyOf: (l: ShopListingRaw) => string, opts?: Opts) {
+async function peggedPrices(scope: { contractAddress: string } | { creator: string }, keyOf: (l: ShopListingRaw) => string, opts: Opts) {
   const map: Record<string, PeggedPrice> = {};
   const PAGE = 200;
   for (let skip = 0; ; skip += PAGE) {
@@ -207,15 +207,15 @@ async function peggedPrices(scope: { contractAddress: string } | { creator: stri
   return map;
 }
 
-export function fetchPeggedPrimaryPrices(contractAddress: string, opts?: Opts): Promise<Record<string, PeggedPrice>> {
+export function fetchPeggedPrimaryPrices(contractAddress: string, opts: Opts): Promise<Record<string, PeggedPrice>> {
   return peggedPrices({ contractAddress }, (l) => String(l.itemId), opts);
 }
 
-export function fetchCreatorPeggedPrimaryPrices(creator: string, opts?: Opts): Promise<Record<string, PeggedPrice>> {
+export function fetchCreatorPeggedPrimaryPrices(creator: string, opts: Opts): Promise<Record<string, PeggedPrice>> {
   return peggedPrices({ creator: creator.toLowerCase() }, (l) => `${l.contractAddress.toLowerCase()}-${l.itemId}`, opts);
 }
 
-export async function fetchListings({ first = 100, ...filters }: ShopListingFilters = {}, opts?: Opts): Promise<ItemsPage> {
+export async function fetchListings({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage> {
   const { listings, total, meta } = await fetchShopListingsRaw({ ...filters, first }, opts);
   return { items: listings.map(shopListingToItem), total, meta };
 }
@@ -224,13 +224,13 @@ function unifiedQuery(first: number, filters: ShopListingFilters, groupBy?: "ite
   return { ...shopQuery({ ...filters, first }), ...(groupBy ? { groupBy } : {}) };
 }
 
-export async function fetchUnified({ first = 100, ...filters }: ShopListingFilters = {}, opts?: Opts): Promise<ItemsPage<UnifiedListing>> {
+export async function fetchUnified({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage<UnifiedListing>> {
   const json = await c(opts).catalog.unified<DataTotal<UnifiedListingRaw>>(unifiedQuery(first, filters), o(opts));
   const data = json.data ?? [];
   return { items: data.map(unifiedListingToItem), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
 }
 
-export async function fetchShopItems({ first = 100, ...filters }: ShopListingFilters = {}, opts?: Opts): Promise<ItemsPage<UnifiedListing>> {
+export async function fetchShopItems({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage<UnifiedListing>> {
   const json = await c(opts).catalog.unified<DataTotal<ShopItemRaw>>(unifiedQuery(first, filters, "item"), o(opts));
   const data = json.data ?? [];
   return { items: data.map(shopItemToItem), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
@@ -240,7 +240,7 @@ export async function fetchRelatedItems(
   contractAddress: string,
   itemId: string,
   { first = 10, listingType }: { first?: number; listingType?: "primary" | "secondary" } = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<UnifiedListing[]> {
   const json = await c(opts).catalog.related<{ data?: ShopItemRaw[] }>({ contractAddress, itemId, first, listingType }, o(opts));
   return (json.data ?? []).map(shopItemToItem);
@@ -248,7 +248,7 @@ export async function fetchRelatedItems(
 
 export async function fetchTrendingItems(
   { first = 12, listingType }: { first?: number; listingType?: "primary" | "secondary" } = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<UnifiedListing[]> {
   const json = await c(opts).catalog.trending<{ data?: ShopItemRaw[] }>({ first, includeSocialEmotes: "false", listingType }, o(opts));
   return (json.data ?? []).map(shopItemToItem);
@@ -278,7 +278,7 @@ export async function fetchSuggestedItems(
     category,
     first = 12,
   }: { address?: string; seeds?: string[]; bodyShape?: string; equipped?: string[]; exclude?: string[]; category?: string; first?: number } = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<SuggestedItemsResult> {
   const q: QueryParams = { first };
   if (address) q.address = address;
@@ -299,7 +299,7 @@ export async function fetchSuggestedItems(
   };
 }
 
-export async function fetchCatalogByIds(ids: string[], opts?: Opts): Promise<CatalogItem[]> {
+export async function fetchCatalogByIds(ids: string[], opts: Opts): Promise<CatalogItem[]> {
   if (ids.length === 0) return [];
   const CHUNK = 50;
   const chunks: string[][] = [];
@@ -334,7 +334,7 @@ export type CatalogItemsFilters = {
   maxPriceCredits?: number;
 } & EmoteAttributeFilters;
 
-async function withRunningSales(items: CatalogItem[], scope: { creator?: string; contractAddress?: string }, opts?: Opts): Promise<CatalogItem[]> {
+async function withRunningSales(items: CatalogItem[], scope: { creator?: string; contractAddress?: string }, opts: Opts): Promise<CatalogItem[]> {
   if (!scope.creator && !scope.contractAddress) return items;
   if (!items.some((i) => i.itemId != null)) return items;
   try {
@@ -379,7 +379,7 @@ export async function fetchCatalogItems(
     maxPriceCredits,
     ...emote
   }: CatalogItemsFilters = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<ItemsPage> {
   const q: QueryParams = { first, skip, includeSocialEmotes: "false" };
   if (category === "wearable" || category === "emote") q.category = category;
@@ -414,7 +414,7 @@ export type CollectionItemsFilters = {
 export async function fetchCollectionItems(
   contractAddress: string,
   { first = 20, skip = 0, ...filters }: { first?: number; skip?: number } & CollectionItemsFilters = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<ItemsPage> {
   return fetchCatalogItems(
     {
@@ -461,21 +461,21 @@ function toCollection(c: RawCollection): CollectionSummary {
 export async function fetchCreatorCollections(
   creator: string,
   { first = 24, skip = 0 }: { first?: number; skip?: number } = {},
-  opts?: Opts,
+  opts: Opts,
 ): Promise<{ collections: CollectionSummary[]; total: number }> {
   const json = await c(opts).market.collections<DataTotal<RawCollection>>({ creator, first, skip, sortBy: "newest" }, o(opts));
   const collections = (json.data ?? []).map(toCollection);
   return { collections, total: json.total ?? skip + collections.length };
 }
 
-export async function fetchCollection(contractAddress: string, opts?: Opts): Promise<CollectionMeta | null> {
+export async function fetchCollection(contractAddress: string, opts: Opts): Promise<CollectionMeta | null> {
   const json = await c(opts).market.collections<DataTotal<RawCollection>>({ contractAddress, first: 1 }, o(opts));
   const row = json.data?.[0];
   return row && row.contractAddress ? toCollection(row) : null;
 }
 
 /** Collections whose name matches `search` (the newest first without one), for the browse page's collection filter. */
-export async function searchCollections(search: string, { onSale, first = 10 }: { onSale?: boolean; first?: number } = {}, opts?: Opts): Promise<CollectionSummary[]> {
+export async function searchCollections(search: string, { onSale, first = 10 }: { onSale?: boolean; first?: number } = {}, opts: Opts): Promise<CollectionSummary[]> {
   const term = search.trim();
   const json = await c(opts).market.collections<DataTotal<RawCollection>>(
     { ...(term ? { search: term } : { sortBy: "newest" }), first, ...(onSale ? { isOnSale: "true" } : {}) },
@@ -486,7 +486,7 @@ export async function searchCollections(search: string, { onSale, first = 10 }: 
 
 export type ShopCreatorRank = { id: string; volumeWei?: string; sales: number; totalSales?: number; collections?: number; items?: number };
 
-export async function fetchShopTopCreators(first: number, days: number, opts?: Opts): Promise<ShopCreatorRank[]> {
+export async function fetchShopTopCreators(first: number, days: number, opts: Opts): Promise<ShopCreatorRank[]> {
   const json = await c(opts).catalog.creators<{ data?: ShopCreatorRank[] }>({ first, days }, o(opts));
   return json.data ?? [];
 }
@@ -505,7 +505,7 @@ type RawSuggestions = {
   creators?: { data?: { address?: string; name?: string; face?: string | null }[] };
 };
 
-export async function fetchSuggestions(search: string, { items = 5, collections = 4, creators = 4 }: SuggestionSizes = {}, opts?: Opts): Promise<Suggestions> {
+export async function fetchSuggestions(search: string, { items = 5, collections = 4, creators = 4 }: SuggestionSizes = {}, opts: Opts): Promise<Suggestions> {
   const term = search.trim();
   if (!term) return EMPTY_SUGGESTIONS;
   const body = await c(opts).catalog.suggest<RawSuggestions>({ search: term, items, collections, creators }, o(opts));
@@ -528,7 +528,7 @@ export async function fetchSuggestions(search: string, { items = 5, collections 
   };
 }
 
-export async function searchCreators(search: string, first = 10, opts?: Opts): Promise<CreatorHit[]> {
+export async function searchCreators(search: string, first = 10, opts: Opts): Promise<CreatorHit[]> {
   const term = search.trim();
   if (!term) return [];
   const json = await c(opts).catalog.searchCreators<{ data?: { address?: string; name?: string; face?: string | null }[] } | Array<{ address?: string; name?: string }>>(

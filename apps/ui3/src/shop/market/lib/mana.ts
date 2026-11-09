@@ -8,9 +8,9 @@
 import { encodeFunctionData } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { isPolygon, type ChainId } from "../../model/chain";
-import type { ManaWei } from "../../model/money";
-import { ERC20_ABI, manaToken } from "./contracts";
+import { isPolygon, type ChainId } from "@shop/model/chain";
+import type { ManaWei } from "@shop/model/money";
+import { ERC20_ABI, manaToken } from "@shop/market/lib/contracts";
 import { sendMetaTransaction } from "./metaTx";
 import { readContract } from "./rpc";
 import { sendCall, waitForReceipt, walletAccount, type WaitOptions } from "./tx";

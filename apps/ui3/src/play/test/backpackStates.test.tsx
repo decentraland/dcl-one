@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BackpackPage } from '../features/backpack/BackpackPage'
 import { fakeProfileState, fakeSession } from './harness'
 
@@ -28,6 +28,21 @@ describe('backpack empty and loading states', () => {
     renderBackpack({ loading: true })
     expect(document.querySelectorAll('[aria-busy="true"] > span')).toHaveLength(16)
   })
+
+  it('the catalogue says it is loading while its page is in flight', () => {
+    renderBackpack({ loading: true })
+    expect(screen.getByRole('region', { name: 'Catalog' })).toHaveAttribute('aria-busy', 'true')
+  })
+
+  it('the catalogue says it is loading while the search waits out its debounce, the old page still shown', async () => {
+    renderBackpack({ list: [{ urn: 'urn:t', name: 'Blue Shirt', rarity: 'base', category: 'upper_body', equipped: false }], total: 1 })
+    const catalog = screen.getByRole('region', { name: 'Catalog' })
+    expect(catalog).toHaveAttribute('aria-busy', 'false')
+    fireEvent.change(screen.getByPlaceholderText('Search item'), { target: { value: 'Shirt' } })
+    expect(catalog).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: 'Blue Shirt' })).toBeInTheDocument()
+    await waitFor(() => expect(catalog).toHaveAttribute('aria-busy', 'false'), { timeout: 2000 })
+  })
 })
 
 describe('backpack tabs', () => {
@@ -43,9 +58,9 @@ describe('backpack tabs', () => {
 })
 
 describe('backpack outfits', () => {
-  const renderOutfits = (outfitSlots: number) => {
+  const renderOutfits = (outfitSlots: number, outfitsLoaded = true) => {
     const s = fakeSession()
-    const backpack = { ...s.backpack, open: true, outfitSlots }
+    const backpack = { ...s.backpack, open: true, outfitSlots, outfitsLoaded }
     render(<BackpackPage backpack={backpack} emotes={s.emotes} profile={fakeProfileState()} onNavigate={vi.fn()} setEngineViewport={vi.fn()} />)
     fireEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
   }
@@ -54,6 +69,16 @@ describe('backpack outfits', () => {
     renderOutfits(5)
     expect(screen.getAllByRole('button', { name: /^Save outfit in slot/ })).toHaveLength(5)
     expect(screen.getByText('Unlock 5 more Outfit slots by getting a NAME!')).toBeInTheDocument()
+  })
+
+  it('the slots say they are loading until the saved outfits arrive', () => {
+    renderOutfits(5, false)
+    expect(screen.getByRole('region', { name: 'Saved outfits' })).toHaveAttribute('aria-busy', 'true')
+  })
+
+  it('the slots are ready once the saved outfits arrived', () => {
+    renderOutfits(5)
+    expect(screen.getByRole('region', { name: 'Saved outfits' })).toHaveAttribute('aria-busy', 'false')
   })
 
   it('with a NAME, ten slots and no banner', () => {

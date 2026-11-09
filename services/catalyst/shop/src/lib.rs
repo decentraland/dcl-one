@@ -114,7 +114,7 @@ pub struct States {
     pub mana: Arc<mana::State>,
 }
 
-/// The canonical `/shop-api` tree ([`paths`]; `ui3/src/shop/api/endpoints.ts`
+/// The canonical `/shop-api` tree ([`paths`]; `library/shop/api/endpoints.ts`
 /// is the client's table of it):
 /// the marketplace-server paths as they are, the credits paths under their
 /// resource names, the rentals store's `/v1/rentals-listings`, the MANA

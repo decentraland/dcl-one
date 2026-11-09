@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { erc20Abi, rpcReader } from "../land/evm";
 import { fakeWallet, pollCountedWait, stubClient } from "../land/testkit";
-import { CHAIN } from "../model/chain";
-import { manaUsdRate, usdCents } from "../model/money";
-import { parseNameLabel } from "../model/asset";
-import { presentPayment } from "../payment/present";
-import { RATE, web2, web3, SIGNED_OUT, BOOK } from "../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { manaUsdRate, usdCents } from "@shop/model/money";
+import { parseNameLabel } from "@shop/model/asset";
+import { presentPayment } from "@shop/payment/present";
+import { RATE, web2, web3, SIGNED_OUT, BOOK } from "@shop/payment/fixtures";
 import { LAND_NETWORKS } from "../land/contracts";
 import {
   buildNameUseCreditsArgs,
@@ -33,8 +33,8 @@ import {
 } from "./names";
 import { interimNameOffer, NameAlreadyRegisteredError, serverNameOffer } from "./offer";
 import { fetchBannedNames } from "./api";
-import { encodePurchaseOffer } from "../model/wire";
-import { nameRegistration } from "../payment/fixtures";
+import { encodePurchaseOffer } from "@shop/model/wire";
+import { nameRegistration } from "@shop/payment/fixtures";
 
 const MAINNET = LAND_NETWORKS[CHAIN.ETHEREUM]!;
 const BUYER = "0x0000000000000000000000000000000000000b0b";

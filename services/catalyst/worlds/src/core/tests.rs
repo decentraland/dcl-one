@@ -26,7 +26,7 @@ use crate::shared::signed_fetch::ORIGINAL_PATH_HEADER;
 use catalyst_storage::Storage;
 
 use super::auth::test_support::{Wallet, signed_headers};
-use super::deploy_form::test_support::multipart_body;
+use super::deploy_form::test_support::{chain_fields, multipart_body};
 use super::store::{
     self, AccessSetting, AllowListEdit, AllowListEditOutcome, OrderDirection, SceneDeployment,
     WorldSettingsUpdate, WorldsListFilters, WorldsListOptions, WorldsOrderBy,
@@ -316,13 +316,13 @@ async fn deployment_at(
     });
     let entity_bytes = serde_json::to_vec(&entity).unwrap();
     let entity_id = hash_bytes_v1(&entity_bytes);
-    let chain = serde_json::to_string(&wallet.chain(&entity_id).await).unwrap();
-    let (body, content_type) = multipart_body(&[
-        ("entityId", None, entity_id.as_bytes()),
-        ("authChain", None, chain.as_bytes()),
-        ("entity.json", Some("entity.json"), &entity_bytes),
-        ("thumb.png", Some("thumb.png"), thumb),
-    ]);
+    let chain = chain_fields(&wallet.chain(&entity_id).await);
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+    parts.push((&entity_id, Some(&entity_id), &entity_bytes));
+    parts.push((&thumb_hash, Some(&thumb_hash), thumb));
+    let (body, content_type) = multipart_body(&parts);
     Deployment {
         body,
         content_type,
@@ -1111,6 +1111,36 @@ fn assert_newer_refusal(result: Result<(), super::http::ApiError>) {
     );
 }
 
+/// Upstream compares entity timestamps as JS numbers (doubles): an epoch-ms timestamp with three
+/// decimals is newer than one a thousandth below it, and an equal one falls to the entity-id
+/// tie-break.
+#[tokio::test]
+async fn fractional_timestamps_compare_as_numbers() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    let at = |timestamp: f64| {
+        json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"],
+                "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } })
+    };
+    let publish = |id: &'static str, timestamp: f64| {
+        let (f, world, owner, entity) = (&f, &world, &owner, at(timestamp));
+        async move { deploy(f, world, owner, id, &entity, &["0,0"], &Deploy::Owner).await }
+    };
+    const T: f64 = 1_731_100_000_000.123;
+    publish("bafyb", T).await.unwrap();
+    // Equal: the greater entity id wins.
+    assert_newer_refusal(publish("bafya", T).await);
+    publish("bafyc", T)
+        .await
+        .expect("an equal timestamp with a greater id");
+    // A thousandth older loses whatever its id; a thousandth newer wins.
+    assert_newer_refusal(publish("bafyz", 1_731_100_000_000.122).await);
+    publish("bafyd", 1_731_100_000_000.124)
+        .await
+        .expect("a thousandth newer");
+    assert_eq!(entity_ids(&f, &world).await, vec!["bafyd".to_string()]);
+}
+
 #[tokio::test]
 async fn an_older_entity_never_replaces_a_newer_overlapping_scene() {
     let Some(f) = fixture().await else { return };
@@ -1453,6 +1483,8 @@ async fn publishing_an_older_entity_answers_400_and_keeps_the_newer_scene() {
         body,
         json!({ "error": "Bad request", "message": "Deployment failed: a newer scene is already deployed on one or more of these parcels." })
     );
+    // Refused before any of its files is stored (upstream `entity-deployer.ts` fast-fail).
+    assert!(!f.storage.exist(&older.thumb_hash).await.unwrap());
     assert_eq!(
         deployed_entity_ids(&f.pool, &world).await,
         vec![newer.entity_id]
@@ -3752,7 +3784,9 @@ async fn active_content_keys_names_every_referenced_blob_and_fails_closed_on_an_
 #[tokio::test]
 async fn scoped_replacement_conflicts_on_unauthorized_overlap() {
     let Some(f) = fixture().await else { return };
-    let (world, owner) = (world_name(), Wallet::random().address);
+    // The 409 names the world as deployed (upstream `SceneReplacementConflictError`).
+    let world = WorldName::parse(&format!("Mixed{}", world_name().display())).unwrap();
+    let owner = Wallet::random().address;
     let thumb = store_png(&f).await;
     deploy(
         &f,
@@ -3778,6 +3812,13 @@ async fn scoped_replacement_conflicts_on_unauthorized_overlap() {
     assert!(
         matches!(&conflict, Err(e) if e.is_conflict()),
         "unauthorized overlap must 409, got {conflict:?}"
+    );
+    assert_eq!(
+        conflict.unwrap_err().public_message(),
+        format!(
+            "Scene replacement authorization changed while deploying to world \"{}\". Please retry.",
+            world.display()
+        )
     );
     assert_eq!(entity_ids(&f, &world).await, vec!["bafyA".to_string()]);
     deploy(
@@ -4565,6 +4606,29 @@ async fn every_route_answers_its_contract() {
     .await;
     assert_eq!(undeployed, json!({}));
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+    // Upstream answers the string `{}`, so `text/plain` (`undeploy-entity-handler.ts`).
+    post_entity(app, &good, 200).await;
+    let request = Case::new("delete", format!("/entities/{w}"))
+        .signed(&owner)
+        .await;
+    let mut builder = Request::builder().method("DELETE").uri(&request.path);
+    for (k, v) in &request.headers {
+        builder = builder.header(k, v);
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/plain; charset=utf-8"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 64)
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..], b"{}");
 }
 
 const NEST: &str = "/worlds-content-server";
@@ -6589,13 +6653,12 @@ async fn worlds_listing_reads_the_query_like_url_search_params_and_hides_banned_
 async fn signed_deployment(wallet: &Wallet, entity: &Value, files: &[&[u8]]) -> Deployment {
     let entity_bytes = serde_json::to_vec(entity).unwrap();
     let entity_id = hash_bytes_v1(&entity_bytes);
-    let chain = serde_json::to_string(&wallet.chain(&entity_id).await).unwrap();
-    let names: Vec<String> = (0..files.len()).map(|i| format!("f{i}")).collect();
-    let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![
-        ("entityId", None, entity_id.as_bytes()),
-        ("authChain", None, chain.as_bytes()),
-        ("entity.json", Some("entity.json"), &entity_bytes),
-    ];
+    let chain = chain_fields(&wallet.chain(&entity_id).await);
+    let names: Vec<String> = files.iter().map(|f| hash_bytes_v1(f)).collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+    parts.push((&entity_id, Some(&entity_id), &entity_bytes));
     for (name, file) in names.iter().zip(files) {
         parts.push((name, Some(name), file));
     }
@@ -6856,6 +6919,38 @@ async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure(
     assert!(status.is_client_error(), "{status}");
     assert!(!f.storage.exist(&refused.entity_id).await.unwrap());
     wait_spool_empty(&f).await;
+}
+
+/// The upload-slot cap (`MAX_CONCURRENT_UPLOADS`, this tree's) refuses `POST /entities` with
+/// upstream's byte-budget 503 (`multipart/errors.ts`), as the in-flight bytes do (WD-11): with a
+/// cap of one and a slot held, the publish is shed.
+#[tokio::test]
+async fn a_publish_past_the_upload_slots_gets_the_byte_budget_503() {
+    let mut settings = test_settings();
+    settings.upload_limits.max_concurrent_uploads = 1;
+    // The slot counter is process-wide: other tests' uploads only make the shed more certain.
+    let _held = super::upload_limits::try_acquire_upload_slot(u64::MAX).expect("a slot");
+    let Some(f) = fixture_full(PersonalWorldsPolicy::disabled(), None, None, settings).await else {
+        return;
+    };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Shed", "0,0", &["0,0"]).await;
+    let body = expect(
+        &f.app,
+        Case::new("post", "/entities").body(d.body.clone(), &d.content_type),
+        503,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "Service Unavailable",
+            "message": super::upload_limits::BYTES_SHED_MESSAGE,
+        })
+    );
+    assert!(!f.storage.exist(&d.entity_id).await.unwrap());
 }
 
 #[tokio::test]
@@ -8201,4 +8296,90 @@ async fn signed_routes_refuse_with_the_crypto_middleware_body() {
             "This endpoint requires a signed fetch request. See ADR-44."
         );
     }
+}
+
+/// Upstream `test/integration/multipart-error-handling.spec.ts`, `extract-auth-chain.ts` and
+/// `deploy-entity-handler.ts` `authenticateRequest`: what `POST /entities` answers before it
+/// reads the entity.
+#[tokio::test]
+async fn deploy_form_and_auth_chain_refusals_answer_upstreams_texts() {
+    let Some(f) = fixture().await else { return };
+    let app = &f.app;
+    let refused = |message: String| json!({ "error": "Bad request", "message": message });
+    let post = |bytes: Vec<u8>, content_type: String| async move {
+        expect(
+            app,
+            Case::new("post", "/entities").body(bytes, &content_type),
+            400,
+        )
+        .await
+    };
+
+    let body = post(
+        br#"{"entityId":"test"}"#.to_vec(),
+        "application/json".into(),
+    )
+    .await;
+    assert_eq!(
+        body,
+        refused("Unsupported content type: application/json".into())
+    );
+
+    let boundary = "----TestBoundary";
+    let multipart_type = format!("multipart/form-data; boundary={boundary}");
+    let truncated = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nsome-id\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: application/octet-stream\r\n\r\nincomplete file da"
+    );
+    let body = post(truncated.into_bytes(), multipart_type.clone()).await;
+    assert_eq!(body, refused("Unexpected end of form".into()));
+
+    let (bytes, content_type) = multipart_body(&[("someOtherField", None, b"value")]);
+    assert_eq!(
+        post(bytes, content_type).await,
+        refused("A string was expected".into())
+    );
+
+    let (bytes, content_type) = multipart_body(&[("entityId", None, b"bafyx")]);
+    assert_eq!(
+        post(bytes, content_type).await,
+        refused("Missing auth chain".into())
+    );
+
+    let wallet = Wallet::random();
+    let entity_id = hash_bytes_v1(b"an entity");
+    let chain_over = |payload: String| {
+        let wallet = &wallet;
+        async move { chain_fields(&wallet.chain(&payload).await) }
+    };
+    let form = |chain: Vec<(String, String)>| {
+        let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+            vec![("entityId", None, entity_id.as_bytes())];
+        parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+        multipart_body(&parts)
+    };
+
+    let mut bad_signer = chain_over(entity_id.clone()).await;
+    bad_signer[1].1 = "nope".to_string();
+    let (bytes, content_type) = form(bad_signer);
+    assert_eq!(
+        post(bytes, content_type).await,
+        refused("Deployment failed: Invalid signer: nope".into())
+    );
+
+    let other = hash_bytes_v1(b"another entity");
+    let (bytes, content_type) = form(chain_over(other.clone()).await);
+    assert_eq!(
+        post(bytes, content_type).await,
+        refused(format!(
+            "Deployment failed: ERROR: Invalid final authority. Expected: {entity_id}. Current {other}."
+        ))
+    );
+
+    let mut unknown_type = chain_over(entity_id.clone()).await;
+    unknown_type[3].1 = "NOT_A_LINK".to_string();
+    let (bytes, content_type) = form(unknown_type);
+    assert_eq!(
+        post(bytes, content_type).await,
+        refused("Deployment failed: must be equal to one of the allowed values".into())
+    );
 }

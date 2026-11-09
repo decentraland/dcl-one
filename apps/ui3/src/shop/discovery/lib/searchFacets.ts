@@ -5,7 +5,7 @@
 import type { IconName } from "../components/Icon";
 import { SHOP_BASE } from "../../routes";
 import { CATEGORIES } from "./categories";
-import { RARITIES } from "./rarity";
+import { RARITIES } from "@shop/discovery/lib/rarity";
 export type Facet =
   | {
       kind: "category"

@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCreatorCollections, type CollectionSummary } from "../api";
 import AssetCard from "../components/AssetCard";
@@ -20,11 +20,11 @@ import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "../freshness";
 import { useProfile, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { SUBCAT_MAP } from "../lib/categories";
-import type { CatalogItem } from "../lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { resolveGridView } from "../lib/creatorView";
-import { rarityLabel } from "../lib/rarity";
+import { rarityLabel } from "@shop/discovery/lib/rarity";
 import { routeSegment } from "../lib/routes";
 import { EMOTE_FILTER_DEFAULTS, emoteFilterBindings } from "../lib/itemsGrid";
 import { useInfiniteShopQuery, useShopQuery } from "../query";
@@ -34,6 +34,7 @@ import CreatorHero from "./creator/CreatorHero";
 import collectionsEmptyIllustration from "./creator/collections-empty.svg?url";
 import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?url";
 import searchEmptyIllustration from "./creator/search-empty.svg?url";
+import { shopClient } from "../../api/host";
 
 const PAGE_SIZE = 48;
 
@@ -75,11 +76,11 @@ export default function Creator() {
     ...emoteFilters.emote,
   };
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(address && !collectionsMode ? ["creator-items", filters] : null, (skip, signal) =>
-    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { signal }),
+    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { client: shopClient(), signal }),
   );
-  const baseline = useShopQuery(address ? ["creator-item-count", address] : null, (signal) => fetchCatalogItems({ creator: address, first: 1 }, { signal }).then((r) => r.total));
+  const baseline = useShopQuery(address ? ["creator-item-count", address] : null, (signal) => fetchCatalogItems({ creator: address, first: 1 }, { client: shopClient(), signal }).then((r) => r.total));
   const collections = useInfiniteShopQuery<CollectionSummary>(address && collectionsMode ? ["creator-collections", address] : null, (skip, signal) =>
-    fetchCreatorCollections(address!, { first: PAGE_SIZE, skip }, { signal }).then((r) => ({ items: r.collections, total: r.total })),
+    fetchCreatorCollections(address!, { first: PAGE_SIZE, skip }, { client: shopClient(), signal }).then((r) => ({ items: r.collections, total: r.total })),
   );
 
   const searchWith = (next: URLSearchParams, collections: boolean) => {

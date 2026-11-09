@@ -3,10 +3,10 @@
 
 import { Link } from "react-router";
 
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { useProfile } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import "./hero.css";
 
 export function CollectionHero({ name, cover }: { name: string; cover?: string | null }) {
