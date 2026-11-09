@@ -3,7 +3,8 @@
 // upstream's) is off until the file answers yes. A host (the native shop, a journey) may declare it through
 // `window.__SHOP_FLAGS__`. The Marketplace's switch (`dapps-shop-marketplace-features`, dcl-one's own) may be declared
 // there too, but only market/access.tsx reads it: a declared value stands at once (else it waits for the file), and
-// the Marketplace still needs a web3 wallet session.
+// the Marketplace still needs a web3 wallet session. So may My Store's (`dapps-shop-my-store`, upstream's), read only by
+// seller/lib/featureFlags.ts: a declared value stands at once, and the file's address list then does not apply.
 
 import { REMOTE_FLAG, remoteFlag } from "./lib/remoteFlags";
 
@@ -12,7 +13,7 @@ export type ShopFlags = {
 };
 
 /** What a host may declare in `window.__SHOP_FLAGS__`. */
-export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean };
+export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean };
 
 declare global {
   interface Window {
