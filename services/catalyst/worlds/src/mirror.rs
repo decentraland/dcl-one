@@ -434,8 +434,10 @@ fn parse_index(index: &Value) -> Vec<CatalogueEntry> {
                     if name.is_empty() || scene_ids.is_empty() || !seen.insert(name.clone()) {
                         return None;
                     }
-                    let newest_timestamp_ms =
-                        scenes.iter().filter_map(|s| s["timestamp"].as_i64()).max();
+                    let newest_timestamp_ms = scenes
+                        .iter()
+                        .filter_map(|s| crate::core::store::entity_timestamp_ms(s))
+                        .max();
                     Some(CatalogueEntry {
                         name,
                         scene_ids,
@@ -1189,8 +1191,7 @@ impl<'a> Signatures<'a> {
                 self.world
             );
         }
-        let timestamp = entity["timestamp"]
-            .as_i64()
+        let timestamp = crate::core::store::entity_timestamp_ms(entity)
             .with_context(|| format!("entity {cid} has no timestamp"))?;
         verify_auth_chain(&signed.chain, cid, Some(timestamp))
             .with_context(|| format!("the auth chain of scene {cid} does not verify"))?;
@@ -1537,11 +1538,9 @@ async fn mirror_world(
     // a parcel that predecessor vacated. CID breaks timestamp ties stably.
     let mut chronological: Vec<_> = records.iter().collect();
     chronological.sort_by(|a, b| {
-        a.1["timestamp"]
-            .as_i64()
-            .unwrap_or_default()
-            .cmp(&b.1["timestamp"].as_i64().unwrap_or_default())
-            .then_with(|| a.0.cmp(&b.0))
+        let ts =
+            |entity: &Value| crate::core::store::entity_timestamp_number(entity).unwrap_or(0.0);
+        ts(&a.1).total_cmp(&ts(&b.1)).then_with(|| a.0.cmp(&b.0))
     });
     for record in chronological {
         scene_identity::assign(&mut tx, &world, &record.0, &record.2)
