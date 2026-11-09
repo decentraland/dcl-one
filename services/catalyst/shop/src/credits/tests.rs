@@ -6238,3 +6238,142 @@ async fn a_blocked_wallet_refuses_a_spend_but_its_settlement_debit_lands() {
     );
     cleanup(&pool, &addr).await;
 }
+
+/// A purchase that names itself (`operationId`) is authorized once: a retry
+/// signed again replays its credit, two at once pledge once, and the same id
+/// with other lines is refused without a pledge. Without an id, each signed
+/// request is its own (the key holds its timestamp), as before.
+#[tokio::test]
+async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_lines() {
+    let Some(db) = OwnDatabase::create("opid").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let contract = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5".to_string();
+    let signer_key = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3";
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(signer_key.into()),
+        credits_manager_contract: Some(contract.clone()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(contract.clone()),
+        ..super::usage::Settings::default()
+    };
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_item(COLLECTION, "95", "1900000000000000000", true)
+        .with_mana_usd("0.5");
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    // Enough for every pledge below (four of 200 cents).
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize",
+                &[],
+                Some(body),
+            )
+            .await
+        }
+    };
+    let item = |cents: i64, item: &str, op: Option<&str>| {
+        let mut body =
+            json!({ "usdPriceCents": cents, "contractAddress": COLLECTION, "itemId": item });
+        if let Some(op) = op {
+            body["operationId"] = json!(op);
+        }
+        body
+    };
+    let op = "0b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+
+    let (status, first) = authorize(item(200, "200", Some(op))).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+    // Signed again (a later timestamp, as after a restart): the same credit, the same signature.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = authorize(item(200, "200", Some(&op.to_ascii_uppercase()))).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        1,
+        "and pledges nothing more"
+    );
+
+    // The same operation asking for other lines is refused, and pledges nothing.
+    let (status, other) = authorize(item(95, "95", Some(op))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+
+    // Two requests of one operation at once pledge once.
+    let op2 = "1b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let (a, b) = tokio::join!(
+        authorize(item(200, "200", Some(op2))),
+        authorize(item(200, "200", Some(op2)))
+    );
+    assert_eq!(
+        (a.0, b.0),
+        (StatusCode::OK, StatusCode::OK),
+        "{} {}",
+        a.1,
+        b.1
+    );
+    assert_eq!(a.1["credit"], b.1["credit"]);
+    assert_ne!(
+        a.1["credit"], first["credit"],
+        "another operation, another credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+
+    // A malformed id is refused before anything is read or pledged.
+    let (status, bad) = authorize(item(200, "200", Some("op-1"))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+
+    // Without an id, each signed request is its own, as before.
+    let (status, _) = authorize(item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, _) = authorize(item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}

@@ -225,6 +225,8 @@ pub enum AuthorizeError {
     TooManyLive {
         balance_cents: i64,
     },
+    /// 409: the request's `operationId` already authorized other lines.
+    OperationReused,
     Api(ApiError),
 }
 
@@ -300,6 +302,16 @@ impl AuthorizeError {
                 let mut extra = serde_json::Map::new();
                 extra.insert("balanceCents".into(), json!(balance_cents));
                 envelope(409, "Too many purchases in progress. Complete or cancel them before starting another one.".to_string(), extra)
+            }
+            Self::OperationReused => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("code".into(), json!("operation_reused"));
+                envelope(
+                    409,
+                    "This purchase was already authorized for other items. Start a new purchase."
+                        .to_string(),
+                    extra,
+                )
             }
             Self::Api(e) => {
                 let status = e.status().as_u16();
@@ -682,6 +694,7 @@ pub async fn authorize_group(
     lines: &[ValidatedLine],
     source: Option<&str>,
     idempotency_key: &str,
+    request_digest: Option<&str>,
     single: bool,
 ) -> Result<AuthorizeCreditOut, AuthorizeError> {
     let settings = &state.settings;
@@ -830,6 +843,10 @@ pub async fn authorize_group(
             .authorization_for_key(idempotency_key, signer)
             .await?
         {
+            if request_digest.is_some() && prior.request_digest.as_deref() != request_digest {
+                return Err(AuthorizeError::OperationReused);
+            }
+            let prior = prior.id;
             let (issued, lines) = replayed(
                 state,
                 &prior,
@@ -861,6 +878,7 @@ pub async fn authorize_group(
             Some(ReserveRefusal::TooManyLive { balance_cents }) => {
                 return Err(AuthorizeError::TooManyLive { balance_cents });
             }
+            Some(ReserveRefusal::OperationReused) => return Err(AuthorizeError::OperationReused),
             None => {}
         }
         let reading = state
@@ -934,7 +952,7 @@ pub async fn authorize_group(
     };
     let reserved = match state
         .credits
-        .reserve_credit_group(&group, idempotency_key)
+        .reserve_credit_group(&group, idempotency_key, request_digest)
         .await?
     {
         Ok(reserved) => reserved,
@@ -950,6 +968,7 @@ pub async fn authorize_group(
         Err(ReserveRefusal::TooManyLive { balance_cents }) => {
             return Err(AuthorizeError::TooManyLive { balance_cents });
         }
+        Err(ReserveRefusal::OperationReused) => return Err(AuthorizeError::OperationReused),
     };
     let (issued, issued_lines) = if reserved.replayed {
         replayed(
