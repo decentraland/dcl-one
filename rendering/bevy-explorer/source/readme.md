@@ -78,6 +78,8 @@ just setup-cef                 # once per machine: exports the CEF distribution 
 export CEF_PATH=$HOME/.local/share/cef
 # linux only, to run from the target dir:
 export LD_LIBRARY_PATH=$CEF_PATH:$LD_LIBRARY_PATH
+# nixos only, when running without just: lets CEF's bundled vulkan loader find the drivers
+export XDG_DATA_DIRS=/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 
 just native-release            # bundles the HUD if stale, then builds + runs everything
 ```

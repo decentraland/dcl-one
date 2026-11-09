@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, MaskIcon, Tabs, openPopup, type TabItem } from '../../design'
+import { Avatar, Button, MaskIcon, Pencil, Tabs, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -12,6 +12,7 @@ import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, roleLabel } from './roles'
 import { useSession } from '../session/SessionContext'
+import { openCommunityEditModal } from './CommunityCreateModal'
 import type {
   Community,
   CommunityDetailMessage,
@@ -193,6 +194,8 @@ export function CommunityModal({
   onAddFriend,
   onOpenChat,
   stream,
+  onEdit,
+  onDelete,
   onClose
 }: {
   community: Community
@@ -208,6 +211,10 @@ export function CommunityModal({
   /** The community's voice stream: live, whether the local user is in it, and whether they may
    *  open one (owner or moderator). */
   stream?: { live: boolean; inStream: boolean; canStart: boolean; pending: boolean; participants: number; onStart: () => void; onJoin: () => void; onLeave: () => void }
+  /** Open the Edit Community form (owners and moderators). */
+  onEdit?: () => void
+  /** Delete the community (owner only; asked first). */
+  onDelete?: (id: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -222,6 +229,18 @@ export function CommunityModal({
   const addFriend = (address: string): void => {
     setRequested((prev) => new Set(prev).add(address))
     onAddFriend(address)
+  }
+  // unity-explorer's confirmation, with the community's picture
+  const confirmDelete = (): void => {
+    setMenuOpen(false)
+    void showConfirm({
+      title: `Are you sure you want to delete [${community.name}] Community?`,
+      body: showCover ? <img className={styles.confirmThumb} src={community.thumbnail} alt="" /> : undefined,
+      confirmLabel: 'CONTINUE',
+      cancelLabel: 'CANCEL'
+    }).then((yes) => {
+      if (yes) onDelete?.(community.id)
+    })
   }
   const copyLink = (): void => {
     void navigator.clipboard?.writeText(`https://decentraland.org/communities/${community.id}`).catch(() => undefined)
@@ -259,6 +278,9 @@ export function CommunityModal({
             ) : stream != null && stream.canStart ? (
               <Button size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
             ) : null}
+            {(community.role === 'owner' || community.role === 'moderator') && onEdit != null && (
+              <button type="button" className={styles.iconBtn} aria-label="Edit Community" onClick={onEdit}><Pencil size={16} /></button>
+            )}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
@@ -278,9 +300,15 @@ export function CommunityModal({
               {menuOpen && (
                 <div className={styles.menu}>
                   <button type="button" className={styles.menuItem} onClick={copyLink}>Copy link</button>
-                  {member && (
+                  {/* an owner cannot leave their community, only delete it (unity-explorer) */}
+                  {member && community.role !== 'owner' && (
                     <button type="button" className={`${styles.menuItem} ${styles.menuDanger}`} onClick={() => { setMenuOpen(false); onLeave(community.id); onClose() }}>
                       Leave community
+                    </button>
+                  )}
+                  {community.role === 'owner' && onDelete != null && (
+                    <button type="button" className={`${styles.menuItem} ${styles.menuDanger}`} onClick={confirmDelete}>
+                      Delete Community
                     </button>
                   )}
                 </div>
@@ -343,7 +371,8 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   // the browse list only holds what the Communities page fetched; a card opened from elsewhere
   // (the chat's "View Community") has its community fetched by id, and a join or leave that
   // re-reads the list (its first page) does not take it away
-  const community = communities.list.find((c) => c.id === communityId) ?? communities.cards[communityId]
+  const community =
+    communities.list.find((c) => c.id === communityId) ?? communities.cards[communityId]
   const listed = community != null
   useEffect(() => {
     if (!listed) fetch(communityId)
@@ -353,6 +382,11 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   }, [loadDetail, communityId])
 
   const error = communities.error?.id === communityId ? communities.error.message : null
+  // deleted: the card goes with it
+  const gone = communities.deleted === communityId
+  useEffect(() => {
+    if (gone) onClose()
+  }, [gone, onClose])
   if (!community) {
     // not fetched yet, or gone from the list while open; a failed fetch says so instead of nothing
     if (error == null) return null
@@ -388,6 +422,8 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onCancelRequest={communities.cancelRequest}
       onLeave={communities.leave}
       onAddFriend={(address) => friends.act('request', address)}
+      onEdit={() => openCommunityEditModal(community)}
+      onDelete={communities.remove}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })
