@@ -3,7 +3,7 @@
 
 import { CHAIN, type ChainId } from "@shop/model/chain";
 import { ethereumChainId } from "../checkout/chain/config";
-import { LAND_NETWORKS } from "./contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 
 type ShopEnvWindow = Window & typeof globalThis & { __SHOP_ETHEREUM_CHAIN_ID__?: number };
 

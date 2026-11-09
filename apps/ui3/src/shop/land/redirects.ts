@@ -1,6 +1,6 @@
 import { landTokenId } from "../../data/catalyst/landListing";
 import { landChainId } from "./chain";
-import { landNetwork } from "./contracts";
+import { landNetwork } from "@shop/land/contracts";
 
 export type LandRedirect = "lands" | "rent" | "transfer" | "operator" | "assign-ens";
 

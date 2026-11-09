@@ -19,9 +19,9 @@ import type { MissingFact, PaymentMethod, Quote, Session, SettlementGroupKey } f
 import { decodePurchaseOffer } from "@shop/model/wire";
 import { present, restrictions } from "@shop/payment/rule";
 import { landChainId } from "../land/chain";
-import { landNetwork } from "../land/contracts";
+import { landNetwork } from "@shop/land/contracts";
 import { rpcReader, type ChainReader } from "../land/evm";
-import { quoteNameCredits } from "./api";
+import { quoteNameCredits } from "@shop/names/api";
 import { checkNameAvailability, creditsChainFor, NAME_PRICE_WEI } from "./names";
 import { shopClient } from "../api/host";
 

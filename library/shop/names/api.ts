@@ -3,15 +3,15 @@
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 // NAME reads: the DAO's banned-names list (explore's `/dcl-lists/banned-names`, not a Shop route),
 // NAMEs on resale (`/shop-api/v1/nfts?category=ens`, MANA only), the account's own NAMEs and a NAME's credits
-// quote. The host gives the node's base, the transport and the Shop client (names/reads.ts in the browser).
+// quote. The host gives the node's base, the transport and the Shop client (ui3: names/reads.ts).
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
 import type { ProfileName } from "@catalyst-api/market/ProfileName";
-import { isShopApiError } from "@shop/api/client";
-import { type ShopClient } from "@shop/api/shop";
-import { centsFromCredits, parseManaInput, type UsdCents } from "@shop/model/money";
-import type { MissingFact } from "@shop/model/settlement";
+import { isShopApiError } from "../api/client";
+import { type ShopClient } from "../api/shop";
+import { centsFromCredits, parseManaInput, type UsdCents } from "../model/money";
+import type { MissingFact } from "../model/settlement";
 import { NAME_PRICE_IN_WEI } from "./name";
 
 export type { NftResult };

@@ -10,16 +10,10 @@ import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "..", "..");
-// The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file)
-// are held by library/shop/boundary.test.ts, which compiles them without a host at all.
-const SEAM = [
-  "shop/checkout/lib/api.ts",
-  "shop/checkout/lib/trade.ts",
-  "shop/land/contracts.ts",
-  "shop/land/read.ts",
-  "shop/names/api.ts",
-  "shop/names/name.ts",
-];
+// The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file,
+// the LAND and NAME contracts, the NAME reads) are held by library/shop/boundary.test.ts, which compiles them without
+// a host at all.
+const SEAM = ["shop/checkout/lib/api.ts", "shop/checkout/lib/trade.ts"];
 
 /**
  * Every module a file names, read from its raw source as library/shop/boundary.test.ts reads it, so that a mistake

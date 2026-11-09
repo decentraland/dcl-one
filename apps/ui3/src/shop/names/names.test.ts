@@ -7,7 +7,7 @@ import { manaUsdRate, usdCents } from "@shop/model/money";
 import { parseNameLabel } from "@shop/model/asset";
 import { presentPayment } from "@shop/payment/present";
 import { RATE, web2, web3, SIGNED_OUT, BOOK } from "@shop/payment/fixtures";
-import { LAND_NETWORKS } from "../land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import {
   buildNameUseCreditsArgs,
   checkNameAvailability,
@@ -32,7 +32,7 @@ import {
   NAME_PRICE_WEI,
 } from "./names";
 import { interimNameOffer, NameAlreadyRegisteredError, serverNameOffer } from "./offer";
-import { fetchBannedNames } from "./api";
+import { fetchBannedNames } from "@shop/names/api";
 import { listsTransport } from "./reads";
 import { encodePurchaseOffer } from "@shop/model/wire";
 import { nameRegistration } from "@shop/payment/fixtures";

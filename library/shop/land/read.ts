@@ -2,7 +2,7 @@
 // nonce reads), catalyrst-v2 sites/src/data/lib/catalyst/marketplace/name-claim.ts (transaction + receipt)
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 // A contract read on whatever answers `eth_call`, with viem for the ABI. Which answerer, the node's read-only relay
-// or the buyer's wallet, is the host's (land/evm.ts).
+// or the buyer's wallet, is the host's (ui3: land/evm.ts).
 
 import { decodeFunctionResult, encodeFunctionData, type Abi, type Hex } from "viem";
 

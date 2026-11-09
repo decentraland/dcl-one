@@ -4,9 +4,9 @@
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { itemUrn } from '@shop/detail/lib/urn'
 import { landChainId } from '../../../shop/land/chain'
-import { landNetwork } from '../../../shop/land/contracts'
+import { landNetwork } from '@shop/land/contracts'
 import { CHAIN } from '@shop/model/chain'
-import { nameTokenIdOf } from '../../../shop/names/names'
+import { nameTokenIdOf } from '@shop/names/name'
 import { siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'
 

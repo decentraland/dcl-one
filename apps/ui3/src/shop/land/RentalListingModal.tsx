@@ -13,7 +13,7 @@ import Button from "../../atoms/Button";
 import Modal from "../../components/Modal";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import type { ShopClient } from "@shop/api/shop";
-import { landCategoryOf, landNetwork } from "./contracts";
+import { landCategoryOf, landNetwork } from "@shop/land/contracts";
 import { addressHref, ensureOperatorApproval, erc721Abi, readContract, walletReader, type ChainReader } from "./evm";
 import { Mana } from "./format";
 import {
