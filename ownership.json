@@ -318,6 +318,17 @@
       "paths": [
         "/docs/"
       ]
+    },
+    {
+      "id": "ui-provenance",
+      "description": "Provenance of the shared UI library: the port lock and the port verification record, a reviewed assertion that changes only with an approving code-owner review",
+      "owners": [
+        "@decentraland/web-applications"
+      ],
+      "paths": [
+        "/library/ui/upstream.lock.json",
+        "/library/ui/port-verification.json"
+      ]
     }
   ]
 }

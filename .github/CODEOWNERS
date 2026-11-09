@@ -131,3 +131,7 @@
 
 # documentation
 /docs/ @decentraland/infra
+
+# ui-provenance
+/library/ui/upstream.lock.json @decentraland/web-applications
+/library/ui/port-verification.json @decentraland/web-applications
