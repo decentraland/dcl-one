@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { validateDocs } from "./docs-validation.mts";
 import { DocsMedia, rasterKind, webpName } from "./docs-images.mts";
 import { RemoteImages } from "./docs-remote-images.mts";
+import { reviewedDocsProse, searchableText } from "./docs-prose.mts";
 
 const SITES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
@@ -92,16 +93,6 @@ function countTokens(md: string): number | undefined {
   } catch {
     return undefined;
   }
-}
-
-function searchableText(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, " ")
-    .replace(/!?(?:\[([^\]]*)\])\([^)]*\)/g, "$1")
-    .replace(/<[^>]+>|[`*_>#{}|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 5000);
 }
 
 function splitHash(t: string): [string, string] {
@@ -449,7 +440,7 @@ async function addPage(entry: Omit<PageEntry, "file" | "tokens">, md: string): P
 
 async function writePage(srcRel: string): Promise<void> {
   const { fm, body } = stripFrontMatter(await fs.readFile(path.join(SRC, srcRel), "utf8"));
-  let cleaned = rewriteLinks(embeds(repairSource(body)), srcRel).trim();
+  let cleaned = reviewedDocsProse(srcRel, rewriteLinks(embeds(repairSource(body)), srcRel)).trim();
   const title = fmField(fm, "title") || (cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim()) || path.basename(srcRel, ".md");
   const description = fmField(fm, "description");
   if (!/^#\s+/.test(cleaned)) cleaned = `# ${title}\n\n${cleaned}`;

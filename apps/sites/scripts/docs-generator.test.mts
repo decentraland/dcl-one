@@ -8,6 +8,10 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "docs-generator-"));
 const source = path.join(root, "source");
 const output = path.join(root, "output");
 const fallback = "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp";
+const reviewedPages = JSON.parse(fs.readFileSync(new URL("./docs-reviewed-prose.fixture.json", import.meta.url), "utf8")) as {
+  source: string; file: string; url: string; before: string; after: string;
+}[];
+const operationalLiterals = "```sh\nnpx skills add decentraland/sdk-skills --skill unity-explorer-mcp\ncurl http://127.0.0.1:8123/unity-explorer-mcp\n```";
 const write = (base: string, rel: string, data: string | Buffer) => {
   const dest = path.join(base, rel);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -20,11 +24,12 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 it("repairs upstream content, validates links and pinned media, and detects drift", () => {
   write(source, "player/README.md", "# Welcome\n\n[Account](https://docs.decentraland.org/faqs/my-account)\n");
-  write(source, "player/faqs/my-account.md", "# Account\n");
+  write(source, "player/faqs/my-account.md", "# Account\n\nUnity asset bundles\n");
   write(source, "creator/README.md", '# Creator\n\n![\x01](images/pic.webp)\n\n\\\x01src="../images/wearables-and-emotes/creating-wearables/19\\_skin\\_uv.png"width="600"/>\n\n![Revocations Committee](https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true)\n');
   write(source, "creator/images/pic.webp", "image");
   write(source, "player/images/favicon.ico", "icon");
   write(source, "player/images/DAO Organizational Chart/Revocation.webp", "chart");
+  for (const page of reviewedPages) write(source, page.source, `# Reviewed page\n\n${page.before}\n\n${operationalLiterals}\n`);
   write(output, fallback, fs.readFileSync(path.join(process.cwd(), "content/docs", fallback)));
   execFileSync("git", ["init", "-q", source]);
   execFileSync("git", ["-C", source, "add", "."]);
@@ -37,6 +42,16 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   expect(creator).toContain(`![Avatar skin UV map](/docs/${fallback})`);
   expect(creator).toContain("/docs/player/images/DAO%20Organizational%20Chart/Revocation.webp");
   expect(creator).not.toContain("\x01");
+  expect(fs.readFileSync(path.join(output, "player/faqs/my-account/index.md"), "utf8")).toContain("Unity asset bundles");
+  const search = JSON.parse(fs.readFileSync(path.join(output, "search-index.json"), "utf8")) as { url: string; text: string }[];
+  for (const page of reviewedPages) {
+    const rendered = fs.readFileSync(path.join(output, page.file), "utf8");
+    expect(rendered, page.source).toContain(page.after);
+    expect(rendered, page.source).toContain(operationalLiterals);
+    const indexed = search.find((entry) => entry.url === page.url);
+    expect(indexed, page.source).toBeDefined();
+    expect(indexed!.text, page.source).not.toMatch(/\bunity\b/i);
+  }
   expect(run(true).status).toBe(0);
   fs.unlinkSync(path.join(output, fallback));
   expect(run(true).stderr).toContain("missing or altered pinned image");

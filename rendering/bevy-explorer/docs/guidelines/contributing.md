@@ -102,6 +102,10 @@ gates and useful source pins outside this prohibition. Do not turn a report abou
 implementation into a requirement or claimed behavior of this engine; retain such evidence
 in the ignored review report when it cannot stand alone here.
 
+For generated documentation, update its source or generation transform and regenerate derived
+views, including search indexes. Run the generator's consistency check; editing only the rendered
+document leaves the policy unenforced on the next generation.
+
 Before committing or updating a PR, search every changed documentation file and the complete
 PR text with `rg -ni '\bunity(?:\b|[-_])'` and check the diff for indirect provenance wording.
 Remove matches outside this prohibition and the operational literals above; explain each
