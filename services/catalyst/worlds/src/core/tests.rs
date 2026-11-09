@@ -4298,11 +4298,24 @@ async fn every_route_answers_its_contract() {
         identity: owner.display(),
         ..Default::default()
     };
-    f.state.observe_room_event(&event);
-    f.state.observe_room_event(&RoomEvent {
+    // `serve` fans the webhook's events out to worlds beside the other consumers.
+    struct Other(std::sync::Mutex<usize>);
+    impl RoomEventSink for Other {
+        fn observe_room_event(&self, _: &RoomEvent) {
+            *self.0.lock().unwrap() += 1;
+        }
+    }
+    let other = Arc::new(Other(std::sync::Mutex::new(0)));
+    let fanout = crate::comms::gatekeeper::events::RoomEventFanout::new(vec![
+        f.state.clone(),
+        other.clone(),
+    ]);
+    fanout.observe_room_event(&event);
+    fanout.observe_room_event(&RoomEvent {
         kind: RoomEventKind::Unspecified as i32,
         ..event
     });
+    assert_eq!(*other.0.lock().unwrap(), 2);
     assert_eq!(
         f.state.presence.world_participant_count(world.key()),
         0,
