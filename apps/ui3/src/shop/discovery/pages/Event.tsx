@@ -10,7 +10,7 @@ import Spinner from "../../../atoms/Spinner";
 import { SHOP_BASE } from "../../routes";
 import CampaignBanner from "../components/CampaignBanner";
 import { useCampaign, useCampaignContracts } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import Items from "./Items";
 

@@ -3,8 +3,8 @@
 // closes it. Escape is the host's (the HUD's cancel stack, as its other popovers take it).
 
 import { useEffect, useRef, useState } from 'react'
-import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPos, sliderPosToPrice } from '../../../../shop/discovery/lib/price-slider'
-import { formatCreditsFull } from '../../../../shop/checkout/lib/currency'
+import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPos, sliderPosToPrice } from '@shop/discovery/lib/price-slider'
+import { formatCreditsFull } from '@shop/checkout/lib/currency'
 import CreditMark from '../../../../shop/credits/components/CreditMark'
 import styles from './ShopFilters.module.css'
 

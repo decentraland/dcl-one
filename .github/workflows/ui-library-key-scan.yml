@@ -1,0 +1,230 @@
+name: Shared UI library key scan
+
+# The Figma file key check. It runs from the default branch, never from a pull request: workflow_run always
+# uses main's copy of this file, the only checkout is main (trusted/), and the pull request's commits and its
+# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. This workflow
+# executes no pull request file while FIGMA_FILE_KEY is mapped. ui-library.yml itself holds no secret. The key
+# is a repository secret, so other workflows run on same-repository branches can also read it; the policy in
+# library/ui/figma/test/workflows.test.ts reports any workflow that references it, but cannot prevent that
+# (an accepted risk).
+on:
+  workflow_run:
+    workflows: ["Shared UI library"]
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+
+concurrency:
+  group: ui-library-key-scan-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  key-scan:
+    runs-on: ubuntu-26.04
+    # FIGMA_FILE_KEY is a repository secret. workflow_run runs main's copy of this workflow, and the key is
+    # mapped only into the env of the scan step; no other step can read it.
+    steps:
+      # FIGMA_FILE_KEY is not mapped into this step's env. Anything unexpected ends the job before the key is
+      # read. The triggering workflow is pinned by its file path and by the id GitHub assigns to that file,
+      # resolved through the API from this repository, never by display name.
+      - name: Validate the triggering run
+        id: trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+        run: |
+          set -o pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          echo "head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          # Every skip reports a failed check: a required check must not pass on commits nobody scanned.
+          skip() {
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [ "$WORKFLOW_PATH" = .github/workflows/ui-library.yml ] || skip "triggered by another workflow file"
+          expected_id=$(gh api "repos/$REPOSITORY/actions/workflows/ui-library.yml" --jq .id) || skip "workflow id unavailable"
+          [ "$WORKFLOW_ID" = "$expected_id" ] || skip "triggered by another workflow id"
+          [ "$CONCLUSION" = success ] || skip "the run concluded $CONCLUSION"
+          [ "$HEAD_REPO" = "$REPOSITORY" ] || skip "fork run: the key check could not run, because FIGMA_FILE_KEY is never given to fork code. Push these commits to a branch of this repository to scan them before merging"
+          if [ "$EVENT" = pull_request ]; then
+            if [ "$(jq 'length' <<< "$PULL_REQUESTS")" = 0 ]; then
+              PULL_REQUESTS=$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/pulls" --jq "[.[] | select(.head.sha == \"$HEAD_SHA\" and .base.repo.full_name == \"$REPOSITORY\")]") || skip "pull request lookup failed"
+            fi
+            [ "$(jq 'length' <<< "$PULL_REQUESTS")" = 1 ] || skip "not exactly one matching pull request"
+            base=$(jq -r '.[0].base.sha' <<< "$PULL_REQUESTS")
+            head=$(jq -r '.[0].head.sha' <<< "$PULL_REQUESTS")
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]] || skip "unexpected pull request base"
+            [ "$head" = "$HEAD_SHA" ] || skip "the pull request head is not the run's head"
+          elif [ "$EVENT" = push ] && [ "$HEAD_BRANCH" = "$DEFAULT_BRANCH" ]; then
+            # workflow_run omits push.before. Read it from the controller-generated job name, not from
+            # artifact contents, step output or a commit message that pull request code can influence.
+            boundary=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq ".jobs[] | select(.run_id == $RUN_ID and .head_sha == \"$HEAD_SHA\" and .conclusion == \"success\" and (.name | startswith(\"UI key push boundary \"))) | .name")
+            pattern='^UI key push boundary ([0-9a-f]{40})\.\.([0-9a-f]{40})$'
+            if [[ ! "$boundary" =~ $pattern ]]; then
+              echo "Missing or ambiguous trusted push boundary" >&2
+              exit 1
+            fi
+            base="${BASH_REMATCH[1]}"
+            [ "${BASH_REMATCH[2]}" = "$HEAD_SHA" ] || { echo "Push boundary head mismatch" >&2; exit 1; }
+          else
+            skip "event $EVENT on $HEAD_BRANCH"
+          fi
+          {
+            echo "scan=true"
+            echo "base=$base"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.trigger.outputs.scan == 'true'
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.trigger.outputs.scan == 'true'
+        with:
+          node-version: 24
+
+      # The scanned commits enter the object store under a private ref. Nothing is checked out from them. LFS
+      # objects come from this repository's own fixed endpoint, through main's configuration only (no system or
+      # global Git config, and the scanned commits' .lfsconfig and .gitattributes are never read), by oid, for
+      # exactly what the scan reads. The read token reaches this one step's environment and is not persisted.
+      - name: Fetch the scanned commits and the LFS objects they point to
+        id: inputs
+        if: steps.trigger.outputs.scan == 'true'
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          BASE: ${{ steps.trigger.outputs.base }}
+          REPOSITORY: ${{ github.repository }}
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          header=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$header"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $header"
+          git -C trusted fetch --no-tags --no-recurse-submodules origin "+$HEAD_SHA:refs/key-scan/head"
+          if [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
+            git -C trusted fetch --no-tags --no-recurse-submodules origin "+$BASE:refs/key-scan/base"
+          fi
+          range="$BASE..$HEAD_SHA"
+          required=false
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD_SHA"
+            required=true
+          else
+            files=$(git -C trusted log --format= --name-only --diff-merges=cc "$range" -- library/ui .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            [ -z "$files" ] || required=true
+          fi
+          echo "artifact_required=$required" >> "$GITHUB_OUTPUT"
+          # Every LFS object the scan will read: each blob the range adds or changes, in any path and in
+          # commits a later one deletes, plus the library/ui tree when the scan reads it. Main's scripts list
+          # them and download them by oid from the fixed endpoint; the scan step reads them locally, tokenless.
+          tree=()
+          [ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")
+          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range" \
+            "${tree[@]}" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
+          LFS_AUTHORIZATION="Basic $header" node trusted/library/ui/figma/lfs-prefetch.mjs --root trusted \
+            --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
+
+      - name: Require the artifact for UI changes
+        id: artifact_check
+        if: steps.trigger.outputs.scan == 'true' && steps.inputs.outputs.artifact_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+        run: |
+          set -o pipefail
+          # gh does not combine slurping pages with --jq, so each page prints one id per matching artifact.
+          count=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\") | .id" | wc -l | tr -d ' ')
+          [ "$count" = 1 ] || { echo "The run must provide exactly one Review artifact for its head" >&2; exit 1; }
+
+      - id: artifact_download
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.trigger.outputs.scan == 'true' && steps.inputs.outputs.artifact_required == 'true'
+        with:
+          name: ui-review-${{ steps.trigger.outputs.head }}
+          path: ${{ runner.temp }}/pr-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # The only step whose env maps the key: main's key guard over the scanned commits, their library/ui tree
+      # and the unpacked Review build (enumerated without following links, and size and count limited), all as
+      # data.
+      # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
+      # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
+      # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
+      - name: Scan for the Figma file key
+        id: scan
+        if: steps.trigger.outputs.scan == 'true'
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+          ARTIFACT_REQUIRED: ${{ steps.inputs.outputs.artifact_required }}
+          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          BASE: ${{ steps.trigger.outputs.base }}
+        run: |
+          set -o pipefail
+          range="$BASE..$HEAD_SHA"
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then range="$HEAD_SHA"; fi
+          extra=()
+          if [ "$ARTIFACT_REQUIRED" = true ]; then
+            extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
+          fi
+          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
+            --range "$range" --allowlist-from HEAD "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
+          grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
+
+      # The summary is the scanner's stdout alone, which the scanner redacts: the key never appears in a path,
+      # a finding or an error line it prints. Its stderr stays in the job log and is never part of the summary.
+      - name: Report the result on the scanned commit
+        if: always() && steps.trigger.outputs.head != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          OUTCOME: ${{ steps.scan.outcome }}
+          SKIP_REASON: ${{ steps.trigger.outputs.reason }}
+          FETCH_OUTCOME: ${{ steps.inputs.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact_check.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
+        run: |
+          conclusion=failure
+          [ "$OUTCOME" = success ] && conclusion=success
+          summary=$(head -c 60000 "$RUNNER_TEMP/key-scan.txt" 2> /dev/null || echo "The scan did not run.")
+          if [ "$FETCH_OUTCOME" = failure ]; then summary="Commit or LFS prefetch failed; the scan did not run."; fi
+          if [ "$ARTIFACT_OUTCOME" = failure ]; then summary="The required Review artifact was missing or could not be verified."; fi
+          if [ "$DOWNLOAD_OUTCOME" = failure ]; then summary="The verified Review artifact could not be downloaded."; fi
+          if [ -n "$SKIP_REASON" ]; then
+            conclusion=failure
+            summary="Not scanned: $SKIP_REASON"
+          fi
+          gh api --method POST "repos/$REPOSITORY/check-runs" \
+            -f name='UI library key scan' -f head_sha="$HEAD_SHA" -f status=completed \
+            -f conclusion="$conclusion" -f "output[title]=Figma file key scan: $conclusion" \
+            -f "output[summary]=$summary" > /dev/null

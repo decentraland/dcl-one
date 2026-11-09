@@ -1,18 +1,13 @@
-import { catalystBase, type QueryParams } from "../../data/catalyst/client";
-import { SHOP_API_PREFIX, templateParams, type Endpoint } from "./endpoints";
+// The Shop API client: the endpoint table over a transport, signed by a signer, at a base. All of them are given:
+// the client reads no configuration and reaches for no network or identity of its own. The browser host's wiring
+// (where the API is, fetch, who signs, the document's client) is api/host.ts.
+
+import { SHOP_API_PREFIX, templateParams, type Endpoint } from "@shop/api/endpoints";
 import type { ShopSigner, ShopTransport, TransportRequest } from "./signer";
 
 export type ShopApiMode = "canonical" | "legacy";
 
-type ShopWindow = Window & typeof globalThis & { __SHOP_API_MODE__?: string };
-
-export function shopApiMode(override?: ShopApiMode): ShopApiMode {
-  if (override) return override;
-  const fromWindow = typeof window !== "undefined" ? (window as ShopWindow).__SHOP_API_MODE__ : undefined;
-  const fromEnv = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_SHOP_API_MODE as string | undefined) : undefined;
-  const value = fromWindow ?? fromEnv;
-  return value === "legacy" ? "legacy" : "canonical";
-}
+export type QueryParams = Record<string, string | number | boolean | null | undefined | (string | number)[]>;
 
 export class ShopApiError extends Error {
   override name = "ShopApiError";
@@ -41,11 +36,12 @@ export type RequestInput = {
 };
 
 export type ShopApiOptions = {
-  base?: string;
-  mode?: ShopApiMode;
+  /** Where the API is, as the host resolved and normalized it (no trailing slash). */
+  base: string;
+  mode: ShopApiMode;
+  /** Who signs the non-public routes; none, and a signed route fails before the transport. */
   signer?: ShopSigner | null | (() => ShopSigner | null | Promise<ShopSigner | null>);
-  transport?: ShopTransport;
-  fetchImpl?: typeof fetch;
+  transport: ShopTransport;
 };
 
 export type ShopApi = {
@@ -84,23 +80,9 @@ function parseBody(text: string): unknown {
   }
 }
 
-function fetchTransport(fetchImpl: typeof fetch): ShopTransport {
-  return async (req) => {
-    const res = await fetchImpl(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-      signal: req.signal,
-    });
-    return { status: res.status, body: res.status === 204 ? "" : await res.text() };
-  };
-}
-
-export function createShopApi(opts: ShopApiOptions = {}): ShopApi {
-  const mode = shopApiMode(opts.mode);
-  const base = catalystBase(opts.base);
+export function createShopApi(opts: ShopApiOptions): ShopApi {
+  const { mode, base, transport } = opts;
   const resolveSigner = async () => (typeof opts.signer === "function" ? await opts.signer() : (opts.signer ?? null));
-  const transport = opts.transport ?? fetchTransport(opts.fetchImpl ?? ((...a) => fetch(...a)));
 
   const api: ShopApi = {
     mode,

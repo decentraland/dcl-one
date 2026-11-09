@@ -7,7 +7,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { rpcUrl } from "./config";
 
 export type TxReceipt = {

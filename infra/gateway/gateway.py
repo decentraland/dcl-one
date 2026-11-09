@@ -20,6 +20,18 @@ CONTENT_DEPLOY_CAP = "248m"
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
+# The gateway's own answers on a worlds deploy: named location, status,
+# Retry-After seconds (0 for none) and the worlds service's {error, message} body.
+WORLDS_DEPLOY_ERRORS = [
+    ("@worlds_deploy_too_large", 413, 0,
+     {"error": "Payload Too Large", "message": "The multipart request is too large."}),
+    ("@worlds_deploy_rate", 429, 1,
+     {"error": "Too Many Requests",
+      "message": "Too many deploy requests from this client, please retry shortly."}),
+    ("@worlds_deploy_busy", 429, 5,
+     {"error": "Too Many Requests",
+      "message": "Too many uploads in progress from this client, please retry shortly."}),
+]
 # Segment delivers each webhook event as its own POST from a few egress
 # addresses, and the HMAC in the app is the gate: this guard sits above the
 # sink's sizing (DATABASE.md, about 280 inserts/s) so a delivery is never
@@ -203,9 +215,27 @@ def render(table, cfg, mime):
     # spelling, so the match ignores case too.
     locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
         "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
+    # The gateway's own refusals on a worlds deploy answer the worlds service's JSON
+    # envelope instead of nginx's HTML pages; the app's own errors pass through, as the
+    # proxy does not intercept them. Both request limits answer 429, but error_page
+    # keys on the status alone, so limit_conn is raised here as an internal 503 that
+    # only its named location catches and turns back into 429 with its own text (the
+    # app's own 503 shed answer is not intercepted). A body that stalls for
+    # client_body_timeout gets no answer: nginx logs 408 and closes the connection
+    # without a response, which error_page cannot replace.
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
+        f"limit_req zone=deploy burst=4 nodelay; {uploads} limit_conn_status 503;\n"
+        "error_page 413 = @worlds_deploy_too_large; error_page 429 = @worlds_deploy_rate;\n"
+        "error_page 503 = @worlds_deploy_busy;"))
+    # axum's Json, which the app's deploy answers use, sends application/json without
+    # a charset, and nginx adds none to it.
+    json_error = ("default_type application/json;\n" + security_headers + "\n"
+                  "add_header Access-Control-Allow-Origin $cors_fallback always;\n")
+    for name, status, retry, body in WORLDS_DEPLOY_ERRORS:
+        retry_after = f"add_header Retry-After {retry} always;\n" if retry else ""
+        text = json.dumps(body, separators=(",", ":"))
+        locations += location(name, json_error + retry_after + f"return {status} '{text}';")
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
     locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",

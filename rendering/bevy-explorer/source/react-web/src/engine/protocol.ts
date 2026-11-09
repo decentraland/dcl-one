@@ -208,6 +208,10 @@ export type PageToScene =
   | GetCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
+  | GetCommunityPlaceOptionsRequest
+  | RemoveCommunityPlaceRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -1094,6 +1098,8 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
 }
@@ -1139,6 +1145,93 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+  /** The linked places (lands first, then worlds), sent as the form's `placeIds` JSON array. */
+  placeIds: string[]
+}
+
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+  /** The whole new set of linked places (lands first, then worlds), when it changed; absent keeps
+   *  the current set. */
+  placeIds?: string[]
+}
+
+/** A LAND or World the form can link, or one already linked (unity-explorer's CommunityPlace). */
+export interface CommunityPlaceOption {
+  id: string
+  isWorld: boolean
+  /** "title (world name)" or "title (x,y)". */
+  label: string
+  /** The place owner's name, or empty when it could not be read. */
+  ownerName: string
+}
+
+/** The form opened (page → scene): read the places the user owns or operates, and, when editing,
+ *  the community's linked places. */
+export interface GetCommunityPlaceOptionsRequest {
+  kind: 'getCommunityPlaceOptions'
+  /** The community being edited; absent on create. */
+  communityId?: string
+}
+/** The places for the form (scene → page). */
+export interface CommunityPlaceOptionsMessage {
+  kind: 'communityPlaceOptions'
+  communityId?: string
+  /** The places the user owns or operates: the picker's options. */
+  owned: CommunityPlaceOption[]
+  /** The community's linked places (edit only). */
+  linked: CommunityPlaceOption[]
+  /** Linked places the places service did not return (a disabled one, say): never shown, but kept
+   *  on every save so the form cannot unlink them. */
+  hiddenLinkedIds: string[]
+  /** The linked places could not be read (edit only): the form must not replace them. */
+  linkedFailed: boolean
+  /** unity-explorer's messages for the reads that failed, each shown as a toast. */
+  errors: string[]
+}
+
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1163,7 +1256,7 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace'
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1190,10 +1283,19 @@ export interface CommunityPlace {
   id: string
   title: string
   thumbnail?: string
-  /** e.g. "-66,56" */
+  /** e.g. "-66,56", or the world's name for a World */
   positions?: string
   /** 0..1 like rate. */
   likeRate?: number
+  /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
+  isMine?: boolean
+}
+
+/** Unlink a place from a community (page → scene → signed DELETE to the social-api). */
+export interface RemoveCommunityPlaceRequest {
+  kind: 'removeCommunityPlace'
+  id: string
+  placeId: string
 }
 
 /** An announcement post (Announcements tab). */
@@ -1840,6 +1942,9 @@ export type SceneToPage =
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
+  | CommunityPlaceOptionsMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

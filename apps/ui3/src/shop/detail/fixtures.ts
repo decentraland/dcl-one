@@ -4,9 +4,9 @@
 // `outage` variant keeps the rule's methods but states the credits price missing, as the server does
 // when the MANA/USD feed is stale.
 
-import type { PurchaseOffer } from "../model/purchase";
-import type { Session } from "../model/settlement";
-import { creatorOrder, nameRegistration, parcelResale, storeMint, wearableResale } from "../payment/fixtures";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
+import { creatorOrder, nameRegistration, parcelResale, storeMint, wearableResale } from "@shop/payment/fixtures";
 import type { OfferSource } from "./offers";
 
 export type OfferKind = "storeMint" | "creatorOrder" | "resale" | "parcel" | "name";

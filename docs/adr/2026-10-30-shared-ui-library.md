@@ -30,6 +30,10 @@ built from. The exception covers only `library/ui/apps/`; when a second
 deliverable needs something from it, it moves to the shared `components/` or
 `foundations/`.
 
+### Foundation installation
+
+The shared `figma install` command owns installation of public UI targets. Its foundations target regenerates colors, icons, typography, layout and spacing from the verified capture pinned in `library/ui/upstream.lock.json`. Live reads cannot write public output. Installation stages the complete target, refuses dirty or concurrently changed output and restores the previous directory when publication fails. Maintained CSS entrypoints, declarations and licensed Inter font assets are preserved. The public lock table records file digests and origins, and font validation compares materialized bytes with Git LFS object identities and their pinned digests. A port verification record binds the source lock and tooling tree to a clean installation that reproduces every tracked foundation file. Browser entrypoints remain independent of installation code.
+
 ## Consequences
 
 Applications and the Explorer HUD will consume shared UI from the same library

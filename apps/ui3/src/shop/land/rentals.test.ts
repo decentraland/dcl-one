@@ -2,7 +2,7 @@ import { hashTypedData, recoverTypedDataAddress, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
 
 import type { RentalListing } from "@catalyst-api/market/RentalListing";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { WrongNetworkError } from "../wallet/chain";
 import { LAND_NETWORKS } from "./contracts";
 import { erc20Abi } from "./evm";

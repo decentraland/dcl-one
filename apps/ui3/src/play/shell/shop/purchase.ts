@@ -18,14 +18,14 @@ import { fetchProfile } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { createShopClient, type ShopClient } from '../../../shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
-import { identitySigner, type ShopSigner } from '../../../shop/api/signer'
-import { partitionCart, type CartGroup } from '../../../shop/cart/partition'
+import { type ShopSigner } from '../../../shop/api/signer'
+import { partitionCart, type CartGroup } from '@shop/cart/partition'
 import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
-import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
+import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopListingForItem } from '../../../shop/detail/api'
@@ -33,20 +33,20 @@ import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain
 import { fetchBannedNames } from '../../../shop/names/api'
 import { checkNameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
-import { parseEvmAddress } from '../../../shop/model/address'
-import { itemAsset } from '../../../shop/model/asset'
-import { creditsCeil, creditsFloor, type UsdCents } from '../../../shop/model/money'
-import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '../../../shop/model/purchase'
-import type { Session } from '../../../shop/model/settlement'
+import { parseEvmAddress } from '@shop/model/address'
+import { itemAsset } from '@shop/model/asset'
+import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
+import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
+import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '../../features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
   parseOperationRef,
-  SHOP_BUSY,
+  shopBusy,
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
@@ -71,6 +71,7 @@ import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
+import { hostApiOptions, identitySigner } from '../../../shop/api/host'
 
 /** The buyer's wallet, as the page hosting the shell resolves it (Sites: its sign-in session). */
 export interface ShellShopWallet {
@@ -249,7 +250,7 @@ function defaultStorage(): Storage | null {
 }
 
 const LIVE: ShellShopServices = {
-  client: (signer) => createShopClient({ signer }),
+  client: (signer) => createShopClient(hostApiOptions({ signer })),
   fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client }),
   offers: (client) => purchaseOfferSource(client),
   balance: (account, client) => getUsdBalance(account, client),
@@ -1240,7 +1241,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || slot.open()) throw new Error(SHOP_BUSY)
+    if (starting || running || slot.open()) throw shopBusy()
     starting = true
     try {
       const who = signedIn()
@@ -1269,14 +1270,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const capabilities = (): ShopCapabilities => {
     const login = deps.login()
-    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut' }
+    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut', codedErrors: true }
     const buyer = rootAddress(login.identity).toLowerCase()
-    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest' }
+    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest', codedErrors: true }
     const wallet = deps.wallet?.kind(buyer) ?? null
     const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
     const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
     const namesMode = canPay ? nameSession()?.mode : undefined
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }) }
+    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }), codedErrors: true }
   }
 
   const balance = async (): Promise<ShopBalance | null> => {

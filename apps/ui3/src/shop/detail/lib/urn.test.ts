@@ -29,15 +29,12 @@ describe("the network a list of urns belongs to", () => {
 })
 
 describe("the catalyst that holds a urn's content", () => {
-  it("is the one the host names for the urns' network, else this node", () => {
-    const w = window as unknown as { __SHOP_PEERS__?: Record<string, string>; __CATALYST_BASE__?: string }
-    w.__CATALYST_BASE__ = "https://node.test"
-    expect(peerUrlFor([MATIC])).toBe("https://node.test")
-    w.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }
-    expect(peerUrlFor([BASE, AMOY])).toBe("https://peer.decentraland.zone")
-    expect(peerUrlFor([MATIC])).toBe("https://node.test")
-    delete w.__SHOP_PEERS__
-    delete w.__CATALYST_BASE__
+  it("is the one the host names for the urns' network, else the host's base", () => {
+    const node = { byNetwork: {}, base: "https://node.test/" }
+    expect(peerUrlFor([MATIC], node)).toBe("https://node.test")
+    const peers = { byNetwork: { amoy: "https://peer.decentraland.zone" }, base: "https://node.test" }
+    expect(peerUrlFor([BASE, AMOY], peers)).toBe("https://peer.decentraland.zone")
+    expect(peerUrlFor([MATIC], peers)).toBe("https://node.test")
   })
 })
 

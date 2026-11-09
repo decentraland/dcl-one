@@ -1,0 +1,21 @@
+node_modules
+.agent-work
+pnpm-lock.yaml
+figma/.figma-cache
+figma/figma-snapshot
+figma/test/fixtures
+figma/capture
+figma/review/review-dist
+figma/review/src/generated
+figma/review/src/review/catalog.json
+# Written by lock-digests --write and fetch-source --seal.
+upstream.lock.json
+
+# Generated installation output is preserved byte for byte.
+components/*
+!components/Button
+!components/Modal
+foundations/*
+!foundations/index.ts
+!foundations/foundations.css
+foundations/typography/inter.css

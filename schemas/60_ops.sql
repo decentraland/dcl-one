@@ -367,6 +367,9 @@ CREATE TABLE credits.authorizations (
     submitted_at timestamp without time zone,
     retired_at timestamp without time zone,
     consumed_at timestamp without time zone,
+    -- A request that names its purchase (operationId) keeps what it asked for, so the same
+    -- operation with other lines is refused (src/credits/handlers/authorize.rs).
+    request_digest text,
     CONSTRAINT authorizations_pkey PRIMARY KEY (id),
     CONSTRAINT authorizations_address_check CHECK (address ~ '^0x[0-9a-f]{40}$'),
     CONSTRAINT authorizations_status_check CHECK (status IN ('authorized', 'retired', 'released', 'consumed', 'expired')),

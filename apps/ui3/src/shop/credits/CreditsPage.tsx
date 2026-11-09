@@ -9,7 +9,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import Button from "../../atoms/Button";
 import { useShopWallet } from "../wallet/context";
 import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
-import { CURRENCY, formatAmount } from "../checkout/lib/currency";
+import { CURRENCY, formatAmount } from "@shop/checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCreditOrder, type CreditOrder } from "./credits";
 import { useCreditPacks } from "./hooks";

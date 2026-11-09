@@ -119,6 +119,15 @@ const MOCK_NEARBY = [
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
 
+// The places the mock user can link to a community, and what each community links.
+const MOCK_OWNED_PLACES = [
+  { id: 'place-land-1', isWorld: false, label: 'Mock Plaza (12,-34)', ownerName: 'You' },
+  { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
+]
+const mockLinkedPlaces = new Map<string, string[]>()
+// The card places unlinked per community.
+const mockRemovedPlaces = new Map<string, Set<string>>()
+
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
@@ -944,18 +953,82 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
       return
     }
+    if (msg.kind === 'removeCommunityPlace') {
+      // unlinked from this community; the card reads its places again
+      const removed = mockRemovedPlaces.get(msg.id) ?? new Set<string>()
+      removed.add(msg.placeId)
+      mockRemovedPlaces.set(msg.id, removed)
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'getCommunityPlaceOptions') {
+      // one LAND and one World the user owns, and what each community links
+      const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), hiddenLinkedIds: [], linkedFailed: false, errors: [] }
+      setTimeout(() => reply(options), 300)
+      return
+    }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
+      mockLinkedPlaces.set(id, msg.placeIds)
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 300)
+      return
+    }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+        if (msg.placeIds != null) mockLinkedPlaces.set(c.id, msg.placeIds)
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {
@@ -1009,9 +1082,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
           { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
         ],
+        // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1 }
-        ],
+          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+        ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
           url: `https://picsum.photos/seed/dclph${i}/600/600`,
