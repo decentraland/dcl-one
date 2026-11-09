@@ -1115,6 +1115,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social.rpc.spawn_jobs(&jobs);
     social.segment_webhooks.spawn_jobs(&jobs);
     if config.writes.social_writes_enabled {
+        badges::jobs::spawn(&social.badges, &jobs);
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(
             "social-referral-rewards",
@@ -2460,6 +2461,15 @@ fn social_states(
             public_asset_base_url: config.social.badges_public_asset_base_url.clone(),
             assets_dir: non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from),
             commit_hash: config.commit_hash(),
+            processor: badges::jobs::ProcessorSettings {
+                enabled: config.social.badges_processor_enabled,
+                batch_size: i64::from(config.social.badges_processor_batch_size),
+                max_event_age: (config.social.badges_event_max_age_secs > 0)
+                    .then(|| Duration::from_secs(config.social.badges_event_max_age_secs)),
+                deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
+                    .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
+                ..badges::jobs::ProcessorSettings::default()
+            },
         },
     ));
 

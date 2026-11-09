@@ -1151,7 +1151,8 @@ handlers at the destination's delivery rate: the explorer reports a
 `move_to_parcel` per parcel crossing and the distance and height events on
 thresholds, so the expected order is one row per active player per minute; no
 production rate is measured. Readers are consumers scanning forward in
-insertion order from a cursor of their own (none in this change) and the purge;
+insertion order (`seq`) from a cursor of their own (the badge processor, below)
+and the purge;
 the trigger `client_events_notify_trigger` announces each stored row's identity
 columns (never the metadata) on the `social.client_events` channel for
 listeners outside the request path.
@@ -1182,13 +1183,35 @@ Deletion is the `client-events-purge` job only: hourly, leased, it deletes rows
 whose `created_at` is older than `CLIENT_EVENTS_RETENTION_DAYS` (default 30)
 in batches of 5,000 keys through `client_events_created_idx (created_at,
 key)`, at most 200 batches a pass (a million rows an hour, some 280 inserts a
-second sustained). A consumer that adds a cursor records that
-its cursor stays above the purge horizon; without a consumer the horizon is
-free.
+second sustained). The badge processor's cursor stays above the purge horizon
+while it runs: it passes rows seconds after their insert, so the purge only
+reaches rows a stopped processor never read (their badges are then not
+counted, which is the accepted cost of the retention).
 
-The bootstrap (`schemas/40_social.sql`) defines the table, the index and the
-trigger; an existing database gains them from the object pass, so no step
-exists.
+The bootstrap (`schemas/40_social.sql`) defines the table, the indexes and the
+trigger; an existing database gains them from the object pass. Step
+`0037_social_badge_processor` adds `seq` to a table that predates it as a
+nullable column, then its default (`nextval` of `social.client_events_seq`,
+named as text so the step precedes the object pass that creates the
+sequence): both change the catalog only, no row is rewritten, and the kept
+rows keep a NULL `seq` (they precede every cursor, which starts at the head).
+The object pass then builds `client_events_seq_idx` (`seq`) and
+`client_events_session_moves_idx` (`address, session_id, seq` over
+`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in the migrate
+transaction: the build holds SHARE on the table (the webhook inserts and the
+purge wait, reads do not) for one heap scan with nothing to sort. On 2M
+synthetic rows (822 MB, about two months at the expected rate) the step took
+22 ms and the two builds 0.24 s and 0.35 s with a warm cache; the identity
+column it replaces rewrote the same table in 27.7 s under ACCESS EXCLUSIVE.
+To take even that off the migrate window, add the column by hand first
+(`ALTER TABLE social.client_events ADD COLUMN IF NOT EXISTS seq bigint`, the
+step's first statement, without the default: the sequence does not exist
+yet), then build both indexes with the definitions of `schemas/40_social.sql`
+and `CREATE INDEX CONCURRENTLY`; `migrate` then sets the default, creates the
+sequence and skips the indexes (a failed concurrent build leaves an invalid
+index: drop it before retrying).
+`client_events_seq_idx` serves the cursor scan and
+`client_events_session_moves_idx` traveler's read-back of one session.
 
 ## Credits wallet flags workload
 
@@ -1273,3 +1296,105 @@ wallet holds the last tier and its steps stop at its highest held tier's
 target (no unearned tier on the next write), and a completed single badge
 reads its target as reached. The rest of upstream's
 catalog reaches it through the TS database import.
+
+### Badge processor
+
+The writers of evaluated progress are four leased jobs
+(`social/src/badges/jobs/`, on where `BADGES_PROCESSOR_ENABLED`, off by
+default, and social writes are), each a reader of tables other areas own, with one row of
+`social.badge_cursors` per source:
+
+- `social.client_events` by `seq` (citizen, traveler, walkabout, moves
+  master, social butterfly, vertical voyager), traveler resolving a parcel's
+  scene title through `content.active_pointers` and `content.deployments`.
+  The values are the client's claim, as upstream took them, within bounds:
+  a `walked-distance` event counts at most 10,000 steps (the explorer
+  reports on thresholds far below it), a `vertical-height-reached` height
+  above 5,000 m is passed (no scene is that tall) and a `passport-opened`
+  receiver must be a wallet address;
+- `content.deployments` by `id` (rarity badges, profile pro, land architect,
+  the store half of open for business), a wearable's rarity from its active
+  entity or `shop.items`;
+- `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
+  and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
+  each up to the block its index published in `shop.chain_cursor`
+  (emotionista, fashionista; one step per transaction hash, the legacy order's
+  chain position standing in for its missing hash). A sale of an item
+  `shop.items` lacks holds its log's cursor until the item is mirrored or the
+  items mirror completes a pass an hour after the sale (a pass walks every
+  item, minutes at the defaults); then it is passed without effect;
+- recounts of `shop.items` and `shop.collections` on Polygon (once
+  `shop.mirror_state` records a complete pass) and of accepted
+  `social.referral_progress` rows (creators, the collection half of open for
+  business, referral), for the wallets whose stored steps are behind. A pass
+  walks those wallets in address order and records the last one recounted
+  (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
+  imported document whose flag is truthy but not `true`) never starves the
+  ones after it; `position` counts completed passes. A batch reads its
+  creators' items in one statement through `items_creator_lower_idx`
+  (`lower(creator)`: the mirror lowercases, no constraint says so): 20 ms
+  for 200 creators on 1M synthetic items (781 MB), where the unindexed
+  per-creator read scanned the table once per creator. The candidate scan
+  itself reads the table once per batch (150 ms on the same rows). The
+  object pass builds the index in the migrate transaction under SHARE on
+  `shop.items` (the mirror's upserts wait): 1.7 s on those rows; it can be
+  built beforehand with `CREATE INDEX CONCURRENTLY` and the definition of
+  `schemas/30_shop.sql`.
+
+One transaction holds a batch (`BADGES_PROCESSOR_BATCH_SIZE`, default 200):
+the cursor row `FOR UPDATE`, the batch's progress writes through
+`apply_progress` and the cursor advance, so a database error rolls the batch
+back and the next tick reads the same rows; a row an evaluator cannot read is
+logged and passed. Invariants: a cursor never moves past a row it did not
+pass; its first pass records the source's head and replays no history; a
+recount's first pass writes no notification.
+
+The id cursors (`client_events` by `seq`, `deployments` by `id`) never skip a
+committed row. A sequence value is drawn before its transaction commits, so
+ids become visible out of order: the sync flushes insert concurrent batches,
+and a younger transaction can hold a lower id than rows an older one already
+committed. A batch therefore passes every visible row past the cursor and
+records each run of ids it passed without seeing in
+`social.badge_cursor_gaps` (`lo..=hi`, the `horizon` and `seen_at` of the scan
+that found it). The invariant: every id at or below a cursor's position is
+processed or inside a gap of that source. Each batch first re-reads the gaps
+and processes the rows that appeared (out of id order, as upstream's queue
+delivered them), then drops a gap only when both hold:
+
+- its `horizon` is at or below the `xmin` of a snapshot taken before the
+  re-read that still misses it. The horizon is the transaction id of the
+  batch that found the gap, which reads the cursor without a lock, scans,
+  and only then locks the cursor row, which assigns that id: every
+  transaction that had an id at the scan, so every one that could hold an id
+  of the gap, has a lower one. (A snapshot's `xmax` is one past the highest
+  completed id; a transaction still running can be above it.) Once `xmin`
+  reaches the horizon all of them have ended, and a committed row would have
+  been visible to the re-read. A batch that finds the cursor row changed when
+  it locks it (a second runner after a lease expiry) writes nothing;
+- it is older than the grace (600 s). A writer draws the value inside its
+  INSERT just before it takes its transaction id (the row's default is
+  evaluated before the heap insert assigns the id), so a writer between the
+  two at the scan is not under the horizon. Neither table has a BEFORE
+  INSERT trigger, so that window is one row's projection, microseconds; the
+  grace covers it by orders of magnitude.
+
+Values that never commit (a rolled-back flush, a value an `ON CONFLICT DO
+NOTHING` burned, as every redelivered Segment event does) are what expire. A long
+write transaction anywhere on the cluster delays expiry, never a row: rows
+are processed as soon as they are visible. A source holds at most 5,000 gap
+ranges; at the cap its cursor passes no row that would open another until
+gaps resolve (it holds, it does not skip). The first pass starts at the
+head, so a row still uncommitted below the head when a cursor is created is
+history and not read. Each tick publishes, per source,
+`badges_processor_cursor_lag` (ids behind the head; blocks behind the
+published block for the sales logs), and for the id cursors
+`badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
+a cursor that stops advancing shows as a growing lag, and a horizon held by a
+transaction left open on the cluster as gaps that keep ageing. A deployment stored
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
+timestamp is history a syncing node caught up on and is passed without
+effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+`EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0037_social_badge_processor`
+adds `seq`; the object pass creates `social.badge_cursors`,
+`social.badge_cursor_gaps` and both indexes.
+

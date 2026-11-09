@@ -12,6 +12,9 @@
 //! the schema), `user_badge_progress`, `user_achieved_tiers`,
 //! `badge_admin_audit`, `presence_badges`. Every progress write goes through
 //! [`progress::apply_progress`]: the console grant and the backfill here.
+//! `badge_admin_audit`, `presence_badges`, `badge_cursors`. Every progress
+//! write goes through [`progress::apply_progress`]: the console grant and the
+//! processor's [`jobs`], which feed upstream's observers ([`evaluators`]).
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix), so `<node>/badges` is the base URL of upstream's
@@ -22,7 +25,9 @@
 
 pub mod assets;
 pub mod backfill;
+pub mod evaluators;
 pub mod handlers;
+pub mod jobs;
 pub mod progress;
 pub mod store;
 pub mod types;
@@ -53,6 +58,8 @@ pub struct Settings {
     pub assets_dir: Option<PathBuf>,
     /// The commit `/status` reports.
     pub commit_hash: Option<String>,
+    /// The badge processor ([`jobs`]).
+    pub processor: jobs::ProcessorSettings,
 }
 
 impl Default for Settings {
@@ -62,6 +69,7 @@ impl Default for Settings {
             public_asset_base_url: DEFAULT_ASSET_BASE_URL.to_string(),
             assets_dir: None,
             commit_hash: None,
+            processor: jobs::ProcessorSettings::default(),
         }
     }
 }

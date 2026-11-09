@@ -896,6 +896,43 @@ CREATE TABLE social.badge_admin_audit (
     CONSTRAINT badge_admin_audit_action_check CHECK (action IN ('grant', 'revoke'))
 );
 
+-- The badge processor's durable read positions, one row per source, advanced
+-- in the transaction that writes the progress the rows it passed produced:
+-- `client_events` (social.client_events.seq), `deployments`
+-- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- log_index of a shop log) and the recount passes (`position` counts the
+-- passes, the first of which writes no notification; `resume_after` is the
+-- last wallet the pass in progress recounted, NULL between passes).
+CREATE TABLE social.badge_cursors (
+    source text NOT NULL,
+    position bigint NOT NULL,
+    log_index integer NOT NULL DEFAULT 0,
+    resume_after text,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
+);
+
+-- Ids an id cursor (`client_events`, `deployments`) passed without seeing
+-- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- cursor read past it (sequence order is not commit order), or one that
+-- never commits (a rollback, an ON CONFLICT that burned it). Every batch
+-- re-reads them and processes a row that appeared; a gap is dropped once
+-- every transaction that held an id when it was found has ended (`horizon`,
+-- the id of the transaction that found it, taken after its scan, at or
+-- below a later snapshot's xmin) and it is older than the processor's
+-- grace. At most 5,000 per source: at the cap the cursor holds.
+CREATE TABLE social.badge_cursor_gaps (
+    source text NOT NULL,
+    lo bigint NOT NULL,
+    hi bigint NOT NULL,
+    horizon bigint NOT NULL,
+    seen_at timestamp without time zone NOT NULL,
+    CONSTRAINT badge_cursor_gaps_pkey PRIMARY KEY (source, lo),
+    CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
+    CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)
+        REFERENCES social.badge_cursors (source) ON DELETE CASCADE
+);
+
 -- Presence badges (upstream presence_badges, same columns): where a catalog
 -- badge counts (a scene by its base parcel, or a world), inside which UTC
 -- window, and the rule: a visit, or a stay of required_seconds. The badge's
@@ -1354,6 +1391,7 @@ CREATE TABLE social.land_transfer_cursor (
 -- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
 -- the client-events-purge job deletes those older than
 -- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE SEQUENCE social.client_events_seq AS bigint;
 CREATE TABLE social.client_events (
     key text NOT NULL,
     source text NOT NULL,
@@ -1367,6 +1405,12 @@ CREATE TABLE social.client_events (
     received_at timestamp(3) without time zone NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- Insertion order for consumer cursors (the badge processor), drawn
+    -- before the inserting transaction commits, so not commit order. NULL on
+    -- rows kept from before step 0037 (they precede every cursor). The
+    -- sequence is named as text so step 0037 can set the default before the
+    -- object pass creates it.
+    seq bigint DEFAULT nextval('social.client_events_seq'::text),
     CONSTRAINT client_events_pkey PRIMARY KEY (key),
     CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
     CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
@@ -1374,6 +1418,14 @@ CREATE TABLE social.client_events (
 );
 -- Consumers scan forward in insertion order; the purge deletes the oldest.
 CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
+ALTER SEQUENCE social.client_events_seq OWNED BY social.client_events.seq;
+-- The badge processor's cursor scan (seq > cursor ORDER BY seq). Both seq
+-- indexes are partial so their build on a table kept from before step 0037
+-- (every seq NULL) is one heap scan with nothing to sort.
+CREATE UNIQUE INDEX client_events_seq_idx ON social.client_events (seq) WHERE seq IS NOT NULL;
+-- Traveler's session read-back: a wallet's moves in one session, newest first.
+CREATE INDEX client_events_session_moves_idx ON social.client_events (address, session_id, seq)
+    WHERE sub_type = 'move-to-parcel' AND seq IS NOT NULL;
 
 -- Every stored client event is announced on the `social.client_events`
 -- channel, the row's identity columns as JSON (never the metadata: the
