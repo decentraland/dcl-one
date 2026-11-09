@@ -170,11 +170,12 @@ describe("pixelDiff", () => {
 });
 
 /**
- * The same-origin bases (VITE_*_URL=/path) an env file sets: indented or not, with or without export, quotes, spaces
- * around = or a trailing comment.
+ * The same-origin bases (VITE_*_URL=/path) an env file sets, in every form dotenv reads: indented or not, with or
+ * without export, `=` with spaces around it or `:` and a space, any of its three quotes, a trailing comment. Never past
+ * the line's end, so an empty variable does not take the next line's value.
  */
 function envPaths(env: string): string[] {
-  return [...env.matchAll(/^\s*(?:export\s+)?VITE_[A-Z0-9_]+_URL\s*=\s*["']?(\/[^\s"'#]*)/gm)].map((m) => m[1]!);
+  return [...env.matchAll(/^[ \t]*(?:export[ \t]+)?VITE_[A-Z0-9_]+_URL(?:[ \t]*=[ \t]*|:[ \t]+)["'`]?(\/[^\s"'`#]*)/gm)].map((m) => m[1]!);
 }
 
 describe("services", () => {
@@ -193,8 +194,19 @@ describe("services", () => {
     assert.deepEqual(fromNodePath("GET", "/camera-reel/api/wearables/0xabc-0/images"), upstream);
   });
   it("reads a same-origin base from an env file in every form dotenv accepts", () => {
-    const env = 'VITE_A_URL=/a\nexport VITE_V2_URL = "/v2/x"\nVITE_B_URL=\'/b\'\n  VITE_C_URL=/c#note\nVITE_REMOTE_URL=https://remote.example\n# VITE_OFF_URL=/off\n';
-    assert.deepEqual(envPaths(env), ["/a", "/v2/x", "/b", "/c"]);
+    const env = [
+      "VITE_A_URL=/a",
+      'export VITE_V2_URL = "/v2/x"',
+      "VITE_B_URL='/b'",
+      "  VITE_C_URL=/c#note",
+      "VITE_D_URL=`/d`",
+      "VITE_E_URL: /e",
+      "VITE_REMOTE_URL=https://remote.example",
+      "# VITE_OFF_URL=/off",
+      "VITE_EMPTY_URL=",
+      "/not-a-value",
+    ].join("\n");
+    assert.deepEqual(envPaths(env), ["/a", "/v2/x", "/b", "/c", "/d", "/e"]);
   });
   it("relays to the replay every same-origin service path the production sites build reads", () => {
     const paths = envPaths(readFileSync(join(SITES, ".env.production"), "utf8"));
