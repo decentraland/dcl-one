@@ -361,6 +361,7 @@ function parseArgs(argv) {
     allowlistRev: undefined,
     revision: undefined,
     root: undefined,
+    lfsStore: undefined,
     lfsObjects: false
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -382,6 +383,10 @@ function parseArgs(argv) {
       options.revision = argv[++i]
       if (!options.revision || options.revision.startsWith('-'))
         throw new Error('--revision takes a commit')
+    } else if (arg === '--lfs-store') {
+      // A directory of LFS objects laid out like .git/lfs/objects, read instead of the root's own store.
+      options.lfsStore = argv[++i]
+      if (!options.lfsStore) throw new Error('--lfs-store takes a directory')
     } else if (arg === '--lfs-objects') options.lfsObjects = true
     else throw new Error(`unknown argument: ${arg}`)
   }
@@ -449,6 +454,7 @@ export function main(argv) {
     const options = parseArgs(argv)
     const root =
       options.root ?? git(process.cwd(), ['rev-parse', '--show-toplevel']).toString().trim()
+    if (options.lfsStore) lfsStores.set(root, resolve(options.lfsStore))
     // Lists, one JSON object per line, the LFS objects the same scan would read; scans nothing.
     if (options.lfsObjects) {
       const objects = listLfsObjects({ root, range: options.range, trees: options.trees })

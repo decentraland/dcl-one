@@ -1,35 +1,45 @@
 name: Shared UI library key scan
 
 # The Figma file key check. It runs from the default branch, never from a pull request: workflow_run always
-# uses main's copy of this file, the only checkout is main (trusted/), and the pull request's commits and its
-# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. This workflow
-# executes no pull request file while FIGMA_FILE_KEY is mapped. ui-library.yml itself holds no secret. The key
-# is a repository secret, so other workflows run on same-repository branches can also read it; the policy in
-# library/ui/figma/test/workflows.test.ts reports any workflow that references it, but cannot prevent that
-# (an accepted risk).
+# uses main's copy of this file, and the only checkouts are main (trusted/). Two jobs split the work:
+#   prepare  holds no secret. It validates the triggering run, fetches the scanned commits and the LFS objects
+#            they point to, checks the Review artifact, and uploads the commits (as a git bundle) and the LFS
+#            objects as the key-scan-input artifact. Every skip and every failure here posts a failed check.
+#   key-scan holds FIGMA_FILE_KEY, and runs only checkout, setup-node, download-artifact, the key step and the
+#            report step. The key step and the report are fixed text (library/ui/figma/test/key-step.ts), and no
+#            other step of the job runs shell, so nothing can change trusted/ between its checkout and the scan.
+# The pull request's commits and its Review build reach the key only as data, read by main's key guard. The key is
+# a repository secret, so other workflows run on same-repository branches can also read it; the policy in
+# library/ui/figma/test/workflows.test.ts reports any workflow that references it, but cannot prevent that (an
+# accepted risk).
 on:
   workflow_run:
     workflows: ["Shared UI library"]
     types: [completed]
 
-permissions:
-  actions: read
-  checks: write
-  contents: read
+permissions: {}
 
 concurrency:
   group: ui-library-key-scan-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  key-scan:
+  prepare:
     runs-on: ubuntu-26.04
-    # FIGMA_FILE_KEY is a repository secret. workflow_run runs main's copy of this workflow, and the key is
-    # mapped only into the env of the scan step; no other step can read it.
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    outputs:
+      head: ${{ steps.trigger.outputs.head }}
+      base: ${{ steps.trigger.outputs.base }}
+      scan: ${{ steps.trigger.outputs.scan }}
+      reason: ${{ steps.trigger.outputs.reason }}
+      artifact_required: ${{ steps.inputs.outputs.artifact_required }}
     steps:
-      # FIGMA_FILE_KEY is not mapped into this step's env. Anything unexpected ends the job before the key is
-      # read. The triggering workflow is pinned by its file path and by the id GitHub assigns to that file,
-      # resolved through the API from this repository, never by display name.
+      # Anything unexpected ends the job before anything is fetched. The triggering workflow is pinned by its
+      # file path and by the id GitHub assigns to that file, resolved through the API from this repository,
+      # never by display name.
       - name: Validate the triggering run
         id: trigger
         env:
@@ -108,6 +118,9 @@ jobs:
       # objects come from this repository's own fixed endpoint, through main's configuration only (no system or
       # global Git config, and the scanned commits' .lfsconfig and .gitattributes are never read), by oid, for
       # exactly what the scan reads. The read token reaches this one step's environment and is not persisted.
+      # The key-scan job gets the commits as a bundle whose prerequisites are the parents of the default branch
+      # commit this job checked out, which its own full checkout of the default branch holds, and the LFS objects
+      # as a plain directory, each object verified against its oid by the guard before it is read.
       - name: Fetch the scanned commits and the LFS objects they point to
         id: inputs
         if: steps.trigger.outputs.scan == 'true'
@@ -140,13 +153,23 @@ jobs:
           echo "artifact_required=$required" >> "$GITHUB_OUTPUT"
           # Every LFS object the scan will read: each blob the range adds or changes, in any path and in
           # commits a later one deletes, plus the library/ui tree when the scan reads it. Main's scripts list
-          # them and download them by oid from the fixed endpoint; the scan step reads them locally, tokenless.
+          # them and download them by oid from the fixed endpoint; the key-scan job reads them tokenless.
           tree=()
           [ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")
           node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range" \
             "${tree[@]}" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
           LFS_AUTHORIZATION="Basic $header" node trusted/library/ui/figma/lfs-prefetch.mjs --root trusted \
             --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
+          out="$RUNNER_TEMP/key-scan-input"
+          mkdir -p "$out/lfs"
+          [ ! -d trusted/.git/lfs/objects ] || cp -R trusted/.git/lfs/objects/. "$out/lfs/"
+          main=$(git -C trusted rev-parse HEAD)
+          git -C trusted update-ref refs/key-scan/main "$main"
+          refs=(refs/key-scan/head refs/key-scan/main)
+          [ "$BASE" = "0000000000000000000000000000000000000000" ] || refs+=(refs/key-scan/base)
+          # The default branch commit itself is always in the bundle, so it is never empty, even when every
+          # scanned commit is already on the default branch.
+          git -C trusted bundle create "$out/commits.bundle" "${refs[@]}" --not "$main^@"
 
       - name: Require the artifact for UI changes
         id: artifact_check
@@ -163,76 +186,128 @@ jobs:
             --jq ".artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\") | .id" | wc -l | tr -d ' ')
           [ "$count" = 1 ] || { echo "The run must provide exactly one Review artifact for its head" >&2; exit 1; }
 
-      - id: artifact_download
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: steps.trigger.outputs.scan == 'true' && steps.inputs.outputs.artifact_required == 'true'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        if: steps.trigger.outputs.scan == 'true'
         with:
-          name: ui-review-${{ steps.trigger.outputs.head }}
+          name: key-scan-input
+          path: ${{ runner.temp }}/key-scan-input
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+      # The key-scan job posts the check when this job hands it the scan. Every other outcome, a skip included,
+      # posts a failed check here: a required check must not pass on commits nobody scanned.
+      - name: Report a scan that did not start
+        if: always() && steps.trigger.outputs.head != '' && (steps.trigger.outputs.scan != 'true' || failure() || cancelled())
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          SKIP_REASON: ${{ steps.trigger.outputs.reason }}
+          FETCH_OUTCOME: ${{ steps.inputs.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact_check.outcome }}
+        run: |
+          conclusion=failure
+          summary="The scan inputs could not be prepared; the scan did not run."
+          if [ "$FETCH_OUTCOME" = failure ]; then summary="Commit or LFS prefetch failed; the scan did not run."; fi
+          if [ "$ARTIFACT_OUTCOME" = failure ]; then summary="The required Review artifact was missing or could not be verified."; fi
+          if [ -n "$SKIP_REASON" ]; then summary="Not scanned: $SKIP_REASON"; fi
+          gh api --method POST "repos/$REPOSITORY/check-runs" \
+            -f name='UI library key scan' -f head_sha="$HEAD_SHA" -f status=completed \
+            -f conclusion="$conclusion" -f "output[title]=Figma file key scan: $conclusion" \
+            -f "output[summary]=$summary" > /dev/null
+
+  # The only job that holds the key. Its steps are actions and two fixed scripts, and nothing it runs comes from
+  # the pull request: the commits and the LFS objects are the bundle and directory prepare built, the Review build
+  # is the artifact prepare verified, downloaded again by the same name and run.
+  key-scan:
+    needs: prepare
+    if: needs.prepare.outputs.scan == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: key-scan-input
+          path: ${{ runner.temp }}/key-scan-input
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.prepare.outputs.artifact_required == 'true'
+        with:
+          name: ui-review-${{ needs.prepare.outputs.head }}
           path: ${{ runner.temp }}/pr-artifact
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
       # The only step whose env maps the key: main's key guard over the scanned commits, their library/ui tree
       # and the unpacked Review build (enumerated without following links, and size and count limited), all as
-      # data.
-      # The guard and its url allowlist are read from TRUSTED_SHA, the default branch commit this workflow_run
-      # runs (github.sha), by object id: no earlier step can change what that id names, whatever it does to
-      # trusted/'s HEAD, index, working tree or refs. The scanned commits only enter refs/key-scan/*, and the
-      # allowlist never comes from the scanned head or a pull request base (which can be another branch), so a
-      # commit cannot allowlist a url it adds: the entry has to land on the default branch first. The guard is
-      # written to a fresh file just before it runs; key-guard.mjs imports only node: builtins, so that file is
-      # the whole program. cat-file prints the raw blob, with no textconv, and replace objects are off for every
-      # git read in this step, so a refs/replace entry cannot swap the guard, the allowlist or a scanned blob.
-      # --revision makes the summary name TRUSTED_SHA, the commit the guard was read from, not trusted/'s HEAD.
+      # data. Its run is one of the fixed templates in library/ui/figma/test/key-step.ts, character for character.
+      # No earlier step of this job runs a shell: checkout, setup-node and download-artifact (into runner.temp)
+      # are the only steps before it, so nothing has written into trusted/ since the checkout. That is what
+      # makes the copy below the default branch's guard: cat-file prints the stored blob of TRUSTED_SHA (the
+      # default branch commit this workflow_run runs, github.sha) as it is, without checking it against its
+      # hash. --no-replace-objects and GIT_NO_REPLACE_OBJECTS keep refs/replace out of every git read in the
+      # step. The copy is written before the bundle is fetched, and the bundle can only add objects, which git
+      # hashes as it indexes them, and refs under refs/key-scan/. The url allowlist comes from TRUSTED_SHA too,
+      # never from the scanned head or a pull request base, so a commit cannot allowlist a url it adds: the entry
+      # has to land on the default branch first. key-guard.mjs imports only node: builtins, so the copy is the
+      # whole program, and --revision makes the summary name TRUSTED_SHA.
       - name: Scan for the Figma file key
         id: scan
-        if: steps.trigger.outputs.scan == 'true'
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
           GIT_NO_REPLACE_OBJECTS: "1"
           FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
           TRUSTED_SHA: ${{ github.sha }}
-          ARTIFACT_REQUIRED: ${{ steps.inputs.outputs.artifact_required }}
-          HEAD_SHA: ${{ steps.trigger.outputs.head }}
-          BASE: ${{ steps.trigger.outputs.base }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head }}
+          BASE: ${{ needs.prepare.outputs.base }}
+          ARTIFACT_REQUIRED: ${{ needs.prepare.outputs.artifact_required }}
         run: |
           set -o pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$BASE" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"
+          git -C trusted fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head "$RUNNER_TEMP/key-scan-input/commits.bundle" "+refs/key-scan/*:refs/key-scan/*"
           range="$BASE..$HEAD_SHA"
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then range="$HEAD_SHA"; fi
           extra=()
           if [ "$ARTIFACT_REQUIRED" = true ]; then
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
-          git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"
-          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree --revision "$TRUSTED_SHA" \
-            --range "$range" --allowlist-from "$TRUSTED_SHA" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
+          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree --revision "$TRUSTED_SHA" --range "$range" \
+            --allowlist-from "$TRUSTED_SHA" --lfs-store "$RUNNER_TEMP/key-scan-input/lfs" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
       # The summary is the scanner's stdout alone, which the scanner redacts: the key never appears in a path,
       # a finding or an error line it prints. Its stderr stays in the job log and is never part of the summary.
       - name: Report the result on the scanned commit
-        if: always() && steps.trigger.outputs.head != ''
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head }}
           OUTCOME: ${{ steps.scan.outcome }}
-          SKIP_REASON: ${{ steps.trigger.outputs.reason }}
-          FETCH_OUTCOME: ${{ steps.inputs.outcome }}
-          ARTIFACT_OUTCOME: ${{ steps.artifact_check.outcome }}
-          DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
         run: |
           conclusion=failure
           [ "$OUTCOME" = success ] && conclusion=success
           summary=$(head -c 60000 "$RUNNER_TEMP/key-scan.txt" 2> /dev/null || echo "The scan did not run.")
-          if [ "$FETCH_OUTCOME" = failure ]; then summary="Commit or LFS prefetch failed; the scan did not run."; fi
-          if [ "$ARTIFACT_OUTCOME" = failure ]; then summary="The required Review artifact was missing or could not be verified."; fi
-          if [ "$DOWNLOAD_OUTCOME" = failure ]; then summary="The verified Review artifact could not be downloaded."; fi
-          if [ -n "$SKIP_REASON" ]; then
-            conclusion=failure
-            summary="Not scanned: $SKIP_REASON"
-          fi
           gh api --method POST "repos/$REPOSITORY/check-runs" \
             -f name='UI library key scan' -f head_sha="$HEAD_SHA" -f status=completed \
             -f conclusion="$conclusion" -f "output[title]=Figma file key scan: $conclusion" \
