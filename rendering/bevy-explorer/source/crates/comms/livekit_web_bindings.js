@@ -130,7 +130,7 @@ function set_room_event_handler(room, handler) {
             type: 'connected',
             participants_with_tracks
         })
-        // the change event does not cover the metadata the room already had at join
+        // livekit raises no change event for the metadata present at join
         handler({
             type: 'roomMetadataChanged',
             metadata: room.metadata ?? ''

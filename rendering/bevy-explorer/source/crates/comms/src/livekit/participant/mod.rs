@@ -111,8 +111,7 @@ pub struct ParticipantPayload {
     pub topic: Option<String>,
 }
 
-/// A room's own metadata, on connect and on every change (the gatekeeper writes the scene
-/// room's `{"sceneAdmins", "bannedAddresses"}` here).
+/// A room's own metadata, at join and on every change.
 #[derive(Event)]
 pub struct RoomMetadataChanged {
     pub room: Entity,

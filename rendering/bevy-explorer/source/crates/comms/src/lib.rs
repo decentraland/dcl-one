@@ -10,10 +10,10 @@ pub mod movement_compressed;
 pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
-#[cfg(feature = "livekit")]
-pub mod scene_bans;
 pub mod profile;
 pub mod pulse;
+#[cfg(feature = "livekit")]
+pub mod scene_bans;
 pub mod signed_login;
 #[cfg(test)]
 mod test;

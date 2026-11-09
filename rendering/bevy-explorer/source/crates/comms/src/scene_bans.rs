@@ -1,7 +1,5 @@
-//! Who is banned from the scene the player stands in. The gatekeeper writes the scene room's
-//! LiveKit metadata as `{"sceneAdmins": [..], "bannedAddresses": [..]}` and rewrites it on every
-//! ban and unban; the list holds only while that room is the current scene room, so leaving the
-//! scene or losing the room clears it.
+//! The gatekeeper writes a scene room's LiveKit metadata as
+//! `{"sceneAdmins": [..], "bannedAddresses": [..]}` and rewrites it on every ban and unban.
 
 use alloy_core::primitives::Address;
 use bevy::{platform::collections::HashSet, prelude::*};
@@ -10,17 +8,13 @@ use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{livekit::participant::RoomMetadataChanged, SceneRoom, SceneRoomConnection};
-#[cfg(test)]
-use crate::SetCurrentScene;
+use crate::{livekit::participant::RoomMetadataChanged, SceneRoom};
 
 pub struct SceneBansPlugin;
 
 impl Plugin for SceneBansPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneBans>()
-            .add_observer(scene_room_metadata)
-            .add_observer(scene_room_removed);
+        app.add_observer(scene_room_metadata);
         app.add_console_command::<SceneBansCommand, _>(scene_bans);
         app.add_debug_section(DebugSection {
             title: "Scene bans",
@@ -36,11 +30,10 @@ impl Plugin for SceneBansPlugin {
     }
 }
 
-#[derive(Resource, Default, Debug)]
+/// On a [`SceneRoom`]: the addresses banned from its scene.
+#[derive(Component, Default, Debug)]
 pub struct SceneBans {
-    room: Option<Entity>,
     banned: HashSet<Address>,
-    /// Nearby chat lines dropped because their sender is banned; survives scene changes.
     dropped_chats: u64,
 }
 
@@ -49,23 +42,11 @@ impl SceneBans {
         self.banned.contains(&address)
     }
 
-    /// Whether a nearby chat line from `address` is dropped, counting the drop.
+    /// Counts the drop when `address` is banned.
     pub fn drops_chat_from(&mut self, address: Address) -> bool {
         let banned = self.is_banned(address);
         self.dropped_chats += u64::from(banned);
         banned
-    }
-
-    fn set(&mut self, room: Entity, metadata: &str) {
-        self.room = Some(room);
-        self.banned = banned_addresses(metadata);
-    }
-
-    fn clear(&mut self, room: Entity) {
-        if self.room == Some(room) {
-            self.room = None;
-            self.banned.clear();
-        }
     }
 }
 
@@ -76,7 +57,6 @@ struct SceneRoomMetadata {
     banned_addresses: Vec<String>,
 }
 
-/// Unreadable metadata bans nobody; an entry that is not an address is skipped.
 fn banned_addresses(metadata: &str) -> HashSet<Address> {
     serde_json::from_str::<SceneRoomMetadata>(metadata)
         .unwrap_or_default()
@@ -88,20 +68,22 @@ fn banned_addresses(metadata: &str) -> HashSet<Address> {
 
 fn scene_room_metadata(
     trigger: Trigger<RoomMetadataChanged>,
-    scene_rooms: Query<(), With<SceneRoom>>,
-    current: Res<SceneRoomConnection>,
-    mut bans: ResMut<SceneBans>,
+    mut commands: Commands,
+    mut scene_rooms: Query<Option<&mut SceneBans>, With<SceneRoom>>,
 ) {
-    let room = trigger.room;
-    // only the client's current scene room speaks for the scene the player is in
-    let is_current = current.0.as_ref().is_some_and(|(_, _, entity)| *entity == room);
-    if is_current && scene_rooms.contains(room) {
-        bans.set(room, &trigger.metadata);
+    let Ok(bans) = scene_rooms.get_mut(trigger.room) else {
+        return;
+    };
+    let banned = banned_addresses(&trigger.metadata);
+    match bans {
+        Some(mut bans) => bans.banned = banned,
+        None => {
+            commands.entity(trigger.room).try_insert(SceneBans {
+                banned,
+                dropped_chats: 0,
+            });
+        }
     }
-}
-
-fn scene_room_removed(trigger: Trigger<OnRemove, SceneRoom>, mut bans: ResMut<SceneBans>) {
-    bans.clear(trigger.target());
 }
 
 /// `/scene_bans` prints who the current scene room bans, as JSON.
@@ -111,24 +93,22 @@ struct SceneBansCommand;
 
 fn scene_bans(
     mut input: ConsoleCommand<SceneBansCommand>,
-    bans: Res<SceneBans>,
-    current: Res<SceneRoomConnection>,
+    scene_rooms: Query<(&SceneRoom, &SceneBans)>,
 ) {
     if input.take().is_none() {
         return;
     }
-    let mut banned: Vec<_> = bans.banned.iter().map(|a| format!("{a:#x}")).collect();
+    let room = scene_rooms.iter().next();
+    let mut banned: Vec<_> = room
+        .iter()
+        .flat_map(|(_, bans)| bans.banned.iter().map(|a| format!("{a:#x}")))
+        .collect();
     banned.sort();
-    let scene = current
-        .0
-        .as_ref()
-        .filter(|(_, _, room)| bans.room == Some(*room))
-        .map(|(scene, _, _)| scene.scene_id.clone());
     input.reply_ok(
         json!({
-            "sceneRoom": scene,
+            "sceneRoom": room.map(|(scene, _)| &scene.0),
             "banned": banned,
-            "droppedChats": bans.dropped_chats,
+            "droppedChats": room.map_or(0, |(_, bans)| bans.dropped_chats),
         })
         .to_string(),
     );
@@ -139,7 +119,7 @@ mod tests {
     use super::*;
 
     const A: &str = "0x00000000000000000000000000000000000000aa";
-    const B: &str = "0x00000000000000000000000000000000000000Bb";
+    const B: &str = "0x00000000000000000000000000000000000000bb";
 
     fn address(s: &str) -> Address {
         s.parse().unwrap()
@@ -153,7 +133,7 @@ mod tests {
         ));
         assert_eq!(bans.len(), 2);
         assert!(bans.contains(&address(A)));
-        assert!(bans.contains(&address(&B.to_lowercase())));
+        assert!(bans.contains(&address(B)));
     }
 
     #[test]
@@ -166,74 +146,58 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
-        app.init_resource::<SceneRoomConnection>()
-            .add_plugins(SceneBansPlugin);
+        app.add_plugins(SceneBansPlugin);
         app
     }
 
-    fn metadata(app: &mut App, room: Entity) {
+    fn metadata(app: &mut App, room: Entity, banned: &[&str]) {
         app.world_mut().trigger(RoomMetadataChanged {
             room,
-            metadata: format!(r#"{{"bannedAddresses":["{A}"]}}"#),
+            metadata: json!({ "bannedAddresses": banned }).to_string(),
         });
         app.world_mut().flush();
     }
 
-    fn make_current(app: &mut App, room: Entity) {
-        app.world_mut().resource_mut::<SceneRoomConnection>().0 =
-            Some((
-                SetCurrentScene {
-                    realm_name: String::new(),
-                    scene_id: "scene".into(),
-                },
-                String::new(),
-                room,
-            ));
+    fn banned(app: &App, room: Entity, who: &str) -> bool {
+        app.world()
+            .get::<SceneBans>(room)
+            .is_some_and(|bans| bans.is_banned(address(who)))
     }
 
     #[test]
-    fn only_the_current_scene_room_sets_the_list_and_removing_it_clears_it() {
+    fn only_a_scene_room_takes_the_list() {
         let mut app = app();
         let other_room = app.world_mut().spawn_empty().id();
         let scene_room = app.world_mut().spawn(SceneRoom("scene".into())).id();
-        let stale_scene_room = app.world_mut().spawn(SceneRoom("old".into())).id();
-        make_current(&mut app, scene_room);
 
-        metadata(&mut app, other_room);
-        metadata(&mut app, stale_scene_room);
-        assert!(!app.world().resource::<SceneBans>().is_banned(address(A)));
+        metadata(&mut app, other_room, &[A]);
+        metadata(&mut app, scene_room, &[A]);
 
-        metadata(&mut app, scene_room);
-        assert!(app.world().resource::<SceneBans>().is_banned(address(A)));
-
-        // a stale room going away leaves the current list alone
-        app.world_mut().despawn(stale_scene_room);
-        assert!(app.world().resource::<SceneBans>().is_banned(address(A)));
-
-        app.world_mut().despawn(scene_room);
-        assert!(!app.world().resource::<SceneBans>().is_banned(address(A)));
+        assert!(app.world().get::<SceneBans>(other_room).is_none());
+        assert!(banned(&app, scene_room, A));
     }
 
     #[test]
-    fn an_unban_rewrite_lifts_the_ban() {
+    fn a_rewrite_replaces_the_list_and_keeps_the_count() {
         let mut app = app();
         let scene_room = app.world_mut().spawn(SceneRoom("scene".into())).id();
-        make_current(&mut app, scene_room);
-        metadata(&mut app, scene_room);
-        app.world_mut().trigger(RoomMetadataChanged {
-            room: scene_room,
-            metadata: r#"{"sceneAdmins":[],"bannedAddresses":[]}"#.into(),
-        });
-        app.world_mut().flush();
-        assert!(!app.world().resource::<SceneBans>().is_banned(address(A)));
-    }
+        metadata(&mut app, scene_room, &[A]);
+        assert!(app
+            .world_mut()
+            .get_mut::<SceneBans>(scene_room)
+            .unwrap()
+            .drops_chat_from(address(A)));
 
-    #[test]
-    fn dropped_chats_are_counted() {
-        let mut bans = SceneBans::default();
-        bans.set(Entity::PLACEHOLDER, &format!(r#"{{"bannedAddresses":["{A}"]}}"#));
-        assert!(bans.drops_chat_from(address(A)));
-        assert!(!bans.drops_chat_from(address(&B.to_lowercase())));
-        assert_eq!(bans.dropped_chats, 1);
+        metadata(&mut app, scene_room, &[B]);
+
+        assert!(!banned(&app, scene_room, A));
+        assert!(banned(&app, scene_room, B));
+        assert_eq!(
+            app.world()
+                .get::<SceneBans>(scene_room)
+                .unwrap()
+                .dropped_chats,
+            1
+        );
     }
 }
