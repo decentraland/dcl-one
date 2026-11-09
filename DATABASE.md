@@ -1286,7 +1286,8 @@ catalog rows, and the bootstrap seed reaches only new databases.
    tier a wallet holds, or switch a badge with player rows between single and
    tiered, is a 409 and changes nothing; a removed tier nobody holds is
    deleted from `badge_tiers`. Player rows are never written: a lowered
-   target awards on the wallet's next progress write, not retroactively.
+   target awards on the wallet's next progress write, not retroactively, and
+   a tier added above a completed badge leaves it complete until that write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
    the badges routes refuse bodies over 1 MiB (413).
 2. Make the art reachable: upload it to the CDN that
@@ -1295,8 +1296,8 @@ catalog rows, and the bootstrap seed reaches only new databases.
    `<node>/badges/assets`.
 3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
    awardable.
-4. Grant it: the bulk backfill (`POST /badges/badges/{id}/backfill`), an
-   evaluator that calls `apply_progress`, or the console grant per wallet.
+4. Grant it per wallet with the console grant (`POST
+   /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
 
 Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
 its earners, and `apply_progress` answers `NotAwardable`. `{"archived":
