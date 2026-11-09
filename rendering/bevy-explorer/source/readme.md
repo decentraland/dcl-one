@@ -172,10 +172,14 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
-  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
-  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
+  `/voice_state`, `/ban_block_state [address]` (whether the local user is banned and whom they
+  block or are blocked by, and that address's standing), `/entity_screen_position <entity>
+  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
+  names why), plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
+  social service, as the passport does.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
   and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
   <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which

@@ -112,6 +112,10 @@ same-origin Chrome page contexts, recreates those contexts to check recovery, an
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
 Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 
+`specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
+and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
+"Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each

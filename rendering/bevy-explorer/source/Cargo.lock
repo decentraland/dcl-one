@@ -1480,6 +1480,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ban_block"
+version = "0.1.0"
+dependencies = [
+ "alloy-core",
+ "anyhow",
+ "bevy",
+ "bevy_console",
+ "clap",
+ "common",
+ "comms",
+ "console 0.1.0",
+ "platform",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "social",
+ "wallet",
+]
+
+[[package]]
 name = "base-x"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4471,6 +4491,7 @@ dependencies = [
  "async-std",
  "av",
  "avatar",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",

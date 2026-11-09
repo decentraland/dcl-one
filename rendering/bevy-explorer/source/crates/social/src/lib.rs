@@ -53,14 +53,7 @@ impl Plugin for SocialPlugin {
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(
-            PostUpdate,
-            |mut client: ResMut<SocialClient>, mut changed: EventWriter<SocialStateChanged>| {
-                if client.0.as_mut().is_some_and(|client| client.update()) {
-                    changed.write(SocialStateChanged);
-                }
-            },
-        );
+        app.add_systems(PostUpdate, apply_social_updates);
         app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
@@ -83,11 +76,26 @@ impl Plugin for SocialPlugin {
             app.add_console_command::<RestartSocialCommand, _>(restart_social);
             app.add_console_command::<DmPrivacyCommand, _>(dm_privacy);
             app.add_console_command::<DmPrivacyOfCommand, _>(dm_privacy_of);
+            app.add_console_command::<BlockUserCommand, _>(block_user);
+            app.add_console_command::<UnblockUserCommand, _>(unblock_user);
             app.add_systems(
                 PostUpdate,
                 debug_write_social.run_if(|e: Res<DebugSocialEnabled>| e.0),
             );
         }
+    }
+}
+
+/// Whether this build carries the social client; without it `SocialClientHandler` is a stub.
+pub const SOCIAL_FEATURE: bool = cfg!(feature = "social");
+
+/// Drains the social client's channel into its state.
+pub fn apply_social_updates(
+    mut client: ResMut<SocialClient>,
+    mut changed: EventWriter<SocialStateChanged>,
+) {
+    if client.0.as_mut().is_some_and(|client| client.update()) {
+        changed.write(SocialStateChanged);
     }
 }
 
@@ -314,6 +322,86 @@ fn dm_privacy_of(
                     .join("\n")
             })
         },
+        responder,
+    );
+}
+
+/// `/block_user <address>` blocks a user through the social service, as the passport does.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/block_user")]
+struct BlockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn block_user(
+    mut input: ConsoleCommand<BlockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.block_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "block requested".to_owned()),
+        responder,
+    );
+}
+
+/// `/unblock_user <address>` lifts a block through the social service.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/unblock_user")]
+struct UnblockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn unblock_user(
+    mut input: ConsoleCommand<UnblockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.unblock_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "unblock requested".to_owned()),
         responder,
     );
 }

@@ -78,6 +78,7 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
+use ban_block::BanBlockPlugin;
 use system_api_types::{
     launch_options::{
         help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
@@ -653,6 +654,7 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            .add_plugins(BanBlockPlugin)
             // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
             // without an extension to the last image loader registered, which must stay
             // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
