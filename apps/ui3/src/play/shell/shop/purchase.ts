@@ -390,7 +390,10 @@ const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 /** How a checkout says one of its transactions ended. */
 const NEVER_WENT = 'one of its transactions never went out.'
 const PART_FAILED = 'one of its transactions didn’t go through.'
-const REVERTED_PART = 'one of its transactions failed on-chain, and its Credits were returned.'
+// A reverted transaction's credits are retired, not handed back: they come back with the expiry sweep (as the
+// checkout's own reverted failure says), so the copy never claims they were returned.
+const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
+const REVERTED_ALONE = 'The transaction failed on-chain. Nothing was bought; the Credits it held come back on their own.'
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -675,7 +678,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
       if (result.status === 'failed') {
         const reverted = result.failure.kind === 'reverted'
-        settled(op, 'failed', {}, reverted ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message, reverted ? REVERTED_PART : result.failure.message)
+        settled(op, 'failed', {}, reverted ? REVERTED_ALONE : result.failure.message, reverted ? REVERTED_PART : result.failure.message)
         return true
       }
       // A hash with no receipt may have been dropped or replaced: the server's record of the credit
