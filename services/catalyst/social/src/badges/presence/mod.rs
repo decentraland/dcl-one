@@ -121,7 +121,7 @@ pub async fn drain(
 
 /// Applies up to `event_batch` stored events in `seq` order, each in its own
 /// transaction that deletes it and with the clock read for it. `failures`
-/// counts the passes an event failed (kept by the job);
+/// counts the passes an event failed deterministically (kept by the job);
 /// the first failure ends the pass with the error.
 pub async fn apply_pending(
     pool: &PgPool,
@@ -151,12 +151,9 @@ pub async fn apply_pending(
                 }
             }
             Err(error) => {
-                let attempts = failures.entry(seq).or_default();
-                *attempts += 1;
-                if *attempts < MAX_ATTEMPTS {
+                if !gives_up(failures, seq, &error) {
                     return Err(error.into());
                 }
-                failures.remove(&seq);
                 metrics::counter!("badges_presence_events_total", "outcome" => "failed")
                     .increment(1);
                 tracing::error!(seq, %error, "presence event dropped after failing {MAX_ATTEMPTS} passes");
@@ -168,6 +165,43 @@ pub async fn apply_pending(
         }
     }
     Ok(applied)
+}
+
+/// Whether the event is dropped after this failure. Only a deterministic
+/// error counts toward [`MAX_ATTEMPTS`]; a transient one is retried forever.
+fn gives_up(failures: &mut HashMap<i64, u32>, seq: i64, error: &sqlx::Error) -> bool {
+    if is_transient(error) {
+        return false;
+    }
+    let attempts = failures.entry(seq).or_default();
+    *attempts += 1;
+    if *attempts < MAX_ATTEMPTS {
+        return false;
+    }
+    failures.remove(&seq);
+    true
+}
+
+/// Errors a later pass can clear: the connection or pool, a timeout or
+/// cancel, a serialization or deadlock conflict, a read-only failover.
+fn is_transient(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_)
+        | sqlx::Error::Protocol(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed
+        | sqlx::Error::BeginFailed => true,
+        sqlx::Error::Database(e) => e.code().is_some_and(|code| {
+            // 08 connection, 53 resources, 57 cancel/shutdown
+            ["08", "53", "57"]
+                .iter()
+                .any(|class| code.starts_with(class))
+                || matches!(code.as_ref(), "40001" | "40P01" | "55P03" | "25006")
+        }),
+        _ => false,
+    }
 }
 
 async fn apply_one(pool: &PgPool, flow: &Flow<'_>, seq: i64) -> sqlx::Result<Option<EventOutcome>> {

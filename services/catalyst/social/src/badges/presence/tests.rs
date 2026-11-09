@@ -436,6 +436,67 @@ async fn a_long_drain_reads_the_clock_per_event() {
     assert_eq!(newest, T0 + 10 * min, "bookkeeping follows the clock");
 }
 
+#[derive(Debug)]
+struct DbError(&'static str);
+impl std::fmt::Display for DbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SQLSTATE {}", self.0)
+    }
+}
+impl std::error::Error for DbError {}
+impl sqlx::error::DatabaseError for DbError {
+    fn message(&self) -> &str {
+        self.0
+    }
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(self.0.into())
+    }
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+fn db_error(code: &'static str) -> sqlx::Error {
+    sqlx::Error::Database(Box::new(DbError(code)))
+}
+
+#[test]
+fn only_deterministic_failures_count_toward_dropping_an_event() {
+    let mut failures = HashMap::new();
+    let transient = [
+        sqlx::Error::PoolTimedOut,
+        sqlx::Error::PoolClosed,
+        sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+        db_error("57014"), // statement timeout
+        db_error("57P01"), // admin shutdown
+        db_error("08006"), // connection failure
+        db_error("40001"), // serialization
+        db_error("40P01"), // deadlock
+        db_error("55P03"), // lock not available
+        db_error("25006"), // read-only after a failover
+    ];
+    for error in &transient {
+        for _ in 0..5 {
+            assert!(!super::gives_up(&mut failures, 1, error), "{error}");
+        }
+    }
+    assert!(failures.is_empty(), "a transient failure is not counted");
+    for error in [db_error("23514"), sqlx::Error::RowNotFound] {
+        assert!(!super::gives_up(&mut failures, 2, &error));
+        assert!(!super::gives_up(&mut failures, 2, &error));
+        assert!(super::gives_up(&mut failures, 2, &error), "{error}");
+        assert!(failures.is_empty(), "a dropped event is forgotten");
+    }
+}
+
 // ── windows ─────────────────────────────────────────────────────────────
 
 #[tokio::test]

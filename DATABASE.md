@@ -1277,7 +1277,10 @@ until the next pass of the leased `badges-presence` job (5 s), which applies
 up to 500 in `seq` order, one transaction per event that deletes it, so the
 queue is its own cursor and a row committed behind a later `seq` is still
 there on the next pass. The clock (bookkeeping times and the 5-minute future
-guard) is read per event, so a long drain stays current.
+guard) is read per event, so a long drain stays current. Only a deterministic
+failure counts toward dropping an event (after 3 passes, logged and counted);
+a connection, pool, timeout, conflict or failover error is retried on the next
+pass without counting.
 
 Every presence transaction first takes one advisory lock: the engine and the
 `badges-presence-sweep` job are a single writer fleet-wide, so the runtime
