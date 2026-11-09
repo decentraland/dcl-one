@@ -121,7 +121,7 @@ export function CommunitiesPage({
           <button
             type="button"
             className={styles.createBtn}
-            onClick={() => openCommunityCreateModal(!!p && p.hasClaimedName && !p.isGuest, communities.create)}
+            onClick={() => openCommunityCreateModal(!!p && p.hasClaimedName && !p.isGuest, (id) => id !== '' && setOpenId(id))}
           >
             + CREATE A COMMUNITY
           </button>

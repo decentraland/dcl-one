@@ -469,3 +469,13 @@
   background: rgba(0, 0, 0, 0.65);
   transform: scale(1.08);
 }
+
+/* The community's picture in the delete confirmation, as unity-explorer's. */
+.confirmThumb {
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 4px auto 0;
+  border-radius: var(--r-control);
+  object-fit: cover;
+}
