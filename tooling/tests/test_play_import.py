@@ -313,6 +313,43 @@ class PlayImportTests(unittest.TestCase):
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
+    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+        # react-web compiles these through its aliases (react-web/vite.shared.ts).
+        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
+        for shared in contract.HUD_SHARED:
+            with self.subTest(shared=shared):
+                self.write(shared + 'changed.ts', 'export const changed = true;\n')
+                with self.assertRaisesRegex(ValueError, 'inputs differ'):
+                    play.install(self.build)
+                self.assertEqual(engine, contract.engine_inputs(self.root))
+                self.assertEqual(hud, contract.hud_inputs(self.root))
+                contract.pack(self.build, self.root)
+                play.install(self.build)
+
+    def test_shared_hud_sources_are_inputs_in_git_and_in_the_nix_contract(self):
+        shared = contract.HUD_SHARED[0] + 'model/money.ts'
+        self.write(shared, 'export const zero = 0n;\n')
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        self.assertIn(shared, contract.input_files(self.root))
+        self.assertNotIn(shared, contract.input_files(self.root, engine_only=True))
+        key = contract.inputs(self.root)
+        self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
+        filtered = self.root / 'nix-contract'
+        for name in git('ls-files').splitlines():
+            target = filtered / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / name, target)
+        self.assertEqual(key, contract.inputs(filtered))
+        self.write(shared, 'export const zero = 1n;\n')
+        self.assertNotEqual(key, contract.inputs(self.root))
+
     def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
@@ -1157,6 +1194,28 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
         self.assertEqual(clock[0], 60)
         download.assert_not_called()
+
+
+class HudSharedSourcesTests(unittest.TestCase):
+    """The libraries the web HUD aliases are inputs everywhere its build is fingerprinted or selected."""
+
+    def test_the_hud_aliases_and_the_build_inputs_name_the_same_libraries(self):
+        root = Path(__file__).resolve().parents[2]
+        web = root / contract.SOURCE / 'react-web'
+        expected = {path.rstrip('/') for path in contract.HUD_SHARED}
+        aliased = set(re.findall(r"'\.\./\.\./\.\./\.\./(library/[^']+)'", (web / 'vite.shared.ts').read_text()))
+        mapped = set(re.findall(r'"\.\./\.\./\.\./\.\./(library/[^"*]+)/\*"', (web / 'tsconfig.json').read_text()))
+        self.assertEqual(aliased, expected, 'react-web/vite.shared.ts aliases a library the build inputs miss')
+        self.assertEqual(mapped, expected, 'react-web/tsconfig.json maps a library the build inputs miss')
+        nix = (root / 'infra/packages/play.nix').read_text()
+        spec = importlib.util.spec_from_file_location('bevy_ci', root / 'tooling/bevy-ci.py')
+        ci = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ci)
+        self.assertEqual(set(ci.HUD_SHARED), set(contract.HUD_SHARED))
+        for library in sorted(expected):
+            with self.subTest(library=library):
+                self.assertIn(library, ci.INPUTS)
+                self.assertRegex(nix, rf'/{re.escape(library)}(\s|$)')
 
 
 if __name__ == '__main__':
