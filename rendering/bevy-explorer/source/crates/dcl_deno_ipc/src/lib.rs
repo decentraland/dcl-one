@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail};
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
 use common::{
-    rpc::{rmp_encode, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
+    rpc::{rmp_encode, CancellationToken, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
     structs::GlobalCrdtStateUpdate,
 };
 use dcl_types::{
@@ -22,6 +22,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         RwLock,
     },
+    time::{Duration, Instant},
 };
 use system_bridge::SystemApi;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -31,6 +32,22 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 const MAX_FRAME_BYTES: u64 = 1024 * 1024 * 1024;
 // a frame's buffer starts at most this large and grows only as its bytes arrive
 const FRAME_PREALLOCATION_BYTES: u64 = 1024 * 1024;
+// reply channels one scene host may hold open at once, across all its scenes
+const MAX_HOST_IPC_CHANNELS: usize = 65536;
+
+/// How long a killed scene gets to exit cleanly (finish its in-flight tick after its
+/// renderer channel closes) before its isolate is forcibly terminated.
+pub const KILL_GRACE_PERIOD: Duration = Duration::from_secs(5);
+// how long after its kill a scene's responses are still accepted: its last tick may be in
+// the pipe when the grace period ends
+const KILLED_SCENE_RETENTION: Duration = KILL_GRACE_PERIOD.saturating_add(Duration::from_secs(5));
+
+static REJECTED_HOST_MESSAGES: AtomicU64 = AtomicU64::new(0);
+
+/// Messages dropped because the scene host that sent them does not run the scene they are for.
+pub fn rejected_host_messages() -> u64 {
+    REJECTED_HOST_MESSAGES.load(Ordering::Relaxed)
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct NewSceneInfo {
@@ -63,8 +80,59 @@ pub enum SceneToEngine {
     IpcMessage(u64, IpcMessage),
 }
 
+// The scenes one scene host was given, and where their responses go.
+#[derive(Default)]
+struct HostScenes(std::collections::HashMap<u64, HostScene>);
+
+struct HostScene {
+    responses: TaggedSceneResponseSender,
+    killed_at: Option<Instant>,
+}
+
+impl HostScene {
+    fn is_tracked(&self, now: Instant) -> bool {
+        self.killed_at
+            .is_none_or(|killed_at| now.duration_since(killed_at) < KILLED_SCENE_RETENTION)
+    }
+}
+
+impl HostScenes {
+    fn start(&mut self, id: u64, responses: TaggedSceneResponseSender) {
+        self.0.insert(
+            id,
+            HostScene {
+                responses,
+                killed_at: None,
+            },
+        );
+    }
+
+    fn kill(&mut self, id: u64, now: Instant) {
+        self.0.retain(|_, scene| scene.is_tracked(now));
+        if let Some(scene) = self.0.get_mut(&id) {
+            scene.killed_at.get_or_insert(now);
+        }
+    }
+
+    fn responses(&self, id: u64, now: Instant) -> Option<&TaggedSceneResponseSender> {
+        self.0
+            .get(&id)
+            .filter(|scene| scene.is_tracked(now))
+            .map(|scene| &scene.responses)
+    }
+}
+
+// Counts a message dropped because its scene host has no standing to send it. Warns once per
+// connection, since the host chooses how many it sends.
+fn reject_host_message(warned: &mut bool, message: std::fmt::Arguments) {
+    REJECTED_HOST_MESSAGES.fetch_add(1, Ordering::Relaxed);
+    if !std::mem::replace(warned, true) {
+        warn!("dropping {message}; further drops from this scene host are only counted");
+    }
+}
+
 thread_local! {
-    static RENDERER_SENDER: RefCell<Option<TaggedSceneResponseSender>> = const { RefCell::new(None) };
+    static HOST_SCENES: RefCell<HostScenes> = RefCell::new(HostScenes::default());
     static SYSTEM_API_SENDER: RefCell<Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>> = const { RefCell::new(None) };
 }
 
@@ -206,12 +274,14 @@ async fn run_host_connection(
     new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
 ) {
     let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
+    let channels_open = CancellationToken::new();
     ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
         ipc_channel_registry: Default::default(),
         ipc_router: router_sx,
-        max_channels: None,
-        parent_token: None,
+        max_channels: Some(MAX_HOST_IPC_CHANNELS),
+        parent_token: Some(channels_open.clone()),
     }));
+    let _close_channels = channels_open.drop_guard();
 
     let mut f_out = tokio::spawn(renderer_ipc_out(outbound, new_scene, router_rx));
     let mut f_in = tokio::spawn(renderer_ipc_in(inbound));
@@ -282,7 +352,7 @@ pub async fn renderer_ipc_out(
                     return Ok(());
                 };
 
-                RENDERER_SENDER.set(Some(response_channel.channel().clone()));
+                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone()));
 
                 if let Some(system_api_sender) = system_api_sender {
                     SYSTEM_API_SENDER.set(Some(system_api_sender));
@@ -320,6 +390,9 @@ pub async fn renderer_ipc_out(
                     warn!("renderer_ipc_out exit on inbound closed");
                     return Ok(());
                 };
+                if let EngineToScene::KillScene(id) = &engine_to_scene {
+                    HOST_SCENES.with_borrow_mut(|scenes| scenes.kill(*id, Instant::now()));
+                }
                 write_msg(&mut stream, &engine_to_scene).await?;
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
@@ -397,31 +470,38 @@ async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Opt
 }
 
 pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Result<()> {
+    let mut warned = false;
     while let Some(buffer) = read_frame(&mut stream).await? {
         let msg: SceneToEngine = rmp_serde::from_slice(&buffer)
             .map_err(|e| anyhow!("undecodable frame of {} bytes: {e}", buffer.len()))?;
 
         match msg {
-            SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
-                let mut sender = sender.borrow_mut();
-                let Some(sender) = sender.as_mut() else {
-                    warn!("dropping scene response: no scene started");
-                    return Ok(());
-                };
-                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, ending this connection trips the
-                // process exit above — killing the whole engine and every co-tenant scene. So
-                // shed the response instead: a scene that outruns the bevy-side drain only
-                // stalls itself. Desktop and tests (flag unset) end the connection.
-                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                    if let Err(e) = sender.try_send((id, scene_response)) {
-                        warn!("dropping scene response: renderer channel unavailable ({e})");
+            SceneToEngine::SceneResponse(id, scene_response) => {
+                HOST_SCENES.with_borrow(|scenes| {
+                    let Some(sender) = scenes.responses(id.0.to_bits(), Instant::now()) else {
+                        reject_host_message(
+                            &mut warned,
+                            format_args!(
+                                "a response for scene {id:?}, which this scene host does not run"
+                            ),
+                        );
+                        return Ok(());
+                    };
+                    // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
+                    // where every scene shares one engine. There, ending this connection trips the
+                    // process exit above — killing the whole engine and every co-tenant scene. So
+                    // shed the response instead: a scene that outruns the bevy-side drain only
+                    // stalls itself. Desktop and tests (flag unset) end the connection.
+                    if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
+                        if let Err(e) = sender.try_send((id, scene_response)) {
+                            warn!("dropping scene response: renderer channel unavailable ({e})");
+                        }
+                    } else if let Err(e) = sender.try_send((id, scene_response)) {
+                        bail!("renderer channel unavailable ({e})");
                     }
-                } else if let Err(e) = sender.try_send((id, scene_response)) {
-                    bail!("renderer channel unavailable ({e})");
-                }
-                Ok(())
-            })?,
+                    Ok(())
+                })?
+            }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");

@@ -8,7 +8,7 @@ use bevy::{
     platform::collections::HashMap,
 };
 use common::rpc::{IpcMessage, RequestContext, SCENE_IPC_CONTEXT};
-use dcl_deno_ipc::{write_msg, EngineToScene, SceneToEngine};
+use dcl_deno_ipc::{write_msg, EngineToScene, SceneToEngine, KILL_GRACE_PERIOD};
 use dcl_types::{SceneId, SceneResponseReceiver, SceneResponseSender, TaggedSceneResponseSender};
 use interprocess::local_socket::{
     tokio::{RecvHalf, SendHalf, Stream},
@@ -21,10 +21,6 @@ use tokio::io::AsyncReadExt;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-// how long a killed scene gets to exit cleanly (finish its in-flight tick after its
-// renderer channel closes) before its isolate is forcibly terminated
-const KILL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()

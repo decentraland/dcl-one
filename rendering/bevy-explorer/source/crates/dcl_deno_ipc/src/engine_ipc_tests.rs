@@ -1,6 +1,10 @@
 use super::*;
 use bevy::prelude::{Entity, Vec3};
-use dcl_types::{scene_response_channel, SceneResourceCounters, SceneResponseReceiver};
+use common::rpc::{RequestContext, RpcCall, RpcStreamSender, SCENE_IPC_CONTEXT};
+use dcl_types::{
+    scene_response_channel, RpcCalls, SceneCensus, SceneElapsedTime, SceneResourceCounters,
+    SceneResponseReceiver,
+};
 use std::{collections::HashMap, time::Duration};
 use tokio::{
     io::{DuplexStream, ReadHalf, WriteHalf},
@@ -40,6 +44,12 @@ impl Host {
             rt.block_on(run_host_connection(engine_in, engine_out, new_scene_rx));
             let _ = ended_sx.send(());
         });
+        // the context the host's reply channels are serialized in
+        SCENE_IPC_CONTEXT.set(Some(RequestContext {
+            registry: Default::default(),
+            close_sender: unbounded_channel().0,
+            next_id: 1,
+        }));
         let (responses_sx, responses) = scene_response_channel();
         Self {
             reader,
@@ -106,6 +116,15 @@ impl Host {
         (scene, system_api_rx)
     }
 
+    /// Drops the scene's renderer channel and reads the `KillScene` the engine writes.
+    async fn kill_scene(&mut self, scene: SceneId) {
+        self.renderer_channels.remove(&scene.0.to_bits());
+        let EngineToScene::KillScene(killed) = self.read().await else {
+            panic!("expected the engine to kill the scene");
+        };
+        assert_eq!(killed, scene.0.to_bits());
+    }
+
     async fn read(&mut self) -> EngineToScene {
         tokio::time::timeout(TIMEOUT, async {
             let len = self.reader.read_u64_le().await.unwrap();
@@ -138,12 +157,16 @@ impl Host {
         .await;
     }
 
-    /// The scene and marker of the next response the engine delivered.
-    async fn delivered(&mut self) -> (SceneId, u64) {
-        let (scene, response) = tokio::time::timeout(TIMEOUT, self.responses.recv())
+    async fn delivered_response(&mut self) -> (SceneId, SceneResponse) {
+        tokio::time::timeout(TIMEOUT, self.responses.recv())
             .await
             .expect("no response delivered")
-            .expect("response channel closed");
+            .expect("response channel closed")
+    }
+
+    /// The scene and marker of the next response the engine delivered.
+    async fn delivered(&mut self) -> (SceneId, u64) {
+        let (scene, response) = self.delivered_response().await;
         let SceneResponse::Stats(counters) = response else {
             panic!("unexpected response {response:?}");
         };
@@ -218,4 +241,115 @@ async fn engine_side_loops_end_together() {
     host.new_scene = None;
     assert!(host.connection_ends().await);
     assert!(host.engine_side_closed().await);
+}
+
+#[tokio::test]
+async fn response_for_a_scene_of_this_host_is_delivered() {
+    let mut host = Host::connect();
+    let (first, _) = host.start_scene(false).await;
+    let (second, _) = host.start_scene(false).await;
+
+    host.respond(second, 1).await;
+    host.respond(first, 2).await;
+
+    assert_eq!(host.delivered().await, (second, 1));
+    assert_eq!(host.delivered().await, (first, 2));
+}
+
+#[tokio::test]
+async fn response_for_an_unknown_scene_is_dropped_and_counted() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let rejected = rejected_host_messages();
+
+    host.respond(SceneId(Entity::from_raw(1000)), 1).await;
+    host.respond(scene, 2).await;
+
+    assert_eq!(host.delivered().await, (scene, 2));
+    assert!(rejected_host_messages() > rejected);
+}
+
+#[tokio::test]
+async fn response_after_kill_is_delivered_within_the_grace_period() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    host.kill_scene(scene).await;
+
+    host.respond(scene, 1).await;
+
+    assert_eq!(host.delivered().await, (scene, 1));
+}
+
+#[test]
+fn a_killed_scene_is_forgotten_after_the_grace_period() {
+    let mut scenes = HostScenes::default();
+    let killed_at = Instant::now();
+    scenes.start(1, scene_response_channel().0);
+    scenes.kill(1, killed_at);
+
+    let before = killed_at + KILLED_SCENE_RETENTION - Duration::from_millis(1);
+    assert!(scenes.responses(1, before).is_some());
+    assert!(scenes
+        .responses(1, killed_at + KILLED_SCENE_RETENTION)
+        .is_none());
+}
+
+fn subscription() -> (RpcCall, common::rpc::RpcStreamReceiver<String>) {
+    let (sender, receiver) = RpcStreamSender::channel();
+    (RpcCall::SubscribePlayerConnected { sender }, receiver)
+}
+
+#[tokio::test]
+async fn reply_channels_close_when_the_host_connection_ends() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (call, _receiver) = subscription();
+    host.send(&SceneToEngine::SceneResponse(
+        scene,
+        SceneResponse::ImmediateRpcCall(call),
+    ))
+    .await;
+    let (_, SceneResponse::ImmediateRpcCall(RpcCall::SubscribePlayerConnected { sender })) =
+        host.delivered_response().await
+    else {
+        panic!("expected the subscription");
+    };
+    assert!(!sender.is_closed());
+
+    host.writer.shutdown().await.unwrap();
+
+    assert!(host.connection_ends().await);
+    assert!(sender.is_closed());
+}
+
+#[tokio::test]
+async fn reply_channels_over_the_limit_end_the_host_connection() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let tick = |count| {
+        let (calls, receivers): (Vec<_>, Vec<_>) = (0..count).map(|_| subscription()).unzip();
+        let mut rpc_calls = RpcCalls::default();
+        rpc_calls.extend(calls);
+        let response = SceneResponse::Ok(
+            SceneCensus {
+                born: Default::default(),
+                died: Default::default(),
+            },
+            Default::default(),
+            SceneElapsedTime(0.0),
+            Vec::new(),
+            rpc_calls,
+        );
+        (SceneToEngine::SceneResponse(scene, response), receivers)
+    };
+
+    let (at_the_limit, _receivers) = tick(MAX_HOST_IPC_CHANNELS);
+    host.send(&at_the_limit).await;
+    let (_, delivered) = host.delivered_response().await;
+    assert!(matches!(delivered, SceneResponse::Ok(..)));
+
+    let (one_more, _receivers) = tick(1);
+    host.send(&one_more).await;
+
+    assert!(host.connection_ends().await);
 }
