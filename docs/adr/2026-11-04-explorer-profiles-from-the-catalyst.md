@@ -49,7 +49,7 @@ an engine-side revert of a failed publish.
   data answers compact reads, and an address read compact and then full is fetched full as soon as
   any compact fetch already in flight for it lands.
 - **A catalyst without the compact route serves compact reads from full profiles.** A compact POST
-  answered 404 (Decentraland's catalysts) or 405 (a catalyst whose `/lambdas/profiles/{id}` takes
+  answered 404 or 405 (Decentraland's catalysts answer 405: their `/lambdas/profiles/{id}` takes
   the path) makes every fetch full for the rest of the session; a compact POST that fails any other
   way has its addresses read whole.
 - **Other players only hear versions the server holds.** While an edit of our own profile deploys,
@@ -58,10 +58,14 @@ an engine-side revert of a failed publish.
   version is announced once the deploy lands. A failed deploy puts that profile back in the world
   (the player's avatar, scenes' `PLAYER` data, the profile cache, the HUD's profile-changed stream)
   without deploying again.
+- **A newer edit does not cancel an older one still deploying.** Both deploys run to the end. If
+  the older one lands while the newer one still deploys, it is what peers hear and what a failure
+  of the newer one puts back; if it lands after the newer one failed, the engine takes it, since
+  the server holds it.
 - **An edit's version is new for the session.** It goes above every version this session gave the
   account, not just above the profile held: a deploy that failed here may still have reached the
-  server (an error after the catalyst took it, or a replaced deploy that kept running on the web),
-  and a peer that read that version skips any other profile announced under it.
+  server (an error after the catalyst took it), and a peer that read that version skips any other
+  profile announced under it.
 
 ## Rejected
 
@@ -88,7 +92,7 @@ an engine-side revert of a failed publish.
   made; the player sees it at once.
 - Profiles deployed to a dcl-one node resolve in batches and settle; nothing re-probes them.
 - On a catalyst without the compact route (`decentraland.org`, the default base domain) the first
-  compact read costs a 404, then compact reads cost full profiles.
+  compact read costs a 405, then compact reads cost full profiles.
 - `asset-bundle-registry.<domain>/profiles*` keeps serving Decentraland's registry to
   unity-explorer.
 

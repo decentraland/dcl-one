@@ -681,8 +681,7 @@ pub async fn op_get_user_profile(
         .map_err(|_| anyhow::anyhow!("Not found"))
 }
 
-/// The most addresses one `getCompactProfiles` call may ask about: the bound the bridge kept on
-/// its per-address lookups before the call existed.
+/// The most addresses one `getCompactProfiles` call may ask about.
 pub const COMPACT_PROFILES_MAX: usize = 200;
 
 /// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
