@@ -303,6 +303,12 @@ rand = "0.8.5"
 futures-util = "0.3.28"
 futures-channel = "0.3"
 async-native-tls = { version = "0.5", features = ["runtime-async-std"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
+  "handshake",
+  "native-tls",
+] }
 boimp = { git = "https://github.com/robtfm/boimp", branch = "feat/composite-bake-via-storage-texture" }
 crc = "3"
 num-traits = "0.2"
@@ -553,11 +559,6 @@ deno_net = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_url = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_webidl = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_web = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_websocket = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-# 0.8.1 + upstream bc39c1f (fragmented-message size cap, unreleased) + 1 MiB default cap.
-# deno_websocket's pinned API exposes no set_max_message_size hook, so the fork default is
-# how scene websocket inbound message size is bounded.
-fastwebsockets = { git = "https://github.com/robtfm/fastwebsockets", branch = "0_8_hotfix" }
 deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 
 # deno_console = { path = "../deno/ext/console" }
@@ -566,7 +567,6 @@ deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfi
 # deno_url = { path = "../deno/ext/url" }
 # deno_webidl = { path = "../deno/ext/webidl" }
 # deno_web = { path = "../deno/ext/web" }
-# deno_websocket = { path = "../deno/ext/websocket" }
 # deno_webstorage = { path = "../deno/ext/webstorage" }
 
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"

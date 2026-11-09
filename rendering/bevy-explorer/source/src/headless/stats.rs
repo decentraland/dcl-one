@@ -45,7 +45,16 @@ pub fn scene_stats_sample(
             "failed": cur.storage_failed.saturating_sub(base.storage_failed),
             "unauthorized": cur.storage_unauthorized.saturating_sub(base.storage_unauthorized),
         },
-        "ws": {"opened": cur.ws_opened.saturating_sub(base.ws_opened), "open": cur.ws_open},
+        "ws": {
+            "opened": cur.ws_opened.saturating_sub(base.ws_opened),
+            "open": cur.ws_open,
+            "refused": cur.ws_refused.saturating_sub(base.ws_refused),
+            "failed": cur.ws_failed.saturating_sub(base.ws_failed),
+            "msgs_in": cur.ws_msgs_in.saturating_sub(base.ws_msgs_in),
+            "bytes_in": cur.ws_bytes_in.saturating_sub(base.ws_bytes_in),
+            "msgs_out": cur.ws_msgs_out.saturating_sub(base.ws_msgs_out),
+            "bytes_out": cur.ws_bytes_out.saturating_sub(base.ws_bytes_out),
+        },
         "comms": {
             "msgs_in": cur.comms_msgs_in.saturating_sub(base.comms_msgs_in),
             "bytes_in": cur.comms_bytes_in.saturating_sub(base.comms_bytes_in),

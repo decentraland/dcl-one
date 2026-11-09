@@ -498,11 +498,12 @@ impl deno_core::Resource for ClientResource {}
 /// on the server, redirects are disabled too.
 struct SceneHttpClient(reqwest::Client);
 
-fn allow_private_network(state: &OpState) -> bool {
-    let context = state.borrow::<CrdtContext>();
+pub(super) fn allow_private_network(state: &OpState) -> bool {
     // The renderer gives this sender only to its bundled HUD or an operator-selected
     // system scene. Hosted scenes never inherit that native privilege.
-    context.preview || (!context.is_server && state.has::<dcl_js::SuperUserScene>())
+    state.try_borrow::<CrdtContext>().is_some_and(|context| {
+        context.preview || (!context.is_server && state.has::<dcl_js::SuperUserScene>())
+    })
 }
 
 /// DNS resolver that only ever hands back public addresses.
@@ -763,13 +764,8 @@ mod upload_tests {
 
     #[tokio::test]
     async fn rejected_upload_closes_its_resource_and_cancels_the_stream() {
-        let (mut runtime, _) = crate::js::create_runtime(
-            false,
-            false,
-            "test-rejected-upload",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) =
+            crate::js::create_runtime(false, false, "test-rejected-upload", Default::default());
         let state = runtime.op_state();
         {
             let mut state = state.borrow_mut();

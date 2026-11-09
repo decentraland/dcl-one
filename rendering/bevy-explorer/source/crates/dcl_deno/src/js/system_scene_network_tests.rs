@@ -19,7 +19,6 @@ fn run_scene(
         false,
         super_user,
         "system-scene-network-test",
-        false,
         Default::default(),
     );
     let state = runtime.op_state();

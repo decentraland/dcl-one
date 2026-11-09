@@ -18,7 +18,7 @@ system_bridge = { workspace = true }
 platform = { workspace = true }
 
 bevy = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["net", "time"] }
 once_cell = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -27,6 +27,9 @@ http = { workspace = true }
 base64 = { workspace = true }
 multihash-codetable = { workspace = true }
 uuid = { workspace = true }
+native-tls = { workspace = true }
+tokio-native-tls = { workspace = true }
+tokio-tungstenite = { workspace = true }
 
 deno_core = "0.307"
 deno_console = "0.168"
@@ -35,7 +38,6 @@ deno_net = "0.160"
 deno_url = "0.168"
 deno_webidl = "0.168"
 deno_web = "0.199"
-deno_websocket = "0.173"
 deno_webstorage = "0.163"
 
 bytes = "1.11.1"

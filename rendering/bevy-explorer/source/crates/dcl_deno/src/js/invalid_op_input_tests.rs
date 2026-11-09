@@ -55,21 +55,20 @@ fn websocket_ops_reject_an_unknown_rid() {
         r#"Deno.core.ops.op_ws_send_text(9999, "x")"#,
         "Deno.core.ops.op_ws_send_binary(9999, new Uint8Array(1))",
         "Deno.core.ops.op_ws_send_binary_ab(9999, new ArrayBuffer(1))",
+        "Deno.core.ops.op_ws_close(9999, 1000, undefined)",
+        "Deno.core.ops.op_ws_get_buffer(9999)",
+        "Deno.core.ops.op_ws_get_buffer_as_string(9999)",
+        "Deno.core.ops.op_ws_get_close_code(9999)",
+        "Deno.core.ops.op_ws_get_error(9999)",
     ] {
         assert_refused(script, "Bad resource ID");
     }
-}
-
-#[test]
-fn websocket_create_rejects_urls_the_handshake_cannot_dial() {
-    for url in ["http://example.org/", "wss:", "ws://example.org/"] {
-        let script = format!(
-            r#"Deno.core.ops.op_ws_create("WebSocket.abort", "{url}", "", null, null)
-                .then(() => {{ throw new Error("connected"); }}, (e) => {{ globalThis.__ws = String(e); }})"#
-        );
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-ws-url", false, Default::default());
+    for op in ["op_ws_connect", "op_ws_next_event"] {
+        let (mut runtime, _) = create_runtime(false, false, "test-ws-rid", Default::default());
         runtime.op_state().borrow_mut().put(context(false));
+        let script = format!(
+            r#"Deno.core.ops.{op}(9999).then(() => {{ globalThis.__ws = "settled"; }}, (e) => {{ globalThis.__ws = String(e); }})"#
+        );
         runtime.execute_script("<test>", script).unwrap();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -77,9 +76,29 @@ fn websocket_create_rejects_urls_the_handshake_cannot_dial() {
             .unwrap()
             .block_on(runtime.run_event_loop(Default::default()))
             .unwrap();
-        // refused before the permission request, which nothing here would answer
-        let err = eval_string(&mut runtime, "String(globalThis.__ws)");
-        assert!(err.starts_with("Error"), "{url}: unexpected outcome: {err}");
+        let outcome = eval_string(&mut runtime, "String(globalThis.__ws)");
+        assert!(outcome.contains("Bad resource ID"), "{op}: {outcome}");
+    }
+}
+
+#[test]
+fn websocket_create_rejects_urls_it_cannot_dial() {
+    for (url, needle) in [
+        ("http://example.org/", "ws:// or wss://"),
+        ("wss:", "empty host"),
+        ("wss://", "empty host"),
+        ("ws://example.org/", "must be `wss`"),
+        ("wss://example.org/#x", "fragment"),
+        ("wss://example.org:0/", "port"),
+    ] {
+        let script = format!(r#"Deno.core.ops.op_ws_create("{url}", "")"#);
+        let err = run_scene(false, &script).expect_err(url);
+        assert!(err.contains(needle), "{url}: unexpected error: {err}");
+    }
+    for protocols in ["a,b", "a, a", "a b", ", a"] {
+        let script = format!(r#"Deno.core.ops.op_ws_create("wss://example.org/", "{protocols}")"#);
+        let err = run_scene(false, &script).expect_err(protocols);
+        assert!(err.contains("protocol"), "{protocols}: unexpected error: {err}");
     }
 }
 
@@ -351,7 +370,7 @@ fn streamed_upload_reaches_the_server() {
         body
     });
 
-    let (mut runtime, _) = create_runtime(false, false, "test-upload", true, Default::default());
+    let (mut runtime, _) = create_runtime(false, false, "test-upload", Default::default());
     let state = runtime.op_state();
     {
         let mut state = state.borrow_mut();
@@ -446,7 +465,7 @@ const SWEEP_SKIPPED: &[(&str, &str)] = &[(
 /// before it is made, which names the op when one aborts the test process.
 fn sweep_client_ops(super_user: bool) {
     let kill_flag = dcl_js::KillFlag::default();
-    let (mut runtime, _) = create_runtime(false, super_user, "op-sweep", false, kill_flag.clone());
+    let (mut runtime, _) = create_runtime(false, super_user, "op-sweep", kill_flag.clone());
     let (scene_sx, _scene_rx) = dcl_types::scene_response_channel();
     // dropped so ops that wait on the renderer see a closed channel instead of waiting
     let (_, renderer_rx) = tokio::sync::mpsc::unbounded_channel();
