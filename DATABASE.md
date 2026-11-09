@@ -1253,7 +1253,12 @@ NULL`), a transaction advisory lock per (address, badge) that also serializes
 the console revoke, then the document, the counter, the newly reached tiers,
 completion and, unless suppressed, one idempotent `badge_granted` notification
 per new tier. The console grant raises the steps to the requested tier's
-target through it.
+target through it. The backfill (`POST /badges/badges/{id}/backfill`,
+`social/src/badges/backfill.rs`) runs one such transaction per wallet: it
+takes the same badge lock and advisory lock first, merges upstream's way over
+the progress it reads under them, writes through `apply_progress` without
+notifications, then sets the merger's instants on the earned tiers and the
+completion.
 
 Invariants: `steps_done` equals the document's `steps`; earned tiers and
 completion are never taken back by a write (only the console revoke deletes

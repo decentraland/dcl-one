@@ -1,14 +1,14 @@
 //! Badges: the read surface of badges.decentraland.org (`/badges`,
 //! `/badges/{id}`, `/badges/{id}/tiers`, `/categories`, `/status`,
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
-//! admin read, grant and revoke (the last two with an audit row), and badge
-//! art mirrored into `BADGES_ASSETS_DIR` at `/assets/{path}`. Revoke answers
-//! 200 with a body in every environment; upstream registers it in dev and
-//! test only, with a bare 204. Tables:
+//! admin read, grant, revoke and [`backfill`] (grant and revoke with an
+//! audit row), and badge art mirrored into `BADGES_ASSETS_DIR` at
+//! `/assets/{path}`. Revoke answers 200 with a body in every environment;
+//! upstream registers it in dev and test only, with a bare 204. Tables:
 //! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
 //! the schema), `user_badge_progress`, `user_achieved_tiers`,
 //! `badge_admin_audit`, `presence_badges`. Every progress write goes through
-//! [`progress::apply_progress`]; the console grant is its only caller here.
+//! [`progress::apply_progress`]: the console grant and the backfill here.
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix), so `<node>/badges` is the base URL of upstream's
@@ -18,6 +18,7 @@
 //! there would collide with this prefix and with places' `/categories`.
 
 pub mod assets;
+pub mod backfill;
 pub mod handlers;
 pub mod progress;
 pub mod store;
@@ -27,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::notifications::admin::AdminSecretSource;
@@ -98,6 +99,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/badges", get(handlers::get_badges))
         .route("/badges/{badge_id}", get(handlers::get_badge))
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
+        .route(
+            "/badges/{badge_id}/backfill",
+            post(backfill::backfill_badge),
+        )
         .route("/categories", get(handlers::get_categories))
         .route("/status", get(handlers::get_status))
         .route("/users/{address}/preview", get(handlers::get_user_preview))
@@ -125,5 +130,7 @@ async fn preflight_no_content(mut response: axum::response::Response) -> axum::r
     response
 }
 
+#[cfg(test)]
+mod backfill_tests;
 #[cfg(test)]
 mod tests;
