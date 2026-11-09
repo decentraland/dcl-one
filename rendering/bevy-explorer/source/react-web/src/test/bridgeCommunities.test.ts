@@ -7,9 +7,13 @@ import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene,
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
-const { signed, getCompactProfiles } = vi.hoisted(() => ({ signed: vi.fn(), getCompactProfiles: vi.fn() }))
+const { signed, getCompactProfiles, serviceBase } = vi.hoisted(() => ({
+  signed: vi.fn(),
+  getCompactProfiles: vi.fn(),
+  serviceBase: vi.fn(async (name: string) => `https://${name}.example`)
+}))
 vi.mock('../../bridge-scene/src/http', () => ({
-  serviceBase: async (name: string) => `https://${name}.example`,
+  serviceBase,
   signed,
   getJson: vi.fn(async () => undefined),
   signedForm: vi.fn(),
@@ -212,6 +216,28 @@ describe('bridge community member actions', () => {
     await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'transfer' })
     const card = h.sent.find((s) => s.kind === 'community')
     expect(card?.kind === 'community' ? card.community.role : undefined).toBe('moderator')
+  })
+
+  it.each(['kick', 'ban'] as const)('reads the community again after a %s, for its member count', async (action) => {
+    serve({ [`GET https://socialApi.example/v2/communities/c1`]: { id: 'c1', name: 'Builders', description: '', membersCount: 1, role: 'owner' } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    const card = h.sent.find((s) => s.kind === 'community')
+    expect(card?.kind === 'community' ? card.community.membersCount : undefined).toBe(1)
+    expect(h.sent.some((s) => s.kind === 'communities')).toBe(true)
+  })
+
+  it('does not read the community again after a promote', async () => {
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'promote' })
+    expect(h.sent.some((s) => s.kind === 'community')).toBe(false)
+  })
+
+  it('says on the card when the service cannot be located', async () => {
+    serviceBase.mockRejectedValueOnce(new Error('no socialApi service'))
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'kick' })
+    expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'kick', message: 'no socialApi service' })
   })
 
   it('says on the card when the action fails, and reads nothing', async () => {

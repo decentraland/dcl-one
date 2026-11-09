@@ -592,12 +592,13 @@ export function registerCommunities(ctx: Ctx): void {
   })
   // The card's member menu, as unity-explorer's MembersListController: promote and demote set the
   // member's role, a transfer sets it to owner (the service makes the old owner a moderator), a
-  // kick removes the member and a ban bans them. A failure is shown on the card; on success the
-  // card's members are read again, and after a transfer the community too, since the user's own
-  // role changed.
+  // kick removes the member and a ban bans them. A failure (the service url included) is shown on
+  // the card; on success the card's members are read again. A kick, a ban or a transfer also
+  // changes the community (its member count, or the user's own role), so the community and the
+  // lists are read again too.
   ctx.on('communityMemberAction', async (msg) => {
-    const member = `${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}`
     const run = async (): Promise<unknown> => {
+      const member = `${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}`
       switch (msg.action) {
         case 'promote':
           return await signed(member, 'PATCH', { role: 'moderator' })
@@ -609,6 +610,10 @@ export function registerCommunities(ctx: Ctx): void {
           return await signed(member, 'DELETE')
         case 'ban':
           return await signed(`${member}/bans`, 'POST')
+        default: {
+          const unknown: never = msg.action
+          throw new Error(`unknown member action ${String(unknown)}`)
+        }
       }
     }
     const done = await run().then(
@@ -622,7 +627,7 @@ export function registerCommunities(ctx: Ctx): void {
     if (!done) return
     const fresh = await detail(msg.id).catch(() => undefined)
     if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
-    if (msg.action !== 'transfer') return
+    if (msg.action === 'promote' || msg.action === 'demote') return
     const raw = await rawOne(msg.id).catch(() => undefined)
     const [community] = raw != null ? await communities([raw]) : []
     if (community != null) ctx.send({ kind: 'community', community })

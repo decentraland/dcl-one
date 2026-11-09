@@ -25,7 +25,6 @@ function renderModal(c: Community, error: string | null = null) {
       error={error}
       {...props}
       onLeave={vi.fn()}
-     
       onOpenChat={vi.fn()}
       onClose={vi.fn()}
     />

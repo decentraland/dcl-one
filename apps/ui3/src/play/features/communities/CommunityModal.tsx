@@ -146,7 +146,7 @@ function FriendButton({ relationship, onAction }: { relationship: Relationship; 
   }
   if (relationship === 'requested') {
     return (
-      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Cancel Request" onClick={() => onAction('cancel')}>
+      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Request Sent, Cancel Request" onClick={() => onAction('cancel')}>
         <span className={styles.swapIdle}>REQUEST SENT</span>
         <span className={styles.swapHover}>CANCEL REQUEST</span>
       </button>
@@ -154,7 +154,7 @@ function FriendButton({ relationship, onAction }: { relationship: Relationship; 
   }
   if (relationship === 'blocked') {
     return (
-      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Unblock" onClick={() => onAction('unblock')}>
+      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Blocked, Unblock" onClick={() => onAction('unblock')}>
         <span className={styles.swapIdle}>BLOCKED</span>
         <span className={styles.swapHover}>UNBLOCK</span>
       </button>
@@ -174,7 +174,7 @@ function MemberRow({
   onMenu
 }: {
   member: CommunityMember
-  /** The signed-in user's own row: no friendship button and no menu. */
+  /** The signed-in user's own row, or the user is not known yet: no friendship button and no menu. */
   self: boolean
   relationship: Relationship
   /** An action on this member is running. */
@@ -347,17 +347,25 @@ export function CommunityModal({
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
   // the members acted on: their menu waits for the card's members (or an error) to come back
   const [acting, setActing] = useState<ReadonlySet<string>>(new Set())
+  // released when the card's data comes back, or when an error arrives (not when one is cleared:
+  // a new action clears the last error while it is still running)
   useEffect(() => {
     setRemoving(new Set())
     setActing(new Set())
-  }, [detail, error])
+  }, [detail])
+  useEffect(() => {
+    if (error == null) return
+    setRemoving(new Set())
+    setActing(new Set())
+  }, [error])
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const member = isMemberRole(community.role)
   const isPrivate = community.privacy === 'private'
   const showCover = community.thumbnail != null && !coverFailed
   const loading = detail == null
 
-  const isMe = (address: string): boolean => me != null && me.address.toLowerCase() === address.toLowerCase()
+  // until the user's own profile is known, no row offers controls: any of them could be theirs
+  const noControls = (address: string): boolean => me == null || me.address.toLowerCase() === address.toLowerCase()
   const runMemberAction = (member: CommunityMember, action: CommunityMemberAction): void => {
     setActing((prev) => new Set(prev).add(member.address))
     onMemberAction?.(community.id, member.address, action)
@@ -513,7 +521,7 @@ export function CommunityModal({
                   <MemberRow
                     key={m.address}
                     member={m}
-                    self={isMe(m.address)}
+                    self={noControls(m.address)}
                     relationship={relationship(m.address)}
                     busy={acting.has(m.address)}
                     menuOpen={menuFor === m.address}

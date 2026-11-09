@@ -88,7 +88,12 @@ describe('profile-card as the community member menu', () => {
   it('greys out an action that cannot run, with its reason', async () => {
     const transfer = vi.fn()
     renderCard({ ...handlers, context: 'community', communityActions: [{ label: 'Make Community Owner', icon: null, onClick: transfer, disabledReason: 'Needs a NAME.' }] })
-    expect(screen.getByRole('button', { name: 'Make Community Owner' })).toBeDisabled()
+    const row = screen.getByRole('button', { name: 'Make Community Owner' })
+    // greyed but focusable, its reason both on hover and to assistive tech
+    expect(row).toHaveAttribute('aria-disabled', 'true')
+    expect(row).toHaveAccessibleDescription('Needs a NAME.')
     expect(screen.getByRole('tooltip')).toHaveTextContent('Needs a NAME.')
+    await userEvent.click(row)
+    expect(transfer).not.toHaveBeenCalled()
   })
 })

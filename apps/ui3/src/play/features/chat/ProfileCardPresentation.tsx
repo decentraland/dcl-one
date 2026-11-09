@@ -6,7 +6,7 @@
 // unity-explorer's member menu (context 'community'): View Profile · Chat, the owner's and
 // moderators' actions, then Block · Report.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
@@ -132,6 +132,7 @@ export function ProfileCardPresentation({
     return () => clearTimeout(t)
   }, [copied])
   const cardRef = useRef<HTMLDivElement>(null)
+  const reasonId = useId()
   // Start at the anchor; once laid out, clamp to the viewport using the card's REAL size.
   const [pos, setPos] = useState({ left: x, top: y })
   useLayoutEffect(() => {
@@ -260,13 +261,15 @@ export function ProfileCardPresentation({
               {viewProfile}
               {message}
               {communityActions.length > 0 && <div className={styles.divider} />}
-              {communityActions.map((a) =>
+              {communityActions.map((a, i) =>
                 a.disabledReason != null ? (
+                  // aria-disabled, not disabled: it stays focusable, so the reason is reachable without a mouse
                   <Tooltip key={a.label} label={a.disabledReason} side="bottom" multiline className={styles.rowTip}>
-                    <button type="button" className={styles.row} disabled>
+                    <button type="button" className={styles.row} aria-disabled="true" aria-describedby={`${reasonId}-${i}`}>
                       {a.icon}
                       <span>{a.label}</span>
                     </button>
+                    <span id={`${reasonId}-${i}`} className={styles.srOnly}>{a.disabledReason}</span>
                   </Tooltip>
                 ) : (
                   <button type="button" key={a.label} className={styles.row} onClick={() => { onClose(); a.onClick() }}>

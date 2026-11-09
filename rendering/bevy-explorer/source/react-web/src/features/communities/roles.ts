@@ -1,5 +1,7 @@
 // Community membership roles, as the social-api names them.
 
+import type { CommunityMemberAction } from '../../engine/protocol'
+
 export function isMemberRole(role: string): boolean {
   return role === 'owner' || role === 'moderator' || role === 'member'
 }
@@ -14,7 +16,7 @@ export function roleLabel(role: string | undefined): string | null {
 /** One entry of the member menu's owner/moderator section; `needsName` greys a transfer to a
  *  member without a claimed NAME. */
 export interface MemberActionEntry {
-  action: 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
+  action: CommunityMemberAction
   needsName?: boolean
 }
 

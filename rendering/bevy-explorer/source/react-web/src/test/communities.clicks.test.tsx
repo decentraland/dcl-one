@@ -793,6 +793,41 @@ describe('community card members', () => {
     expect(s.onMemberAction).not.toHaveBeenCalled()
   })
 
+  it('keeps the hold when the new action clears an earlier error', async () => {
+    const s = renderCard('owner', { error: 'There was an error kicking the user. Please try again.' })
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    await act(async () => actions.find((a) => a.label === 'Demote Moderator')?.onClick())
+    s.rerender({ error: null })
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeDisabled()
+  })
+
+  it("releases a member's menu when the action fails", async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    await act(async () => actions.find((a) => a.label === 'Demote Moderator')?.onClick())
+    s.rerender({ error: 'There was an error removing moderator from user. Please try again.' })
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeEnabled()
+  })
+
+  it('does nothing when Remove Member is cancelled', async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Plain')
+    act(() => actions.find((a) => a.label === 'Remove Member')?.onClick())
+    await userEvent.click(await screen.findByRole('button', { name: 'CANCEL' }))
+    expect(s.onMemberAction).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'More options for Plain' })).toBeEnabled()
+  })
+
+  it("offers no row controls until the user's own profile is known", async () => {
+    renderCard('owner', { me: null })
+    await openMembers()
+    expect(screen.queryByRole('button', { name: /More options for/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /ADD FRIEND/ })).toBeNull()
+  })
+
   it("holds a member's menu while an action on them runs, until the members come back", async () => {
     const s = renderCard('owner')
     await openMembers()
