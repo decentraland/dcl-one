@@ -72,7 +72,8 @@
         "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
         "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails.",
-        "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests."
+        "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
+        "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key. Key-holding jobs may not rewrite a checkout with git, may pass only allowlisted action inputs (same repository, no parent paths, artifacts only under runner.temp or a workspace dot directory), may not map the key into an action step, interpolate expressions in the key step, write GITHUB_ENV or GITHUB_PATH, or use parent path segments or loader assignments in the key step."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -3914,13 +3915,14 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "9e8d7f30adaef8a2b81f9a8373411644ae7a1888e7942125087e285504990cc6",
+          "sha256": "9e926bca6de65dc4d36761fa563cf8f3b4469c8c0e2344b8842675d7b6d1e182",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "review-followup-2",
             "bot-review-279-b",
-            "bot-review-279-c"
+            "bot-review-279-c",
+            "key-scan-repair"
           ]
         },
         "library/ui/figma/test/snapshot.ts": {
@@ -3940,14 +3942,15 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "21ba2fd87ef0c72cad36d93ffffd08f1df5572125d552daa466145c809f62dc3",
+          "sha256": "02651d1bb492141659339b9bb381e3b963394917466a969374105fdd87f78881",
           "fds": null,
           "deviation": [
             "capture-removed",
             "bot-review-279",
             "review-followup-2",
             "bot-review-279-b",
-            "review-followup-3"
+            "review-followup-3",
+            "key-scan-repair"
           ]
         },
         "library/ui/figma/tsconfig.json": {
@@ -3982,7 +3985,8 @@
         "seal-removed": 51,
         "foundation-review": 52,
         "verified-install": 53,
-        "review-followup-3": 54
+        "review-followup-3": 54,
+        "key-scan-repair": 55
       }
     }
   ],
