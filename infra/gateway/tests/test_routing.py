@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 
 import nginx_map
@@ -52,6 +53,20 @@ class HostAliasTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(route("badges.example.test", path), ("/badges" + path, path))
                 self.assertEqual(route("gateway.example.test", "/badges" + path), ("/badges" + path, path))
+
+    def test_badges_host_keeps_already_prefixed_paths(self):
+        # A second segment the badges router mounts is taken as the /badges
+        # mount, never as a badge id.
+        for path in ["/badges/badges", "/badges/badges/traveler/tiers", "/badges/categories",
+                     "/badges/status", "/badges/assets/traveler/2d.png",
+                     "/badges/users/0x1234567890abcdef1234567890abcdef12345678/badges"]:
+            with self.subTest(path=path):
+                self.assertEqual(route("badges.example.test", path), (path, path))
+
+    def test_badges_mounts_match_the_badges_router(self):
+        router = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        mounts = set(re.findall(r'\.route\(\s*"/([^/"]+)', router))
+        self.assertEqual(mounts, set(gateway.BADGES_MOUNTS))
 
     def test_worlds_host_reaches_the_prefixed_worlds_routes(self):
         for path in ["/world/w.dcl.eth/settings", "/livekit-webhook", "/health/live",
