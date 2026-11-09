@@ -29,7 +29,7 @@ export function Passport({
 }): React.JSX.Element {
   const session = useSession()
   const { requestOwnedNames } = session.profile
-  // Fetch the rich profile (badges/photos/about) on open; render identity-only until it lands.
+  // Fetch the rich profile (badges/about) on open; render identity-only until it lands.
   useEffect(() => {
     requestPassport(userId)
   }, [userId])
@@ -107,6 +107,17 @@ export function Passport({
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
       onClose={onClose}
+      photoActions={{
+        setPublic: session.gallery.setPublic,
+        remove: session.gallery.remove,
+        metas: session.gallery.metas,
+        loadPhoto: session.gallery.loadPhoto,
+        onTeleport: (x, y) => {
+          onClose()
+          session.map.teleport(x, y)
+        },
+        onViewPerson: (u) => openPassport(u.address)
+      }}
     />
   )
 }

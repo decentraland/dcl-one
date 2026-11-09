@@ -1,0 +1,293 @@
+// The camera-reel thumbnail grid of the Gallery and the passport's Photos tab — unity-explorer's
+// CameraReelGalleryController on a LoopListView2. The reel is flattened into rows (top padding, a month
+// header per run of same-month photos, rows of `columns` thumbnails, bottom padding) with fixed
+// heights, and only the rows near the viewport are mounted, so a reel of any length stays a handful of
+// elements. The highest photo index on screen drives the paging (useReelList.loadMore).
+//
+// A loaded thumbnail shows the Accent outline on hover and, where the menu is enabled, the ⋮ button
+// that opens the photo's options (unity-explorer's CameraReelOptionButtonController).
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { GenericContextMenu, type GenericContextMenuItem } from '../../design'
+import { photoTime } from '../session/useEngineSession'
+import type { GalleryPhoto } from '../../engine/protocol'
+import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
+import menuVerticalIcon from '../../assets/camera-reel/menu-vertical.png'
+import shareIcon from '../../assets/camera-reel/share-x.png'
+import linkIcon from '../../assets/camera-reel/copy-link.png'
+import downloadIcon from '../../assets/camera-reel/download.png'
+import deleteIcon from '../../assets/camera-reel/delete.png'
+import styles from './ReelGrid.module.css'
+
+export interface ReelGridLayout {
+  columns: number
+  /** Thumbnail size in canvas px. With `fitWidth` the width follows the grid's width and the height
+   *  keeps this aspect. */
+  tileWidth: number
+  tileHeight: number
+  fitWidth?: boolean
+  /** One section per run of same-month photos, each under a month header. */
+  groupByMonth: boolean
+  paddingTop: number
+  paddingBottom: number
+  paddingLeft: number
+  monthSpacing: number
+  /** The ⋮ button's height (the gallery's instance is 41, the passport's 40). */
+  optionButtonHeight: number
+}
+
+export interface ReelGridMenu {
+  showDelete: boolean
+  onSetPublic: (photo: GalleryPhoto, isPublic: boolean) => void
+  onDelete?: (photo: GalleryPhoto) => void
+}
+
+// ReelGalleryRow.ROW_SPACING / HEADER_SPACING; the header is one 18 px Inter line.
+const GAP = 4
+const HEADER_SPACING = 20
+const HEADER_HEIGHT = 22
+const OVERSCAN = 600
+
+type Row =
+  | { kind: 'padding'; top: number; height: number }
+  | { kind: 'header'; top: number; height: number; label: string }
+  | { kind: 'thumbs'; top: number; height: number; start: number; count: number }
+
+export function reelMonthLabel(dateTime: string): string {
+  return new Date(photoTime(dateTime)).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+type RowInit = Row extends infer R ? (R extends Row ? Omit<R, 'top'> : never) : never
+
+/** ReelGalleryRow.Build, with each row's top and its spacing folded into its height. */
+export function buildReelRows(photos: GalleryPhoto[], layout: ReelGridLayout, tileHeight: number): { rows: Row[]; height: number } {
+  const rows: Row[] = []
+  let top = 0
+  const push = (row: RowInit): void => {
+    rows.push({ ...row, top } as Row)
+    top += row.height
+  }
+  push({ kind: 'padding', height: layout.paddingTop })
+  let start = 0
+  while (start < photos.length) {
+    const label = reelMonthLabel(photos[start].dateTime)
+    let end = photos.length
+    if (layout.groupByMonth) {
+      end = start + 1
+      while (end < photos.length && reelMonthLabel(photos[end].dateTime) === label) end++
+      push({ kind: 'header', height: HEADER_HEIGHT + HEADER_SPACING, label })
+    }
+    for (let at = start; at < end; at += layout.columns) {
+      const count = Math.min(layout.columns, end - at)
+      const last = at + count >= end
+      const after = !last ? GAP : end >= photos.length ? 0 : layout.monthSpacing
+      push({ kind: 'thumbs', height: tileHeight + after, start: at, count })
+    }
+    start = end
+  }
+  push({ kind: 'padding', height: layout.paddingBottom })
+  return { rows, height: top }
+}
+
+export function ReelGrid({
+  photos,
+  layout,
+  menu,
+  onOpen,
+  onVisibleIndex,
+  'aria-label': ariaLabel
+}: {
+  photos: GalleryPhoto[]
+  layout: ReelGridLayout
+  /** The photo options; null where the reel isn't yours. */
+  menu: ReelGridMenu | null
+  onOpen: (index: number) => void
+  /** The highest photo index on screen (for paging). */
+  onVisibleIndex: (index: number) => void
+  'aria-label'?: string
+}): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // `measured` is false until the viewport has been read once: the first render can't know what is
+  // on screen, and reporting every row as visible then would read pages nobody scrolled to.
+  const [view, setView] = useState({ top: 0, height: 0, width: 0, measured: false })
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (el == null) return
+    const measure = (): void => setView({ top: el.scrollTop, height: el.clientHeight, width: el.clientWidth, measured: true })
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const tileWidth = layout.fitWidth && view.width > 0 ? (view.width - layout.paddingLeft - GAP * (layout.columns - 1)) / layout.columns : layout.tileWidth
+  const tileHeight = layout.fitWidth && view.width > 0 ? (tileWidth * layout.tileHeight) / layout.tileWidth : layout.tileHeight
+  const { rows, height } = useMemo(() => buildReelRows(photos, layout, tileHeight), [photos, layout, tileHeight])
+
+  // A viewport with no height (no layout, as in a test DOM): mount every row rather than none.
+  const all = view.height === 0
+  const visible = rows.filter((r) => all || (r.top + r.height >= view.top - OVERSCAN && r.top <= view.top + view.height + OVERSCAN))
+
+  let lastOnScreen = -1
+  for (const r of rows) {
+    if (r.kind === 'thumbs' && (all || r.top <= view.top + view.height)) lastOnScreen = r.start + r.count - 1
+  }
+  useEffect(() => {
+    if (view.measured) onVisibleIndex(lastOnScreen)
+  }, [view.measured, lastOnScreen, photos.length, onVisibleIndex])
+
+  const [menuFor, setMenuFor] = useState<{ photo: GalleryPhoto; anchor: { x: number; y: number }; trigger: HTMLElement } | null>(null)
+  // A photo that leaves the list (deleted, or made private on a public reel) takes its menu with it.
+  const openPhoto = menuFor != null ? photos.find((p) => p.id === menuFor.photo.id) : undefined
+  useEffect(() => {
+    if (menuFor != null && openPhoto == null) setMenuFor(null)
+  }, [menuFor, openPhoto])
+
+  return (
+    <div
+      ref={scrollRef}
+      className={styles.scroll}
+      aria-label={ariaLabel}
+      onScroll={(e) => {
+        const el = e.currentTarget
+        setView((v) => (v.top === el.scrollTop ? v : { ...v, top: el.scrollTop }))
+      }}
+    >
+      <div className={styles.canvas} style={{ height }}>
+        {visible.map((r) => {
+          if (r.kind === 'padding') return null
+          if (r.kind === 'header') {
+            return (
+              <h2 key={`h${r.top}`} className={styles.month} style={{ top: r.top, left: layout.paddingLeft }}>
+                {r.label}
+              </h2>
+            )
+          }
+          return (
+            <div key={photos[r.start].id} className={styles.row} style={{ top: r.top, left: layout.paddingLeft, gap: GAP }}>
+              {photos.slice(r.start, r.start + r.count).map((photo, i) => (
+                <Thumbnail
+                  key={photo.id}
+                  photo={photo}
+                  width={tileWidth}
+                  height={tileHeight}
+                  optionButtonHeight={layout.optionButtonHeight}
+                  hasMenu={menu != null}
+                  menuOpen={menuFor?.photo.id === photo.id}
+                  onOpen={() => onOpen(r.start + i)}
+                  onMenu={(trigger) => {
+                    if (menuFor?.photo.id === photo.id) {
+                      setMenuFor(null)
+                      return
+                    }
+                    const box = trigger.getBoundingClientRect()
+                    setMenuFor({ photo, trigger, anchor: { x: box.left + box.width / 2, y: box.top + box.height / 2 } })
+                  }}
+                />
+              ))}
+            </div>
+          )
+        })}
+      </div>
+      {menu != null && menuFor != null && openPhoto != null && (
+        <ReelMenu photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} menu={menu} onClose={() => setMenuFor(null)} />
+      )}
+    </div>
+  )
+}
+
+function Thumbnail({
+  photo,
+  width,
+  height,
+  optionButtonHeight,
+  hasMenu,
+  menuOpen,
+  onOpen,
+  onMenu
+}: {
+  photo: GalleryPhoto
+  width: number
+  height: number
+  optionButtonHeight: number
+  hasMenu: boolean
+  menuOpen: boolean
+  onOpen: () => void
+  onMenu: (trigger: HTMLElement) => void
+}): React.JSX.Element {
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Clicks and hover wait for the image, as ReelThumbnailController's do.
+  const ready = loaded && !failed
+  return (
+    <div
+      className={`${styles.tile} ${ready ? styles.ready : ''} ${menuOpen ? styles.active : ''}`.trim()}
+      style={{ width, height }}
+    >
+      <button type="button" className={styles.open} aria-label="Open photo" aria-disabled={!ready} onClick={() => ready && onOpen()}>
+        {!loaded && !failed && <span className={styles.loading} aria-hidden="true" />}
+        <img
+          className={styles.image}
+          src={photo.thumbnailUrl ?? photo.url}
+          alt=""
+          draggable={false}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+        />
+      </button>
+      <span className={styles.outline} aria-hidden="true" />
+      {hasMenu && ready && (
+        <button
+          type="button"
+          className={styles.options}
+          style={{ height: optionButtonHeight, top: 33 - optionButtonHeight / 2 }}
+          aria-label="Photo options"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(e) => onMenu(e.currentTarget)}
+        >
+          <span className={styles.optionsIcon} style={{ maskImage: `url("${menuVerticalIcon}")`, WebkitMaskImage: `url("${menuVerticalIcon}")` }} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ReelMenu({
+  photo,
+  anchor,
+  trigger,
+  menu,
+  onClose
+}: {
+  photo: GalleryPhoto
+  anchor: { x: number; y: number }
+  trigger: HTMLElement
+  menu: ReelGridMenu
+  onClose: () => void
+}): React.JSX.Element {
+  // The switch flips at once, as Unity's toggle does; the photo follows when the service agrees.
+  const [isPublic, setIsPublic] = useState(photo.isPublic === true)
+  const items: GenericContextMenuItem[] = [
+    {
+      kind: 'toggle',
+      label: 'Set as Public',
+      checked: isPublic,
+      onChange: (next) => {
+        setIsPublic(next)
+        menu.onSetPublic(photo, next)
+      }
+    },
+    { kind: 'separator' },
+    { kind: 'button', label: 'Share on X', icon: shareIcon, onClick: () => shareReelToX(photo.id) },
+    { kind: 'button', label: 'Copy Link', icon: linkIcon, onClick: () => copyReelLink(photo.id) },
+    { kind: 'button', label: 'Download', icon: downloadIcon, onClick: () => void downloadReel(photo.url) }
+  ]
+  if (menu.showDelete && menu.onDelete != null) {
+    const onDelete = menu.onDelete
+    items.push({ kind: 'button', label: 'Delete', icon: deleteIcon, onClick: () => onDelete(photo) })
+  }
+  return <GenericContextMenu anchor={anchor} items={items} onClose={onClose} ignore={trigger} aria-label="Photo options" />
+}

@@ -4,7 +4,8 @@ import { EngineDriver } from './engine/EngineDriver'
 import { EngineRpc } from './engine/engineRpc'
 import { EngineHost } from './features/engine/EngineHost'
 import type { LoginDriver } from './engine/driver'
-import { startMockBridge } from './engine/mockBridge'
+import { mockPublicReelPage, startMockBridge } from './engine/mockBridge'
+import { setPublicReelFetcher } from './features/gallery/publicReels'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
@@ -188,6 +189,7 @@ function Hud(): React.JSX.Element {
   } => {
     if (MODE === 'mock') {
       startMockBridge()
+      setPublicReelFetcher(mockPublicReelPage)
       return { rpc: null, createDriver: () => new BridgeClient() }
     }
     if (MODE === 'native') {

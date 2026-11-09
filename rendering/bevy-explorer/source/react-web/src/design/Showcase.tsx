@@ -11,6 +11,11 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
+import { GenericContextMenu } from './GenericContextMenu'
+import reelShareIcon from '../assets/camera-reel/share-x.png'
+import reelLinkIcon from '../assets/camera-reel/copy-link.png'
+import reelDownloadIcon from '../assets/camera-reel/download.png'
+import reelDeleteIcon from '../assets/camera-reel/delete.png'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -146,6 +151,40 @@ function Swatch({ name, hex, token, dark }: { name: string; hex: string; token?:
         {token && <div style={{ fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{token}</div>}
       </div>
     </div>
+  )
+}
+
+function GenericContextMenuDemo(): React.JSX.Element {
+  const [anchor, setAnchor] = useState<{ x: number; y: number; opener: Element } | null>(null)
+  const [pub, setPub] = useState(true)
+  return (
+    <>
+      <Button
+        variant="secondary"
+        onClick={(e) => {
+          const box = e.currentTarget.getBoundingClientRect()
+          setAnchor(anchor == null ? { x: box.left + box.width / 2, y: box.top + box.height / 2, opener: e.currentTarget } : null)
+        }}
+      >
+        Open the photo options
+      </Button>
+      {anchor != null && (
+        <GenericContextMenu
+          anchor={anchor}
+          ignore={anchor.opener}
+          onClose={() => setAnchor(null)}
+          aria-label="Photo options"
+          items={[
+            { kind: 'toggle', label: 'Set as Public', checked: pub, onChange: setPub },
+            { kind: 'separator' },
+            { kind: 'button', label: 'Share on X', icon: reelShareIcon, onClick: () => {} },
+            { kind: 'button', label: 'Copy Link', icon: reelLinkIcon, onClick: () => {} },
+            { kind: 'button', label: 'Download', icon: reelDownloadIcon, onClick: () => {} },
+            { kind: 'button', label: 'Delete', icon: reelDeleteIcon, onClick: () => {} }
+          ]}
+        />
+      )}
+    </>
   )
 }
 
@@ -479,6 +518,10 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="GenericContextMenu (unity-explorer's, as the camera-reel photo options use it)">
+        <GenericContextMenuDemo />
       </Section>
 
       <Section title="HintsButton (opens upward)">

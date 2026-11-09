@@ -3,7 +3,8 @@ import { act } from '@testing-library/react'
 import type { GalleryPhoto } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 
-// DOMAIN: gallery (camera reel) — fetch the reel, lazy per-photo metadata, delete.
+// DOMAIN: gallery (camera reel) — paged reads, lazy per-photo metadata, visibility and delete writes,
+// each answered by the requestId it was sent with.
 describe('gallery domain', () => {
   const photo = (id: string, dateTime: string): GalleryPhoto => ({
     id,
@@ -12,29 +13,29 @@ describe('gallery domain', () => {
     dateTime
   })
 
-  it('opening the gallery fetches it once (cached per session)', async () => {
+  it('opening the gallery sends nothing by itself: the page asks for its pages', async () => {
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.session().gallery.toggle())
-    act(() => h.session().gallery.toggle()) // close
-    act(() => h.session().gallery.toggle()) // reopen — must NOT refetch
-    expect(h.driver.sentOf('getGallery')).toHaveLength(1)
+    expect(h.session().gallery.open).toBe(true)
+    expect(h.driver.sentOf('getGallery')).toHaveLength(0)
   })
 
-  it('gallery stream sorts newest-first and sets storage + loaded', async () => {
+  it('fetchPage sends offset + limit and resolves with the matching reply, in service order', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    expect(h.session().gallery.loaded).toBe(false)
-    h.driver.emit({
-      kind: 'gallery',
-      photos: [photo('old', '1000'), photo('new', '3000'), photo('mid', '2000')],
-      current: 3,
-      max: 500
+    let page: Awaited<ReturnType<ReturnType<typeof h.session>['gallery']['fetchPage']>> | undefined
+    const pending = h.session().gallery.fetchPage(100, 100).then((p) => (page = p))
+    const sent = h.driver.last('getGallery')
+    expect(sent).toMatchObject({ kind: 'getGallery', offset: 100, limit: 100 })
+    const requestId = (sent as { requestId: number }).requestId
+    // Another request's reply doesn't settle this one.
+    h.driver.emit({ kind: 'gallery', requestId: requestId + 99, ok: true, photos: [], current: 0, max: 0 })
+    h.driver.emit({ kind: 'gallery', requestId, ok: true, photos: [photo('old', '1000'), photo('new', '3000')], current: 230, max: 500 })
+    await act(async () => {
+      await pending
     })
-    expect(h.session().gallery.loaded).toBe(true)
-    expect(h.session().gallery.list.map((p) => p.id)).toEqual(['new', 'mid', 'old'])
-    expect(h.session().gallery.current).toBe(3)
-    expect(h.session().gallery.max).toBe(500)
+    expect(page).toEqual({ ok: true, photos: [photo('old', '1000'), photo('new', '3000')], total: 230, max: 500 })
   })
 
   it('loadPhoto requests metadata and the stream fills the cache', async () => {
@@ -46,13 +47,19 @@ describe('gallery domain', () => {
     expect(h.session().gallery.metas['g1']?.sceneName).toBe('Genesis Plaza')
   })
 
-  it('remove posts a delete and optimistically drops the photo', async () => {
+  it('remove and setPublic send their writes and resolve with the outcome', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    h.driver.emit({ kind: 'gallery', photos: [photo('a', '2000'), photo('b', '1000')], current: 2, max: 500 })
-    act(() => h.session().gallery.remove('a'))
-    expect(h.driver.last('deleteGalleryPhoto')).toEqual({ kind: 'deleteGalleryPhoto', id: 'a' })
-    expect(h.session().gallery.list.map((p) => p.id)).toEqual(['b'])
-    expect(h.session().gallery.current).toBe(1)
+    const removed = h.session().gallery.remove('a')
+    const del = h.driver.last('deleteGalleryPhoto') as { requestId: number }
+    expect(del).toMatchObject({ kind: 'deleteGalleryPhoto', id: 'a' })
+    h.driver.emit({ kind: 'galleryWrite', requestId: del.requestId, ok: true, current: 4, max: 500 })
+    await expect(removed).resolves.toEqual({ kind: 'galleryWrite', requestId: del.requestId, ok: true, current: 4, max: 500 })
+
+    const updated = h.session().gallery.setPublic('b', true)
+    const vis = h.driver.last('setGalleryPhotoPublic') as { requestId: number }
+    expect(vis).toMatchObject({ kind: 'setGalleryPhotoPublic', id: 'b', isPublic: true })
+    h.driver.emit({ kind: 'galleryWrite', requestId: vis.requestId, ok: false })
+    await expect(updated).resolves.toMatchObject({ ok: false })
   })
 })

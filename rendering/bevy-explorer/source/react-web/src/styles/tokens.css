@@ -45,6 +45,8 @@
   --black-30: rgba(0, 0, 0, 0.3);
   --black-50: rgba(0, 0, 0, 0.5);
   --black-90: rgba(0, 0, 0, 0.9); /* the Shop's dialog scrim */
+  --black-60: rgba(0, 0, 0, 0.6); /* the camera-reel options button */
+  --black-70: rgba(0, 0, 0, 0.7); /* ...pressed */
   --black-10: rgba(0, 0, 0, 0.1); /* the Shop toast's shadow */
   --cart-badge-ring: #2b0044; /* the Shop cart badge's ring */
   --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
@@ -63,6 +65,8 @@
 
   /* ---- surface washes / hairlines / text-on-dark ---- */
   --fill-1: rgba(255, 255, 255, 0.04);
+  --white-5: rgba(255, 255, 255, 0.051); /* a context-menu separator line */
+  --reel-loading: rgba(229, 184, 255, 0.051); /* a camera-reel thumbnail still loading (unity-explorer LoadingBright) */
   --fill-2: rgba(255, 255, 255, 0.06);
   --fill-3: rgba(255, 255, 255, 0.08);
   --fill-4: rgba(255, 255, 255, 0.1);
@@ -221,6 +225,7 @@
   --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-sm: 8px;
   --r-button: 9.6px;
+  --r-option-button: 5.33px; /* unity-explorer's Container12 at a 4.5 pixels-per-unit multiplier (the camera-reel ⋮ button) */
   --r-md: 12px; /* light buttons and popups */
   --r-slot: 15px;
   --r-lg: 16px;

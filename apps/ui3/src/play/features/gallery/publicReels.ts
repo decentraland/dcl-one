@@ -1,0 +1,44 @@
+// A player's PUBLIC camera reel, for the passport's Photos tab. unity-explorer reads it unsigned
+// (PassportController: useSignedRequest false), so even your own passport lists only the photos you
+// made public. The bridge can't make an unsigned request (every kernelFetch is signed), so the HUD
+// reads the service itself, like the passport's Creations tab reads the marketplace.
+
+import { serviceUrl } from '../../lib/baseDomain'
+import type { GalleryPhoto } from '../../engine/protocol'
+import type { ReelPage } from '../session/useEngineSession'
+
+type CompactImage = { id: string; url?: string; thumbnailUrl?: string; isPublic?: boolean; dateTime?: string }
+type CompactResponse = { images?: CompactImage[]; currentImages?: number; maxImages?: number }
+
+async function fetchFromService(address: string, offset: number, limit: number): Promise<ReelPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset), compact: 'true' })
+  try {
+    const res = await fetch(`${serviceUrl('cameraReel')}/api/users/${address.toLowerCase()}/images?${params}`)
+    if (!res.ok) {
+      // Release the unread error body rather than leave the connection holding it.
+      await res.body?.cancel()
+      throw new Error(`camera reel returned ${res.status}`)
+    }
+    const body = (await res.json()) as CompactResponse
+    const photos: GalleryPhoto[] = (body.images ?? [])
+      .filter((i) => typeof i.url === 'string')
+      .map((i) => ({ id: i.id, url: i.url as string, thumbnailUrl: i.thumbnailUrl, dateTime: i.dateTime ?? '', isPublic: i.isPublic }))
+    return { ok: true, photos, total: body.currentImages ?? photos.length, max: body.maxImages ?? 0 }
+  } catch (e) {
+    console.warn('[passport] camera reel read failed', e)
+    return { ok: false, photos: [], total: 0, max: 0 }
+  }
+}
+
+type PublicReelFetcher = (address: string, offset: number, limit: number) => Promise<ReelPage>
+let fetcher: PublicReelFetcher = fetchFromService
+
+/** One page of a player's public reel. */
+export function fetchPublicReelPage(address: string, offset: number, limit: number): Promise<ReelPage> {
+  return fetcher(address, offset, limit)
+}
+
+/** Swap the source (the ?mock=1 HUD has no service to read). */
+export function setPublicReelFetcher(next: PublicReelFetcher): void {
+  fetcher = next
+}

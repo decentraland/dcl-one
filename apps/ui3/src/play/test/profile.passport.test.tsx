@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfilePassport } from '../features/profile/ProfilePassport'
-import type { Emote, Profile, Wearable } from '../engine/protocol'
+import type { Emote, GalleryPhoto, Profile, Wearable } from '../engine/protocol'
+import { setPublicReelFetcher } from '../features/gallery/publicReels'
+import type { PassportPhotoActions } from '../features/gallery/PassportPhotos'
 
 const profile: Profile = {
   address: '0xkurd000000000000000000000000000000006b635',
@@ -166,21 +168,16 @@ describe('profile passport', () => {
     })
   })
 
-  it('Photos tab renders the camera-reel photos', async () => {
-    render(<ProfilePassport profile={{ ...profile, photos: ['https://x/p1.png', 'https://x/p2.png'] }} onClose={vi.fn()} />)
-    await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
-    expect(screen.getAllByRole('link').some((a) => a.getAttribute('href') === 'https://x/p1.png')).toBe(true)
-  })
-
   it('shows a graceful empty state when the user has no details', () => {
     render(<ProfilePassport profile={{ address: '0xnobody', name: 'Nobody', hasClaimedName: false, isGuest: false }} onClose={vi.fn()} />)
     expect(screen.getByText(/no details to show/i)).toBeInTheDocument()
   })
 
-  it('switches tabs (Photos shows empty state)', async () => {
+  it('switches tabs (Photos shows unity-explorer\'s empty state)', async () => {
+    setPublicReelFetcher(async () => ({ ok: true, photos: [], total: 0, max: 500 }))
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
-    expect(screen.getByText(/No photos shared yet/i)).toBeInTheDocument()
+    expect(await screen.findByText('No photos here yet!')).toBeInTheDocument()
   })
 })
 
@@ -275,5 +272,59 @@ describe('passport equipped items', () => {
   it('a body-shape-only equipped set leaves no section behind', () => {
     render(<ProfilePassport profile={{ ...equippedProfile, equippedWearables: [BODY_SHAPE] }} onClose={vi.fn()} />)
     expect(screen.queryByRole('heading', { name: 'Equipped Wearables' })).toBeNull()
+  })
+})
+
+// Photos tab — unity-explorer's passport gallery: the PUBLIC reel (read without signing), paged like the
+// Gallery; the options menu only on your own passport, without Delete; making a photo private drops it.
+describe('passport photos', () => {
+  const reel: GalleryPhoto[] = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, url: `https://img/${i}.jpg`, thumbnailUrl: `https://img/${i}_t.jpg`, dateTime: '1707000000', isPublic: true }))
+  const actions = (): PassportPhotoActions => ({
+    setPublic: vi.fn(async () => ({ ok: true })),
+    remove: vi.fn(async () => ({ ok: true })),
+    metas: {},
+    loadPhoto: vi.fn(),
+    onTeleport: vi.fn()
+  })
+  async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
+    const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
+    setPublicReelFetcher(fetcher)
+    render(<ProfilePassport profile={profile} isSelf={isSelf} onClose={vi.fn()} photoActions={a} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
+    const buttons = await screen.findAllByRole('button', { name: 'Open photo' })
+    for (const b of buttons) fireEvent.load(b.querySelector('img') as HTMLImageElement)
+    expect(fetcher).toHaveBeenCalledWith(profile.address.toLowerCase(), 0, 100)
+    return a
+  }
+
+  it('lists the public reel; another player\'s photos have no options', async () => {
+    await openPhotos(false)
+    expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(3)
+    expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
+  })
+
+  it('your own photos have the options without Delete', async () => {
+    await openPhotos(true)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    const menu = screen.getByRole('menu', { name: 'Photo options' })
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Share on X', 'Copy Link', 'Download'])
+  })
+
+  it('making a photo private takes it off the grid at once and closes its menu', async () => {
+    const a = await openPhotos(true)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Set as Public' }))
+    expect(a.setPublic).toHaveBeenCalledWith('p0', false)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(2))
+    expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
+  })
+
+  it('a thumbnail opens the photo viewer', async () => {
+    const a = await openPhotos(false)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[1])
+    expect(screen.getByRole('dialog', { name: 'Photo' })).toBeInTheDocument()
+    expect(a.loadPhoto).toHaveBeenCalledWith('p1')
+    expect(screen.queryByRole('button', { name: /Delete/ })).toBeNull()
   })
 })
