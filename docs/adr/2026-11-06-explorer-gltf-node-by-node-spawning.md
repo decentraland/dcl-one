@@ -149,7 +149,22 @@ next frame, and a model stays hidden until both steps are done.
   The total work is about the same; it is spread over about 100 frames instead of 17. The slowest
   slice left is a single node of about 40 ms (`clocktower_main.glb`): one node is the smallest
   unit, so a heavy collision shape still costs its build in one frame. One run had a 366 ms frame
-  that glTF instantiation did not cause (its longest processing was 45 ms).
+  that glTF instantiation did not cause (its longest processing was 45 ms). Across the three
+  runs, frames over 50 ms went from 85 to 16, and over 200 ms from 5 to 1.
+
+  This ran on 2026-11-09 against `main` `a71ee5602`, with the spawner of the time: it wrote in
+  archetype order from a list of the scene's entities. Writing parents first, with the progress on
+  the entities, changes only the spawner's own cost, measured next; processing is unchanged.
+- **The spawner alone** (`scene_spawner/spawn_bench.rs`, an ignored test, release): a 5,051-entity
+  hierarchy spawned seven times after a warm-up, medians:
+
+  | | total | per entity | frames | longest frame |
+  |---|---|---|---|---|
+  | whole (stock `write_to_world_with`) | 9.96 ms | 1.97 µs | 1 | 9.96 ms |
+  | 4 ms slices | 11.61 ms | 2.30 µs | 3 | 4.08 ms |
+
+  Slicing caps the frame at the slice for about 17 % more spawner work in total: one marker added
+  and removed per entity (sparse set, so no table move) and one query lookup per entity.
 - **Standing at the arrival point** (arriving at 0,0, the arrival behind the loading backdrop):
   no difference within noise. The heavy instantiation happens behind the backdrop, which both
   builds run whole by design, before the measured 90 s begin.
