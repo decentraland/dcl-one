@@ -640,6 +640,7 @@ impl DecentralandApp {
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
             .add_plugins(InputManagerPlugin)
+            // before VisualsPlugin: its stars graph edge needs the highlight node SceneBoundPlugin adds
             .add_plugins(SceneBoundPlugin)
             .add_plugins(UserInputPlugin)
             .add_plugins(UiCorePlugin)

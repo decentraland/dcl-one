@@ -11172,9 +11172,12 @@ dependencies = [
 name = "scene_material"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "bevy",
  "boimp",
  "common",
+ "naga_oil",
+ "nonmax",
 ]
 
 [[package]]
@@ -13641,6 +13644,7 @@ dependencies = [
  "dcl_types",
  "ipfs",
  "noise",
+ "scene_material",
  "scene_runner",
  "serde_json",
  "web-time",
