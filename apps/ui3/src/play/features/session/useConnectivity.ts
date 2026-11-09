@@ -34,7 +34,7 @@ export function useConnectivity(driver: LoginDriver | null, active: boolean) {
   }, [driver, active])
   const retry = useCallback(() => {
     if (!active) return
-    void driver?.command?.('/connectivity_retry').then(() => refresh.current?.()).catch(() => {})
+    return driver?.command?.('/connectivity_retry').then(() => { void refresh.current?.() })
   }, [driver, active])
   return { state: active ? state : null, retry }
 }

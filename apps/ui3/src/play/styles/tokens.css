@@ -69,6 +69,14 @@
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
   --modal-scrim: rgba(18, 7, 33, 0.6);
+  /* Unity ErrorPopupWithRetry.prefab, pinned in docs/guidelines/connection-lost-modal.md. */
+  --connection-modal-bg: #4c147c;
+  --connection-modal-scrim: rgba(0, 0, 0, 0.8);
+  --connection-modal-glow: #ff4bed;
+  --connection-modal-glow-top: 0.101960786;
+  --connection-modal-glow-bottom: 0.14901961;
+  --connection-modal-floor-opacity: 0.29803923;
+  --connection-modal-radius: 48px;
   /* The NAME upsell panel at the foot of the name editor (unity's Edit Username dialog). */
   --promo-bg: linear-gradient(105deg, #7b2ea8 0%, #a92e93 100%);
 
@@ -210,6 +218,7 @@
   --type-15: 15px;
   --type-16: 16px;
   --type-18: 18px;
+  --type-20: 20px;
   --type-22: 22px;
   --type-24: 24px;
   --type-30: 30px;

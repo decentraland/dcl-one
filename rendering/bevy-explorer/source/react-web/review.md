@@ -46,7 +46,7 @@ Connectivity feedback is engine-owned. `src/test/connectivity.test.tsx` checks t
 console status/retry bridge, one Connection Lost alert dialog, Retry/Exit, automatic dismissal,
 and scoped access messages. Runtime verification reads `/connectivity_state`, uses
 `/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
-`Exit`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
+`Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
 same safe snapshot and Retry action. Preview, held-world and terminal access failures must
 never become an offline alert. A reachable network with a failed room shows its room status.
 

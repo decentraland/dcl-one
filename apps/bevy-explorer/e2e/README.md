@@ -196,7 +196,7 @@ Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) a
 `explorer.retryConnectivity()` (`/connectivity_retry`). The snapshot contains `connectionLost`,
 `probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
 credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
-with `Retry` and `Exit` buttons, and a `status` named `Multiplayer status` for scoped room
+with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
 degradation. Recovery retracts the dialog automatically; Exit follows session sign-out.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A

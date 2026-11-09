@@ -137,7 +137,8 @@ State, in every build:
   adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new
   reachability check; terminal admission failures and intentional pauses stay stopped.
   The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and
-  Exit buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  Exit Application buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
