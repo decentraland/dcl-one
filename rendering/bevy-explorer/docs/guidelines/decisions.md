@@ -17,6 +17,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Sun shadow bias goes to bevy's normal bias.** URP biases each cascade by its own texel
+  (`DepthBias` 1.75 or 1.56 texels, times the soft kernel radius 2.5). bevy's depth bias is one
+  world length for every cascade and only its normal bias scales per cascade texel, so Unity's
+  texels times 2.5 are the normal bias and the depth bias stays bevy's 0.02 m. A depth bias
+  sized from the widest cascade let the soft filter shade the ground with its own shadow,
+  jagged-edged patches in Low and High alike, and lost contact shadows.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's

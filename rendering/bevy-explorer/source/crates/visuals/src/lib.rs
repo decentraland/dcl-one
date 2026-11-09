@@ -13,7 +13,7 @@ mod trees;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
-    pbr::{wireframe::WireframePlugin, CascadeShadowConfigBuilder, DirectionalLightShadowMap},
+    pbr::{wireframe::WireframePlugin, DirectionalLightShadowMap},
     prelude::*,
     render::view::{Layer, RenderLayers},
 };
@@ -31,8 +31,9 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes, PrimaryUser,
-        SceneGlobalLight, SceneLoadDistance, ShadowSetting, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        sun_cascades, sun_shadow_bias, AppConfig, DofConfig, FogSetting, PrimaryCamera,
+        PrimaryCameraRes, PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay,
+        PRIMARY_AVATAR_LIGHT_LAYER, SUN_SHADOW_MAP_SIZE,
     },
 };
 use console::DoAddConsoleCommand;
@@ -49,8 +50,6 @@ use crate::{
     trees::TreesPlugin,
 };
 
-const MIN_CASCADE: f32 = 0.1;
-
 pub struct VisualsPlugin {
     pub no_fog: bool,
 }
@@ -58,28 +57,30 @@ pub struct VisualsPlugin {
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         debug_panel::register(app);
-        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
-            .init_resource::<SceneGlobalLight>()
-            .insert_resource(CloudCover {
-                cover: 0.375,
-                speed: 5.0,
-                density_cap: 0.8,
-                shadow: 0.05,
-                scale: 1.5,
-                steps: 44,
-                lacunarity: 2.0,
-                sharpness: 50.0,
-                sharp_mid: 0.1,
-            })
-            .add_plugins(WireframePlugin::default())
-            .add_plugins(DayNightPlugin)
-            .add_plugins(ShellTexturingPlugin)
-            .add_plugins(TerrainPlugin)
-            .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-            .add_systems(Update, apply_global_light)
-            .add_systems(Update, update_dof)
-            .add_systems(Startup, setup.in_set(SetupSets::Main));
+        app.insert_resource(DirectionalLightShadowMap {
+            size: SUN_SHADOW_MAP_SIZE,
+        })
+        .init_resource::<SceneGlobalLight>()
+        .insert_resource(CloudCover {
+            cover: 0.375,
+            speed: 5.0,
+            density_cap: 0.8,
+            shadow: 0.05,
+            scale: 1.5,
+            steps: 44,
+            lacunarity: 2.0,
+            sharpness: 50.0,
+            sharp_mid: 0.1,
+        })
+        .add_plugins(WireframePlugin::default())
+        .add_plugins(DayNightPlugin)
+        .add_plugins(ShellTexturingPlugin)
+        .add_plugins(TerrainPlugin)
+        .add_plugins(CoastPlugin)
+        .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+        .add_systems(Update, apply_global_light)
+        .add_systems(Update, update_dof)
+        .add_systems(Startup, setup.in_set(SetupSets::Main));
 
         app.insert_resource(AtmosphereSettings {
             resolution: 1024,
@@ -95,6 +96,8 @@ impl Plugin for VisualsPlugin {
         .add_plugins(stars::StarsPlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
+        app.init_resource::<ShadowBiasOverride>();
+        app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
@@ -188,6 +191,7 @@ fn apply_global_light(
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
     envmap_settings: Res<SkyEnvmapSettings>,
+    shadow_bias: Res<ShadowBiasOverride>,
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_primary_distance: Local<f32>,
@@ -290,6 +294,7 @@ fn apply_global_light(
     let skip_writes = settled
         && !setting.is_changed()
         && !envmap_settings.is_changed()
+        && !shadow_bias.is_changed()
         && !scene_distance.is_changed()
         && !fog_added
         && *last_primary_distance == primary_distance;
@@ -301,6 +306,9 @@ fn apply_global_light(
         return;
     }
 
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias
+        .0
+        .unwrap_or_else(|| sun_shadow_bias(setting.graphics.shadow_settings));
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -312,6 +320,8 @@ fn apply_global_light(
         light_trans.rotation = rotation;
         directional.illuminance = next_light.dir_illuminance;
         directional.color = next_light.dir_color;
+        directional.shadow_depth_bias = shadow_depth_bias;
+        directional.shadow_normal_bias = shadow_normal_bias;
     }
 
     for new_layer in next_light
@@ -324,40 +334,12 @@ fn apply_global_light(
             layer = layer.union(&PRIMARY_AVATAR_LIGHT_LAYER);
         }
 
-        let (shadows_enabled, cascade_shadow_config) = match setting.graphics.shadow_settings {
-            ShadowSetting::Off => (false, Default::default()),
-            ShadowSetting::Low => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 1,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
-            ShadowSetting::High => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: (setting.graphics.shadow_distance / 15.0)
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
+        let (shadows_enabled, cascade_shadow_config) = match sun_cascades(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        ) {
+            Some(cascades) => (true, cascades),
+            None => (false, Default::default()),
         };
 
         commands.spawn((
@@ -365,6 +347,8 @@ fn apply_global_light(
                 color: next_light.dir_color,
                 illuminance: next_light.dir_illuminance,
                 shadows_enabled,
+                shadow_depth_bias,
+                shadow_normal_bias,
                 ..Default::default()
             },
             Transform::default().with_rotation(rotation),
@@ -464,6 +448,37 @@ fn shadow_console_command(
                 Some(true) => "enabled",
                 Some(false) => "disabled",
             }
+        ));
+    }
+}
+
+/// The sun shadow biases set live by `/shadowbias`, in place of the preset's.
+#[derive(Resource, Default)]
+pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
+
+/// set the sun shadow depth bias (world length) and normal bias (texels); no arguments restores
+/// the preset's
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadowbias")]
+struct ShadowBiasConsoleCommand {
+    depth: Option<f32>,
+    normal: Option<f32>,
+}
+
+fn shadow_bias_console_command(
+    mut input: ConsoleCommand<ShadowBiasConsoleCommand>,
+    mut bias: ResMut<ShadowBiasOverride>,
+    setting: Res<AppConfig>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let preset = sun_shadow_bias(setting.graphics.shadow_settings);
+        bias.0 = command
+            .depth
+            .map(|depth| (depth, command.normal.unwrap_or(preset.1)));
+        let (depth, normal) = bias.0.unwrap_or(preset);
+        input.reply_ok(format!(
+            "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
+            preset.0, preset.1
         ));
     }
 }

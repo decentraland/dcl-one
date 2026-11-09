@@ -12,7 +12,10 @@ use bevy::{
 use common::{
     dynamics::PLAYER_COLLIDER_RADIUS,
     sets::SceneSets,
-    structs::{AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER},
+    structs::{
+        AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        SPOT_SHADOW_MAX_DISTANCE,
+    },
     util::TryPushChildrenEx,
 };
 use dcl_component::{
@@ -40,7 +43,7 @@ impl Plugin for LightsPlugin {
         app.insert_resource(LightSwitches {
             lights: true,
             shadows: true,
-            point_shadows: true,
+            point_shadows: false,
         })
         .add_console_command::<LightCommand, _>(light_command)
         .add_preview_console_command::<SetLightSwitch, _>(set_light_switch)
@@ -99,6 +102,8 @@ impl Plugin for LightsPlugin {
 struct LightSwitches {
     lights: bool,
     shadows: bool,
+    /// Lets point lights take shadow caster slots too. Off by default: Unity gives scene shadows
+    /// to spot lights only, so this is a comparison aid for testers, not a setting.
     point_shadows: bool,
 }
 
@@ -554,8 +559,38 @@ fn update_point_lights(
 #[derive(Component)]
 pub struct RetryLightTexture;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightKind {
+    Point,
+    Spot,
+}
+
+/// Entities to give shadows, Unity's LightSourceCullingSystem: spot lights only (point lights
+/// too with `point_lights`), within SPOT_SHADOW_MAX_DISTANCE of the player, nearest first, at
+/// most `max`.
+pub fn shadow_caster_slots(
+    candidates: impl IntoIterator<Item = (Entity, LightKind, f32)>,
+    max: usize,
+    point_lights: bool,
+) -> Vec<Entity> {
+    let mut spots: Vec<_> = candidates
+        .into_iter()
+        .filter(|(_, kind, distance)| {
+            (point_lights || *kind == LightKind::Spot) && *distance <= SPOT_SHADOW_MAX_DISTANCE
+        })
+        .collect();
+    spots.sort_by_key(|(_, _, distance)| FloatOrd(*distance));
+    spots.into_iter().take(max).map(|(e, _, _)| e).collect()
+}
+
 fn manage_shadow_casters(
-    read_lights: Populated<(Entity, &GlobalTransform, &LightEntity, &ChildOf)>,
+    read_lights: Populated<(
+        Entity,
+        &GlobalTransform,
+        &LightEntity,
+        &ChildOf,
+        Has<SpotLight>,
+    )>,
     mut write_lights: Query<(
         Option<&mut PointLight>,
         Option<&mut SpotLight>,
@@ -566,7 +601,7 @@ fn manage_shadow_casters(
     containing_scene: ContainingScene,
     config: Res<AppConfig>,
     switches: Res<LightSwitches>,
-    mut lights: Local<Vec<(Entity, bool, FloatOrd, bool)>>,
+    mut lights: Local<Vec<(Entity, bool, FloatOrd, bool, LightKind, f32)>>,
 ) {
     let (player, player_gt) = player.into_inner();
     let player_t = player_gt.translation();
@@ -574,30 +609,41 @@ fn manage_shadow_casters(
     let active_scenes = containing_scene.get_area(player, PLAYER_COLLIDER_RADIUS);
 
     // collect lights
-    lights.extend(read_lights.iter().map(|(entity, gt, light, parent)| {
-        let enabled = light.enabled
-            && parent_visibility
-                .get(parent.parent())
-                .is_ok_and(|pv| pv.get());
-        let importance = if enabled {
-            let distance = (gt.translation() - player_t).length();
-            let importance = light.range / distance;
-            FloatOrd(importance)
-        } else {
-            FloatOrd(0.0)
-        };
+    lights.extend(
+        read_lights
+            .iter()
+            .map(|(entity, gt, light, parent, is_spot)| {
+                let enabled = light.enabled
+                    && parent_visibility
+                        .get(parent.parent())
+                        .is_ok_and(|pv| pv.get());
+                let distance = (gt.translation() - player_t).length();
+                let importance = if enabled {
+                    let importance = light.range / distance;
+                    FloatOrd(importance)
+                } else {
+                    FloatOrd(0.0)
+                };
+                let kind = if is_spot {
+                    LightKind::Spot
+                } else {
+                    LightKind::Point
+                };
 
-        (
-            entity,
-            active_scenes.contains(&light.scene),
-            importance,
-            light.shadows_enabled,
-        )
-    }));
+                (
+                    entity,
+                    active_scenes.contains(&light.scene),
+                    importance,
+                    light.shadows_enabled,
+                    kind,
+                    distance,
+                )
+            }),
+    );
     // sort by scene-active and distance
-    lights.sort_by_key(|(_, scene_active, importance, _)| (*scene_active, *importance));
+    lights.sort_by_key(|(_, scene_active, importance, ..)| (*scene_active, *importance));
     // enable up to limit
-    let mut max_enabled = if switches.lights {
+    let max_enabled = if switches.lights {
         config.graphics.light_count
     } else {
         0
@@ -615,19 +661,27 @@ fn manage_shadow_casters(
         max_enabled,
         max_casters
     );
+    let casters = shadow_caster_slots(
+        lights
+            .iter()
+            .rev()
+            .filter(|(_, _, importance, ..)| importance.0 != 0.0)
+            .take(max_enabled)
+            .filter(|(_, _, _, shadows_enabled, ..)| *shadows_enabled)
+            .map(|(entity, _, _, _, kind, distance)| (*entity, *kind, *distance)),
+        max_casters,
+        switches.point_shadows,
+    );
+    let mut max_enabled = max_enabled;
     // only write (and trigger change detection) when the target value differs
-    for (light, _, importance, shadows_enabled) in lights.drain(..).rev() {
+    for (light, _, importance, ..) in lights.drain(..).rev() {
         let (maybe_p, maybe_s, mut vis) = write_lights.get_mut(light).unwrap();
 
         if importance.0 != 0.0 && max_enabled > 0 {
             vis.set_if_neq(Visibility::Visible);
             max_enabled -= 1;
 
-            let cast =
-                shadows_enabled && max_casters > 0 && (maybe_p.is_none() || switches.point_shadows);
-            if cast {
-                max_casters -= 1;
-            }
+            let cast = casters.contains(&light);
             if let Some(mut p) = maybe_p {
                 if p.shadows_enabled != cast {
                     p.shadows_enabled = cast;
@@ -647,6 +701,36 @@ fn manage_shadow_casters(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shadow_casters_are_nearest_spots_within_twenty_metres() {
+        let e = |i: u32| Entity::from_raw(i);
+        let slots = shadow_caster_slots(
+            [
+                (e(1), LightKind::Spot, 25.0),
+                (e(2), LightKind::Point, 1.0),
+                (e(3), LightKind::Spot, 5.0),
+                (e(4), LightKind::Spot, 3.0),
+                (e(5), LightKind::Spot, 19.9),
+                (e(6), LightKind::Spot, 10.0),
+            ],
+            3,
+            false,
+        );
+        assert_eq!(slots, vec![e(4), e(3), e(6)]);
+        assert!(shadow_caster_slots([(e(1), LightKind::Spot, 5.0)], 0, false).is_empty());
+        // the point-shadows switch lets point lights compete for the slots
+        let slots = shadow_caster_slots(
+            [
+                (e(2), LightKind::Point, 1.0),
+                (e(3), LightKind::Spot, 5.0),
+                (e(7), LightKind::Point, 30.0),
+            ],
+            3,
+            true,
+        );
+        assert_eq!(slots, vec![e(2), e(3)]);
+    }
 
     #[test]
     fn sun_follows_unitys_path() {

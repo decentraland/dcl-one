@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -998,8 +999,71 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// unity's Medium: one soft cascade
     Low,
+    /// unity's High: four soft cascades
     High,
+}
+
+/// unity: Assets/Rendering/UniversalRenderPipeline - High.asset, m_Cascade4Split
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// unity: QualityPresetsAsset.asset MainShadowResolution (Medium, High)
+pub const SUN_SHADOW_MAP_SIZE: usize = 1024;
+/// unity: Quality Settings.asset dynamicLights, SpotLightsLods first tier
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
+}
+
+/// bevy's default directional depth bias, a world length: the constant floor under the
+/// per-cascade normal bias
+pub const SUN_SHADOW_DEPTH_BIAS: f32 = 0.02;
+/// URP's soft shadow kernel radius, by which `ShadowUtils.GetShadowBias` scales the bias of soft
+/// shadows
+const SOFT_SHADOW_KERNEL_RADIUS: f32 = 2.5;
+
+/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality.
+/// unity: `QualityPresetsAsset.asset` DepthBias 1.75 (Medium) and 1.56 (High) texels of each
+/// cascade, times the soft kernel radius. bevy's depth bias is one world length for every
+/// cascade, so those texels go to its normal bias, the bias bevy scales by each cascade's texel;
+/// the depth bias stays bevy's small default. A depth bias sized from the widest cascade instead
+/// over-biased the near cascades and still let the soft filter's wide kernel shade the ground with
+/// its own shadow (acne) on the far ones.
+pub fn sun_shadow_bias(setting: ShadowSetting) -> (f32, f32) {
+    let texels = match setting {
+        ShadowSetting::Off => return (0.0, 0.0),
+        ShadowSetting::Low => 1.75,
+        ShadowSetting::High => 1.56,
+    };
+    (SUN_SHADOW_DEPTH_BIAS, texels * SOFT_SHADOW_KERNEL_RADIUS)
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1922,6 +1986,35 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sun_shadow_bias_is_unitys_texels() {
+        // Unity's texels times the soft kernel radius, per cascade texel through the normal bias;
+        // the depth bias is bevy's small floor, whatever the quality
+        assert_eq!(
+            sun_shadow_bias(ShadowSetting::Low),
+            (SUN_SHADOW_DEPTH_BIAS, 1.75 * 2.5)
+        );
+        assert_eq!(
+            sun_shadow_bias(ShadowSetting::High),
+            (SUN_SHADOW_DEPTH_BIAS, 1.56 * 2.5)
+        );
+        assert_eq!(sun_shadow_bias(ShadowSetting::Off), (0.0, 0.0));
+    }
+
+    #[test]
+    fn sun_cascades_follow_unity_splits() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
 
     #[test]
     fn migrate_inputs_updates_old_tables() {
