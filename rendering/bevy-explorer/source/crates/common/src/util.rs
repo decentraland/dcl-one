@@ -678,7 +678,8 @@ pub fn is_loopback_url(url: &str) -> bool {
 
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
 /// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
-/// unique-local/link-local v6, unspecified, and v4-mapped v6 forms of the above.
+/// benchmarking, reserved, multicast, unique-local/link-local v6, unspecified, and IPv6
+/// addresses that carry a forbidden IPv4 address (see [`embedded_ipv4`]).
 pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
     match ip {
@@ -687,25 +688,47 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
-                || v4.is_broadcast()
                 || v4.is_unspecified()
                 || v4.is_documentation()
+                || v4.is_multicast()
                 || o[0] == 0
+                // reserved 240.0.0.0/4, broadcast included
+                || o[0] >= 240
                 // carrier-grade NAT 100.64.0.0/10
                 || (o[0] == 100 && (o[1] & 0xc0) == 64)
+                // benchmarking 198.18.0.0/15
+                || (o[0] == 198 && (o[1] & 0xfe) == 18)
         }
         IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_forbidden_ip(&IpAddr::V4(mapped));
+            if let Some(v4) = embedded_ipv4(v6) {
+                return is_forbidden_ip(&IpAddr::V4(v4));
             }
             let seg = v6.segments();
             v6.is_loopback()
                 || v6.is_unspecified()
+                || v6.is_multicast()
                 // unique local fc00::/7
                 || (seg[0] & 0xfe00) == 0xfc00
                 // link local fe80::/10
                 || (seg[0] & 0xffc0) == 0xfe80
+                // local-use NAT64 64:ff9b:1::/48; where the IPv4 address sits is site-chosen
+                || seg[..3] == [0x64, 0xff9b, 1]
         }
+    }
+}
+
+/// The IPv4 address an IPv6 address carries to a translator or tunnel: v4-mapped
+/// `::ffff:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96` and 6to4 `2002::/16`.
+fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    let seg = v6.segments();
+    let o = v6.octets();
+    let low = || std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
+    match seg {
+        [0, 0, 0, 0, 0, 0xffff, ..] | [0, 0, 0, 0, 0, 0, ..] | [0x64, 0xff9b, 0, 0, 0, 0, ..] => {
+            Some(low())
+        }
+        [0x2002, ..] => Some(std::net::Ipv4Addr::new(o[2], o[3], o[4], o[5])),
+        _ => None,
     }
 }
 
@@ -918,6 +941,52 @@ mod tests {
     /// `resolve_checked` hook depend on: literal private/loopback is refused normally and
     /// allowed only under `allow_private` (preview), while cloud metadata stays refused even
     /// under preview. Uses literal IPs so no network lookup happens.
+    #[test]
+    fn special_purpose_ranges_are_forbidden() {
+        for address in [
+            // benchmarking, reserved, broadcast, multicast
+            "198.18.0.1",
+            "198.19.255.255",
+            "240.0.0.1",
+            "255.255.255.255",
+            "224.0.0.1",
+            "239.255.255.250",
+            "ff02::1",
+            "ff0e::1",
+            // NAT64 64:ff9b::/96 to private, loopback and metadata
+            "64:ff9b::a00:5",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            // local-use NAT64, whatever the embedding
+            "64:ff9b:1::a00:5",
+            "64:ff9b:1:808:808::",
+            // v4-compatible
+            "::a00:5",
+            "::7f00:1",
+            "::a9fe:a9fe",
+            // 6to4 to private and metadata
+            "2002:a00:5::1",
+            "2002:a9fe:a9fe::",
+            "2002:c0a8:101::1",
+        ] {
+            let ip: std::net::IpAddr = address.parse().unwrap();
+            assert!(is_forbidden_ip(&ip), "{address} must be forbidden");
+        }
+        for address in [
+            "8.8.8.8",
+            "198.17.255.255",
+            "198.20.0.1",
+            "223.255.255.255",
+            "64:ff9b::808:808",
+            "::808:808",
+            "2002:808:808::1",
+            "2001:4860:4860::8888",
+        ] {
+            let ip: std::net::IpAddr = address.parse().unwrap();
+            assert!(!is_forbidden_ip(&ip), "{address} is public");
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn resolve_public_addrs_enforces_egress_policy() {
