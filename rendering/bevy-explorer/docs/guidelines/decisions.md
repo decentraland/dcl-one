@@ -60,6 +60,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     Unity's hang-up skips a ringing call and starts the stream next to it a second later.
   - A stream whose start succeeds after its creator left (or moved to another stream) is ended
     with `EndCommunityVoiceChat`; Unity leaves it running with nobody in it.
+  - Hanging up a private call whose id is known ends it here at once and sends
+    `EndPrivateVoiceChat` behind it; Unity waits in `VoiceChatEndingCall` for the reply. With the
+    social link down the request waits for the reconnect (up to 30 s of backoff), and waiting in
+    the ending state would keep the nearby mic off and refuse new calls all that time.
+  - A call that rang while the social link dropped is rejected on reconnect, and the reconnect's
+    own report of that call does not ring it again: the server tells only the caller about a
+    reject, so a second ring would never be stopped.
+  - The "stream in this scene" banner is not shown to guests, who cannot join; Unity's
+    `SceneVoiceChatPresenter` shows it with no account check.
 - **Profiles always from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas only:

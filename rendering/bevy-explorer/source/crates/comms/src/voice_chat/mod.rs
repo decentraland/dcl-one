@@ -18,7 +18,7 @@ use bevy::{ecs::relationship::Relationship, prelude::*};
 use bevy_console::ConsoleCommand;
 #[cfg(target_arch = "wasm32")]
 use common::structs::AudioSettings;
-use common::{rpc::RpcStreamSender, structs::SystemAudio, util::AsH160};
+use common::{rpc::RpcStreamSender, sets::SceneSets, structs::SystemAudio, util::AsH160};
 use console::DoAddConsoleCommand;
 use social::{
     voice::{VoiceEvent, VoiceQuery, VoiceRefusal},
@@ -66,7 +66,11 @@ impl Plugin for VoiceChatPlugin {
         app.add_systems(
             Update,
             (
-                drive_voice_chat.run_if(resource_exists::<SocialClient>),
+                // sees an account change while `social.0` is still the old account's client,
+                // which ends the call it leaves
+                drive_voice_chat
+                    .run_if(resource_exists::<SocialClient>)
+                    .in_set(SceneSets::RestrictedActions),
                 subscribe_voice_room_tracks,
                 #[cfg(target_arch = "wasm32")]
                 apply_voice_room_volume,
@@ -147,7 +151,7 @@ enum Pending {
     EndPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
     StartCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
     JoinCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
-    EndCommunity(oneshot::Receiver<Result<(), VoiceRefusal>>),
+    EndCommunity(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
     Moderation(oneshot::Receiver<Result<(), VoiceRefusal>>),
     Mute(oneshot::Receiver<Result<bool, VoiceRefusal>>),
 }
@@ -177,7 +181,7 @@ impl Pending {
             Pending::JoinCommunity(id, attempt, rx) => {
                 Reply::JoinCommunity(id.clone(), *attempt, take(rx)?)
             }
-            Pending::EndCommunity(rx) => Reply::EndCommunity(take(rx)?),
+            Pending::EndCommunity(id, rx) => Reply::EndCommunity(id.clone(), take(rx)?),
             Pending::Moderation(rx) => Reply::Moderation(take(rx)?),
             Pending::Mute(rx) => Reply::Moderation(take(rx)?.map(|_| ())),
         })
@@ -335,6 +339,8 @@ fn drive_voice_chat(
             info!(target: "comms::voice_chat", "the account changed: ending the call");
         }
         inputs.0.push_front(Input::SignedOut);
+        // the HUD clears its call state on logout
+        force_snapshot = true;
     }
     let refusal = user_refusal(disable_realm_comms.as_deref(), &disable_gatekeeper, &wallet);
     for input in console.0.drain(..) {
@@ -580,7 +586,9 @@ fn drive_voice_chat(
                     }
                     Rpc::EndCommunity { community_id } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::EndCommunity(rx));
+                        voice
+                            .pending
+                            .push(Pending::EndCommunity(community_id.clone(), rx));
                         client.map(|c| {
                             c.voice(VoiceQuery::EndCommunity {
                                 community_id,

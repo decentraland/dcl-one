@@ -49,7 +49,7 @@ export function streamGate(voice: VoiceChatState | null, isGuest: boolean): Call
 
 /** A start or join is in flight: another click would hang it up and start over. */
 export function streamPending(voice: VoiceChatState | null): boolean {
-  return voice?.status === 'startingCall'
+  return voice?.status === 'startingCall' && voice.kind === 'community'
 }
 
 export function streamAct(voiceChat: VoiceChatSession, action: Extract<VoiceChatActionWire, { op: 'startCommunityCall' | 'joinCommunityCall' }>): void {

@@ -28,6 +28,7 @@ import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
+import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
@@ -377,6 +378,7 @@ function Hud(): React.JSX.Element {
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          <VoiceChatToasts />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {chrome && (

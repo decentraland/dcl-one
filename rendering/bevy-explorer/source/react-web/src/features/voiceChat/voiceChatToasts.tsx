@@ -4,9 +4,16 @@
 import { useEffect, useRef } from 'react'
 import { showToast } from '../../design'
 import type { VoiceChatState } from '../../engine/protocol'
+import { useSession } from '../session/SessionContext'
 import { onVoiceChatEvent } from '../session/useEngineSession'
 
-/** Subscribes for the component's lifetime; mount once (the panel does). */
+/** Mounted outside the chrome: a full-screen page must not unmount it. */
+export function VoiceChatToasts(): null {
+  useVoiceChatToasts(useSession().voiceChat.state)
+  return null
+}
+
+/** Subscribes for the component's lifetime; mount once (`VoiceChatToasts` does). */
 export function useVoiceChatToasts(state: VoiceChatState | null): void {
   useEffect(
     () =>

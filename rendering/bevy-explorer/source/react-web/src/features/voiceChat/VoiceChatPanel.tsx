@@ -16,7 +16,6 @@ import { openProfileCard } from '../profileCard/ProfileCard'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { useSession } from '../session/SessionContext'
 import { voiceActive } from './callGate'
-import { useVoiceChatToasts } from './voiceChatToasts'
 // Unity's sprites (Assets/DCL/VoiceChat/Textures): MuteIcn / Unmute are the mic on / off images
 // of MicrophoneButton, the rest keep their names.
 import callIcon from '../../assets/voice/call.png'
@@ -80,7 +79,6 @@ export function useVoiceDock(height: number | null): React.CSSProperties {
 export function VoiceChatPanel(): React.JSX.Element | null {
   const { voiceChat } = useSession()
   const state = voiceChat.state
-  useVoiceChatToasts(state)
   const [collapsed, setCollapsed] = useState(false)
   const [people, setPeople] = useState(false)
   const visible = state != null && state.status !== 'disconnected'

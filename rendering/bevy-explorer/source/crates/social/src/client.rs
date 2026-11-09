@@ -171,6 +171,7 @@ pub struct SocialClientHandler {
 }
 
 impl SocialClientHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         wallet: wallet::Wallet,
         runtime: &SocialRuntime,
@@ -964,7 +965,16 @@ async fn run_one_connection(
         loop {
             tokio::select! {
                 req = rx.recv() => {
-                    let Some((req, reply)) = req else { return Result::<(), anyhow::Error>::Ok(()); };
+                    let Some((req, reply)) = req else {
+                        // the handler is gone: still send its last voice queries (the end or
+                        // reject of the call it left)
+                        while let Ok(query) = query_rx.try_recv() {
+                            if let SocialQuery::Voice(query) = query {
+                                voice::rpc::dispatch(service_module.as_ref(), query).await;
+                            }
+                        }
+                        return Result::<(), anyhow::Error>::Ok(());
+                    };
                     debug!("[social] upsert_friendship request: {req:?}");
                     let action = req.action.clone();
                     let resp = service_module

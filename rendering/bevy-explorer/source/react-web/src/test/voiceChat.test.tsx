@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { SessionProvider } from '../features/session/SessionContext'
 import { VoiceChatPanel } from '../features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from '../features/voiceChat/SceneVoiceChatBanner'
-import { callGate, streamLive } from '../features/voiceChat/callGate'
+import { callGate, streamLive, streamPending } from '../features/voiceChat/callGate'
 import { streamTarget } from '../features/notifications/summary'
 import type { ActiveCommunityVoiceChat, AppNotification, VoiceChatParticipant, VoiceChatState } from '../engine/protocol'
 import { resetProfileStore, seedProfiles } from '../features/session/profileStore'
@@ -171,20 +171,29 @@ describe('the stream in this scene', () => {
   const here: ActiveCommunityVoiceChat = { communityId: 'c1', communityName: 'Decentraland Foundation', isMember: true, positions: ['0,0'], worlds: [], participantCount: 12, moderatorCount: 1 }
 
   it('offers to join, and goes away once joined', async () => {
-    const s = renderPanel({}, { scene: here })
+    const s = fakeSession()
+    s.voiceChat = { state: idle, active: [], activeLoaded: false, scene: here, guest: false, act: vi.fn() }
+    const view = (session: typeof s) => (
+      <SessionProvider value={session}>
+        <VoiceChatPanel />
+        <SceneVoiceChatBanner />
+      </SessionProvider>
+    )
+    const { rerender } = render(view(s))
     expect(screen.getByRole('status', { name: 'Stream in this scene' })).toHaveTextContent('Decentraland Foundation')
     await userEvent.click(screen.getByRole('button', { name: 'Join stream' }))
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'joinCommunityCall', communityId: 'c1' })
+    rerender(view({ ...s, voiceChat: { ...s.voiceChat, state: { ...idle, status: 'startingCall', kind: 'community', communityId: 'c1' } } }))
+    expect(screen.queryByRole('status', { name: 'Stream in this scene' })).toBeNull()
   })
 
   it('is hidden while in that stream', () => {
     renderPanel({ status: 'inCall', kind: 'community', communityId: 'c1', connection: 'connected' }, { scene: here })
     expect(screen.queryByRole('status', { name: 'Stream in this scene' })).toBeNull()
   })
-  it('tells a guest why not instead of joining', async () => {
-    const s = renderPanel({}, { scene: here, guest: true })
-    await userEvent.click(screen.getByRole('button', { name: 'Join stream' }))
-    expect(vi.mocked(s.voiceChat.act)).not.toHaveBeenCalled()
+  it('is not offered to a guest', () => {
+    renderPanel({}, { scene: here, guest: true })
+    expect(screen.queryByRole('status', { name: 'Stream in this scene' })).toBeNull()
   })
 })
 
@@ -206,6 +215,21 @@ describe('live streams', () => {
     s.voiceChat = { ...s.voiceChat, active: [live] }
     streamTarget(n, s.voiceChat)?.()
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'joinCommunityCall', communityId: 'c1' })
+  })
+
+  it('a stream notification for the stream the user is in only opens its chat', () => {
+    const n: AppNotification = { id: 'n', type: 'community_voice_chat_started', timestamp: '0', read: false, metadata: { communityId: 'c1' } }
+    const s = fakeSession()
+    s.voiceChat = { ...s.voiceChat, state: { ...idle, status: 'inCall', kind: 'community', communityId: 'c1', localSpeaker: true }, active: [live], activeLoaded: true, act: vi.fn() }
+    const openCommunity = vi.fn()
+    streamTarget(n, s.voiceChat, { ...s.chat, communities: [], openCommunity })?.()
+    expect(vi.mocked(s.voiceChat.act)).not.toHaveBeenCalled()
+    expect(openCommunity).toHaveBeenCalledWith(expect.objectContaining({ id: 'c1' }))
+  })
+
+  it('a private call being placed does not hold a stream join back', () => {
+    expect(streamPending({ ...idle, status: 'startingCall', kind: 'private' })).toBe(false)
+    expect(streamPending({ ...idle, status: 'startingCall', kind: 'community', communityId: 'c1' })).toBe(true)
   })
 })
 

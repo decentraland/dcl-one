@@ -14,7 +14,7 @@ export function SceneVoiceChatBanner(): React.JSX.Element | null {
   const chat = voiceChat.scene
   const state = voiceChat.state
   // the panel shows it once joined; another call (or its error) keeps the panel's dock
-  const shown = chat != null && !inCommunityStream(state, chat.communityId) && !voiceActive(state) && (state == null || state.status === 'disconnected')
+  const shown = chat != null && !voiceChat.guest && !inCommunityStream(state, chat.communityId) && !voiceActive(state) && (state == null || state.status === 'disconnected')
   const dock = useVoiceDock(shown ? VOICE_PANEL_SIZE.scene : null)
   if (chat == null || !shown) return null
   return (

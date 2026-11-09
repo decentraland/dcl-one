@@ -28,14 +28,13 @@ type ActiveChatRaw = {
 /** The answer is `{ data: { activeChats, total } }`; `signed` has already taken off `data`. A failed
  *  fetch is `null`, not an empty list: it says nothing about which streams are live. */
 export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[] | null> {
-  const res = await signed<{ activeChats?: ActiveChatRaw[] }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).then(
-    (r) => r ?? {},
-    (e: unknown) => {
-      console.error('[voiceChat] active streams failed', e)
-      return null
-    }
-  )
-  if (res == null) return null
+  let res: { activeChats?: ActiveChatRaw[] }
+  try {
+    res = (await signed<{ activeChats?: ActiveChatRaw[] }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`)) ?? {}
+  } catch (e: unknown) {
+    console.error('[voiceChat] active streams failed', e)
+    return null
+  }
   return (res.activeChats ?? [])
     .filter((c) => c.communityId != null && c.communityId !== '')
     .map((c) => ({

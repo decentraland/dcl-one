@@ -3218,6 +3218,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setNotifications([])
     clearNotificationToasts()
     clearRewardPopups()
+    // the engine sends its state again after an account change
+    setVoiceChatState(null)
     // the live streams are per account (`isMember`)
     setActiveVoiceChats([])
     setActiveVoiceChatsLoaded(false)

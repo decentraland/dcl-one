@@ -625,6 +625,7 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
 /// Re-dials every dropped room but a paused one and the voice room, whose re-dial budget the
 /// voice module keeps (a call's token stays valid after the server deleted the room; re-dialling
 /// would recreate it).
+#[allow(clippy::type_complexity)]
 fn try_reconnect(
     mut commands: Commands,
     rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>, Without<VoiceRoom>)>,
