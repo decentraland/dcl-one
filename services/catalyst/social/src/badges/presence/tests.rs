@@ -469,7 +469,7 @@ fn db_error(code: &'static str) -> sqlx::Error {
 }
 
 #[test]
-fn only_deterministic_failures_count_toward_dropping_an_event() {
+fn only_deterministic_failures_count_toward_dropping_a_fresh_event() {
     let mut failures = HashMap::new();
     let transient = [
         sqlx::Error::PoolTimedOut,
@@ -485,16 +485,83 @@ fn only_deterministic_failures_count_toward_dropping_an_event() {
     ];
     for error in &transient {
         for _ in 0..5 {
-            assert!(!super::gives_up(&mut failures, 1, error), "{error}");
+            assert!(!super::gives_up(&mut failures, 1, error, false), "{error}");
         }
     }
     assert!(failures.is_empty(), "a transient failure is not counted");
     for error in [db_error("23514"), sqlx::Error::RowNotFound] {
-        assert!(!super::gives_up(&mut failures, 2, &error));
-        assert!(!super::gives_up(&mut failures, 2, &error));
-        assert!(super::gives_up(&mut failures, 2, &error), "{error}");
+        assert!(!super::gives_up(&mut failures, 2, &error, false));
+        assert!(!super::gives_up(&mut failures, 2, &error, false));
+        assert!(super::gives_up(&mut failures, 2, &error, false), "{error}");
         assert!(failures.is_empty(), "a dropped event is forgotten");
     }
+}
+
+#[test]
+fn a_transient_failure_of_an_event_past_the_grace_counts() {
+    let mut failures = HashMap::new();
+    let timeout = db_error("57014");
+    assert!(!super::gives_up(&mut failures, 1, &timeout, true));
+    assert!(!super::gives_up(&mut failures, 1, &timeout, true));
+    assert!(super::gives_up(&mut failures, 1, &timeout, true));
+}
+
+#[tokio::test]
+async fn an_event_failing_transiently_past_the_grace_is_dropped_and_the_queue_moves_on() {
+    let Some(t) = T::new().await else { return };
+    t.badge("stay", At::Scene(PARCEL), 300).await;
+    t.window_around_now("stay", -1, 1).await;
+    t.badge("visit", At::Scene("-5,7"), 0).await;
+    t.window_around_now("visit", -1, 1).await;
+    // every visit Alice opens fails as a statement timeout would
+    sqlx::raw_sql(
+        "CREATE FUNCTION public.time_out_alice() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.wallet = '0x00000000000000000000000000000000000a11ce' THEN \
+           RAISE EXCEPTION 'statement timeout' USING ERRCODE = '57014'; END IF; \
+         RETURN NEW; END $$; \
+         CREATE TRIGGER time_out_alice BEFORE INSERT ON social.presence_visits \
+         FOR EACH ROW EXECUTE FUNCTION public.time_out_alice();",
+    )
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    sink::insert(
+        &t.pool,
+        &[
+            t.event(true, ALICE, "a", now - 60 * SEC, At::Scene(SCENE)),
+            t.event(true, BOB, "b", now - 60 * SEC, At::Scene(OTHER_SCENE)),
+        ],
+    )
+    .await
+    .unwrap();
+    let mut failures = HashMap::new();
+    let clock = move || now;
+    for _ in 0..5 {
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        assert!(pass.is_err(), "a fresh event waits out the timeout");
+    }
+    assert!(failures.is_empty());
+    sqlx::query("UPDATE social.presence_events SET received_at = received_at - interval '2 hours'")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        assert!(pass.is_err());
+    }
+    let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+    assert_eq!(
+        pass.unwrap(),
+        1,
+        "dropped on the third pass, then Bob's join applies"
+    );
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert!(t.progress("visit", BOB).await.is_some());
 }
 
 // ── windows ─────────────────────────────────────────────────────────────
@@ -872,7 +939,7 @@ async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
     let Some(t) = T::new().await else { return };
     t.badge("world", At::World(None), 0).await;
     t.window_around_now("world", -1, 1).await;
-    let sink = super::EventSink::with_capacity(2);
+    let sink = super::EventSink::with_capacity(2, Settings::default());
     sink.observe_room_event(&room_event(ALICE, "EV_a"));
     sink.observe_room_event(&room_event(ALICE, "EV_a"));
     sink.observe_room_event(&room_event(ALICE, "EV_dropped"));
@@ -901,7 +968,7 @@ async fn the_sink_stores_only_events_in_places_a_badge_could_count() {
     // a world badge whose window closed days ago counts nothing now
     t.badge("world", At::World(None), 0).await;
     t.window_around_now("world", -240, -216).await;
-    let sink = super::EventSink::default();
+    let sink = super::EventSink::new(Settings::default());
     let scene = |id: &str, scene: &str| RoomEvent {
         room: format!("scene-{scene}"),
         room_type: RoomType::Scene as i32,
@@ -951,4 +1018,60 @@ async fn a_failed_insert_is_tried_once_more() {
     .await;
     assert!(stored.is_err());
     assert_eq!(calls, 2, "one retry, then the batch is dropped");
+}
+
+#[tokio::test]
+async fn the_sink_keeps_events_of_a_scene_redeployed_after_its_snapshot() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene", At::Scene(PARCEL), 0).await;
+    t.window_around_now("scene", -1, 1).await;
+    let sink = super::EventSink::new(Settings::default());
+    let scene = |id: &str, scene: &str| RoomEvent {
+        room: format!("scene-{scene}"),
+        room_type: RoomType::Scene as i32,
+        realm_name: REALM.into(),
+        scene_id: scene.into(),
+        ..room_event(ALICE, id)
+    };
+    sink.observe_room_event(&scene("EV_before", SCENE));
+    assert_eq!(
+        sink.flush(&t.pool).await.unwrap(),
+        1,
+        "the snapshot is read"
+    );
+    for (entity, pointers) in [
+        (
+            "bafkreiredeployafterdddddddddddddddd",
+            vec![PARCEL, "10,21"],
+        ),
+        ("bafkreiunrelatedafterdeeeeeeeeeeeeee", vec!["-40,40"]),
+    ] {
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, \
+               entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ($1, 'v3', 'scene', $2, '{}', now(), $3, now(), '[]')",
+        )
+        .bind(ALICE)
+        .bind(entity)
+        .bind(&pointers)
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    }
+    for event in [
+        scene("EV_redeployed", "bafkreiredeployafterdddddddddddddddd"),
+        scene("EV_unrelated", "bafkreiunrelatedafterdeeeeeeeeeeeeee"),
+        // a scene this node has not synced yet: the engine decides
+        scene("EV_unsynced", "bafkreinotsyncedyetfffffffffffffffff"),
+    ] {
+        sink.observe_room_event(&event);
+    }
+    assert_eq!(sink.flush(&t.pool).await.unwrap(), 2);
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id FROM social.presence_events WHERE event_id <> 'EV_before' ORDER BY event_id",
+    )
+    .fetch_all(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, ["EV_redeployed", "EV_unsynced"]);
 }

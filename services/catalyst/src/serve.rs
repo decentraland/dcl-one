@@ -948,8 +948,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         config.social.badges_presence_enabled && config.writes.social_writes_enabled;
     let mut room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
+    let presence_badge_settings = badges::presence::Settings::default();
     if presence_badges {
-        let sink = Arc::new(badges::presence::EventSink::default());
+        let sink = Arc::new(badges::presence::EventSink::new(
+            presence_badge_settings.clone(),
+        ));
         sink.spawn_writer(pool.clone(), &jobs);
         room_event_sinks.push(sink);
     }
@@ -1132,7 +1135,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             pool.clone(),
             social.badges.badges.asset_base_url().to_owned(),
             live_presence.clone(),
-            badges::presence::Settings::default(),
+            presence_badge_settings,
             &jobs,
         );
     }
