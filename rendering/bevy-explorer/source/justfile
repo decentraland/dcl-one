@@ -8,7 +8,7 @@ set positional-arguments
 wasm_toolchain := "nightly-2026-04-15"
 
 # nixos: cef's bundled libvulkan.so.1 can't find the system's vulkan drivers without this
-nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { "XDG_DATA_DIRS=/run/opengl-driver/share:" + env("XDG_DATA_DIRS", "/usr/local/share:/usr/share") } else { "" }
+nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { 'XDG_DATA_DIRS="/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"' } else { "" }
 
 # build the wasm engine into deploy/web/engine/pkg, then serve the react-web page (which hosts
 # the engine + live bridge-scene preview) and open a browser at the vite dev server.
