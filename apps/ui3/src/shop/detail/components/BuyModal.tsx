@@ -486,16 +486,14 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
               <DialogButton variant="outline" onClick={close}>
                 {TEXT.close}
               </DialogButton>
-              {/* A split is checked by its own receipt; the checkout's purchase by the checkout. */}
-              {splitSent ? (
-                <DialogButton variant="ruby" onClick={() => void combined.checkAgain()} disabled={combined.checking}>
-                  {TEXT.checkAgain}
-                </DialogButton>
-              ) : (
-                <DialogButton variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
-                  {TEXT.checkAgain}
-                </DialogButton>
-              )}
+              {/* A split is checked by its own receipt (none to read before its purchase went out); the checkout's by the checkout. */}
+              <DialogButton
+                variant="ruby"
+                onClick={() => void (splitSent ? combined.checkAgain() : co.resume())}
+                disabled={splitSent ? combined.checking || !combined.checkable : co.running}
+              >
+                {TEXT.checkAgain}
+              </DialogButton>
             </DialogCtas>
           </PendingBody>
         ) : null}
