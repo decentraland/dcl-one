@@ -133,16 +133,43 @@ describe("the card's price row", () => {
     expect(screen.queryByTestId("card-price-was")).toBeNull();
   });
 
-  it("the cart button takes the chips row's place only on a card that has something to buy", async () => {
+  it("the cart button takes the chips row's place on a card that has something to buy, VIEW on one that has not", async () => {
     const { unmount } = card(item());
     await settle();
     expect(screen.getByTestId("card-cart")).toBeTruthy();
+    expect(screen.queryByTestId("card-view")).toBeNull();
     expect(screen.getByTestId("card-price").closest("[data-chips]")).not.toBeNull();
     unmount();
     card(item({ available: 0 }));
     await settle();
     expect(screen.queryByTestId("card-cart")).toBeNull();
-    expect(screen.getByTestId("card").querySelector("[data-chips]")).toBeNull();
+    expect(screen.queryByTestId("card-add-round")).toBeNull();
+    expect(screen.getByTestId("card-link")).toHaveAttribute("href");
+    expect(screen.getByTestId("card-view")).toHaveTextContent("View");
+    // Drawings only: the overlay link beneath is the one navigation a click or a screen reader reaches.
+    for (const id of ["card-view", "card-view-round"]) {
+      const el = screen.getByTestId(id);
+      expect(el.closest("a, button")).toBeNull();
+      expect(el).toHaveAttribute("aria-hidden", "true");
+    }
+    expect(screen.getByTestId("card-nfs").closest("[data-chips]")).not.toBeNull();
+  });
+
+  it("says NOT FOR SALE for a mint with no copies left, as upstream's browse card", async () => {
+    card(item({ available: 0 }));
+    await settle();
+    expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
+    expect(screen.queryByTestId("card-sold-out")).toBeNull();
+  });
+
+  it("a view card, as a creator's unlisted item, says NOT FOR SALE and shows VIEW too, as upstream's", async () => {
+    card(item({ available: 0 }), "signedOut", { mode: "view" });
+    await settle();
+    expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
+    expect(screen.queryByTestId("card-sold-out")).toBeNull();
+    expect(screen.queryByTestId("card-cart")).toBeNull();
+    expect(screen.getByTestId("card-view")).toHaveTextContent("View");
+    expect(screen.getByTestId("card-view-round")).toBeTruthy();
   });
 
   it("Add to cart puts the item in the cart and opens the drawer over the page, as upstream's card", async () => {
