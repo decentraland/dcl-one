@@ -561,7 +561,11 @@ async fn friend_gates(
         .collect())
 }
 
-async fn creator_profile_name(pool: &PgPool, creator: &str) -> anyhow::Result<Option<String>> {
+/// The active profile's avatar name of `creator`.
+pub(super) async fn creator_profile_name(
+    pool: &PgPool,
+    creator: &str,
+) -> anyhow::Result<Option<String>> {
     if creator.is_empty() {
         return Ok(None);
     }

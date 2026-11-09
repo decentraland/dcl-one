@@ -313,7 +313,12 @@ pub async fn fetch_snapshots(
         }
 
         if attempt + 1 < max_retries {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Doubles to four times the wait: a dead peer costs the bootstrap
+            // seconds, not minutes (peers are fetched one at a time).
+            tokio::time::sleep(std::time::Duration::from_millis(
+                500u64.saturating_mul(1u64 << attempt.min(2)),
+            ))
+            .await;
         }
     }
 
@@ -1010,7 +1015,11 @@ async fn download_snapshot_file(
         }
 
         if retry + 1 < max_retries {
-            tokio::time::sleep(std::time::Duration::from_millis(retry_wait_ms)).await;
+            // Doubles to four times the wait, as the list fetch above.
+            tokio::time::sleep(std::time::Duration::from_millis(
+                retry_wait_ms.saturating_mul(1u64 << retry.min(2)),
+            ))
+            .await;
         }
     }
 

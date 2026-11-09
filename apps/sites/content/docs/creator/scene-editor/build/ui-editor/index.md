@@ -40,7 +40,7 @@ There is no save button. The editor writes your changes to disk as you go, and t
 Two floating groups of controls sit in the bottom-right corner of the canvas:
 
 * The **preview** group toggles the mobile HUD guides and the safe-area guides, and switches between **Desktop preview** and **Mobile preview**.
-* The **zoom** group has a minus and a plus button, and a percentage readout. Click the percentage to reset the view.
+* The **zoom** group has a minus and a plus button, and a percentage field. Click the percentage to type an exact zoom level between 10 and 200, then press Enter or click away to apply it, or Escape to cancel. The plus button turns off once you reach 200%.
 
 <div align="left"><img src="/docs/creator/images/editor/ui-editor-left-panel.webp" alt="The left panel of the UI Editor, with the 2D and 3D tabs, a search box, the GUIs list containing MainUI, and the Nodes tree showing a Container with a Label and a Button, the Button row showing lock, hide and delete icons." width="220"> <img src="/docs/creator/images/editor/ui-editor-properties.webp" alt="The Properties tab of the UI Editor for a selected Button, with Visibility, Interaction States, a Position section with Constraints, Position and Z-Index, and a Layout section with Size, Min Size, Max Size, Padding and Margin." width="360"></div>
 
@@ -95,8 +95,10 @@ The root of a GUI is always positioned freely.
 * **Opacity**: 100% is fully opaque, 0% fully transparent. The default is 100%.
 * **Scene Inset**: which part of the screen the GUI sits in.
   * **Full Screen** uses the whole renderable screen.
-  * **Gameplay Safe Area** stays clear of the client's own interface, such as chat, the minimap, and HUD indicators.
+  * **Interactable Safe Area** stays clear of the client's own interface, such as chat, the minimap, and HUD indicators.
   * **Device Safe Area** also avoids physical obstructions such as a notch or system bars. This option is offered when the canvas is in mobile preview.
+
+  In the code the editor writes, these three choices become `screenInset: 'none'`, `'interactable'` and `'device'`. See [Screen inset area](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-inset-area).
 
 If you give a GUI's root a width and a height in fixed pixels, the canvas frames it as an artboard of exactly that size rather than as a screen.
 
@@ -106,10 +108,12 @@ The controls in the bottom-right corner of the canvas switch the preview between
 
 Two sets of guides help you place things where players can see and reach them:
 
-* **Safe-area guides** outline the part of the screen your GUI is confined to, matching the **Scene Inset** you picked. While the Scene Inset is **Device Safe Area** or **Gameplay Safe Area** the outline is always on, because it is what the GUI is clipped to. Set the Scene Inset to **Full Screen** and you can turn the outline on or off with the frame icon button.
+* **Safe-area guides** outline the part of the screen your GUI is confined to, matching the **Scene Inset** you picked. While the Scene Inset is **Device Safe Area** or **Interactable Safe Area** the outline is always on, because it is what the GUI is clipped to. Set the Scene Inset to **Full Screen** and you can turn the outline on or off with the frame icon button.
 * **HUD guides** draw the mobile client's own controls, such as the joystick, the jump and action buttons, the emote wheel, the profile, chat and compass. They are reference only, you cannot select or move them. The game controller button turns them on and off, it only appears in mobile preview, and the guides show by default when the Scene Inset is a safe area.
 
 Content placed outside the safe area is not hidden, it is drawn past the outline. That overflow is the warning: in the real client it would sit under the game's own HUD.
+
+**Interactable Safe Area** clears the mobile client's left-hand column of controls, but it shares its right edge with the device area, so the action buttons in the bottom-right corner are drawn over it by design. Keep those corners free. See [Where the client controls live](/docs/creator/build-for-mobile/develop/safe-area/#where-the-client-controls-live).
 
 
 > [!WARNING]
@@ -144,11 +148,16 @@ Each row gives you three things:
 * An **eye icon** that shows or hides that button. When you hide one, the lower buttons move up to fill the gap.
 * **Custom Icon**: replaces the button's glyph with a `.png`, `.jpg` or `.jpeg` image from your scene.
 
-By default nothing is hidden and `IA_JUMP` is the main button, which is exactly what players get in a scene that doesn't touch the HUD.
+In this panel every button starts visible and `IA_JUMP` is the main button.
+
+
+> [!WARNING]
+> **📔 Note**: A scene that never touches the HUD shows only three buttons: jump, pointer and primary. The panel only writes `src/mobile-hud.ts` once you change something, so an untouched panel keeps that default. As soon as the file exists, its code replaces the default set with whatever you configure here, so hiding the joystick alone, for example, also puts the five extra buttons on the player's screen. Hide the ones your scene doesn't use. See [What shows by default](/docs/creator/sdk7/interactivity/touch-screen-controls/#what-shows-by-default).
+
 
 
 > [!NOTE]
-> **💡 Tip**: The numbered buttons normally sit behind a "+" overflow toggle. Hide enough of the higher buttons and they show directly. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/#how-the-button-layout-works) for how the slots fill.
+> **💡 Tip**: With more than five buttons visible, the last ones sit behind a "+" overflow toggle. Hide enough of the higher buttons and the rest show directly. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/#how-the-button-layout-works) for how the slots fill.
 
 
 ### The file it writes

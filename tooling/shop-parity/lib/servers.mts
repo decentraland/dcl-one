@@ -1,6 +1,8 @@
 // The three loopback servers of a capture: the reference build (static, SPA fallback), the replay
 // that stands in for the node (sites SSR and its /shop-api proxy read it), and the built sites tree
 // served by sites-preview.mts with that replay as its upstream.
+import { waitUntil } from "../../../library/async/index.ts";
+import { fetchGeneratesNoServerError, HTTP_PROBE_TIMEOUT_MS } from "../../../library/async/http.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -10,6 +12,8 @@ import { placeholderPng } from "./png.mts";
 import { SITES, TOOL } from "./paths.mts";
 import type { Recording } from "./recording.mts";
 import { fromNodePath, isContentImage, OWN_IMAGE_MOUNTS, serviceForHost } from "./services.mts";
+
+const PROCESS_STARTUP_TIMEOUT_MS = 60_000;
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -134,7 +138,8 @@ export function startReplay(recording: Recording, port: number): Promise<Server>
 /** The production preview of the built sites tree (sites-preview.mts), with the replay as its node. */
 export async function startSites(port: number, upstream: string, env: Record<string, string> = {}): Promise<ChildProcess> {
   if (!existsSync(join(SITES, "build", "server", "index.js"))) throw new Error("apps/sites is not built: run `pnpm build` in apps/sites (or capture.mts --build)");
-  const child = spawn(process.execPath, [join(TOOL, "sites-preview.mts"), "--base", `http://127.0.0.1:${port}`, "--upstream", upstream], {
+  const previewUrl = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, [join(TOOL, "sites-preview.mts"), "--base", previewUrl, "--upstream", upstream], {
     env: { ...childEnv(), CATALYST_URL: upstream, PUBLIC_CATALYST_URL: "", ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -143,29 +148,25 @@ export async function startSites(port: number, upstream: string, env: Record<str
   let log = "";
   child.stdout!.on("data", (c) => (log += c));
   child.stderr!.on("data", (c) => (log += c));
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`sites preview exited (${child.exitCode ?? child.signalCode}):\n${log}`);
-    // Only this child's own ready line counts: another server already on the port would answer too.
-    if (!log.includes(`sites preview: http://127.0.0.1:${port}`)) {
-      await new Promise((r) => setTimeout(r, 250));
-      continue;
-    }
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/robots.txt`, { signal: AbortSignal.timeout(2000) });
-      await r.body?.cancel();
-      if (r.status < 500) {
-        // A later exit would otherwise surface only as refused connections on every page after it.
-        child.once("exit", (code, signal) => {
-          if (!child.killed) console.error(`sites preview exited (${code ?? signal}) during the run:\n${log.slice(-4000)}`);
-        });
-        return child;
+  try {
+    await waitUntil(async (remainingMs) => {
+      const childRunning = child.exitCode === null && child.signalCode === null;
+      if (!childRunning) throw new Error(`sites preview exited (${child.exitCode ?? child.signalCode}):\n${log}`);
+      const loggedPreviewUrl = log.includes(`sites preview: ${previewUrl}`);
+      if (!loggedPreviewUrl) return;
+      try {
+        const ready = await fetchGeneratesNoServerError(`${previewUrl}/robots.txt`, Math.min(HTTP_PROBE_TIMEOUT_MS, remainingMs));
+        return ready ? true : undefined;
+      } catch {
+        return;
       }
-    } catch {
-      // not listening yet
-    }
-    await new Promise((r) => setTimeout(r, 250));
+    }, { timeoutMs: PROCESS_STARTUP_TIMEOUT_MS, description: `sites preview on ${port}` });
+    child.once("exit", (code, signal) => {
+      if (!child.killed) console.error(`sites preview exited (${code ?? signal}) during the run:\n${log.slice(-4000)}`);
+    });
+    return child;
+  } catch (error) {
+    child.kill();
+    throw new Error(`sites preview startup failed on ${port}: ${error instanceof Error ? error.message : String(error)}\n${log}`, { cause: error });
   }
-  child.kill();
-  throw new Error(`sites preview did not answer on ${port}:\n${log}`);
 }

@@ -3,6 +3,7 @@ import { ModalShell } from './Modal'
 import { Button } from './Button'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { isInputLocked, subscribeInputLock } from '../lib/inputLock'
+import { nextLayerOrder } from '../lib/cancelLayers'
 import styles from './popups.module.css'
 
 /** A popup is a render function given its own `close` callback; it returns the overlay to render. */
@@ -43,7 +44,7 @@ const DEFAULTS: Required<Omit<PopupOptions, 'onClose' | 'confirmClose'>> = {
 }
 const closesOnBackdrop = (o: ResolvedOptions): boolean =>
   typeof o.backdropClickCloses === 'function' ? o.backdropClickCloses() : o.backdropClickCloses
-type PopupNode = { id: number; render: PopupRender; options: ResolvedOptions }
+type PopupNode = { id: number; order: number; render: PopupRender; options: ResolvedOptions }
 
 // Module-level popup stack — a single HUD-wide layer (like the hoverPos store), NOT React state.
 // Plain functions mutate it and notify subscribers, so a popup can be opened from anywhere (a
@@ -108,10 +109,16 @@ export function hasOpenPopup(): boolean {
   return stack.length > 0
 }
 
+/** The top popup's place in the shared layer/popup order (0 when none is open), so the session's
+ *  Cancel can close a cancel layer opened inside it first — see lib/cancelLayers. */
+export function topPopupOrder(): number {
+  return stack.length > 0 ? stack[stack.length - 1].order : 0
+}
+
 /** Open an arbitrary popup imperatively; returns a `close` handle. Callable from anywhere. */
 export function openPopup(render: PopupRender, options?: PopupOptions): () => void {
   const id = ++nextId
-  stack = [...stack, { id, render, options: { ...DEFAULTS, ...options } }]
+  stack = [...stack, { id, order: nextLayerOrder(), render, options: { ...DEFAULTS, ...options } }]
   emit()
   return () => closeById(id)
 }

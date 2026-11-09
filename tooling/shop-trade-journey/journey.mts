@@ -12,13 +12,15 @@
 // The primary loop: the seller, creator of E2E_ITEM's collection, starts a discount from My Store; the
 // buyer sees the lower price, buys one with MANA, tops up test credits with the mock card and buys one
 // with credits; the seller ends the discount. It mints two units each run, so it runs while supply lasts.
+import { waitUntil } from "../../library/async/index.ts";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, isAddress, keccak256, parseAbi, parseEther, toHex, zeroAddress, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page, Response } from "playwright-core";
-import { launch } from "./lib/browser.mts";
+import { launch, waitForDiscountedPrice } from "./lib/browser.mts";
+import { AMOY_CREDITS_MANAGER } from "./lib/contracts.mts";
 import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
 import { chargedMana, collectionInRoot, couponData, couponProofs, settledCall, soldItem } from "./lib/settlement.mts";
@@ -40,16 +42,21 @@ const AMOY_TRADE_CONTRACTS = [
   "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d", // BidV2
   "0xe36abc9ec616c83caaa386541380829106149d68", // CollectionStore
 ];
-// The primary loop's other destinations: ending a discount calls the CouponManager V3, and a credits
-// purchase goes through the CreditsManager (both under `amoy` in addresses.json).
+// The primary loop's other destinations: ending a discount calls the CouponManager V3 (under `amoy` in
+// addresses.json), and a credits purchase goes through dcl-one's own CreditsManager (./lib/contracts.mts).
 const AMOY_COUPON_MANAGER = "0x6c956587d9fe70032781edcdc626310648575382";
-const AMOY_CREDITS_MANAGER = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3" as const;
 const CREDITS_SIGNER_ROLE = keccak256(toHex("CREDITS_SIGNER_ROLE"));
 const COLLECTION_ABI = parseAbi(["function creator() view returns (address)", "function name() view returns (string)", "function balanceOf(address) view returns (uint256)"]);
 const ROLES_ABI = parseAbi(["function hasRole(bytes32, address) view returns (bool)"]);
 // Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag (apps/ui3 discovery/flags.ts),
 // which is off; the primary loop turns them on the way a host does, through window.__SHOP_FLAGS__.
 const CREATOR_SALES_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), creatorSales: true };";
+// Resales, bids and listing are the Marketplace's (`dapps-shop-marketplace-features`, apps/ui3 market/access.tsx),
+// shown to a web3 session only while that rollout is on: both loops' wallets are web3 and turn it on the same way.
+const MARKETPLACE_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), marketplaceFeatures: true };";
+// My Store follows decentraland.org's `dapps-shop-my-store` rollout flag (apps/ui3 seller/lib/featureFlags.ts), which
+// is off and would send the seller to the overview; the primary loop starts its discount there, so it turns it on too.
+const MY_STORE_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), myStore: true };";
 
 const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
@@ -155,14 +162,14 @@ const ownerOf = (t: { contract: string; tokenId: string }) => amoy.readContract(
 
 /** The token's owner becomes `who`: polled, since the UI may confirm before the RPC sees the block. */
 async function becomesOwner(t: { contract: string; tokenId: string }, who: Hex): Promise<void> {
-  const until = Date.now() + 2 * 60_000;
-  // A failed read is retried at the next poll; only the deadline fails the step.
-  let owner = await ownerOf(t).catch(() => null);
-  while (owner?.toLowerCase() !== who.toLowerCase()) {
-    if (Date.now() > until) throw new Error(`ownerOf is still ${owner ?? "unreadable"} after 2 minutes`);
-    await new Promise((r) => setTimeout(r, 5_000));
-    owner = await ownerOf(t).catch(() => null);
-  }
+  let lastOwner: string | null = null;
+  await waitUntil(async () => {
+    const owner = await ownerOf(t).catch(() => null);
+    if (owner !== null) lastOwner = owner;
+    return owner?.toLowerCase() === who.toLowerCase() ? owner : undefined;
+  }, { timeoutMs: 2 * 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: `ownerOf becoming ${who}` }).catch((cause: unknown) => {
+    throw new Error(`ownerOf did not become ${who}; last owner: ${lastOwner ?? "unavailable"}`, { cause });
+  });
 }
 
 /** The rows of the token's Bids tab that the buyer made. */
@@ -324,13 +331,14 @@ const unitsOf = (i: { contract: string }, who: Hex) => amoy.readContract({ addre
 
 /** The buyer's units of the collection grow past `before`: polled, as the receipt may come before the RPC's block. */
 async function unitsGrow(i: { contract: string }, who: Hex, before: bigint): Promise<bigint> {
-  const until = Date.now() + 2 * 60_000;
-  for (;;) {
-    const now = await unitsOf(i, who).catch(() => before);
-    if (now > before) return now;
-    if (Date.now() > until) throw new Error(`the buyer still holds ${before} unit(s) of the collection after 2 minutes`);
-    await new Promise((r) => setTimeout(r, 5_000));
-  }
+  let lastUnits: bigint | undefined;
+  return waitUntil(async () => {
+    const now = await unitsOf(i, who).catch(() => undefined);
+    if (now !== undefined) lastUnits = now;
+    return now !== undefined && now > before ? now : undefined;
+  }, { timeoutMs: 2 * 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: `the buyer holding more than ${before} units` }).catch((cause: unknown) => {
+    throw new Error(`the buyer did not hold more than ${before} units; last units: ${lastUnits ?? "unavailable"}`, { cause });
+  });
 }
 
 /**
@@ -369,12 +377,10 @@ const manaOf = (who: Hex) => amoy.readContract({ address: AMOY_MANA, abi: erc20A
 
 /** The buyer's MANA once it differs from `before`, polled: the RPC may answer from a block behind the receipt. */
 async function manaMoves(who: Hex, before: bigint): Promise<bigint> {
-  const until = Date.now() + 60_000;
-  for (;;) {
+  return waitUntil(async () => {
     const now = await manaOf(who).catch(() => before);
-    if (now !== before || Date.now() > until) return now;
-    await new Promise((r) => setTimeout(r, 5_000));
-  }
+    return now !== before ? now : undefined;
+  }, { timeoutMs: 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: "the buyer's MANA balance changing" }).catch(() => before);
 }
 
 /** The MANA amount the item page quotes once MANA is selected, or null when it cannot be read. */
@@ -589,7 +595,7 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       await discountButton(seller.page, collectionName);
     });
   }
-  // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on Amoy's CreditsManager,
+  // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on dcl-one's CreditsManager,
   // and only once its usage index has caught up (README, "Credits").
   let creditsProblem: string | null = null;
   await step("stack can sign credits on Amoy", buyer, async () => {
@@ -600,12 +606,12 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     }
     const st = (await res.json()) as CreditsStatus;
     const signer = env.E2E_CREDITS_SIGNER;
-    if (st.contract?.toLowerCase() !== AMOY_CREDITS_MANAGER || st.chainId !== 80002) creditsProblem = `the stack's credits contract is ${st.contract ?? "unset"} on ${st.chainId}, not Amoy's CreditsManager`;
+    if (st.contract?.toLowerCase() !== AMOY_CREDITS_MANAGER || st.chainId !== 80002) creditsProblem = `the stack's credits contract is ${st.contract ?? "unset"} on ${st.chainId}, not dcl-one's CreditsManager on Amoy (${AMOY_CREDITS_MANAGER})`;
     else if (!st.authorizeEnabled) creditsProblem = "the stack signs no credits: put its signer key in .cache/dev/credits-signer.key and restart it";
     else if (!st.ready) creditsProblem = "the stack's credits usage index has not caught up yet";
     else if (signer && !isAddress(signer)) creditsProblem = "E2E_CREDITS_SIGNER is not an address";
     else if (signer && !(await amoy.readContract({ address: AMOY_CREDITS_MANAGER, abi: ROLES_ABI, functionName: "hasRole", args: [CREDITS_SIGNER_ROLE, signer as Hex] }))) {
-      creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on Amoy's CreditsManager`;
+      creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on the CreditsManager`;
     }
     if (creditsProblem && !preflightOnly) throw new Error(creditsProblem);
     return creditsProblem ? `not yet: ${creditsProblem}` : "ready";
@@ -642,15 +648,8 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     });
     await step("the item shows the discounted price", buyer, async () => {
       // The catalogue joins the creator's live coupon once the coupon-state job has read it from the manager.
-      const until = Date.now() + 3 * 60_000;
-      for (;;) {
-        await buyer.page.goto(itemPath(item));
-        await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 }).catch(() => {});
-        // The server render has no __SHOP_FLAGS__, so the crossed-out price arrives with the client's refetch.
-        if (await buyer.page.getByTestId("detail-price-was").waitFor({ timeout: 15_000 }).then(() => true, () => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
-        if (Date.now() > until) throw new Error("no crossed-out regular price after 3 minutes: the discount does not reach the item page");
-        await new Promise((r) => setTimeout(r, 15_000));
-      }
+      // The server render has no __SHOP_FLAGS__, so the crossed-out price arrives with the client's refetch.
+      return waitForDiscountedPrice(buyer.page, itemPath(item));
     });
     await step("buyer buys one with MANA at the discount", buyer, async () => {
       const units = await unitsOf(item, buyer.wallet.address);
@@ -700,7 +699,7 @@ async function main(): Promise<void> {
   const tradeTo = [...AMOY_TRADE_CONTRACTS, ...(token ? [token.contract] : [])];
   const sellerTo = primaryLoop ? [AMOY_COUPON_MANAGER] : tradeTo;
   const buyerTo = primaryLoop ? [...AMOY_TRADE_CONTRACTS, AMOY_CREDITS_MANAGER] : tradeTo;
-  const flags = primaryLoop ? CREATOR_SALES_ON : undefined;
+  const flags = primaryLoop ? `${CREATOR_SALES_ON}\n${MARKETPLACE_ON}\n${MY_STORE_ON}` : MARKETPLACE_ON;
   const browser = await launch();
   try {
     const seller = await actor(browser, "seller", sellerKey, sellerTo, flags);

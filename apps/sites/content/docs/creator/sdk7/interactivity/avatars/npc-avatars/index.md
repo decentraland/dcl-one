@@ -24,7 +24,7 @@ Transform.create(myAvatar, {
 
 When passing data to generate an `AvatarShape`, the following fields are required:
 
-* `id`: (required) Internal identifier for the Avatar
+* `id`: (required) Internal identifier for the Avatar. The last 4 characters of the `id` show after the NPC's name, in faded text, like a player's wallet suffix. An `id` shorter than 4 characters shows `0000`. Give each NPC an `id` whose ending reads well next to its name, for example `'guide-0001'`.
 
 The following optional fields are also available:
 
@@ -41,9 +41,9 @@ The following optional fields are also available:
 
 > [!WARNING]
 > **📔 Note**: The `AvatarShape`component must be imported via
-> 
+>
 > > `import { AvatarShape } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -51,6 +51,17 @@ The following optional fields are also available:
 > [!WARNING]
 > **📔 Note**: The URN fields must follow the same format used for [NFTShapes](/docs/creator/sdk7/media/display-a-certified-nft/): `urn:decentraland:<CHAIN>:<CONTRACT_STANDARD>:<CONTRACT_ADDRESS>:<TOKEN_ID>`
 
+
+## Move an NPC
+
+To move an NPC, change the `position` of its `Transform`. The avatar doesn't jump to the new position: it walks there from where it is, at about 4 meters per second, and moves faster when the target is 1.5 meters away or more. While it moves, it turns to face the direction it's walking in. The `rotation` you set in the `Transform` is only applied once it arrives.
+
+```ts
+// The NPC walks from its current position to the new one
+Transform.getMutable(myAvatar).position = Vector3.create(10, 0.25, 5)
+```
+
+To control the movement yourself, use a [Tween](/docs/creator/sdk7/3d-essentials/move-entities/). A Tween on the position replaces this automatic walk, and a Tween on the rotation stops the NPC from turning to face where it walks. An entity can only have one Tween at a time, so you can't tween both the position and the rotation of the same entity at once.
 
 ## Animations
 
@@ -61,7 +72,7 @@ To play animations on the avatar, set the `expressionTriggerId` string to the na
 ```ts
 const myAvatar = engine.addEntity()
 AvatarShape.create(myAvatar, {
-	id: '',
+	id: 'dancer-0001',
 	emotes: [],
 	wearables: [],
 	expressionTriggerId: 'robot',
@@ -74,9 +85,24 @@ Transform.create(myAvatar, {
 
 The `expressionTriggerId` field supports all [default animations](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#default-animations), as well as custom animations [from a scene file](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#custom-animations), and even URNs from emotes that are published to the marketplace.
 
+To use a custom animation, give the path to the `_emote.glb` file from your project's root folder, for example `'assets/animations/Cheer_emote.glb'`. As with [`triggerSceneEmote()`](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#custom-animations), a wrong path plays nothing.
+
+
+> [!WARNING]
+> **📔 Note**: `AvatarShape` has no `mask` field, so an `expressionTriggerId` animation always plays on the whole body. [Animating only the upper body](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#animate-only-the-upper-body) is available on the player's own avatar, not on NPCs.
+
+
+### Moving an NPC while it plays an emote
+
+Writing the avatar's `Transform.position`, or running a [Tween](/docs/creator/sdk7/3d-essentials/move-entities/) on it, cancels the emote that is playing. The avatar drops back to its walk cycle, because Decentraland works out which locomotion animation to blend from how far the avatar moved since the last frame.
+
+To move an NPC during an emote, if the movement is over a small area you may want to bake the movement into the animation itself, as root or hips motion inside the `_emote.glb` file.
+
 ### Looping Animations
 
 Animations on an `AvatarShape` play once, if you want the avatar to keep looping an animation, you should create a system that tells it to play the animation again every couple of seconds.
+
+The one exception is the looping default emotes, `sittingChair1`, `sittingChair2`, `sittingGround1` and `sittingGround2`, which hold their pose on an `AvatarShape` with no need to replay them. A custom animation from a file never loops on an `AvatarShape`, even if the clip itself is marked as looping, so a sustained custom pose needs the replay pattern below.
 
 Use the `expressionTriggerTimestamp` to replay a same emote. The value of this field is a [lamport timestamp](https://en.wikipedia.org/wiki/Lamport_timestamp), meaning that it's not a time value, but rather an index that is raised by 1 for each repetition of the emote.
 
@@ -87,7 +113,7 @@ The following snippet creates a system that runs a same emote every 2 seconds:
 ```ts
 const myAvatar = engine.addEntity()
 AvatarShape.create(myAvatar, {
-	id: '',
+	id: 'fan-0001',
 	emotes: [],
 	wearables: [],
 	expressionTriggerId: 'clap',
@@ -132,7 +158,7 @@ If the `AvatarShape` has an empty `name`, only the plate is shown, with no empty
 
 > [!NOTE]
 > **💡 Tip**: For a color-coded plate with no text, set `label` to a string of spaces and pick a `backgroundColor`. Spaces are preserved, so more spaces make a wider plate.
-> 
+>
 > ```ts
 > AvatarNametag.create(myAvatar, {
 > 	label: '      ',
@@ -176,7 +202,7 @@ Use the `showOnlyWearables` field to display only the listed wearables of an ava
 ```ts
 const myAvatar = engine.addEntity()
 AvatarShape.create(myAvatar, {
-	id: '',
+	id: 'mannequin-0001',
 	emotes: [],
 	wearables: [
     'urn:decentraland:matic:collections-v2:0x90e5cb2d673699be8f28d339c818a0b60144c494:0'
@@ -239,6 +265,6 @@ To do this, hide the player's own avatar with an [Avatar Modifier Area](/docs/cr
 
 > [!WARNING]
 > **📔 Note**: To allow the player to have full control over that avatar, you should listen to button events to detect when they press a button, and then trigger the corresponding animation on the NPC avatar. See [Button Events](/docs/creator/sdk7/interactivity/button-events/system-based-events/) for more details.
-> 
+>
 > The fluidity of control may not be perfect while doing this, you may want to use this only in very specific cases.
 

@@ -67,7 +67,9 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const { rerender } = render(<ChromeAuthContext value={auth}><DclTopBar /></ChromeAuthContext>);
     expect(document.querySelector<HTMLImageElement>(".dtb__avatar img")?.src).toBe(auth.avatarUrl);
     rerender(<ChromeAuthContext value={{ ...auth, account: "0x2222", name: "", avatarUrl: undefined }}><DclTopBar /></ChromeAuthContext>);
-    expect(document.querySelector(".dtb__avatar img")).toBeNull();
+    // The previous account's face goes; with none to show, the disc carries the Decentraland mark, as ui2's.
+    expect(document.querySelector(".dtb__avatar .u-avatar__img")).toBeNull();
+    expect(document.querySelector("[data-testid=topbar-avatar-logo]")).not.toBeNull();
     expect(getJSON).not.toHaveBeenCalled();
   });
 

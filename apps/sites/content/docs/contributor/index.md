@@ -29,7 +29,7 @@ For contributors, start by exploring the [Contributor Guides](/docs/contributor/
 
 ### Quick Links
 
-<table data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Architecture</strong></td><td>System architecture overview</td><td></td><td><a href="/docs/contributor/architecture/architecture/">architecture.md</a></td></tr><tr><td><strong>Contributor Guides</strong></td><td>Guidelines and best practices</td><td></td><td><a href="/docs/contributor/contributor-guides/contributor-guides/">contributor-guides.md</a></td></tr><tr><td><strong>API Reference</strong></td><td>API documentation for services</td><td></td><td><a href="/docs/contributor/apis/">apis</a></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Architecture</strong></td><td>System architecture overview</td><td></td><td><a href="/docs/contributor/architecture/architecture/">architecture.md</a></td></tr><tr><td><strong>Contributor Guides</strong></td><td>Guidelines and best practices</td><td></td><td><a href="/docs/contributor/contributor-guides/contributor-guides/">contributor-guides.md</a></td></tr><tr><td><strong>API Reference</strong></td><td>API documentation for services</td><td></td><td><a href="/docs/apis/">apis</a></td></tr></tbody></table>
 
 ## Additional Resources
 

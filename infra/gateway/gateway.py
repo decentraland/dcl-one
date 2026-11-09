@@ -12,6 +12,20 @@ import subprocess
 # `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
 WORLDS_DEPLOY_CAP = "360m"
 WORLDS_SETTINGS_CAP = "12m"
+# The content server's `POST /entities` route limit at the default field
+# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
+# multipart framing), rounded up, so its own 413 is the one a client meets.
+CONTENT_DEPLOY_CAP = "248m"
+# Uploads one address may have in flight on a deploy route: nginx buffers each
+# body before proxying it, and the app's limits only answer after that. Above
+# upstream catalyst's 4 per source, so it stays a coarse guard.
+DEPLOY_CONNECTIONS_PER_ADDRESS = 10
+# Segment delivers each webhook event as its own POST from a few egress
+# addresses, and the HMAC in the app is the gate: this guard sits above the
+# sink's sizing (DATABASE.md, about 280 inserts/s) so a delivery is never
+# answered 429 and retried.
+WEBHOOK_RATE = 300
+WEBHOOK_BURST = 600
 
 
 def words(value):
@@ -90,6 +104,7 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
         "trusted": trusted,
         "storage_trusted": storage_trusted,
+        "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
     }
 
@@ -117,6 +132,7 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
     storage_geo = " ".join(f"{net} 1;" for net in cfg["storage_trusted"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
@@ -133,9 +149,9 @@ def render(table, cfg, mime):
         # list in a location, which would discard that trusted set.
         return f"proxy_pass http://{target};\n{extra}"
 
-    def pair(path, target, final=False):
-        return (location("= " + path, proxy(target))
-                + location(("^~ " if final else "") + path + "/", proxy(target)))
+    def pair(path, target, final=False, extra=""):
+        return (location("= " + path, proxy(target, extra))
+                + location(("^~ " if final else "") + path + "/", proxy(target, extra)))
 
     security_headers = ('add_header X-Content-Type-Options nosniff always;\n'
                         'add_header Referrer-Policy strict-origin-when-cross-origin always;\n'
@@ -148,21 +164,39 @@ def render(table, cfg, mime):
     for row in table["node"]:
         # The query-based places social cards own only their exact endpoints;
         # /places/place/<position> and /places/world/<name> are Sites pages.
-        locations += (location("= " + row["path"], proxy("apis"))
-                      + location("= " + row["path"] + "/", proxy("apis"))
-                      if row.get("exact") else pair(row["path"], "apis", True))
+        # A webhook route (Segment's deliveries) takes its own rate zone.
+        extra = f"limit_req zone=webhook burst={WEBHOOK_BURST} nodelay;" if row.get("webhook") else ""
+        locations += (location("= " + row["path"], proxy("apis", extra))
+                      + location("= " + row["path"] + "/", proxy("apis", extra))
+                      if row.get("exact") else pair(row["path"], "apis", True, extra))
     for row in table["aliases"]:
         rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
     # Worlds deploys reach these matches already rewritten under their host prefix.
+    # The content deploy zone is only a coarse abuse guard: 200 at once, then
+    # 5 r/s per address, above the content server's own per-client burst limit
+    # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
+    # client within that limit never meets nginx's HTML 429. Concurrent
+    # uploads per address are capped on both deploy routes, since each body
+    # is buffered in the gateway's temp space before the app sees it.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
-    locations += location(f'~ "^({deploy})/*$"', proxy("apis",
-        "client_max_body_size 200m; client_body_timeout 300s; limit_req zone=deploy burst=4 nodelay;"))
+    uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
+    # Case-insensitive, as nginx would otherwise pass /content/Entities to the
+    # /content/ location and its looser limits.
+    locations += location(f'~* "^({deploy})/*$"', proxy("apis",
+        f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
+        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+    # Upstream caps the POST /entities/active body at 10 MiB and answers its
+    # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
+    # nginx's HTML 413 first. The content server's case rewrite routes any
+    # spelling, so the match ignores case too.
+    locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
+        "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
-        "limit_req zone=deploy burst=4 nodelay;"))
+        f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
     locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
@@ -271,6 +305,8 @@ http {{
         default 0;
         "~*^/({blocked})(/|\\\\.|$)" 1;
     }}
+    # The telemetry dash entries guard the old serve's routes: they leave with the
+    # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
     map $uri $operator_path {{
         volatile;
         default 0;
@@ -280,6 +316,14 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
+    # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key on
+    # GET and HEAD /contents/{{hash}}, which nginx does not count: upstream exempts
+    # a peer that syncs from it on that route only.
+    geo $sync_peer {{ default 0; {sync_peer_geo} }}
+    map "$sync_peer:$request_method:$uri" $content_limit_key {{
+        default $binary_remote_addr;
+        "~^1:(GET|HEAD):(/content)?/contents/[^/]+/*$" "";
+    }}
     geo $storage_trusted {{ default 0; {storage_geo} }}
     map $storage_trusted $storage_limit_key {{ 1 ""; default $binary_remote_addr; }}
     map "$storage_trusted:$request_method" $storage_write_key {{
@@ -293,10 +337,13 @@ http {{
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
+    limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
+    limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
     limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
-    limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;
+    limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
+    limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
     proxy_buffering off;

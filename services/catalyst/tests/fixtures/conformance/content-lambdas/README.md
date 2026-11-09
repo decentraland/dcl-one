@@ -35,11 +35,14 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [content-writes.md](content-writes.md) | `POST /entities` (regular and `partial=true`), preflight, 405 | 4 | 1 | 0 | 3 | 0 | CW-1..18 |
 | [content-reads.md](content-reads.md) | `/entities/*`, `/contents/:hash` (GET/HEAD), `/contents/:hash/active-entities`, `/available-content`, `/audit`, 404/405/CORS | 8 | 1 | 2 | 5 | 0 | CR-1..20 |
-| [content-sync.md](content-sync.md) | `/deployments`, `/pointer-changes`, `/failed-deployments`, `/snapshots`, `/status`, `/challenge`, `/queries/items/*`, `/queries/erc721/*` | 11 | 0 | 0 | 11 | 0 | CS-01..23 |
+| [content-sync.md](content-sync.md) | `/deployments`, `/pointer-changes`, `/failed-deployments`, `/snapshots`, `/status`, `/challenge`, `/queries/items/*`, `/queries/erc721/*` | 11 | 0 | 0 | 11 | 0 | CS-01..24 |
 | [lambdas-profiles.md](lambdas-profiles.md) | `/profiles`, `/profile/:id`, `/outfits/:id`, `/status`, `/about`, `/contracts/*`, `/crypto/validate-signature` | 10 | 1 | 0 | 8 | 1 | LP-01..32 |
 | [lambdas-items.md](lambdas-items.md) | `/users/:a/{wearables,emotes,third-party-wearables}`, `/third-party-integrations`, `/explorer/:a/*`, `/nfts/collections`, `/collections/*` | 12 | 0 | 0 | 12 | 0 | LI-1..32 |
 | [lambdas-land.md](lambdas-land.md) | `/users/:a/{names,lands,lands-permissions}`, `/names/:n/owner`, `/users/:a/parcels/:x/:y/permissions`, `/parcels/:x/:y/operators` | 6 | 0 | 0 | 6 | 0 | LL-1..24 |
-| **total** | | **51** | **3** | **2** | **45** | **1** | **149** (10 with no work, 139 open) |
+| **total** | | **51** | **3** | **2** | **45** | **1** | **150** (11 with no work, 139 open) |
+| [asset-bundle-registry.md](asset-bundle-registry.md) (not in the total) | ABR content routes: `/profiles`, `/profiles/metadata`, `/entities/{active,versions,status}`, `/worlds/:n/manifest`, `/denylist`; admin routes listed | 14 | 1 | 3 | 1 | 9 | AB-1..16 |
+
+The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 1, GAP 3, DIVERGENT 1, MISSING 9, 5 of the MISSING outside catalyst parity), 16 backlog items (3 with no work, 13 open), one P0, AB-10: Decentraland's moderation denylist is not applied, so a mirror serves content production hides (pending fix: `decentraland/dcl-one#275`).
 
 Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
 `/about` exists here.
@@ -49,7 +52,8 @@ lists its own dcl-one-only routes at the end.
 
 ## P0: a client breaks or the data is wrong
 
-No backlog item is P0 in this tree. These items keep their ids with "Status: MATCH, no work": CR-1, CR-13,
+No backlog item of the six areas in the total is P0 in this tree; the asset-bundle-registry area has
+one, AB-10 (above). These items keep their ids with "Status: MATCH, no work": CR-1, CR-13,
 CS-01, LP-01, LP-15, LI-1, LI-3, LI-4, LL-1 and LL-2.
 
 The largest open items:
@@ -102,10 +106,10 @@ These problems show up in several files, so one fix can close several rows.
   - **EIP-1654** (contract-wallet signatures) needs `ETH_RPC_URL`.
 
   Upstream ships production defaults for each of these sources. In this tree `NODE_POSTURE=mirror` sets the
-  collections, marketplace and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on the chain indexes, and
-  leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs:262-325`). With `NODE_POSTURE` unset, `island`
-  or `journey`, the subgraph URLs stay unset (LL-3). The third-party registry URL has no default under any
-  posture. The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
+  collections, marketplace, third-party registry and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on
+  the chain indexes, and leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs`).
+  A mirror refuses to start with the third-party registry URL or the NFT worker set empty. With `NODE_POSTURE`
+  unset, `island` or `journey`, the subgraph URLs stay unset (LL-3). The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
   the data" sections.
 
 ## Rows that need a live capture

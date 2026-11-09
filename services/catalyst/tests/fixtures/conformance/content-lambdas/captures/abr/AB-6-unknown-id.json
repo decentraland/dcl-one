@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/entities/status/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "78"
+    },
+    "body": {
+      "ok": false,
+      "message": "No active entity found for the provided id or pointer"
+    }
+  }
+}

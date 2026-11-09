@@ -55,6 +55,7 @@ fn update_chat_history(
     mut private_chats: EventReader<DirectChatEvent>,
     mut nearby_chats: EventReader<ChatEvent>,
     users: Query<&UserProfile>,
+    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
     mut pending_friends: Local<Vec<FriendshipEventBody>>,
     mut pending_private_chats: Local<Vec<DirectChatMessage>>,
     mut pending_nearby_chats: Local<Vec<DirectChatMessage>>,
@@ -84,6 +85,11 @@ fn update_chat_history(
             };
             profile.content.eth_address.as_h160()?
         };
+
+        #[cfg(feature = "livekit")]
+        if super::dm_state::blocked_either_way(&social, partner) {
+            return None;
+        }
 
         Some(DirectChatMessage {
             partner,

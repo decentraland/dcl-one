@@ -34,11 +34,12 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   number or its URL) and optionally `change_sha` (a commit of the pull request; its head by
   default), `base_sha` (a commit on main; by default the newest main build that has each
   artifact) and `runs` (1 to 3). Starting one takes write access.
-- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main.
-  Setup reads `engine.optimized` from both web apps' `build-info.json` and refuses a run whose
-  change or base build is unoptimized, such as one from a CI run older than this rule. A manual
-  *Bevy Explorer / CI* run on the branch builds the same; its completion starts no benchmark, so
-  start one by hand after it.
+- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
+  unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
+  it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
+  from both web apps' `build-info.json` and refuses a run whose change or base build is
+  unoptimized, such as one built while the fleet was off. A manual *Bevy Explorer / CI* run on the
+  branch builds optimized; its completion starts no benchmark, so start one by hand after it.
 - **Nothing starts, silently,** for a CI run that failed, built no web app or belongs to no pull
   request, a pull request that is closed or comes from a fork, and a CI run of a commit that is no
   longer the head (the head's own run starts the benchmark). The reason is in the *Inputs* job's
@@ -596,7 +597,9 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 - `BENCHMARK_ENABLED_RUNNERS`: the labels of the laptops that are online, for example
   `intel-i5,apple-m1`. Unset or empty means every laptop, so it can never silently turn the
   benchmark off. The match is a substring check, so any separator works. Clear it when the whole
-  fleet is online.
+  fleet is online. `none`, in any letter case, turns the benchmark off, and pull requests that
+  compile the engine then skip wasm-opt; any other value that names no laptop turns it off and
+  keeps them optimized.
 - `BENCHMARK_RUNS`: measured runs per build, 1 to 3; 3 when unset. A manual run's `runs` overrides
   it.
 - `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.

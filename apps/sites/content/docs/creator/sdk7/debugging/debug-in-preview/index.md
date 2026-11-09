@@ -7,7 +7,7 @@ Running a preview provides some useful debugging information and tools to help y
 If the scene can't be compiled, you'll just see the empty ground, with nothing rendered on it. If this occurs, there are several places where you can look for error messages to help you understand what went wrong:
 
 1. Check your code editor to make sure that it didn't mark any syntax or logic errors.
-2. Check the console in the preview window for any error messages. Open the console by clicking the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner.
+2. Check the console in the preview window for any error messages. Open the console by clicking the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner.
 3. If you ran the scene using the Creator Hub, check the window with the console output of the scene. If you ran the scene using the CLI, check the output of the command line where you ran `npm run start`
 
 
@@ -17,7 +17,7 @@ If the scene can't be compiled, you'll just see the empty ground, with nothing r
 
 ## Use the console
 
-Open the console by clicking the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner.
+Open the console by clicking the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner.
 
 You can also toggle it by pressing the backtick key on your keyboard: **`**. This key is left of the 1 key on most english language keyboards. Or otherwise press Shift + **\`** to open a wider view of the console, in case you need to view more text.
 
@@ -27,11 +27,11 @@ The console also shows error messages, these are marked in red.
 
 ## The debug panel
 
-Open the debug console by clicking the ![](/docs/creator/images/debug-icon.webp) icon on the top-right corner.
+Open the debug console by clicking the ![](/docs/creator/images/debug-icon.webp) icon on the top-right corner.
 
 This opens a panel on the lower-right corner with information about the renderer engine, and is updated in real time as things change.
 
-![](/docs/creator/images/debug-panel.webp)
+![](/docs/creator/images/debug-panel.webp)
 
 ### Current scene
 
@@ -52,7 +52,7 @@ The **PERFORMANCE** tab includes several fields related to _FPS_ (Frames Per Sec
 
 The most important value here is the **Average FPS**, which rounds up the FPS from the last 1000 frames.
 
-![](/docs/creator/images/fps-debug-panel.webp)
+![](/docs/creator/images/fps-debug-panel.webp)
 
 
 > [!WARNING]
@@ -70,7 +70,7 @@ If your scene interacts with a third party server, it's often useful to see what
 
 > [!WARNING]
 > **📔 Note**: To use this feature, you must first install the [Creator Hub](/docs/creator/scene-editor/get-started/editor-installation/), as the necessary dependencies are bundled with that installation.
-> 
+>
 > You don't need to have the Creator Hub open or run your scene preview via the Creator Hub to use this feature, it can also be used if you're using the CLI to run your scene preview.
 
 
@@ -82,7 +82,7 @@ Whenever you make changes to the scene, the preview reloads and updates automati
 
 If you need to reload the scene you're standing on, click the **Reload Scene** button on the top-left corner of the preview window.
 
-![](/docs/creator/images/reload-button.webp)
+![](/docs/creator/images/reload-button.webp)
 
 You can also reload the scene by writing the following into the chat and pushing enter:
 
@@ -96,7 +96,7 @@ If you encounter a problem that is not with your scene, but instead with the Dec
 
 Make sure you always use the latest versions of all dependencies in your scene, as any issues you're experiencing might already be fixed in newer versions. The Creator Hub will notify you when there are updates to install on your Decentraland scene.
 
-![](/docs/creator/images/new-dependencies.webp)
+![](/docs/creator/images/new-dependencies.webp)
 
 You can also manually update the dependenceis via the command line. Running a Decentraland scene locally depends on two main libraries: `@dcl/sdk` and `@dcl/js-runtime`, which is installed on each project folder. Make sure both of those are up to date. You can run the following commands to manually update both these libraries to the latest stable version:
 
@@ -119,7 +119,7 @@ The in-world time of day has a big impact on how 3d models look. The color of th
 
 Check that your scene looks good at all times of day by switching the game clock to different values. Click the **skybox time** icon on the left panel of the screen to set any time you prefer. If this slider is grayed out, make sure that the **Auto** option is disabled.
 
-<figure><a href="https://github.com/decentraland/docs-creator/blob/main/images/media/daylight-settings.png">Dynamic skybox</a><figcaption><p>In-world instructions</p></figcaption></figure>
+<figure><img src="/docs/_remote/be169c2886b8a8e49dfe5d5d.webp" alt="Dynamic skybox" width="300"><figcaption><p>In-world instructions</p></figcaption></figure>
 
 Your 3d model's materials might not look the same as they did in the modeling tool you created it with. This is to be expected, as all 3d rendering engines have subtle differences in how they deal with light and materials.
 
@@ -131,9 +131,9 @@ If you launch a scene preview and open it in two (or more) different explorer wi
 
 Interact with the scene on one window, then switch to the other to see that the effects of that interaction are also visible there.
 
-Using the Creator Hub, click the Preview button a second time, and that opens a second Decentraland explorer window. You must connect on both windows with different addresses. The same sessions will remain open as the scene reloads. You may need to log out and log in again to the second window to select a different account.
+Using the Creator Hub, turn on **Multi-Instance Preview** in the **Desktop Client** submenu of **Play Options**, then click the **Play** button a second time to open a second Decentraland explorer window. You must connect on both windows with different addresses. The same sessions will remain open as the scene reloads. You may need to log out and log in again to the second window to select a different account.
 
-![](/docs/creator/images/editor/preview-button.webp)
+![](/docs/creator/images/editor/preview-button.webp)
 
 Both players will see each other, and can interact with each other. If the scene has any multiplayer logic, it will work as expected and get synced between the two players.
 

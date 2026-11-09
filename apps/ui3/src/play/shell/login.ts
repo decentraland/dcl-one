@@ -19,7 +19,8 @@ import { personalSign } from './sign'
 // read again.
 let held: StoredLogin | null = null
 let pinned = false
-function currentLogin(): StoredLogin | null {
+/** The login the shell holds now, key included: the in-world Shop's buyer (shop/purchase). */
+export function currentLogin(): StoredLogin | null {
   if (!pinned || !held || loginExpired(held)) {
     held = getStoredLogin()
     pinned = false

@@ -103,7 +103,7 @@ impl Selector {
 
 /// Exactly one non-empty selector of at most `MAX_KEYS` values; pointers are
 /// compared case-insensitively like the content server does.
-fn select(body: SelectorBody) -> Result<(Selector, Vec<String>), Response> {
+fn select(body: SelectorBody) -> Result<(Selector, Vec<String>), Box<Response>> {
     let (selector, values) = match (body.pointers, body.ids) {
         (Some(p), None) if !p.is_empty() => (
             Selector::Pointers,
@@ -111,17 +111,17 @@ fn select(body: SelectorBody) -> Result<(Selector, Vec<String>), Response> {
         ),
         (None, Some(i)) if !i.is_empty() => (Selector::Ids, i),
         _ => {
-            return Err(json_error(
+            return Err(Box::new(json_error(
                 StatusCode::BAD_REQUEST,
                 "ids or pointers must be present in the request body, and only one of them",
-            ));
+            )));
         }
     };
     if values.len() > MAX_KEYS {
-        return Err(json_error(
+        return Err(Box::new(json_error(
             StatusCode::BAD_REQUEST,
             format!("at most {MAX_KEYS} ids or pointers per request"),
-        ));
+        )));
     }
     let mut seen = HashSet::new();
     let values: Vec<String> = values
@@ -195,7 +195,7 @@ async fn entities_active(
 ) -> Response {
     let (selector, keys) = match select(body) {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let world = q
         .world_name
@@ -306,7 +306,7 @@ async fn entities_versions(
 ) -> Response {
     let (selector, mut keys) = match select(body) {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     keys.sort();
     let cache_key = format!("{}:{}", selector.field(), keys.join("\n"));

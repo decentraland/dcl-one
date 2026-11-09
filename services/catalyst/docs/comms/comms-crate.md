@@ -93,7 +93,7 @@ with 1013; undecodable frames 1007; restart closes every socket with 1012.
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). The proxy sends `/ws`, `/parcels`, `/peers`, `/peers/{id}`, `/islands`, `/islands/{id}` (at the root and under `/comms` and `/stats`), `/hot-scenes`, `/stats/health` (root and `/archipelago-ea-stats`) and `/lambdas/explore/realms` to the primary alone; a replica answers 404 for all but the last. Stop the primary before its successor starts.
 - Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
-- `DENY_LIST_URL` is required in production; unset, the node warns at start and runs with the list off.
+- `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
 
 ## Bus messages

@@ -1091,6 +1091,29 @@ async fn event_data(ctx: &Context, me: &str, stream: Stream, event: &SocialEvent
     }
 }
 
+/// Exercise the production mapper through the captured source channel names.
+#[cfg(test)]
+pub(crate) async fn captured_event_data(
+    ctx: &Context,
+    me: &str,
+    id: &str,
+    event: &SocialEvent,
+) -> Option<Value> {
+    let stream = match id {
+        "friendship" => Stream::Friendships,
+        "friend-connectivity" => Stream::FriendConnectivity,
+        "block" => Stream::Blocks,
+        "private-voice" => Stream::PrivateVoiceChats,
+        "community-member" => Stream::CommunityMemberConnectivity,
+        "community-voice" => Stream::CommunityVoiceChats,
+        _ => return None,
+    };
+    if !stream.carries(event) {
+        return None;
+    }
+    event_data(ctx, me, stream, event).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1159,27 +1182,4 @@ mod tests {
         let astral = "\u{1F600}".repeat(33);
         assert!(parse(&format!(r#"{{"type":"unsubscribe","id":"{astral}"}}"#)).is_err());
     }
-}
-
-/// Exercise the production mapper through the captured source channel names.
-#[cfg(test)]
-pub(crate) async fn captured_event_data(
-    ctx: &Context,
-    me: &str,
-    id: &str,
-    event: &SocialEvent,
-) -> Option<Value> {
-    let stream = match id {
-        "friendship" => Stream::Friendships,
-        "friend-connectivity" => Stream::FriendConnectivity,
-        "block" => Stream::Blocks,
-        "private-voice" => Stream::PrivateVoiceChats,
-        "community-member" => Stream::CommunityMemberConnectivity,
-        "community-voice" => Stream::CommunityVoiceChats,
-        _ => return None,
-    };
-    if !stream.carries(event) {
-        return None;
-    }
-    event_data(ctx, me, stream, event).await
 }

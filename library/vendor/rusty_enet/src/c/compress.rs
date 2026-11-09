@@ -460,6 +460,9 @@ pub(crate) unsafe fn enet_range_coder_compress(
     }
     out_data.offset_from(out_start) as i64 as usize
 }
+// The translated range coder fetches the final input byte into `decode_code` as the C
+// source does, after the last read of it.
+#[allow(unused_assignments)]
 pub(crate) unsafe fn enet_range_coder_decompress(
     context: *mut u8,
     mut in_data: *const u8,

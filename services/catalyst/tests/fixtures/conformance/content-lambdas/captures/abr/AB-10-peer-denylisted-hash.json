@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/content/contents/bafkreid44mgpv2yb5uhrk5f2f7disnocovyfoc6tlxv5q4rzhmnisvahba",
+    "headers": {
+      "If-None-Match": "*"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "98"
+    },
+    "body": {
+      "error": "No content found with hash bafkreid44mgpv2yb5uhrk5f2f7disnocovyfoc6tlxv5q4rzhmnisvahba"
+    }
+  },
+  "note": "Answered by the application (it carries the application trace header). The hash is the first entry of AB-9-denylist.json."
+}

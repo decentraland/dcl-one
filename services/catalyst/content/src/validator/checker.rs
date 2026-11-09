@@ -1,14 +1,26 @@
 //! The access step per entity type (scene LAND rights, profile/outfits
 //! pointer ownership, names and items, store pointers, collection and
 //! third-party items) over a [`BlockchainChecker`]. A checker `Err` means
-//! the source could not answer: it is `Unavailable` with the old
-//! "Error checking ...: ..." text, never a rejection (the old validator
-//! rejected with it).
+//! the source could not answer: it is `Unavailable` with a fixed sentence
+//! ([`undecided`]), never a rejection, and its cause is only logged.
 
 use async_trait::async_trait;
 
 use super::error::{PermissionResult, ValidationResponse, ValidatorError};
 use super::types::*;
+
+/// Upstream's answer when the scene access check cannot run
+/// (`@dcl/content-validator` `access/on-chain/scenes.ts`, `b1893d37`).
+pub(crate) const PARCEL_ACCESS_UNDECIDED: &str = "Cannot validate deployment";
+
+/// A source that could not answer: `Unavailable` with `answer`. The cause
+/// (RPC, subgraph or configuration detail) is logged, never answered.
+/// Upstream folds these failures into an ownership refusal and has no
+/// sentence of its own except for scenes ([`PARCEL_ACCESS_UNDECIDED`]).
+fn undecided(check: &'static str, answer: &'static str, e: &ValidatorError) -> ValidationResponse {
+    tracing::warn!(check, error = %e, "access check could not be answered");
+    ValidationResponse::unavailable(answer)
+}
 
 /// What the access step reads: [`super::Sources`] is the live implementation
 /// (`chain.rs`: the Checker contract and the item contracts at the entity
@@ -105,7 +117,7 @@ pub async fn validate_scene_access(
             }
         }
         Err(e) => {
-            return ValidationResponse::unavailable(format!("Error checking parcel access: {e}"));
+            return undecided("parcel access", PARCEL_ACCESS_UNDECIDED, &e);
         }
     }
 
@@ -181,9 +193,7 @@ pub async fn validate_profile_access(
                     }
                 }
                 Err(e) => {
-                    return ValidationResponse::unavailable(format!(
-                        "Error checking name ownership: {e}"
-                    ));
+                    return undecided("name ownership", "Error checking name ownership.", &e);
                 }
             }
         }
@@ -214,9 +224,7 @@ pub async fn validate_profile_access(
                     return ValidationResponse::fail(format!("Error checking item ownership: {e}"));
                 }
                 Err(e) => {
-                    return ValidationResponse::unavailable(format!(
-                        "Error checking item ownership: {e}"
-                    ));
+                    return undecided("item ownership", "Error checking item ownership.", &e);
                 }
             }
         }
@@ -371,9 +379,11 @@ pub async fn validate_outfits_access(
                     ));
                 }
                 Err(e) => {
-                    return ValidationResponse::unavailable(format!(
-                        "Error checking wearable ownership: {e}"
-                    ));
+                    return undecided(
+                        "wearable ownership",
+                        "Error checking wearable ownership.",
+                        &e,
+                    );
                 }
             }
         }
@@ -399,9 +409,7 @@ pub async fn validate_outfits_access(
                     }
                 }
                 Err(e) => {
-                    return ValidationResponse::unavailable(format!(
-                        "Error checking name ownership: {e}"
-                    ));
+                    return undecided("name ownership", "Error checking name ownership.", &e);
                 }
             }
         }
@@ -484,9 +492,11 @@ pub async fn validate_item_access(
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        return ValidationResponse::unavailable(format!(
-                            "Error checking collection access: {e}"
-                        ));
+                        return undecided(
+                            "collection access",
+                            "Error checking collection access.",
+                            &e,
+                        );
                     }
                 };
 
@@ -514,9 +524,11 @@ pub async fn validate_item_access(
             {
                 Ok(v) => v,
                 Err(e) => {
-                    return ValidationResponse::unavailable(format!(
-                        "Error checking third-party access: {e}"
-                    ));
+                    return undecided(
+                        "third-party access",
+                        "Error checking third-party access.",
+                        &e,
+                    );
                 }
             };
 

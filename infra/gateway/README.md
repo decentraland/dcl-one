@@ -6,14 +6,20 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event image links use the node's `PUBLIC_URL` plus the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
 
-Referral quotas use the backend TCP peer by default. Configure
+Referral quotas, the `POST /entities` burst limit and daily quota, and the
+`/contents` rate limit use the backend TCP peer by default. Configure
 `HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
-networks, and ensure those proxies overwrite a single valid `X-Real-IP`. An
+networks (the gateway's container network), and ensure those proxies overwrite
+a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header and therefore buckets traffic behind
-a gateway under that gateway's peer address. Missing or malformed X-Real-IP
-from a trusted peer fails closed. This API-side setting is separate from
+a gateway under that gateway's peer address: every deployer then shares one
+deploy limit. The API logs one warning when an untrusted private or loopback
+peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
+fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
-Verify the deployed trust chain and client bucket separation before cutover.
+Verify the deployed trust chain and client bucket separation before cutover:
+without it every client behind the gateway shares one `/contents` budget
+(1000 requests a minute by default) and gets 429s past it.
 
 Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
 
@@ -34,6 +40,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 | `GATEWAY_SITES_UPSTREAMS` | `sites:5212` | Sites destinations |
 | `GATEWAY_ADMIN_CIDRS` | empty | Operator networks; empty denies all |
 | `GATEWAY_TRUSTED_PROXY_CIDRS` | empty | Proxies trusted for client IP and scheme |
+| `GATEWAY_TRUSTED_SYNC_PEER_IPS` | empty | Sync peers exempt from the `read` and `content` request limits; list the API's `TRUSTED_SYNC_PEER_IPS` |
 | `GATEWAY_STORAGE_TRUSTED_CIDRS` | empty | Client networks (such as scene-host egress) with a higher, bounded storage budget |
 | `GATEWAY_RESOLVERS` | resolv.conf | DNS servers |
 | `GATEWAY_STORAGE_ROOT` | empty | Content mount; API sets `STORAGE_X_ACCEL_BASE=/__protected_storage` |
@@ -43,7 +50,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
-- Limits: bodies 1 MiB (deployments 200, builder 21, reports 11); 30 r/s per client (content 100, deployments 2); `%3F` in paths returns 400.
+- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, builder 21, reports 11); 30 r/s per client (content 100, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment uploads in flight per client, then 429; `%3F` in paths returns 400.
 - `/world-storage` (after host rewriting): reads 100 r/s per client (burst 400), writes also 30 r/s (burst 60). Each client address in `GATEWAY_STORAGE_TRUSTED_CIDRS` gets a separate 1000 r/s budget (burst 1000); the allowance is per address, not per CIDR, and never disables limiting. Startup rejects overlaps with `GATEWAY_TRUSTED_PROXY_CIDRS`.
 
 A service subdomain `<sub>.<domain>` reaches the APIs under `/<sub>`, except

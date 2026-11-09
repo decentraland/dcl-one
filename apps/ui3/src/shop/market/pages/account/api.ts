@@ -4,6 +4,7 @@
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { shopClient, type ShopClient } from "../../../api/shop";
+import { catalogCategoryParams } from "../../../discovery/lib/categories";
 import type { Gender } from "../../../discovery/lib/catalogItem";
 import { toMyAsset, type MyAsset } from "../../lib/api";
 
@@ -119,7 +120,8 @@ export async function fetchAccountNfts(address: string, q: AccountNftsQuery, c: 
     else if (q.section === "emotes") query.category = "emote";
     else if (isWearableSection(q.section)) {
       query.category = "wearable";
-      query.wearableCategory = wearableCategoriesOf(q.section);
+      // A group (Head, Accessories) is its flag, as the catalog's: /v1/nfts reads one wearableCategory.
+      Object.assign(query, catalogCategoryParams(wearableCategoriesOf(q.section)));
     }
   }
   const res = await c.market.nfts(query);

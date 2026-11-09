@@ -4,7 +4,7 @@
 
 The Decentraland mobile app replaces the keyboard and mouse with on-screen touch controls. Everything you can do on desktop is also possible on mobile, with a different layout designed for one-handed touch use.
 
-<figure><img src="/docs/.gitbook/assets/mobile-controls.webp" alt="Mobile in-world HUD with controls labeled"><figcaption><p>The Decentraland mobile app in-world HUD, with each touch control labeled.</p></figcaption></figure>
+<figure><img src="/docs/player/.gitbook/assets/mobile-controls.webp" alt="Mobile in-world HUD with controls labeled"><figcaption><p>The Decentraland mobile app in-world HUD, with each touch control labeled.</p></figcaption></figure>
 
 ## Movement
 

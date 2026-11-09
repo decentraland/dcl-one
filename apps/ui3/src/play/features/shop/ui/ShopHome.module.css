@@ -10,30 +10,169 @@
   flex: none;
   margin-top: 68px;
 }
+/* An outfit, the design system's Outfits Explorer: its colours' gradient on a 295×354 card (radius/xl),
+   the render rising 46px over its top edge (clipped at the sides and the rounded bottom only), and the
+   bottom 150px fading into the second colour. Hovered or focused, it takes the design's ring 4px off it,
+   its render grows to the design's hover framing, and its name, items, price and BUY show at the bottom.
+   Layers, as the design stacks them: the ring under everything (the render's head rises over it), then the
+   press target, the render, its fade and the hover row. They stack inside the tile (isolation), so the
+   carousel's arrows still paint over it. */
 .outfit {
   position: relative;
+  isolation: isolate;
   flex: none;
   width: 295px;
   height: 354px;
-  padding: 0;
-  overflow: hidden;
-  border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   background: linear-gradient(180deg, var(--from, var(--accent)) 0%, var(--to, var(--brand)) 100%);
-  cursor: pointer;
 }
-.outfit img {
+.outfit::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  z-index: 0;
+  padding: 4px;
+  border-radius: calc(var(--r-xl) + 8px);
+  background: linear-gradient(180deg, var(--brand) 0%, var(--lavender) 100%);
+  mask: linear-gradient(var(--black) 0 0) content-box, linear-gradient(var(--black) 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+.outfit:hover::after,
+.outfit:has(:focus-visible)::after {
+  opacity: 1;
+}
+.outfitHit {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: none;
+  border-radius: inherit;
+  background: none;
+  cursor: pointer;
+}
+.outfitHit:focus-visible {
+  outline: none;
+}
+.outfitArt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -56px;
+  bottom: 0;
+  z-index: 1;
+  clip-path: inset(0 round 0 0 var(--r-xl) var(--r-xl));
+  pointer-events: none;
+}
+/* The render as the design frames it: its top 46px above the card at rest, 56px and 1.1018× (677.9 → 746.9)
+   hovered. The design draws a square full-body render; the outfits' thumbnails are portraits (27:40) the
+   web Shop's studio captures, so the render covers the card from that line down (the art box starts 56px
+   above the card), scaled from its top: a portrait keeps its head on the line, a square fills the card. */
+.outfitArt img {
+  position: absolute;
+  left: 0;
+  top: 10px;
   width: 100%;
-  height: 100%;
+  height: calc(100% - 10px);
+  max-width: none;
   object-fit: cover;
+  object-position: 50% 0;
+  transform-origin: 50% 0;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
-.outfit:hover,
-.outfit:focus-visible {
-  box-shadow: 0 0 0 2px var(--brand), 0 0 18px var(--glow-pink);
+.outfit:hover .outfitArt img,
+.outfit:has(:focus-visible) .outfitArt img {
+  transform: translateY(-10px) scale(1.1018);
 }
-
+@media (prefers-reduced-motion: reduce) {
+  .outfitArt img {
+    transition: none;
+  }
+}
+.outfitFade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 204px;
+  bottom: 0;
+  z-index: 1;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--to, var(--brand)) 80%, transparent));
+  pointer-events: none;
+}
+/* The hover row: 22/11/12 in, 6px between, on Black 80% fading up to nothing. */
+.outfitInfo {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 11px 12px;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  background: linear-gradient(0deg, var(--black-80) 1.23%, transparent 99.67%);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+.outfit:hover .outfitInfo,
+.outfit:has(:focus-visible) .outfitInfo {
+  opacity: 1;
+}
+.outfitName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.outfitMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.outfitCount {
+  line-height: 1;
+  font-size: var(--type-12);
+  color: var(--text);
+}
+.outfitPrice {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: var(--r-sm);
+  line-height: 1.5;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.outfitPrice > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.outfitBuy {
+  width: 100%;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  /* Pressable only while its row shows: at rest a press anywhere on the tile tries the outfit on. */
+  pointer-events: none;
+}
+.outfit:hover .outfitBuy,
+.outfit:has(:focus-visible) .outfitBuy {
+  pointer-events: auto;
+}
 .row {
   display: flex;
   flex-direction: column;

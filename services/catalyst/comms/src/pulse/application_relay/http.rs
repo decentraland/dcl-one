@@ -57,17 +57,16 @@ struct FlightGuard {
 }
 impl Drop for FlightGuard {
     fn drop(&mut self) {
-        if let Ok(mut registry) = self.inner.registry.lock() {
-            if let Some(entry) = registry
+        if let Ok(mut registry) = self.inner.registry.lock()
+            && let Some(entry) = registry
                 .entries
                 .get_mut(&self.scope)
                 .filter(|entry| entry.serial == self.serial)
-            {
-                if entry.lease.is_some() && entry.deadline > Instant::now() {
-                    entry.in_flight = false;
-                } else {
-                    registry.entries.remove(&self.scope);
-                }
+        {
+            if entry.lease.is_some() && entry.deadline > Instant::now() {
+                entry.in_flight = false;
+            } else {
+                registry.entries.remove(&self.scope);
             }
         }
     }

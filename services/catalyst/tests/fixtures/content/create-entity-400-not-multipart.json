@@ -1,5 +1,5 @@
 {
-  "description": "POST /content/entities with a non-multipart body must 400 - the handler expects a multipart/form-data submission.",
+  "description": "POST /content/entities with a non-multipart body must 400 on a node that takes deploys.",
   "request": {
     "method": "POST",
     "path": "/content/entities",
@@ -14,11 +14,11 @@
   "response": {
     "status": 400,
     "headers": {
-      "content-type": "text/plain; charset=utf-8"
+      "content-type": "application/json"
     },
-    "body_bytes_b64": "SW52YWxpZCBgYm91bmRhcnlgIGZvciBgbXVsdGlwYXJ0L2Zvcm0tZGF0YWAgcmVxdWVzdA=="
+    "body_json": {"error": "Invalid request: expected a multipart/form-data body"}
   },
-  "captured_from": "INTENTIONAL DIVERGENCE from upstream \u2014 a missing/invalid multipart boundary is a client error, so we return 400 (correct). Upstream 500s (unhandled exception). Golden asserts OUR (better) behavior.",
-  "captured_at": "2026-05-23T20:00:00Z",
+  "captured_from": "re-derived from decentraland/catalyst a416565db1e705cff9523540a2578af642598a29 (src/controllers/multipart.ts, the busboy constructor's catch), not captured",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

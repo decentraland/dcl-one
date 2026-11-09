@@ -5,6 +5,7 @@ import { recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { claimMagicReturn, finishMagicSignIn, isConsumedSession, returnFromState, startMagicSignIn } from "./magic";
+import { signInKindFor } from "@/data/lib/auth/signin-kind";
 
 // A made-up account standing in for the wallet Magic holds, so its signatures can be checked for real.
 const ACCOUNT = privateKeyToAccount(`0x${"56".repeat(32)}`);
@@ -115,6 +116,8 @@ describe("social sign-in through Magic", () => {
     const days = (new Date(identity.expiration).getTime() - before) / 86_400_000;
     expect(days).toBeGreaterThan(29.99);
     expect(localStorage.getItem("dcl_magic_user_email")).toBe("jane.doe@example.com");
+    // A social account through Magic is managed, whatever wallet extension the browser carries.
+    expect(signInKindFor(SIGNER)).toBe("managed");
   });
 
   it("uses Magic's existing session when it skipped the OAuth check, and fails without an account", async () => {

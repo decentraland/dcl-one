@@ -204,6 +204,9 @@ pub async fn create_rentals_listing(
     let signer = state
         .require_signer(&headers, "post", &signed_path(&original, ROUTE_LISTINGS))
         .await?;
+    // After the signature, so an unsigned request keeps the old 401. A refresh (below) only re-reads the chain for a
+    // listing that exists, and stays open.
+    state.require_marketplace()?;
 
     let now = chrono::Utc::now();
     if body.expiration < now.timestamp_millis() {

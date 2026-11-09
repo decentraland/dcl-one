@@ -266,6 +266,11 @@ const ENDED_OCCURRENCES_SQL: &str = "WITH schedules AS MATERIALIZED (
         (SELECT count(*) FROM explore.event_attendance_local a WHERE a.event_id=candidates.event_id AND a.action='going')
     FROM candidates";
 
+#[cfg(test)]
+tokio::task_local! {
+    static DISABLE_ENDED_STATEMENT_TIMEOUT: ();
+}
+
 async fn scan_ended_page(
     pool: &PgPool,
     now: NaiveDateTime,
@@ -276,6 +281,12 @@ async fn scan_ended_page(
     sqlx::query("SET LOCAL statement_timeout='2s'")
         .execute(&mut *tx)
         .await?;
+    #[cfg(test)]
+    if DISABLE_ENDED_STATEMENT_TIMEOUT.try_with(|()| ()).is_ok() {
+        sqlx::query("SET LOCAL statement_timeout=0")
+            .execute(&mut *tx)
+            .await?;
+    }
     // Bound source keys before reading schedules, probing receipts or counting
     // attendance. Completed history cannot grow the work of this page.
     let page: Vec<(String, i32)> = sqlx::query_as(ENDED_EVENT_PAGE_SQL)
@@ -352,7 +363,18 @@ pub async fn scan_ended(
         )
         .await
         {
-            Ok(result) => collected += result?,
+            Ok(Ok(count)) => collected += count,
+            Ok(Err(error))
+                if error.downcast_ref::<sqlx::Error>().is_some_and(|error| {
+                    error.as_database_error().is_some_and(|error| {
+                        error.code().as_deref() == Some("57014")
+                            && error.message() == "canceling statement due to statement timeout"
+                    })
+                }) =>
+            {
+                break;
+            }
+            Ok(Err(error)) => return Err(error),
             Err(_) => break,
         }
         if collected == 100 || (cursor.after_event.is_empty() && cursor.occurrence_offset == 0) {
@@ -390,7 +412,6 @@ pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
     });
     let pool = state.pool.clone();
     jobs.spawn_leased("community-ranking", move |ctx| { let pool = pool.clone(); async move {
-        tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(Duration::from_secs(1800))=>{} }
         loop {
             match recalculate(&pool,Utc::now().naive_utc()).await {
                 Ok(count)=>ctx.progress(format!("{count} community scores calculated")),
