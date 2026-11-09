@@ -17,6 +17,7 @@ import feetIcon from '../../assets/category-icons/feet.png'
 import accessoriesIcon from '../../assets/category-icons/earring.png'
 import skinIcon from '../../assets/category-icons/skin.png'
 import { listingTypeFor } from '../../../shop/market/access-rule'
+import { shopClient } from '../../../shop/api/host'
 
 export const SHOP_PAGE_SIZE = 48
 
@@ -135,7 +136,7 @@ export const shopQueries = {
               maxPriceCredits: filters.maxCredits ?? undefined,
               ...paging
             },
-            { signal }
+            { client: shopClient(), signal }
           )
         // Nothing not for sale has a price, so the range applies to the other statuses only.
         const status = statusOf(filters)
@@ -153,7 +154,7 @@ export const shopQueries = {
             maxPriceCredits: priced ? (filters.maxCredits ?? undefined) : undefined,
             ...paging
           },
-          { signal }
+          { client: shopClient(), signal }
         )
       },
       staleTime: 30_000

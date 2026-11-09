@@ -2,11 +2,10 @@
 
 import { isShopApiError } from "../../api/client";
 import { ENDPOINTS } from "../../api/endpoints";
-import { identitySigner } from "../../api/signer";
-import { shopClient } from "../../api/shop";
 import type { AuthIdentity } from "../../../data/auth/identity";
 import type { CatalogItem } from "../lib/catalogItem";
 import { slotOf } from "../lib/outfit";
+import { identitySigner, shopClient } from "../../api/host";
 
 export type OutfitBodyShape = "male" | "female" | "unisex";
 export type OutfitItemRef = { contractAddress: string; itemId: string };

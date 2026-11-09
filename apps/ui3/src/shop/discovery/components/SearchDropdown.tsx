@@ -27,6 +27,7 @@ import { CollectionThumb } from "./CollectionCard";
 import { subCategoryLabel } from "./Filters";
 import Icon from "./Icon";
 import "./search.css";
+import { shopClient } from "../../api/host";
 
 const DEBOUNCE_MS = 200;
 
@@ -94,7 +95,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
     const controller = new AbortController();
     setState((s) => ({ ...s, loading: true, error: false }));
     const timer = setTimeout(() => {
-      fetchSuggestions(query, {}, { signal: controller.signal }).then(
+      fetchSuggestions(query, {}, { client: shopClient(), signal: controller.signal }).then(
         (data) => !controller.signal.aborted && setState({ query, data, loading: false, error: false }),
         (e) => !controller.signal.aborted && (e as { name?: string })?.name !== "AbortError" && setState({ query, data: EMPTY_SUGGESTIONS, loading: false, error: true }),
       );

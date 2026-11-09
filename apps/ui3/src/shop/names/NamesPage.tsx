@@ -10,7 +10,6 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useMarketplace } from "../market/access";
 import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
-import { shopClient } from "../api/shop";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
 import type { ShopClient } from "../api/shop";
@@ -29,6 +28,7 @@ import "./namespage.css";
 import identityIcon from "./icons/identity-icon.svg?url";
 import worldIcon from "./icons/world-icon.svg?url";
 import inviteIcon from "./icons/invite-icon.svg?url";
+import { shopClient } from "../api/host";
 
 export type NamesNavState = { resumeName?: string };
 

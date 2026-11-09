@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import { Link } from "react-router";
 
 import { isShopApiError } from "../../api/client";
-import { shopClient } from "../../api/shop";
 import { shopCart } from "../../cart/store";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogByIds } from "../api";
@@ -20,6 +19,7 @@ import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
 import "../components/rail.css";
 import "./overviewoutfits.css";
+import { shopClient } from "../../api/host";
 
 const MAX_DOTS = 6;
 const DEFAULT_GRADIENT = { from: "#c640cd", to: "#691fa9" } as const;
@@ -162,7 +162,7 @@ export default function OverviewOutfitsRow() {
   const outfits = useMemo(() => orderOutfitsByRecency(outfitsQ.data ?? []), [outfitsQ.data]);
   // From the feed's order, not the shuffled one, so the lookup's cache key is the same on every visit.
   const ids = useMemo(() => Array.from(new Set((outfitsQ.data ?? []).flatMap((o) => o.items.map(itemKey)))).sort(), [outfitsQ.data]);
-  const itemsQ = useShopQuery(ids.length ? ["overview-outfit-items", ...ids] : null, (signal) => fetchCatalogByIds(ids, { signal }), { staleMs: 60_000 });
+  const itemsQ = useShopQuery(ids.length ? ["overview-outfit-items", ...ids] : null, (signal) => fetchCatalogByIds(ids, { client: shopClient(), signal }), { staleMs: 60_000 });
   const byKey = useMemo(() => {
     const m = new Map<string, CatalogItem>();
     for (const item of itemsQ.data ?? []) if (item.itemId != null) m.set(itemKey({ contractAddress: item.contractAddress, itemId: item.itemId }), item);

@@ -7,7 +7,7 @@
 // silently charged; a line whose settlement this cart cannot build (a NAME registration, a rental, a
 // legacy order: single-asset calls) is `unsupported` and finishes on its own page.
 
-import { shopClient, type ShopClient } from "../../api/shop";
+import { type ShopClient } from "../../api/shop";
 import type { CreditLineRequest } from "../../api/types";
 import { tokenRefId } from "../../model/asset";
 import { discountedCents, discountedMana, usdCents, type ManaWei, type UsdCents } from "../../model/money";
@@ -20,6 +20,7 @@ import { getCouponManagerForTrade, getMarketplaceForTrade } from "../lib/marketp
 import { isOwnTrade } from "../lib/ownership";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./encoding";
 import type { PurchaseTarget } from "./mana";
+import { shopClient } from "../../api/host";
 
 const PPM = 1_000_000;
 /** CollectionDiscountCoupon.DISCOUNT_TYPE_RATE: the only kind the Shop prices and settles. */

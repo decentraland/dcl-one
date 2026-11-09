@@ -8,6 +8,7 @@
 // fail soft: no answer is no button and no permission list.
 
 import { catalystBase } from "../../data/catalyst/client";
+import { shopPeers } from "../api/host";
 import { peerUrlFor } from "./lib/urn";
 
 const VIDEO_FILE = "video.mp4";
@@ -45,7 +46,7 @@ type ActiveEntity = { content?: { file: string; hash: string }[] };
 
 /** The permissions a smart wearable's scene asks for (scene.json `requiredPermissions`); [] when none or unknown. */
 export async function fetchSmartWearableRequiredPermissions(urn: string, signal?: AbortSignal): Promise<string[]> {
-  const peer = peerUrlFor([urn]);
+  const peer = peerUrlFor([urn], shopPeers());
   try {
     const res = await fetch(`${peer}/content/entities/active`, {
       method: "POST",

@@ -7,7 +7,7 @@
 // a balance rounds down (model/money creditsFloor), never up.
 
 import { isShopApiError, type ShopApiError } from "../api/client";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import type { CreditAuthorization, CreditBatchAuthorization, CreditLineRequest } from "../api/types";
 import { creditsFloor, parseUsdCents, ZERO_CENTS, type UsdCents } from "../model/money";
 
@@ -107,12 +107,12 @@ export function decodeUserCredits(v: unknown): UserCreditsResponse {
 }
 
 /** GET /shop-api/v1/users/{address}/credits (signed: the caller must be `address`). */
-export async function getUserCredits(address: string, client: ShopClient = shopClient(), signal?: AbortSignal): Promise<UserCreditsResponse> {
+export async function getUserCredits(address: string, client: ShopClient, signal?: AbortSignal): Promise<UserCreditsResponse> {
   return decodeUserCredits(await client.credits.balance<unknown>(address, { signal }));
 }
 
 /** The spendable USD balance; zero when the feature is off or nothing was bought yet. */
-export async function getUsdBalance(address: string, client: ShopClient = shopClient(), signal?: AbortSignal): Promise<UsdBalance> {
+export async function getUsdBalance(address: string, client: ShopClient, signal?: AbortSignal): Promise<UsdBalance> {
   const { usd } = await getUserCredits(address, client, signal);
   return usd ?? { balanceCents: ZERO_CENTS, credits: 0 };
 }
@@ -128,7 +128,7 @@ export type CheckoutLine = CreditLineRequest;
 export async function authorizeUsdCreditGroup(
   lines: CheckoutLine[],
   source: "website" | "client" = "website",
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<CreditBatchAuthorization> {
   return client.authorizations.authorizeGroup({ items: lines, source });
 }
@@ -137,7 +137,7 @@ export async function authorizeUsdCreditGroup(
 export async function authorizeUsdCredit(
   usdPriceCents: number,
   opts: { tradeId?: string; item?: { contractAddress: string; itemId: string }; registeredName?: string; source?: "website" | "client" } = {},
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<CreditAuthorization> {
   return client.authorizations.authorize({
     usdPriceCents,
@@ -204,7 +204,7 @@ function pageTotal(json: Json, skip: number, first: number | undefined, count: n
 export async function fetchUserPurchases(
   address: string,
   opts: { all?: boolean; first?: number; skip?: number } = {},
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<{ items: PurchaseRecord[]; total: number }> {
   const json =
     obj(
@@ -251,7 +251,7 @@ export function creditOrderPill(status: CreditOrderStatus): "SETTLED" | "PENDING
 export async function fetchUserCreditOrders(
   address: string,
   opts: { first?: number; skip?: number } = {},
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<{ items: CreditOrder[]; total: number; payouts: Payout[] }> {
   try {
     const json =
@@ -271,7 +271,7 @@ export async function fetchUserCreditOrders(
 }
 
 /** The buyer walked away from a pack checkout. Best-effort and silent: the server expires it anyway. */
-export async function cancelCreditOrder(orderId: string, client: ShopClient = shopClient()): Promise<void> {
+export async function cancelCreditOrder(orderId: string, client: ShopClient): Promise<void> {
   try {
     await client.packs.cancelOrder(orderId);
   } catch {
@@ -283,7 +283,7 @@ export async function cancelCreditOrder(orderId: string, client: ShopClient = sh
 export type ResumeResult = { kind: "url"; url: string } | { kind: "expired" } | { kind: "paid" } | { kind: "unavailable" };
 
 /** Reopen a pack checkout the buyer left, or say why it cannot be (the 409 body carries the order's status). */
-export async function resumeCreditOrder(orderId: string, client: ShopClient = shopClient()): Promise<ResumeResult> {
+export async function resumeCreditOrder(orderId: string, client: ShopClient): Promise<ResumeResult> {
   try {
     const json = obj(await client.packs.resumeOrder<unknown>(orderId));
     return typeof json?.url === "string" && json.url ? { kind: "url", url: json.url } : { kind: "unavailable" };
@@ -296,7 +296,7 @@ export async function resumeCreditOrder(orderId: string, client: ShopClient = sh
 }
 
 /** Release the reservations nothing was handed off for (by salt). No-op for an empty list. */
-export async function cancelUsdIntents(salts: string[], client: ShopClient = shopClient()): Promise<number> {
+export async function cancelUsdIntents(salts: string[], client: ShopClient): Promise<number> {
   const unique = [...new Set(salts)];
   if (unique.length === 0) return 0;
   const out = await client.authorizations.cancel({ salts: unique });
@@ -304,7 +304,7 @@ export async function cancelUsdIntents(salts: string[], client: ShopClient = sho
 }
 
 /** Record the transaction a group's credits went out in: a FACT about a transaction, never an outcome. */
-export async function reportIntentSubmission(salts: string[], txHash: string, client: ShopClient = shopClient()): Promise<number> {
+export async function reportIntentSubmission(salts: string[], txHash: string, client: ShopClient): Promise<number> {
   const unique = [...new Set(salts)];
   if (unique.length === 0) return 0;
   const out = await client.authorizations.submitted({ salts: unique, txHash });

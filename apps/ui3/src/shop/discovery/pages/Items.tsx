@@ -30,6 +30,7 @@ import { useInfiniteShopQuery } from "../query";
 import searchEmpty from "./assets/search-empty.svg?url";
 import "../components/browselayout.css";
 import "./items.css";
+import { shopClient } from "../../api/host";
 
 const SEO_TITLE = "Browse Collectibles";
 const seoSearchTitle = (query: string) => `Search results for “${query}”`;
@@ -62,7 +63,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const creatorNames = useCreatorNames(creators);
   const collectionName = useCollectionName(collection);
 
-  const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, { signal }));
+  const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, { client: shopClient(), signal }));
 
   const listingsFreshness = useListingsFreshness(isUnified && category !== "names");
 

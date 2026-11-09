@@ -258,7 +258,7 @@ const publishable: PublishableItem = {
 
 describe("Discounts, issuance and the listing import", () => {
   it("previews a discount in whole credits and refuses to publish on a node without its coupons index", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     setShopClient(fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]).client);
     try {
@@ -281,7 +281,7 @@ describe("Discounts, issuance and the listing import", () => {
   });
 
   it("signs and publishes a discount on the Shop's settlement chain, not always Polygon", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     const shop = fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]);
     setShopClient(shop.client);

@@ -9,12 +9,12 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { onTestFinished } from "vitest";
 
 import type { AuthIdentity } from "../../data/auth/identity";
-import { setShopClient } from "../api/shop";
 import { shopRouteObjects } from "../routes";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost, WalletKind } from "../wallet/session";
 import { fakeShop, fakeWallet, type FakeRoute, type FakeShop, type FakeWallet } from "./testing";
 import { marketplaceOn } from "./testing-flags";
+import { setShopClient } from "../api/host";
 
 export function testIdentity(signer: string, ms = 3_600_000): AuthIdentity {
   return {

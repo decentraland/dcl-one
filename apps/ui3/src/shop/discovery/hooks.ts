@@ -6,13 +6,13 @@ import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
 import { shortAddress } from "../model/address";
-import { shopClient } from "../api/shop";
 import { readMirrorFreshness, type IndexFreshness } from "./freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
 import { isSaleActive, saleTimeLeft, type SaleInfo } from "./lib/sale";
 import { useShopQuery } from "./query";
 import { cachedProfile, rememberProfiles } from "./lib/profileCache";
+import { shopClient } from "../api/host";
 
 export type FilterValue = string | string[] | boolean | null;
 

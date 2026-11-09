@@ -51,7 +51,7 @@ describe("bids are MANA only", () => {
     });
     const phases: string[] = [];
     const posted: unknown[] = [];
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../testing");
     const shop = fakeShop([{ method: "POST", path: /^\/v1\/trades$/, reply: ({ body }) => (posted.push(body), { status: 201, body: { ok: true, data: { ...(body as object), id: "t-9", contract: MARKET } } }) }]);
     setShopClient(shop.client);
