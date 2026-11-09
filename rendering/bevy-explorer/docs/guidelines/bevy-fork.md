@@ -133,10 +133,13 @@ across workers:
     whose parent has no visibility yet, so a child is never written before its parent.
   - A part-written instance's top-level entities are attached to the parent and kept
     `Visibility::Hidden` until it is complete; a `HiddenSceneRoot` component holds their own
-    visibility, restored then.
-  - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written.
+    visibility, restored then unless something changed it meanwhile (none becomes `Inherited`).
+    A descendant with an explicit `Visibility::Visible` still shows; glTF nodes are `Inherited`.
+  - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written,
+    and drop the instance if it is still queued.
   - A scene replaced or removed mid-spawn starts the instance over. If no entity is marked while
-    some are unwritten (despawned by others, a scene changed in place), it is written whole.
+    some are unwritten, a despawned top-level entity cancels the instance; otherwise it starts
+    over in slices, and is written whole only if it gets stuck again.
   - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
     `reveal_instance_sync`.
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF

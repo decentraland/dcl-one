@@ -50,21 +50,25 @@ next frame, and a model stays hidden until both steps are done.
 - **A part-written instance is hidden.** When a run leaves an instance part-written, its
   top-level entities are attached to the parent, in the order a whole spawn attaches them, and
   carry `Visibility::Hidden` until the instance is complete, with a `HiddenSceneRoot` component
-  holding the visibility their scene gives them. Then each gets that visibility back; a root whose
-  scene gives it none loses the visibility components hiding added. A root's own visibility
-  written by a later slice is hidden again at once. Writing parents first is what makes the hiding
-  hold. Bevy resolves an `Inherited` child whose parent has no visibility components yet as
+  holding the visibility their scene gives them. Then each gets that visibility back, unless
+  something changed it while hidden; a root whose scene gives it none is left `Inherited`, since
+  something may require the visibility components by then. A root's own visibility written by a
+  later slice is hidden again at once. Hiding the top-level entities hides what inherits from
+  them: a descendant with an explicit `Visibility::Visible` still shows (glTF nodes are all
+  `Inherited`). Writing parents first is what makes the hiding hold. Bevy resolves an `Inherited` child whose parent has no visibility components yet as
   visible (`visibility_propagate_system`), so a child written before its parent, as archetype
   order does, would show at the origin; a test with Bevy's propagation checks that nothing
   written shows between slices. `instance_is_ready` and `SceneInstanceReady` mean complete, as
   before, so every caller that waits for them is unchanged.
 - **Cancelling mid-spawn leaves nothing behind.** Entities are attached only as their instance is
   hidden or complete, so a despawned parent does not reach them all. Its parent despawned,
-  `despawn_instance` and `unregister_instance` despawn every entity the instance allocated. A
-  scene replaced (another `World`) or removed mid-spawn starts its instance over; a removed one
-  waits for its scene to load again. If no entity is marked while some are still unwritten (an
-  entity despawned by others mid-spawn, a scene changed in place, or a hierarchy that does not
-  reach every entity), the instance starts over and is written whole.
+  `despawn_instance` and `unregister_instance` despawn every entity the instance allocated, and
+  drop it if it is still queued. A scene replaced (another `World`) or removed mid-spawn starts
+  its instance over; a removed one waits for its scene to load again. If no entity is marked while
+  some are still unwritten: a top-level entity despawned by others cancels the instance; otherwise
+  (an entity despawned by others, a scene changed in place) it starts over, still in slices, and
+  only if that gets stuck too, which a hierarchy that does not reach every entity does, is it
+  written whole.
 - **Hidden until revealed.** `spawn_as_child_hidden` keeps an instance hidden after it has
   spawned, until `reveal_instance_sync`. The Explorer spawns glTF containers that way and reveals
   them when processing is done, so Bevy's own materials and a model's collider meshes never show,
@@ -76,7 +80,9 @@ next frame, and a model stays hidden until both steps are done.
   `ContainerEntity`, which processing gives it first, so each frame takes the model's nodes that
   have none; the model's running state stays on the container (`GltfProcessing`: the collider
   counter, the animation flag and the named nodes). Models already in progress go first; at least
-  one node is processed a frame. Resetting or removing the container drops the progress.
+  one node is processed a frame, and containers with nothing to process finish whatever the
+  deadline. Resetting or removing the container drops the progress and despawns a model not
+  processed yet; a container put again with the same value keeps its model.
 - **The Explorer's slice.** `scene_runner::scene_spawn_slice` sets the deadline 4 ms after it runs
   each frame (`SpawnScene`, before `scene_spawner_system`), shared by spawning and processing, and
   none while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
@@ -105,7 +111,7 @@ next frame, and a model stays hidden until both steps are done.
   first needs the spawner to know which components render, the second moves the hierarchy twice
   and breaks the Explorer's roots-under-the-container assumption, and the third is the same work
   as `Visibility` with lights and gizmos filtered differently.
-- **A list of the scene's entities and a cursor into it** (this change's first version): it walks
+- **A list of the scene's entities and a cursor into it**: it walks
   every archetype of the scene world into a second collection of entities beside the instance's
   map, and writes in archetype order, which shows children written before their parents.
 - **A cursor over the scene world's archetypes, without the list**: the same walk, done lazily,
