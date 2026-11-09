@@ -945,17 +945,63 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 300)
+      return
+    }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {

@@ -81,11 +81,14 @@ understand the change in one sitting.
 
 Document current behavior, ownership, constraints and reasons directly. Throughout this
 repository, keep Unity names, repository or file references, source revisions, copied-constant
-provenance and comparison language out of prose in code comments, tracked documentation
-(including ADRs and agent instructions), and PR titles and descriptions. This rule supersedes
+provenance and comparisons used as implementation rationale out of prose in code comments,
+tracked documentation (including ADRs and agent instructions), and PR titles and descriptions. This rule supersedes
 older instructions to put that material in PRs. Keep source inventories and compatibility
 evidence in ignored task/review reports instead; retain required legal attribution in licenses
 and dependency manifests.
+
+Keep client support and compatibility requirements accurate without attributing implementation
+choices to another engine.
 
 Preserve exact operational literals when renaming them would break instructions or contracts:
 tool and skill identifiers, endpoint paths, process names, wire values, and external repository

@@ -12,9 +12,8 @@ with scenarios implemented through this repository's console driver. Every visua
 is recorded anew by dcl-one's CI against this client's rendering behavior.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
-have not yet run against the engine: that needs the Windows GPU runner and the zone accounts
-(see [CI](#ci)). Until a run exists, every scenario's accessible names and waits are as read from
-the HUD's source, not as observed.
+run on the Windows GPU runner with the zone accounts ([CI](#ci)), and on a workstation with a GPU
+and an account's key ([Run it](#run-it)); a run's report says which pass.
 
 ## Run it
 
@@ -81,8 +80,14 @@ describes the gateway layouts and service overrides.
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
 redacted) and
-`final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
-`frame.png`, `reference.png` and `diff.png`. A client that fails to boot, at the open, at the
+`final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
+page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
+the page's last 200 console lines; a failed restore adds the same as `restore-page.jpg` and
+`restore-console.txt`. What the report keeps of the page's console, here and for a
+boot, has its credentials replaced as the engine's own benchmark log does
+(`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
+and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
+`diff.png`. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
@@ -101,11 +106,55 @@ with their replies parsed. It asserts through the engine where it can (`/world_s
 `/avatar_state`, `/get_user_data`'s profile version after an equip, `/chat_history`) and through
 `/hud_read` for what only the HUD shows. HUD controls are named by role and accessible name
 (`specs/pages.ts` holds the pages); a control that appears on hover is reached with `hud.hover`
-first. Every wait is bounded and says what it waits for; nothing asserts zone's live listings as
-literals. A scenario that changes account state restores it.
+first. Every wait is for a state the client reports, bounded by a ceiling and saying what it
+waits for; none waits for time to pass, save the catalyst's deployment window below. Nothing
+asserts zone's live listings as literals. A scenario that changes account state restores it.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for unsigned guest sessions and checks that authenticated
-login delivery is inactive. The **Client login events** section is included in the registered-reading
+What the driver does for every scenario, so a spec need not:
+
+- **One client per session, closed when done.** A session (the account, a guest, the unsigned
+  guest, the visual group's window) is booted on first use and kept for the scenarios that share
+  it. A scenario whose session no later one uses closes it (`closeSession`), so no idle client
+  renders beside the rest on the one GPU.
+- **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
+  rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
+  rail reads pressed, the rail's settings popover is closed and no field holds the keys
+  (`/world_state`'s `keyboardClaimed`). The rail is read once it holds still (sliding in, it reads
+  as covered with nothing open). Each press waits for the HUD to show it took effect (a layer
+  gone, the rail done sliding back in, and after leaving the chat input the engine told of it)
+  before the next. A HUD already at rest gets no Escape; a client with no HUD (the standalone
+  built without it) gets none; a HUD still not at rest after four presses is left to the
+  scenario, whose first step says what it found; any other error fails the scenario at its
+  start. The web boot waits for the HUD's own world (the rail), which
+  comes after the engine's.
+- **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the HUD to call the
+  control actionable: visible, enabled, uncovered and no longer moving. The HUD reports a control
+  inside a running CSS animation or transition as `still moving` (pages slide and fade in, a
+  card's button grows in), since a click aimed at it there lands where it no longer is, and one
+  under the browser's pointer lock as locked to another element (photo mode's camera holds the
+  pointer until the right button frees it), since every click then goes to that element.
+- **The keyboard where the scenario expects it.** The HUD relays a text field's focus to the
+  engine through the bridge scene, a few frames late, and `/world_state` says which side has the
+  keys (`keyboardClaimed`). A real `hud.fill` returns once the field has them, so the next key is
+  typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
+  closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
+  Escape twice only when a field holds the keys, and falls back to the page's Close button when a
+  field keeps them. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
+  and is refused, not raced: run the suite against a web build of its own commit.
+- **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
+  slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
+  their query changes (a filter, a page, the search box's debounce) until its answer shows; the
+  specs wait for `ready` (`hud.waitReady`) and read the cards once. Lists the engine sends whole
+  (the emotes, the communities) are read once they show.
+- **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
+  3 s (`Entity rate limited`), a rule of the server's clock that the client cannot observe;
+  closing the Backpack on a changed look and saving the passport are deployments, so they first
+  wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
+  change and its restore would otherwise fail silently and leave the shared account changed.
+
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
+guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
@@ -144,20 +193,23 @@ Beyond explorer-automation, `specs/community-chat.test.ts` covers community text
 member's community card opens its chat (`Open chat`), the rail shows a
 pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a message typed there
 counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
-account that is a member of a community in the browse grid, and fails saying so otherwise.
+account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
+fails saying so otherwise.
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
-`/hud_read`; implicit roles for `nav`, `section` and `header` in `hudAutomation.ts`.
+`/hud_read`; implicit roles for `section` and `header` in `hudAutomation.ts`.
 
 ## Visual suite
 
 `scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 window, teleports to each scene, waits for its entities and its settle time, and compares
-the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
+the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
+`/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
+teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
 
@@ -263,6 +315,8 @@ change on the left updates what is on the right in the same change, then runs th
 | Changed | Update | Check |
 | --- | --- | --- |
 | A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`react-web/src`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed; the HUD copy in `apps/ui3/src/play` and `hud_source_sha256` in `rendering/bevy-explorer/upstream.lock.json` (`python3 tooling/play-artifact.py hud-inputs --root .`) | `npm run typecheck`; the scenarios in CI |
+| A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
+| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |

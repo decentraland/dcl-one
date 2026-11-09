@@ -1549,7 +1549,7 @@ async fn deploy_profile(
             .body(prepared_data)
     };
 
-    let response = post.send().await?;
+    let response = send_deployment(post).await?;
 
     match response.status() {
         StatusCode::OK => Ok(()),
@@ -1558,6 +1558,42 @@ async fn deploy_profile(
             response.status(),
             String::from_utf8_lossy(&response.bytes().await?)
         )),
+    }
+}
+
+/// Send a deployment, and send it once more when the catalyst refuses it for now with its word on
+/// when to come back (`Retry-After` on a 429 or a 503, up to `platform::http::MAX_RETRY_AFTER`):
+/// the server's own instruction, where reporting the save as failed would leave the user a change
+/// a moment's wait makes (a client's burst of deployments past the catalyst's limit).
+async fn send_deployment(
+    post: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, anyhow::Error> {
+    let again = post.try_clone();
+    let response = post.send().await?;
+    let delay = matches!(
+        response.status(),
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    )
+    .then(|| response.headers().get(reqwest::header::RETRY_AFTER))
+    .flatten()
+    .and_then(|value| value.to_str().ok())
+    .and_then(|value| {
+        let now = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .ok()?;
+        platform::http::parse_retry_after(value, std::time::UNIX_EPOCH + now)
+    })
+    .filter(|delay| *delay <= platform::http::MAX_RETRY_AFTER);
+    match (delay, again) {
+        (Some(delay), Some(again)) => {
+            warn!(
+                "the catalyst refused the profile deployment for now ({}): sending it again in {delay:?}",
+                response.status()
+            );
+            async_std::task::sleep(delay).await;
+            Ok(again.send().await?)
+        }
+        _ => Ok(response),
     }
 }
 
@@ -2004,6 +2040,82 @@ fn process_profile(
         });
     } else {
         deployed.clear();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod deploy_tests {
+    use std::io::{Read, Write};
+
+    use super::*;
+
+    const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    fn refused(retry_after: Option<&str>) -> Vec<u8> {
+        let header = retry_after
+            .map(|s| format!("Retry-After: {s}\r\n"))
+            .unwrap_or_default();
+        format!("HTTP/1.1 429 Too Many Requests\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+    }
+
+    /// A server answering `answers` in turn; it returns the bodies it was sent.
+    fn serve(answers: Vec<Vec<u8>>) -> (String, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/content/entities", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for answer in answers {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                let body = loop {
+                    let n = socket.read(&mut chunk).unwrap();
+                    request.extend_from_slice(&chunk[..n]);
+                    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .map(|value| value.trim().parse().unwrap())
+                        .unwrap_or(0);
+                    while request.len() < end + 4 + length {
+                        let n = socket.read(&mut chunk).unwrap();
+                        request.extend_from_slice(&chunk[..n]);
+                    }
+                    break request[end + 4..end + 4 + length].to_vec();
+                };
+                bodies.push(body);
+                socket.write_all(&answer).unwrap();
+            }
+            bodies
+        });
+        (url, server)
+    }
+
+    fn deployment(url: &str) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .post(url)
+            .body(b"the deployment".to_vec())
+    }
+
+    #[tokio::test]
+    async fn a_deployment_refused_for_now_is_sent_again_once_the_server_says() {
+        let (url, server) = serve(vec![refused(Some("0")), OK.to_vec()]);
+        let response = send_deployment(deployment(&url)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(server.join().unwrap(), vec![b"the deployment".to_vec(); 2]);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_without_a_wait_or_past_the_bound_is_the_answer() {
+        for retry_after in [None, Some("3600")] {
+            let (url, server) = serve(vec![refused(retry_after)]);
+            let response = send_deployment(deployment(&url)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
     }
 }
 

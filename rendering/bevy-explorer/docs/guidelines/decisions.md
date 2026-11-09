@@ -54,6 +54,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Community creation and editing.** The form validates its fields and limits, and the content
+  check has two refusal screens; every HTTP 400 is read as the check's answer. CANCEL on the
+  refusal screen asks "Discard this community?" first, as the form's own CANCEL does. A refused
+  edit says "Your Community Couldn't Be Updated". A failed delete shows its message on the
+  community card, like the card's other actions, instead of as a toast. A picture saved by an
+  edit is kept by the HUD for the session, since its URL does not change and the CDN (CloudFront
+  on .org) ignores a version query. The places picker is not implemented yet.
 - **Pulse only.** Pulse is the only avatar-state transport. Retryable failures are retried
   without limit; there is no transport fallback.
 - **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least

@@ -49,7 +49,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
                       job)
         self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
-                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}\n", job)
+                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
 
@@ -511,6 +511,7 @@ class SelectionTest(unittest.TestCase):
             '.github/workflows/bevy-explorer-images.yml': {'web', 'headless'},
             'apps/bevy-explorer/prepare-native-cache.py': {'clippy', 'test', 'headless', 'native-matrix', 'scenes'},
             'apps/bevy-explorer/install-linux-deps.py': {*ci.LANES, 'scenes'},
+            'apps/bevy-explorer/install-web-tools.py': {'web'},
             ci.SCENES_WORKFLOW: {'scenes'},
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
