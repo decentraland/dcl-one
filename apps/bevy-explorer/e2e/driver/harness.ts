@@ -9,7 +9,7 @@ import { type Console, ConsoleError, scrubCredentials } from './console.ts'
 import type { Explorer, HudRead } from './explorer.ts'
 import { ScenarioReport } from './report.ts'
 import type { Selector } from './selectors.ts'
-import { BOOT_ALLOWANCE_MS, closeSessions, openExplorer, WORLD_HUD, type OpenOptions } from './session.ts'
+import { BOOT_ALLOWANCE_MS, closeSession, closeSessions, openExplorer, WORLD_HUD, type OpenOptions } from './session.ts'
 import { TimeoutError, until } from './wait.ts'
 
 // Every spec imports this module before its first test, so this hook is the root's: it runs once
@@ -39,6 +39,9 @@ export interface ScenarioOptions {
   session?: OpenOptions
   /** Keep the HUD as the scenario left it (no Escape first). */
   noEscape?: boolean
+  /** Close the scenario's session once it is done: a session no later scenario uses would keep
+   *  rendering beside the others, on the same GPU, until the run ends. */
+  closeSession?: boolean
 }
 
 export const DEFAULT_SCENARIO_TIMEOUT_MS = 180_000
@@ -253,6 +256,7 @@ export function scenario(file: string, name: string, body: (ctx: ScenarioContext
     stop()
     await report.write(files)
     t.diagnostic(`${report.commandCount} console commands; report in ${report.dir}`)
+    if (options.closeSession) await closeSession(options.session)
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) throw new AggregateError(failures, failures.map(message).join('; and the restore failed: '))
   })

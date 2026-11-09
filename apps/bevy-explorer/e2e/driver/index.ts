@@ -12,6 +12,6 @@ export { serveRealm, buildScene, contentHash, aboutDocument, type BuiltScene, ty
 export { PACKAGE_ROOT, REPO_ROOT, SCENES_DIR, REFERENCES_DIR, REPORT_DIR } from './paths.ts'
 export { decodePng, encodePng, type Image } from './png.ts'
 export { compareImages, comparePng, type Comparison } from './compare.ts'
-export { openSession, openExplorer, closeSessions, enterWorld, signIn } from './session.ts'
+export { openSession, openExplorer, closeSession, closeSessions, enterWorld, signIn } from './session.ts'
 export { scenario, spec, closeToRest, type ScenarioContext, type ScenarioOptions } from './harness.ts'
 export { ScenarioReport } from './report.ts'

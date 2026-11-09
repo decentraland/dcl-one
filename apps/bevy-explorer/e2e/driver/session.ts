@@ -87,6 +87,20 @@ export async function openExplorer(options: OpenOptions = {}): Promise<Explorer>
   return (await openSession(options)).explorer
 }
 
+/** Close the session for these options, if one is open: the next scenario that asks for it boots
+ *  it anew. Every client renders while it is open, and they share the GPU. */
+export async function closeSession(options: OpenOptions = {}, target: Target = readTarget()): Promise<void> {
+  const id = key(target, options)
+  const session = sessions.get(id)
+  if (!session) return
+  sessions.delete(id)
+  try {
+    await (await session).close()
+  } catch {
+    // a client that is already gone, or never booted
+  }
+}
+
 export async function closeSessions(): Promise<void> {
   const open = [...sessions.values()]
   sessions.clear()

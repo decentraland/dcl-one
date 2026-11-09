@@ -22,7 +22,7 @@ scenario('every registered debug reading resolves or explains what it is waiting
       assert.ok(explained, `${section.title} → ${label}: ${section.query} returned no value or explanation for ${path}`)
     }
   }
-}, { session: { signIn: 'guest' } })
+}, { session: { signIn: 'guest' }, closeSession: true })
 
 scenario('the debug panel shows live plugin data and can play an avatar emote', async ({ explorer }) => {
   const filter = { name: 'Find debug controls' }
@@ -110,4 +110,4 @@ scenario('an unsigned guest does not produce authenticated client login events',
   assert.equal(state.active, false)
   assert.equal(state.inFlight, false)
   assert.ok(Number.isInteger(state.pending) && state.pending >= 0)
-}, { session: { signIn: 'unsigned-guest' }, noEscape: true })
+}, { session: { signIn: 'unsigned-guest' }, noEscape: true, closeSession: true })

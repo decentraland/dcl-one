@@ -232,6 +232,10 @@ State, in every build:
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
 
+- `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
+  they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
+  scenarios hold them still for their frames.
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role

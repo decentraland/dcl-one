@@ -3,7 +3,7 @@ import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
 import { type AuthIdentity, addressOf } from '../driver/identity.ts'
-import { MAX_BOOTS, arrive, closeSessions, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
+import { MAX_BOOTS, arrive, closeSession, closeSessions, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
 import type { Target } from '../driver/target.ts'
 import { BootError } from '../driver/web.ts'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -207,5 +207,9 @@ describe('openSession', () => {
       console.error = original
       await closeSessions()
     }
+  })
+
+  test('closing a session never opened does nothing', async () => {
+    await closeSession({ signIn: 'unsigned-guest' }, target)
   })
 })
