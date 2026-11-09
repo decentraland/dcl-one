@@ -76,9 +76,17 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
   }))
 }
 
+// The page's list: the first 50 of the browse order, then the user's own communities it left out,
+// so My Communities holds every one the user is a member of, however far down the browse order it
+// is. A failed member-of read leaves the browse list as it is.
 async function list(): Promise<Community[]> {
-  const res = await signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`)
-  return await communities(res?.results ?? [])
+  const [browse, member] = await Promise.all([
+    signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`),
+    memberOfRaw().catch((): CommunityRaw[] => [])
+  ])
+  const raw = browse?.results ?? []
+  const listed = new Set(raw.map((c) => c.id))
+  return await communities([...raw, ...member.filter((c) => !listed.has(c.id))])
 }
 
 async function rawOne(id: string): Promise<CommunityRaw | undefined> {
@@ -110,6 +118,10 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
 const MEMBER_OF_PAGE = 100
 const MEMBER_OF_PAGES = 10
 async function memberOf(): Promise<CommunityChannel[]> {
+  return await Promise.all((await memberOfRaw()).map(channel))
+}
+
+async function memberOfRaw(): Promise<CommunityRaw[]> {
   const b = await base('v2')
   const raw: CommunityRaw[] = []
   for (let page = 0; page < MEMBER_OF_PAGES; page++) {
@@ -120,7 +132,7 @@ async function memberOf(): Promise<CommunityChannel[]> {
     raw.push(...rows)
     if (rows.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
   }
-  return await Promise.all(raw.map(channel))
+  return raw
 }
 
 async function one(id: string): Promise<CommunityChannel | undefined> {

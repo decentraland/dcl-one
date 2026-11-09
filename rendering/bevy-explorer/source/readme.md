@@ -169,7 +169,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
+  after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
@@ -201,8 +202,11 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
-  `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
-  `{"name", "role", "index", "exact"}`; several matches need an `index`.
+  `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
+  `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving
+  (a CSS animation or transition), or under a pointer lock that takes every click, is not
+  `actionable`; one inside an `aria-busy` region reads
+  `"busy"`, and `ready` waits it out.
 - Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
   <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
