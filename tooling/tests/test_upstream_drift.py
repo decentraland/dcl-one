@@ -56,6 +56,35 @@ class VersionLogicTests(unittest.TestCase):
         self.assertEqual(advisory['unaffected'], ['< 0.1.0'])
         self.assertIsNone(drift.parse_advisory('no toml here'))
 
+    def test_v8_engine_reads_the_readme_then_the_crate_major(self):
+        self.assertEqual(drift.v8_engine('0.105.1', '# rusty_v8\n\nV8 Version: 12.9.202.9\n'), {'v8': '12.9.202.9', 'milestone': 129})
+        self.assertEqual(drift.v8_engine('150.4.0'), {'v8': '15.0', 'milestone': 150})
+        self.assertEqual(drift.v8_engine('0.105.1'), {'v8': None, 'milestone': None})
+
+    def test_newest_matching_skips_yanked_and_prereleases(self):
+        versions = [{'num': '152.2.0'}, {'num': '150.5.0', 'yanked': True}, {'num': '150.4.0'}, {'num': '150.9.0-rc.1'}, {'num': '149.4.0'}]
+        self.assertEqual(drift.newest_matching(versions, '^150.4.0'), '150.4.0')
+        self.assertIsNone(drift.newest_matching(versions, '^153'))
+
+    def v8_state(self, locked, accepted, chrome):
+        return {'locked_versions': [locked['crate']], 'locked': locked, 'accepted': accepted,
+                'deno_core': {'version': '0.413.0', 'v8_req': '^150.4.0'}, 'chrome': {'milestone': chrome}}
+
+    def test_v8_findings_fire_behind_deno_core_and_far_from_chrome(self):
+        findings = drift.v8_findings(self.v8_state({'crate': '0.105.1', 'v8': '12.9.202.9', 'milestone': 129},
+                                                   {'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}, 157))
+        self.assertEqual(len(findings), 2)
+        self.assertTrue(findings[0].startswith('behind deno_core'))
+        self.assertIn('28 milestones behind Chrome stable M157', findings[1])
+
+    def test_v8_findings_quiet_when_on_what_deno_core_accepts(self):
+        self.assertEqual(drift.v8_findings(self.v8_state({'crate': '150.4.0', 'v8': '15.0', 'milestone': 150},
+                                                         {'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}, 157)), [])
+
+    def test_v8_findings_flag_an_unknown_version(self):
+        findings = drift.v8_findings(self.v8_state({'crate': '0.1.0', 'v8': None, 'milestone': None}, None, 157))
+        self.assertEqual(findings, ['cannot tell the V8 version of the locked v8 0.1.0'])
+
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
         self.assertGreater(drift.version_key('v1.46.3'), drift.version_key('v0.28.0'))

@@ -149,11 +149,21 @@ function overview(){
   <div class="metric"><div class="v">${(D.advisories.findings||[]).filter(f=>f.affected).length}</div><div class="l">advisories affecting the lock</div></div>
   ${Object.entries(verdicts).map(([k,v])=>`<div class="metric"><div class="v">${v}</div><div class="l">${esc(k)}</div></div>`).join('')}</div>
   ${D.review_summary ? `<div class="sum">${D.review_summary}</div>` : ''}
+  ${v8Panel()}
   <h3>Sources</h3><table><thead><tr><th>source</th><th>parent</th><th>base</th><th>latest</th><th>carried</th><th>missing</th><th>releases missed</th><th>branch moved</th><th>advisories</th><th>verdict</th></tr></thead><tbody>
   ${rows.map(s => { const r = rec(s); return `<tr><td><a href="#sources/${encodeURIComponent(s.url)}">${esc(name(s))}</a><br><span class="muted">${esc((s.crates||[]).slice(0,3).map(c=>c.name).join(', '))}${s.crates.length>3?' +'+(s.crates.length-3):''}</span></td>
     <td>${esc(s.parent||'–')}</td><td>${esc(s.base?.tag||'–')}<br><span class="muted">${esc(s.base?.date||'')}</span></td><td>${esc(s.parent_latest_release?.tag||'–')}<br><span class="muted">${esc(s.parent_latest_release?.date||'')}</span></td>
     <td>${n(carried(s))}</td><td>${n(missing(s))}</td><td>${s.releases_since_base ? s.releases_since_base.filter(r=>!r.prerelease).length : '–'}</td><td>${s.branch_since_pin ? s.branch_since_pin.total_commits : '–'}</td>
     <td>${affecting(s) ? `<span class="badge b-security">${affecting(s)}</span>` : '0'}</td><td>${r ? `<span class="badge b-${esc(r.verdict)}">${esc(r.verdict)}</span><span class="muted">${esc(r.priority||'')}</span>` : '<span class="muted">–</span>'}</td></tr>`; }).join('')}</tbody></table>`;
+}
+function v8Panel(){
+  const v = D.v8; if (!v) return '';
+  const row = (label, e, note) => `<tr><td>${esc(label)}</td><td>${e ? `<a href="https://crates.io/crates/v8/${esc(e.crate)}" target="_blank" rel="noreferrer">${esc(e.crate)}</a>` : '–'}</td><td>${esc(e?.v8 || '?')}</td><td>${e?.milestone ? 'M' + e.milestone : '?'}</td><td>${esc(e?.date || '')} <span class="muted">${esc(note || '')}</span></td></tr>`;
+  return `<h3>Scene runtime V8</h3><p class="muted">The <code>v8</code> crate deno_core locks; RustSec has no V8 advisories, so its age is checked here. Chrome gap limit: ${v.chrome_gap_limit} milestones.</p>
+  <table><thead><tr><th></th><th>v8 crate</th><th>V8</th><th>Chrome</th><th>released</th></tr></thead><tbody>
+  ${row('locked', v.locked)}${row(`newest deno_core (${v.deno_core.version}) accepts`, v.accepted, v.deno_core.v8_req)}${row('newest rusty_v8', v.newest)}
+  <tr><td>Chrome stable</td><td>–</td><td>–</td><td>M${v.chrome.milestone}</td><td>${esc(v.chrome.date)} <span class="muted">${esc(v.chrome.version)}</span></td></tr></tbody></table>
+  ${v.findings.length ? `<ul>${v.findings.map(f => `<li><span class="badge b-security">behind</span> ${esc(f)}</li>`).join('')}</ul>` : '<p class="empty">V8 is current.</p>'}`;
 }
 function catList(obj){
   if (!obj) return '<p class="empty">Not researched.</p>';

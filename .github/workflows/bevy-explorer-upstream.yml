@@ -5,6 +5,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 concurrency:
   group: bevy-explorer-dependency-drift
@@ -29,6 +30,23 @@ jobs:
           name: bevy-explorer-dependency-drift-site
           path: rendering/bevy-explorer/drift/
           retention-days: 30
+      - name: Open, update or close the V8 freshness issue
+        env:
+          TITLE: 'Bevy Explorer: the scene runtime V8 is behind'
+        run: |
+          body=.cache/upstream-drift/v8-issue.md
+          python3 tooling/upstream-drift.py v8-report --body "$body"
+          number=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')
+          if [ -f "$body" ]; then
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --body-file "$body"
+            else
+              gh issue create --title "$TITLE" --body-file "$body"
+            fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment 'The scene runtime V8 is no longer behind deno_core or Chrome.'
+          fi
       - name: Open or update the fork inventory pull request
         run: |
           git add rendering/bevy-explorer/forks.toml rendering/bevy-explorer/cargo-patches.toml

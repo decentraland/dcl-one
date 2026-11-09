@@ -67,6 +67,13 @@ with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
 (`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`). Bevy is not among these forks:
 it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/bevy-fork.md)).
 
+RustSec has no V8 advisories, so the same run checks the scene runtime's `v8` crate: `upstream-drift.py
+v8-report` compares the locked V8 with what the newest deno_core accepts, the newest rusty_v8 and Chrome
+stable, and keeps the "scene runtime V8 is behind" issue open while the lock is behind deno_core or 12+
+Chrome milestones old. On pull requests, `bevy-explorer-deny.yml` runs `cargo deny check advisories bans`
+with `source/deny.toml`: a second `v8` or an advisory missing from its baseline ignore list fails; drop an
+ignore entry once its crate is fixed.
+
 ## Native builds and HUD updates
 
 Build from `rendering/bevy-explorer/source` per its README (`just wasm` for the web engine), or

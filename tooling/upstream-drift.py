@@ -8,14 +8,17 @@
   - RustSec advisories against every crate version in the lock (rustsec/advisory-db)
   - the Explorer's direct crates.io dependencies against the newest release on crates.io
   - the lock's shape: sources, duplicated crates
+  - the age of the scene runtime's V8 (the transitive `v8` crate) against deno_core, rusty_v8 and Chrome
 Every GitHub and crates.io response is cached under .cache/upstream-drift/api so reruns are cheap.
 `render` (tooling/upstream-drift-site.py) turns the data, the research and the review into the site.
+`v8-report` reads the V8 section of data.json, prints it and writes the issue body when V8 is stale.
 """
 import argparse
 import base64
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -73,9 +76,14 @@ def gh_pages(path, per_page=100, limit=10):
 
 
 def crates_io(name):
+    return crates_io_api(f'crates/{urllib.parse.quote(name)}')
+
+
+def crates_io_api(path):
+    """Any crates.io API path ('crates/v8', 'crates/v8/0.105.1/dependencies')."""
     def fetch():
         time.sleep(1.1)  # crates.io asks for one request per second
-        request = urllib.request.Request(f'https://crates.io/api/v1/crates/{urllib.parse.quote(name)}', headers={'User-Agent': USER_AGENT})
+        request = urllib.request.Request(f'https://crates.io/api/v1/{path}', headers={'User-Agent': USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 return json.load(response)
@@ -83,7 +91,7 @@ def crates_io(name):
             if error.code == 404:
                 return None
             raise
-    return cached('crates:' + name, fetch)
+    return cached('crates:' + path, fetch)
 
 
 # ---------------------------------------------------------------- lock + manifests
@@ -384,6 +392,145 @@ def collect_registry_drift(source_dir, lock_pkgs):
     return rows
 
 
+# ---------------------------------------------------------------- V8 freshness
+
+RUSTY_V8 = 'denoland/rusty_v8'
+CHROME_STABLE = 'https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Linux&num=1'
+CHROME_GAP_LIMIT = 12  # milestones; Chrome ships one every four weeks, so about a year
+
+
+def v8_engine(crate_version, readme=None):
+    """V8 version and Chrome milestone of a `v8` crate version. rusty_v8's README states the V8
+    version at every tag ('V8 Version: 12.9.202.9'); V8 a.b ships in Chrome milestone a*10+b.
+    Without the README, 130.0.0 and later map from the crate major (the milestone: V8 M//10.M%10);
+    0.x releases have no such mapping and stay unknown."""
+    match = re.search(r'^V8 Version:\s*((\d+)\.(\d+)[0-9.]*)', readme or '', re.M)
+    if match:
+        return {'v8': match.group(1), 'milestone': int(match.group(2)) * 10 + int(match.group(3))}
+    major = parse_version(crate_version)[0][0]
+    if major >= 130:
+        return {'v8': f'{major // 10}.{major % 10}', 'milestone': major}
+    return {'v8': None, 'milestone': None}
+
+
+def rusty_v8_readme(version):
+    content = gh(f'repos/{RUSTY_V8}/contents/README.md?ref=v{version}')
+    return base64.b64decode(content['content']).decode('utf-8', 'replace') if content else None
+
+
+def newest_matching(versions, req):
+    """The newest stable, unyanked version of a crates.io version list matching a requirement."""
+    ok = [v['num'] for v in versions if not v.get('yanked') and '-' not in v['num'] and matches_req(v['num'], req)]
+    return max(ok, key=lambda v: parse_version(v)[0]) if ok else None
+
+
+def v8_requirement(name, version, depth=2):
+    """The `v8` requirement of a crate version, followed through deno_v8 (deno_core -> deno_v8 -> v8)."""
+    deps = [d for d in (crates_io_api(f'crates/{name}/{version}/dependencies') or {}).get('dependencies', []) if d['kind'] == 'normal']
+    for dep in deps:
+        if dep['crate_id'] == 'v8':
+            return dep['req']
+    for dep in deps:
+        if dep['crate_id'] == 'deno_v8' and depth:
+            meta = crates_io('deno_v8')
+            resolved = newest_matching(meta['versions'], dep['req']) if meta else None
+            return v8_requirement('deno_v8', resolved, depth - 1) if resolved else None
+    return None
+
+
+def chrome_stable():
+    def fetch():
+        request = urllib.request.Request(CHROME_STABLE, headers={'User-Agent': USER_AGENT})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.load(response)
+    release = cached('chrome-stable:' + datetime.date.today().isoformat(), fetch)[0]
+    return {'milestone': release['milestone'], 'version': release['version'],
+            'date': datetime.datetime.fromtimestamp(release['time'] / 1000, datetime.UTC).date().isoformat()}
+
+
+def v8_findings(v8):
+    """Why the scene runtime's V8 needs attention; empty when it is current enough."""
+    locked, accepted, chrome = v8['locked'], v8['accepted'], v8['chrome']
+    findings = []
+    if locked['milestone'] is None:
+        findings.append(f"cannot tell the V8 version of the locked v8 {locked['crate']}")
+        return findings
+    if len(v8['locked_versions']) > 1:
+        findings.append(f"the lock has more than one v8: {', '.join(v8['locked_versions'])}")
+    if accepted and accepted['milestone'] and locked['milestone'] < accepted['milestone']:
+        findings.append(f"behind deno_core: v8 {locked['crate']} (V8 {locked['v8']}, M{locked['milestone']}) is locked while "
+                        f"deno_core {v8['deno_core']['version']} accepts v8 {accepted['crate']} (V8 {accepted['v8']}, M{accepted['milestone']}); "
+                        'bump deno_core, deno_web and deno_webidl together')
+    if chrome and chrome['milestone'] - locked['milestone'] >= CHROME_GAP_LIMIT:
+        findings.append(f"M{locked['milestone']} is {chrome['milestone'] - locked['milestone']} milestones behind Chrome stable "
+                        f"M{chrome['milestone']} (limit {CHROME_GAP_LIMIT})")
+    return findings
+
+
+def collect_v8(lock_pkgs):
+    locked_versions = sorted({p['version'] for p in lock_pkgs if p['name'] == 'v8' and 'crates.io' in p['source']},
+                             key=lambda v: parse_version(v)[0])
+    if not locked_versions:
+        return None
+    v8_meta = crates_io('v8')
+    released = {v['num']: v['created_at'][:10] for v in v8_meta['versions']}
+
+    def describe(version):
+        return {'crate': version, 'date': released.get(version), **v8_engine(version, rusty_v8_readme(version))} if version else None
+
+    deno_core = crates_io('deno_core')['crate']['max_stable_version']
+    req = v8_requirement('deno_core', deno_core)
+    v8 = {'locked_versions': locked_versions, 'locked': describe(locked_versions[0]),
+          'deno_core': {'version': deno_core, 'v8_req': req},
+          'accepted': describe(newest_matching(v8_meta['versions'], req) if req else None),
+          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable(),
+          'chrome_gap_limit': CHROME_GAP_LIMIT}
+    v8['findings'] = v8_findings(v8)
+    print(f"  v8: locked {v8['locked']['crate']} (M{v8['locked']['milestone']}), deno_core {deno_core} accepts "
+          f"{(v8['accepted'] or {}).get('crate')}, newest {v8['newest']['crate']}, Chrome stable M{v8['chrome']['milestone']}: "
+          f"{len(v8['findings'])} finding(s)", file=sys.stderr)
+    return v8
+
+
+def v8_report_markdown(v8):
+    def row(label, entry, note=''):
+        if not entry:
+            return f'| {label} | – | – | – | {note} |'
+        return f"| {label} | {entry.get('crate', '–')} | {entry.get('v8') or '?'} | M{entry.get('milestone') or '?'} | {entry.get('date') or ''} {note}".rstrip() + ' |'
+    chrome = v8['chrome']
+    lines = ['The native scene runtime embeds V8 through the `v8` crate (rusty_v8), locked transitively by deno_core in '
+             '`rendering/bevy-explorer/source/Cargo.lock`. RustSec has no V8 advisories, so this is the only check on its age.', '',
+             '| | v8 crate | V8 | Chrome | released |', '| --- | --- | --- | --- | --- |',
+             row('locked', v8['locked']),
+             row(f"newest deno_core ({v8['deno_core']['version']}) accepts", v8['accepted'], f"(`{v8['deno_core']['v8_req']}`)"),
+             row('newest rusty_v8', v8['newest']),
+             f"| Chrome stable | – | – | M{chrome['milestone']} | {chrome['date']} ({chrome['version']}) |", '']
+    if v8['findings']:
+        lines += ['Findings:', ''] + [f'- {f}' for f in v8['findings']]
+    else:
+        lines.append('No findings.')
+    return '\n'.join(lines) + '\n'
+
+
+def v8_report(body_path):
+    v8 = json.loads(DATA.read_text()).get('v8')
+    if not v8:
+        print('no v8 crate in the lock')
+        return 0
+    text = v8_report_markdown(v8)
+    print(text)
+    if os.environ.get('GITHUB_ACTIONS'):
+        for finding in v8['findings']:
+            print(f'::warning title=V8 freshness::{finding}')
+    if body_path:
+        body = Path(body_path)
+        if v8['findings']:
+            body.write_text(text + '\nUpdated nightly by `.github/workflows/bevy-explorer-upstream.yml`.\n')
+        else:
+            body.unlink(missing_ok=True)
+    return 0
+
+
 # ---------------------------------------------------------------- lock shape
 
 def lock_shape(lock_pkgs):
@@ -401,8 +548,11 @@ def lock_shape(lock_pkgs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['collect'])
+    parser.add_argument('command', choices=['collect', 'v8-report'])
+    parser.add_argument('--body', help='v8-report: write the issue body here when V8 is stale, remove it otherwise')
     args = parser.parse_args()
+    if args.command == 'v8-report':
+        return v8_report(args.body)
     forks = tomllib.loads((PIN / 'forks.toml').read_text())
     source_dir = PIN / 'source'
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -417,6 +567,8 @@ def main():
     data['advisories'] = collect_advisories(lock_pkgs)
     print('registry drift', file=sys.stderr)
     data['registry'] = collect_registry_drift(source_dir, lock_pkgs)
+    print('v8', file=sys.stderr)
+    data['v8'] = collect_v8(lock_pkgs)
     CACHE.mkdir(parents=True, exist_ok=True)
     DATA.write_text(json.dumps(data, indent=1))
     # one file per source for the research agents, with the advisories against its crates
