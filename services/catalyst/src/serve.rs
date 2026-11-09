@@ -1791,7 +1791,7 @@ async fn worlds_states(
             encryption_key: non_empty(&config.worlds.encryption_key),
             authoritative_server_address: non_empty(&config.social.authoritative_server_address),
             authorized_addresses: config.worlds.authorized_addresses.clone(),
-            storage_cache_enabled: config.worlds.storage_cache_enabled,
+            storage_cache_enabled: config.worlds.storage_cache_enabled.clone(),
             storage_cache_ttl_seconds: config.worlds.storage_cache_ttl_seconds,
             storage_cache_max: config.worlds.storage_cache_max,
             storage_cache_max_value_bytes: config.worlds.storage_cache_max_value_bytes,
@@ -1806,6 +1806,7 @@ async fn worlds_states(
             export_scene_cooldown_seconds: config.worlds.export_scene_cooldown_seconds,
             export_timeout_seconds: config.worlds.export_timeout_seconds,
             export_max_size_bytes: config.worlds.export_max_size_bytes,
+            export_stream_query_timeout_ms: config.worlds.pg_component_stream_query_timeout,
         })
         .context("ENCRYPTION_KEY / AUTHORIZED_ADDRESSES / *_STORAGE_MAX_* configuration")?,
         eip1654.clone(),
@@ -1888,7 +1889,6 @@ async fn worlds_states(
     tracing::info!(
         scene_host = scene_host.is_some(),
         worlds_admin = config.worlds.catalyrst_worlds_admin_token.is_some(),
-        encryption_key = config.worlds.encryption_key.is_some(),
         nats = config.worlds.nats_url.is_some(),
         federation = config.worlds_fed.worlds_fed_peers_file.is_some(),
         "worlds routes"

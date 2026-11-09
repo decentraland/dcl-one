@@ -7,24 +7,28 @@
 //! player no other player's.
 //!
 //! Quotas: a write takes `pg_advisory_xact_lock` on the scope's key (a
-//! world's quota spans all its scenes, a shared realm's is per scene), reads
+//! world's quota spans its scenes except retired ones, whose rows are kept
+//! but not counted; a shared realm's is per scene), reads
 //! the size picture and inserts only when the limits hold, in one statement
 //! (`quota_upsert_sql`); the aggregate is the `*_size_idx` index-only range.
 //! The current time is a bind.
 //!
-//! Cache: a per-process memo of single values (source: the row; freshness:
-//! `STORAGE_CACHE_TTL_SECONDS`; invalidation: every write and delete path in
-//! this process, per key or per scope prefix; rebuild: none, a miss re-reads).
-//! Another process's write invalidates nothing here, so the memo is off by
-//! default on every node. Opt in with `STORAGE_CACHE_ENABLED=true` only for a
-//! single storage-serving process. The TTL bounds stale reads if another
-//! writer exists; primary and replica roles do not make caching safe.
+//! Cache: upstream's per-process LRU of single values (source: the row;
+//! freshness: `STORAGE_CACHE_TTL_SECONDS` from the write into the cache;
+//! bound: `STORAGE_CACHE_MAX` entries, least recently used evicted first;
+//! invalidation: every write and delete path in this process, per key or per
+//! scope prefix; rebuild: none, a miss re-reads; misses are never cached). On
+//! by default, as upstream (`STORAGE_CACHE_ENABLED=false` turns it off).
+//! Another process's write invalidates nothing here: with several
+//! storage-serving processes a read may be stale for up to the TTL after
+//! another process's write, as on upstream's replicas.
 
 use crate::shared::now_utc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use hashlink::LruCache;
+use parking_lot::Mutex;
 use sqlx::{PgExecutor, PgPool, Row};
 
 use crate::comms::world_identity::SceneNamespace;
@@ -190,14 +194,15 @@ fn player_scope_prefix(ns: &SceneNamespace, player: Option<&str>) -> String {
 
 pub struct StorageCache {
     cfg: StorageCacheConfig,
-    map: DashMap<String, (Instant, Arc<str>)>,
+    map: Mutex<LruCache<String, (Instant, Arc<str>)>>,
 }
 
 impl StorageCache {
     pub fn new(cfg: StorageCacheConfig) -> Self {
+        let capacity = usize::try_from(cfg.max_entries).unwrap_or(usize::MAX);
         Self {
             cfg,
-            map: DashMap::new(),
+            map: Mutex::new(LruCache::new(capacity)),
         }
     }
 
@@ -205,45 +210,43 @@ impl StorageCache {
         Duration::from_secs(self.cfg.ttl_seconds)
     }
 
+    /// A fresh hit becomes the most recently used; an expired entry is dropped.
     pub fn get(&self, key: &str) -> Option<Arc<str>> {
         if !self.cfg.enabled {
             return None;
         }
-        let entry = self.map.get(key)?;
-        (entry.0.elapsed() < self.ttl()).then(|| entry.1.clone())
+        let mut map = self.map.lock();
+        let (at, value) = map.get(key)?;
+        if at.elapsed() < self.ttl() {
+            return Some(value.clone());
+        }
+        map.remove(key);
+        None
     }
 
-    /// Bounded: at capacity the expired entries go first, then the whole
-    /// memo (a miss costs one PK read; a stale hit would cost correctness).
+    /// At `STORAGE_CACHE_MAX` the least recently used entry is evicted.
     pub fn insert(&self, key: String, value: Arc<str>) {
         if !self.cfg.enabled || value.len() > self.cfg.max_value_bytes {
             return;
         }
-        if self.map.len() as u64 >= self.cfg.max_entries {
-            let ttl = self.ttl();
-            self.map.retain(|_, (at, _)| at.elapsed() < ttl);
-            if self.map.len() as u64 >= self.cfg.max_entries {
-                self.map.clear();
-            }
-        }
-        self.map.insert(key, (Instant::now(), value));
+        self.map.lock().insert(key, (Instant::now(), value));
     }
 
     pub fn invalidate(&self, key: &str) {
         if self.cfg.enabled {
-            self.map.remove(key);
+            self.map.lock().remove(key);
         }
     }
 
     pub fn invalidate_prefix(&self, prefix: &str) {
         if self.cfg.enabled {
-            self.map.retain(|k, _| !k.starts_with(prefix));
+            self.map.lock().retain(|k, _| !k.starts_with(prefix));
         }
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.map.len()
+        self.map.lock().len()
     }
 }
 
@@ -868,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_is_bounded() {
+    fn the_cache_evicts_the_least_recently_used_entry() {
         let cache = StorageCache::new(StorageCacheConfig {
             enabled: true,
             ttl_seconds: 60,
@@ -879,13 +882,27 @@ mod tests {
             cache.insert(format!("k{i}"), Arc::from("1"));
         }
         assert_eq!(cache.len(), 3);
+        // A read makes k0 the most recently used, so k1 goes first.
+        assert!(cache.get("k0").is_some());
         cache.insert("k3".to_string(), Arc::from("1"));
-        assert_eq!(
-            cache.len(),
-            1,
-            "at capacity with nothing expired the memo is dropped, not grown"
-        );
-        assert_eq!(cache.get("k3").as_deref(), Some("1"));
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get("k1").is_none());
+        for kept in ["k0", "k2", "k3"] {
+            assert_eq!(cache.get(kept).as_deref(), Some("1"), "{kept}");
+        }
+    }
+
+    #[test]
+    fn expired_entries_miss_and_leave_the_cache() {
+        let cache = StorageCache::new(StorageCacheConfig {
+            enabled: true,
+            ttl_seconds: 0,
+            max_entries: 3,
+            max_value_bytes: 64,
+        });
+        cache.insert("k".to_string(), Arc::from("1"));
+        assert_eq!(cache.get("k"), None);
+        assert_eq!(cache.len(), 0);
     }
 
     #[test]

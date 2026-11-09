@@ -1099,6 +1099,32 @@ async fn undeployed_storage_is_retained_but_does_not_consume_the_redeployment_qu
         store.env_get_enc(&old, "secret").await.unwrap().unwrap(),
         b"encrypted"
     );
+
+    // The new scene's clear routes, then the world row's deletion, leave the
+    // retired safety copy alone.
+    store.world_delete_all(&new).await.unwrap();
+    store.player_delete_all(&new).await.unwrap();
+    store.env_delete_all(&new).await.unwrap();
+    sqlx::query("DELETE FROM worlds.worlds WHERE name = $1")
+        .bind(world.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+    for table in [
+        "worlds.world_storage",
+        "worlds.player_storage",
+        "worlds.env_variables",
+    ] {
+        let kept: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE realm = $1 AND scene_namespace = $2"
+        )))
+        .bind(old.realm())
+        .bind(old.scene_namespace())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, 1, "{table} keeps the retired scene's row");
+    }
 }
 
 const SCENE_ID: &str = "bafkrei-delegated-scene";
@@ -2872,9 +2898,9 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
 }
 
 /// Nested under `/world-storage`, a signature over the public path verifies
-/// without a proxy header; the env routes answer 503 without a key.
+/// without a proxy header; the env routes serve through the required key.
 #[tokio::test]
-async fn the_nested_public_path_verifies_and_env_needs_a_key() {
+async fn the_nested_public_path_verifies_and_env_serves() {
     let Some(pool) = scratch().await else { return };
     let (world, _) = seed_owned_world(&pool).await;
     let owner_key = random_key();
@@ -2884,9 +2910,10 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         Some(&Address::parse(&address_of(&owner_key)).unwrap()),
     )
     .await;
-    let mut settings = Settings::for_tests(None);
-    settings.encryption_key = None;
-    let app = Router::new().nest("/world-storage", router(state_with(&pool, settings)));
+    let app = Router::new().nest(
+        "/world-storage",
+        router(state_with(&pool, Settings::for_tests(None))),
+    );
     let meta = scene_metadata(world.display(), "0,0", SCENE_ID);
 
     let (status, body) = send(
@@ -2949,11 +2976,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         .await,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert!(
-        body["message"].as_str().unwrap().contains("ENCRYPTION_KEY"),
-        "{body}"
-    );
+    assert!(status.is_success(), "{status} {body}");
     let (status, body) = send(
         &app,
         signed_request("get", "/world-storage/env/k", &owner_key, &meta, None, None).await,
@@ -2962,7 +2985,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "an owner never reads env values, key or no key: {body}"
+        "an owner never reads env values: {body}"
     );
     let (status, body) = send(
         &app,
@@ -2977,11 +3000,8 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         .await,
     )
     .await;
-    assert_eq!(
-        (status, body["usedBytes"].as_i64()),
-        (StatusCode::OK, Some(0)),
-        "usage and the key listing need no key"
-    );
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["usedBytes"].as_i64().unwrap() > 0, "{body}");
     let (status, body) = send(
         &app,
         signed_request("get", "/world-storage/env", &owner_key, &meta, None, None).await,
@@ -2989,7 +3009,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
     .await;
     assert_eq!(
         (status, body["pagination"]["total"].as_i64()),
-        (StatusCode::OK, Some(0))
+        (StatusCode::OK, Some(1))
     );
 }
 
@@ -4786,6 +4806,36 @@ async fn exports_refuse_bad_formats_selections_and_bodies() {
         .insert("transfer-encoding", HeaderValue::from_static("chunked"));
     let (status, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::LENGTH_REQUIRED);
+
+    // Upstream's order: the signed fetch, the scene, the body cap, authorization.
+    let unsigned = Request::builder()
+        .method("POST")
+        .uri("/exports?format=json")
+        .header("content-length", huge.len().to_string())
+        .body(Body::from(huge.clone()))
+        .unwrap();
+    let (status, body) = send(&app, unsigned).await;
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "the signed fetch answers before the body cap: {status} {body}"
+    );
+    let nowhere = scene_metadata(world.display(), "90,90", SCENE_ID);
+    let (status, body) = send(
+        &app,
+        export_request(&owner_key, &nowhere, "?format=json", Some(&huge)).await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the scene first: {body}");
+    let (status, _) = send(
+        &app,
+        export_request(&random_key(), &meta, "?format=json", Some(&huge)).await,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "the body cap runs before authorization"
+    );
 }
 
 #[tokio::test]
@@ -5087,19 +5137,15 @@ async fn exports_abort_past_the_size_cap_and_the_timeout() {
                 export_request(&owner_key, &meta, "?format=csv", None).await,
             )
             .await;
-            if export.timeout.is_zero() {
-                assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-                assert_eq!(resp.headers()["retry-after"], "1");
-            } else {
-                assert_eq!(resp.status(), StatusCode::OK);
-                // Check the HTTP body error itself, not only the gzip decoder.
-                assert!(
-                    axum::body::to_bytes(resp.into_body(), 1 << 20)
-                        .await
-                        .is_err(),
-                    "{export:?}"
-                );
-            }
+            // Upstream answers 200 and aborts the stream, a zero timeout included.
+            assert_eq!(resp.status(), StatusCode::OK);
+            // Check the HTTP body error itself, not only the gzip decoder.
+            assert!(
+                axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .is_err(),
+                "{export:?}"
+            );
         }
     }
 }
@@ -5107,7 +5153,6 @@ async fn exports_abort_past_the_size_cap_and_the_timeout() {
 #[tokio::test]
 async fn exports_bound_database_resources_and_keep_one_snapshot() {
     use super::export::{ExportLimits, Format, Selection};
-    use axum::response::IntoResponse;
     use futures::StreamExt;
     let Some(pool) = scratch().await else { return };
     let (world, _) = seed_owned_world(&pool).await;
@@ -5126,39 +5171,37 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         .fetch_one(&dedicated)
         .await
         .unwrap();
-    let cooling = ExportLimits::new(ExportSettings::default());
+    // An exhausted pool: the export was admitted (200 upstream), so the
+    // stream is cut once the timer runs out, and the cooldown stays consumed.
+    let cooling_settings = ExportSettings {
+        timeout: Duration::from_millis(200),
+        ..ExportSettings::default()
+    };
+    let cooling = ExportLimits::new(cooling_settings);
     let held = dedicated.acquire().await.unwrap();
-    let result = super::export::body(
+    let starved = super::export::body(
         dedicated.clone(),
         scope.clone(),
         Selection::default(),
         Format::Json,
         cooling.open("scene").unwrap(),
-        settings,
-    )
-    .await;
-    let error = result.expect_err("exhausted pool must refuse export setup");
-    assert!(matches!(error, super::errors::ApiError::Unavailable(_)));
-    let response = error.into_response();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers()["retry-after"], "1");
-    drop(cooling.open("scene").unwrap());
+        cooling_settings,
+    );
+    assert!(axum::body::to_bytes(starved, 1 << 20).await.is_err());
+    assert!(matches!(
+        cooling.open("scene"),
+        Err(super::export::Refusal::Cooldown { .. })
+    ));
     drop(held);
     let retry = super::export::body(
         dedicated.clone(),
         scope.clone(),
         Selection::default(),
         Format::Json,
-        cooling.open("scene").unwrap(),
+        limits.open("scene").unwrap(),
         settings,
-    )
-    .await
-    .unwrap();
+    );
     axum::body::to_bytes(retry, 1 << 20).await.unwrap();
-    assert!(matches!(
-        cooling.open("scene"),
-        Err(super::export::Refusal::Cooldown { .. })
-    ));
 
     // More incompressible data than the four-chunk buffer can hold: an unread
     // body keeps the producer blocked until cancellation or its deadline.
@@ -5174,9 +5217,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
             Format::Json,
             limits.open("scene").unwrap(),
             settings,
-        )
-        .await
-        .unwrap();
+        );
         let body = if disconnect {
             drop(body);
             None
@@ -5236,9 +5277,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         Format::Json,
         slot,
         settings,
-    )
-    .await
-    .unwrap();
+    );
     // Drain the channel while the producer consumes the whole world query.
     // The per-export pause then holds a genuinely idle transaction independent
     // of PostgreSQL or operating-system socket buffer sizes.
@@ -5312,9 +5351,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         Format::Json,
         limits.open("scene").unwrap(),
         settings,
-    )
-    .await
-    .unwrap();
+    );
     let mut stream = body.into_data_stream();
     let mut compressed = stream.next().await.unwrap().unwrap().to_vec();
     let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
@@ -5448,9 +5485,7 @@ async fn exports_report_rollback_failure_before_writing_a_valid_gzip_trailer() {
         Format::Json,
         slot,
         settings,
-    )
-    .await
-    .unwrap();
+    );
     let reader = tokio::spawn(async move {
         let mut stream = body.into_data_stream();
         let mut compressed = Vec::new();

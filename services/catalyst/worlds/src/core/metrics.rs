@@ -14,6 +14,7 @@ use super::upload_limits;
 
 pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";
+pub const HTTP_REQUEST_SIZE_BYTES: &str = "http_request_size_bytes";
 pub const WORLD_DEPLOYMENTS_COUNTER: &str = "world_deployments_counter";
 pub const DEPLOYMENT_PROCESSING_STAGE_DURATION_SECONDS: &str =
     "deployment_processing_stage_duration_seconds";
@@ -250,8 +251,21 @@ fn method_label(method: &axum::http::Method) -> &'static str {
     }
 }
 
-/// `http_requests_total` and `http_request_duration_seconds` by method, matched route (`handler`)
-/// and status (`code`), the labels of upstream's default HTTP metrics.
+/// The declared request size upstream's `http_request_size_bytes` records:
+/// `Number(content-length) || 0`.
+fn declared_request_size(request: &Request) -> f64 {
+    request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(0.0)
+}
+
+/// `http_requests_total`, `http_request_duration_seconds` and `http_request_size_bytes` by
+/// method, matched route (`handler`) and status (`code`), upstream's default HTTP metrics
+/// (worlds-content-server's and world-storage-service's alike).
 pub async fn http_metrics(request: Request, next: Next) -> Response {
     let Some(handler) = request
         .extensions()
@@ -261,10 +275,12 @@ pub async fn http_metrics(request: Request, next: Next) -> Response {
         return next.run(request).await;
     };
     let method = method_label(request.method()).to_string();
+    let size = declared_request_size(&request);
     let started = Instant::now();
     let response = next.run(request).await;
     let code = response.status().as_u16().to_string();
     let labels = [("method", method), ("handler", handler), ("code", code)];
+    metrics::histogram!(HTTP_REQUEST_SIZE_BYTES, &labels).record(size);
     metrics::counter!(HTTP_REQUESTS_TOTAL, &labels).increment(1);
     metrics::histogram!(HTTP_REQUEST_DURATION_SECONDS, &labels)
         .record(started.elapsed().as_secs_f64());
@@ -332,5 +348,47 @@ mod tests {
             rendered.contains("http_request_duration_seconds_bucket{method=\"GET\",handler=\"/world/{world_name}/about\",code=\"200\",le="),
             "a histogram with buckets: {rendered}"
         );
+        assert!(
+            rendered.contains(
+                "http_request_size_bytes_sum{method=\"GET\",handler=\"/world/{world_name}/about\",code=\"200\"} 0"
+            ),
+            "no Content-Length records 0: {rendered}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn http_metrics_record_the_declared_request_size() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let app = Router::new()
+            .route(
+                "/values/{key}",
+                axum::routing::put(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(axum::middleware::from_fn(http_metrics));
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        for (length, body) in [("12", "{\"value\":1}x"), ("nope", "")] {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/values/k")
+                        .header("content-length", length)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let rendered = handle.render();
+        let labels = "method=\"PUT\",handler=\"/values/{key}\",code=\"204\"";
+        for line in [
+            format!("http_request_size_bytes_sum{{{labels}}} 12"),
+            format!("http_request_size_bytes_count{{{labels}}} 2"),
+        ] {
+            assert!(rendered.contains(&line), "{line}: {rendered}");
+        }
     }
 }
