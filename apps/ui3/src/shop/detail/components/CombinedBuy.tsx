@@ -53,6 +53,7 @@ type CombinedPhase =
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
+const REVERTED_RETURNED = "The purchase failed on-chain, so nothing was bought, and your Credits were returned.";
 
 // A split sent and not confirmed yet, per account and item, in this tab. The run writes it itself, so it is there however
 // the split was started (Buy now's dialog or the page's) and even when its screen is gone by then (an account switched
@@ -60,20 +61,36 @@ const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credi
 const SENT_KEY = "dcl-shop-buynow-split:v1:";
 export const SENT_HOLD_MS = 15 * 60 * 1000;
 
-export type SentSplit = { at: number; txHash: string | null; chainId: number | null };
+/** `creditId`: the credit the split reserved, released at once when Check again finds the purchase reverted. */
+export type SentSplit = { at: number; txHash: string | null; chainId: number | null; creditId: string | null };
 
 const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
 
-/** The split this account sent for this line, while it is held: recorded no later than now and no longer ago than the hold. */
-export function readSentSplit(account: string | null, lineId: string, now: number = Date.now()): SentSplit | null {
+/** The record as stored, held or not. A bare number is the first format's (a timestamp, written before the hash was kept). */
+function readSentRecord(account: string | null, lineId: string): SentSplit | null {
   try {
     const raw = sessionStorage.getItem(sentKey(account, lineId));
-    const sent = raw ? (JSON.parse(raw) as Partial<SentSplit>) : null;
-    if (!sent || typeof sent.at !== "number" || now < sent.at || now - sent.at >= SENT_HOLD_MS) return null;
-    return { at: sent.at, txHash: typeof sent.txHash === "string" ? sent.txHash : null, chainId: typeof sent.chainId === "number" ? sent.chainId : null };
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (typeof parsed === "number") return { at: parsed, txHash: null, chainId: null, creditId: null };
+    const sent = parsed as Partial<SentSplit> | null;
+    if (!sent || typeof sent.at !== "number") return null;
+    return {
+      at: sent.at,
+      txHash: typeof sent.txHash === "string" ? sent.txHash : null,
+      chainId: typeof sent.chainId === "number" ? sent.chainId : null,
+      creditId: typeof sent.creditId === "string" ? sent.creditId : null,
+    };
   } catch {
     return null;
   }
+}
+
+const held = (sent: SentSplit, now: number) => now >= sent.at && now - sent.at < SENT_HOLD_MS;
+
+/** The split this account sent for this line, while it is held: recorded no later than now and no longer ago than the hold. */
+export function readSentSplit(account: string | null, lineId: string, now: number = Date.now()): SentSplit | null {
+  const sent = readSentRecord(account, lineId);
+  return sent && held(sent, now) ? sent : null;
 }
 
 function writeSentSplit(account: string | null, lineId: string, sent: SentSplit): void {
@@ -110,6 +127,8 @@ type CombinedBuyRun = {
   reset(): void;
   /** A split for this account and line was sent and is not known to be confirmed yet (this run's, or an earlier one). */
   remembered: boolean;
+  /** It has a transaction to read: a split stopped before its purchase went out (a MANA approval still confirming) has none. */
+  checkable: boolean;
   checking: boolean;
   /** Reads the sent split's receipt: confirmed completes it, reverted fails it, and either releases the hold. */
   checkAgain(): Promise<void>;
@@ -138,8 +157,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     };
   }, []);
   const lineId = cartLineId(line.asset, line.listing);
-  const [remembered, setRemembered] = useState(() => readSentSplit(wallet.account, lineId) !== null);
-  useEffect(() => setRemembered(readSentSplit(wallet.account, lineId) !== null), [wallet.account, lineId]);
+  const [sent, setSent] = useState(() => readSentSplit(wallet.account, lineId));
+  useEffect(() => setSent(readSentSplit(wallet.account, lineId)), [wallet.account, lineId]);
   const [checking, setChecking] = useState(false);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
@@ -239,15 +258,16 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           : await buyMintWithCreditsAndMana(ctx, { mint: target.mint, ...gapArgs });
       guard.current.submitFinished(id);
       clearSentSplit(ctx.buyer, lineId);
-      setRemembered(false);
+      setSent(null);
       setPhase({ kind: "success", txHash: hash });
       onDone?.(hash);
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
       if (isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e)) {
         // Recorded for the account that sent it, whatever the wallet shows by now.
-        writeSentSplit(ctx.buyer, lineId, { at: Date.now(), txHash: sentHash, chainId: sentChain });
-        setRemembered(true);
+        const record = { at: Date.now(), txHash: sentHash, chainId: sentChain, creditId };
+        writeSentSplit(ctx.buyer, lineId, record);
+        setSent(record);
         setPhase({ kind: "pending" });
         return;
       }
@@ -282,40 +302,55 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     reset: () => {
       if (!busy) setPhase({ kind: "review" });
     },
-    remembered,
+    remembered: sent !== null,
+    checkable: !!sent?.txHash && sent.chainId !== null,
     checking,
     checkAgain: async () => {
-      const sent = readSentSplit(wallet.account, lineId);
-      if (!sent) {
-        // The hold ran out: nothing stops a new purchase.
-        setRemembered(false);
+      // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
+      const record = readSentRecord(wallet.account, lineId);
+      const release = () => {
+        clearSentSplit(wallet.account, lineId);
+        setSent(null);
+      };
+      if (!record) {
+        setSent(null);
         if (phase.kind === "pending") setPhase({ kind: "review" });
         return;
       }
-      // A split that never got a hash has no receipt to read: the hold stands until it runs out.
-      if (!sent.txHash || sent.chainId === null) return;
-      setChecking(true);
-      try {
-        const receipt = await services.reader.receipt(sent.chainId, sent.txHash);
-        if (!receipt) return;
-        clearSentSplit(wallet.account, lineId);
-        setRemembered(false);
-        if (receipt.status === "reverted") setPhase({ kind: "error", message: REVERTED });
-        else {
-          setPhase({ kind: "success", txHash: sent.txHash });
-          onDone?.(sent.txHash);
+      if (record.txHash && record.chainId !== null) {
+        setChecking(true);
+        try {
+          const receipt = await services.reader.receipt(record.chainId, record.txHash);
+          if (receipt) {
+            release();
+            if (receipt.status === "reverted") {
+              // The only purchase this credit went into reverted, so nothing consumed it: release it now.
+              const returned = record.creditId ? await cancelUsdIntents([record.creditId], services.client).then(() => true, () => false) : false;
+              setPhase({ kind: "error", message: returned ? REVERTED_RETURNED : REVERTED });
+            } else {
+              setPhase({ kind: "success", txHash: record.txHash });
+              onDone?.(record.txHash);
+            }
+            return;
+          }
+        } catch {
+          // A failed read is not an answer: still confirming.
+          return;
+        } finally {
+          setChecking(false);
         }
-      } catch {
-        // A failed read is not an answer: still confirming.
-      } finally {
-        setChecking(false);
+      }
+      // No receipt (or nothing to read): it stays held while the hold lasts, and is let go once it has run out.
+      if (!held(record, Date.now())) {
+        release();
+        if (phase.kind === "pending") setPhase({ kind: "review" });
       }
     },
   };
 }
 
 export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
-  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checking, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
+  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checkable, checking, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
   const title = `Buy ${line.display.name}`;
   const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
   const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
@@ -338,7 +373,7 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your purchases in a moment.</p>
             <div className="shop-orderbuy__actions">
-              <Button onClick={() => void checkAgain()} disabled={checking} data-testid="combined-check-again">
+              <Button onClick={() => void checkAgain()} disabled={checking || !checkable} data-testid="combined-check-again">
                 Check again
               </Button>
               <Button variant="ghost" onClick={onClose}>

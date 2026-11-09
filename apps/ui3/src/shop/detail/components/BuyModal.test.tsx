@@ -2,7 +2,7 @@
 // purchase goes through the cart's checkout without ever touching the buyer's cart.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
@@ -365,21 +365,23 @@ describe("Buy now's dialog", () => {
     await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
     const sent = readSentSplit(BOOK.buyer, first.lineId);
     expect(sent?.txHash).toBeTruthy();
+    expect(sent?.creditId).toBeTruthy();
     first.unmount();
     resetBuyNowCarts();
-    return sent!;
+    return { ...sent!, lineId: first.lineId };
   }
 
   it("a split still confirming is remembered: opened again, the dialog shows it confirming and offers no second one", async () => {
-    await sendSplitThatStaysPending();
+    const sent = await sendSplitThatStaysPending();
     renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const again = await screen.findByTestId("buy-modal");
     const pending = await within(again).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     expect(pending).toHaveTextContent("Your purchase is still being confirmed.");
     expect(within(again).queryByTestId("payment-method-step")).toBeNull();
-    // Not confirmed yet: Check again leaves it confirming.
+    // Not confirmed yet: Check again reads no receipt and leaves it confirming, still held.
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(within(again).getByTestId("buy-modal-pending")).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, sent.lineId)).not.toBeNull();
   });
 
   it("Check again on a remembered split reads its receipt: confirmed completes it and releases the item", async () => {
@@ -398,8 +400,48 @@ describe("Buy now's dialog", () => {
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("The purchase failed on-chain, so nothing was bought.");
+    // The credit it reserved went into nothing that mined: released at once, not left to its expiry.
+    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("The purchase failed on-chain, so nothing was bought, and your Credits were returned.");
+    expect(demo.shop.log.find((r) => r.name === "cancelCreditAuthorizations")).toBeTruthy();
     expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+  });
+
+  it("past the hold, Check again still reads the receipt: a split that mined meanwhile completes, never offered again", async () => {
+    const sent = await sendSplitThatStaysPending();
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
+    const later = Date.now() + SENT_HOLD_MS + 1;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
+      expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("past the hold with no receipt, Check again lets the item go", async () => {
+    await sendSplitThatStaysPending();
+    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SENT_HOLD_MS + 1);
+    try {
+      await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
+      expect(await within(screen.getByTestId("buy-modal")).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a split held without a transaction to read (the first format's record) shows it confirming with Check again off", async () => {
+    const { lineId } = renderBuy({ session: "web2" });
+    cleanup();
+    resetBuyNowCarts();
+    sessionStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
+    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
   });
 
   it("MANA picked, failed, and Try again: the step comes back with MANA still ticked", async () => {
