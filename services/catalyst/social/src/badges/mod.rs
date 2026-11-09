@@ -1,17 +1,20 @@
 //! Badges: the read surface of badges.decentraland.org (`/badges`,
 //! `/badges/{id}`, `/badges/{id}/tiers`, `/categories`, `/status`,
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
-//! admin read, grant and revoke (the last two with an audit row), and badge
-//! art mirrored into `BADGES_ASSETS_DIR` at `/assets/{path}`. Tables:
-//! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
-//! the schema), `user_badge_progress`, `user_achieved_tiers`,
-//! `badge_admin_audit`, `presence_badges`. Every progress write goes through
+//! admin read, grant and revoke (the last two with an audit row), the
+//! bearer-gated catalog writes ([`catalog`]: `PUT` and `PATCH
+//! /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
+//! `/assets/{path}`. Tables: `social.badge_definitions`, `badge_tiers`
+//! (upstream's catalog, seeded by the schema), `user_badge_progress`,
+//! `user_achieved_tiers`, `badge_admin_audit`, `badge_catalog_audit`,
+//! `presence_badges`. Every progress write goes through
 //! [`progress::apply_progress`]; the console grant is its only caller here.
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix).
 
 pub mod assets;
+pub mod catalog;
 pub mod handlers;
 pub mod progress;
 pub mod store;
@@ -90,7 +93,12 @@ impl AdminSecretSource for SharedState {
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/badges", get(handlers::get_badges))
-        .route("/badges/{badge_id}", get(handlers::get_badge))
+        .route(
+            "/badges/{badge_id}",
+            get(handlers::get_badge)
+                .put(handlers::put_badge)
+                .patch(handlers::patch_badge),
+        )
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
         .route("/categories", get(handlers::get_categories))
         .route("/status", get(handlers::get_status))

@@ -896,6 +896,21 @@ CREATE TABLE social.badge_admin_audit (
     CONSTRAINT badge_admin_audit_action_check CHECK (action IN ('grant', 'revoke'))
 );
 
+-- Append-only; one row per catalog write of the admin routes
+-- (badges::catalog): an upsert with the definition it wrote, or one
+-- publication or archive transition. No foreign key: it outlives the row.
+CREATE TABLE social.badge_catalog_audit (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    action text NOT NULL,
+    badge_id text NOT NULL,
+    definition jsonb,
+    actor text NOT NULL,
+    acted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_catalog_audit_pkey PRIMARY KEY (id),
+    CONSTRAINT badge_catalog_audit_action_check
+        CHECK (action IN ('upsert', 'publish', 'unpublish', 'archive', 'unarchive'))
+);
+
 -- Presence badges (upstream presence_badges, same columns): where a catalog
 -- badge counts (a scene by its base parcel, or a world), inside which UTC
 -- window, and the rule: a visit, or a stay of required_seconds. The badge's

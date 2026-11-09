@@ -1071,3 +1071,437 @@ async fn the_assets_route_serves_the_mirror_directory() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn admin_request(
+    method: &str,
+    uri: &str,
+    bearer: Option<&str>,
+    body: Option<Value>,
+) -> Request<Body> {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(token) = bearer {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    match body {
+        Some(b) => req
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(b.to_string()))
+            .unwrap(),
+        None => req.body(Body::empty()).unwrap(),
+    }
+}
+
+async fn admin_state() -> Option<SharedState> {
+    state(Settings {
+        admin_token: Some("s3cret".into()),
+        ..Settings::default()
+    })
+    .await
+}
+
+async fn catalog_audit(pool: &PgPool, badge_id: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT action FROM social.badge_catalog_audit WHERE badge_id = $1 ORDER BY id",
+    )
+    .bind(badge_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn tier(id: &str, slot: &str, name: &str, steps: i32) -> Value {
+    json!({
+        "tierId": format!("{}-{slot}", id.replace('_', "-")),
+        "tierName": name,
+        "description": format!("{steps} done"),
+        "criteria": { "steps": steps }
+    })
+}
+
+#[tokio::test]
+async fn the_catalog_routes_are_bearer_gated_and_validate() {
+    let Some(unset) = state(Settings::default()).await else {
+        return;
+    };
+    let id = format!("adm_{}", Uuid::new_v4().simple());
+    let uri = format!("/badges/badges/{id}");
+    let body =
+        json!({"name": "N", "description": "D", "category": "Builder", "criteria": {"steps": 1}});
+    for method in ["PUT", "PATCH"] {
+        let (status, _, _) = send(
+            app(unset.clone()),
+            admin_request(method, &uri, Some("anything"), Some(body.clone())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+    }
+    let state = admin_state().await.unwrap();
+    for bearer in [None, Some("wrong")] {
+        let (status, _, _) = send(
+            app(state.clone()),
+            admin_request("PUT", &uri, bearer, Some(body.clone())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let pool = state.badges.pool();
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.badge_definitions WHERE id = $1)")
+            .bind(&id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(!exists, "a refused bearer writes nothing");
+
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PUT",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"name": "N", "description": "D", "category": "Gamer", "criteria": {"steps": 0}})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let message = resp["error"].as_str().unwrap();
+    assert!(message.contains("category must be one of"), "{message}");
+    assert!(
+        message.contains("criteria.steps must be a positive integer"),
+        "{message}"
+    );
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request("PUT", &uri, Some("s3cret"), Some(json!({"name": "N"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(resp["error"].as_str().unwrap().starts_with("invalid body:"));
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request("PATCH", &uri, Some("s3cret"), Some(json!({}))),
+    )
+    .await;
+    assert_eq!(
+        (status, resp["error"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("the body sets published, archived or both")
+        )
+    );
+    let (status, _, _) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"published": true})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(catalog_audit(pool, &id).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_single_badge_is_created_unpublished_then_published_and_awarded() {
+    let Some(state) = admin_state().await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = format!("adm_{}", Uuid::new_v4().simple());
+    let uri = format!("/badges/badges/{id}");
+    let body = json!({
+        "id": id, "name": "Fright Night 2026", "description": "Jumped in",
+        "category": "Socializer", "criteria": { "steps": 1 }
+    });
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request("PUT", &uri, Some("s3cret"), Some(body.clone())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let badge = &resp["data"]["badge"];
+    assert_eq!(badge["criteria"], json!({"steps": 1}));
+    assert_eq!(
+        badge["assets"]["2d"]["normal"],
+        json!(format!("{id}/2d/normal.png"))
+    );
+    assert_eq!(badge["publishedAt"], Value::Null);
+    assert!(badge.get("tiers").is_none());
+    let (status, _) = get(app(state.clone()), &uri).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an unpublished badge is invisible"
+    );
+    let addr = fresh_address();
+    let opts = ApplyOptions {
+        at: chrono::Utc::now().naive_utc(),
+        notify: None,
+        granted_by: None,
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    assert_eq!(
+        apply_progress(&mut conn, &addr, &id, &opts, |p| p.steps = 1)
+            .await
+            .unwrap(),
+        Applied::NotAwardable
+    );
+
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"published": true})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(resp["data"]["badge"]["publishedAt"].is_i64());
+    let (status, resp) = get(app(state.clone()), &uri).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        resp["data"]["badge"]["assets"]["2d"]["normal"],
+        json!(format!("{CDN}/{id}/2d/normal.png"))
+    );
+    assert!(matches!(
+        apply_progress(&mut conn, &addr, &id, &opts, |p| p.steps = 1)
+            .await
+            .unwrap(),
+        Applied::Written(_)
+    ));
+
+    // a replace keeps publication and creation order
+    let mut renamed = body.clone();
+    renamed["name"] = json!("Fright Night");
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request("PUT", &uri, Some("s3cret"), Some(renamed)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["data"]["badge"]["name"], json!("Fright Night"));
+    assert!(resp["data"]["badge"]["publishedAt"].is_i64());
+
+    // earners keep it: unpublishing is refused, archiving is the retirement
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"published": false})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{resp}");
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"archived": true})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(resp["data"]["badge"]["archivedAt"].is_i64());
+    let other = fresh_address();
+    assert_eq!(
+        apply_progress(&mut conn, &other, &id, &opts, |p| p.steps = 1)
+            .await
+            .unwrap(),
+        Applied::NotAwardable,
+        "an archived badge is never awarded"
+    );
+    let (_, resp) = get(app(state.clone()), &uri).await;
+    assert_eq!(resp["data"]["badge"]["archived"], json!(true));
+    // a repeated state is no transition
+    let (status, _, _) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"archived": true, "published": true})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"archived": false})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(matches!(
+        apply_progress(&mut conn, &other, &id, &opts, |p| p.steps = 1)
+            .await
+            .unwrap(),
+        Applied::Written(_)
+    ));
+    assert_eq!(
+        catalog_audit(&pool, &id).await,
+        ["upsert", "publish", "upsert", "archive", "unarchive"]
+    );
+    let actor: String = sqlx::query_scalar(
+        "SELECT actor FROM social.badge_catalog_audit WHERE badge_id = $1 LIMIT 1",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actor, "service-token:CATALYRST_BADGES_ADMIN_TOKEN");
+    drop(conn);
+    drop_badge(&pool, &id).await;
+}
+
+#[tokio::test]
+async fn tiered_updates_keep_held_tiers_and_refuse_removing_them() {
+    let Some(state) = admin_state().await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = format!("adm_{}", Uuid::new_v4().simple());
+    let uri = format!("/badges/badges/{id}");
+    let tiered = |tiers: Vec<Value>| json!({"name": "Steps", "description": "Walk", "category": "Explorer", "tiers": tiers});
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PUT",
+            &uri,
+            Some("s3cret"),
+            Some(tiered(vec![
+                tier(&id, "starter", "Starter", 1),
+                tier(&id, "bronze", "Bronze", 5),
+                tier(&id, "silver", "Silver", 10),
+            ])),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let tiers = resp["data"]["badge"]["tiers"].as_array().unwrap();
+    assert_eq!(tiers.len(), 3);
+    let starter = format!("{}-starter", id.replace('_', "-"));
+    let bronze = format!("{}-bronze", id.replace('_', "-"));
+    assert_eq!(tiers[0]["tierId"], json!(starter));
+    assert_eq!(
+        tiers[1]["assets"]["3d"]["hrm"],
+        json!(format!("{id}/bronze/3d/hrm.png"))
+    );
+    assert!(resp["data"]["badge"].get("criteria").is_none());
+    send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &uri,
+            Some("s3cret"),
+            Some(json!({"published": true})),
+        ),
+    )
+    .await;
+
+    let addr = fresh_address();
+    let mut tx = pool.begin().await.unwrap();
+    let opts = ApplyOptions {
+        at: chrono::Utc::now().naive_utc(),
+        notify: None,
+        granted_by: None,
+    };
+    apply_progress(&mut tx, &addr, &id, &opts, |p| p.steps = 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        achieved(&pool, &addr, &id).await,
+        [starter.clone(), bronze.clone()]
+    );
+
+    // drop the unheld silver, add gold, retarget bronze: held tiers stay
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PUT",
+            &uri,
+            Some("s3cret"),
+            Some(tiered(vec![
+                tier(&id, "starter", "Starter", 1),
+                tier(&id, "bronze", "Bronze", 6),
+                tier(&id, "gold", "Gold", 50),
+            ])),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let names: Vec<_> = resp["data"]["badge"]["tiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["tierName"].clone())
+        .collect();
+    assert_eq!(names, [json!("Starter"), json!("Bronze"), json!("Gold")]);
+    assert_eq!(
+        achieved(&pool, &addr, &id).await,
+        [starter.clone(), bronze.clone()]
+    );
+    assert_eq!(progress(&pool, &addr, &id).await.unwrap().0, 5);
+
+    // reordering swaps ordinals within the transaction
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PUT",
+            &uri,
+            Some("s3cret"),
+            Some(tiered(vec![
+                tier(&id, "bronze", "Bronze", 2),
+                tier(&id, "starter", "Starter", 3),
+                tier(&id, "gold", "Gold", 50),
+            ])),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+
+    for (body, held) in [
+        (
+            tiered(vec![tier(&id, "starter", "Starter", 1)]),
+            "held by players cannot be removed",
+        ),
+        (
+            json!({"name": "Steps", "description": "Walk", "category": "Explorer", "criteria": {"steps": 1}}),
+            "cannot change between single and tiered",
+        ),
+    ] {
+        let (status, _, resp) = send(
+            app(state.clone()),
+            admin_request("PUT", &uri, Some("s3cret"), Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{resp}");
+        assert!(resp["error"].as_str().unwrap().contains(held), "{resp}");
+    }
+    let stored: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM social.badge_tiers WHERE badge_id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, 3, "a refused upsert changes nothing");
+    // listed in the reordered tier order
+    assert_eq!(achieved(&pool, &addr, &id).await, [bronze, starter]);
+    assert_eq!(
+        catalog_audit(&pool, &id).await,
+        ["upsert", "publish", "upsert", "upsert"]
+    );
+    drop_badge(&pool, &id).await;
+}

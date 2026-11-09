@@ -1,11 +1,12 @@
 //! The routes. Reads take any address text (a malformed one reads no rows,
 //! upstream's behaviour); the admin routes take the bearer-gated
-//! [`RequireAdmin`] in their signature, and the two mutations a validated
-//! address.
+//! [`RequireAdmin`] in their signature, the grant and revoke a validated
+//! address, and the catalog writes a body [`catalog::validate`] accepts.
 
 use std::sync::Arc;
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -13,6 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::assets;
+use super::catalog::{self, AdminBadgeBody, StateBody};
 use super::store::CATEGORIES;
 use super::types::{
     BadgeBody, CategoriesBody, Data, GrantResult, PreviewBody, RevokeResult, StatusBody, TiersBody,
@@ -223,6 +225,52 @@ pub async fn revoke_user_badge(
         address: address.into_string(),
         badge_id,
     })))
+}
+
+/// `PUT /badges/{id}`: upserts the definition (201 created, 200 replaced).
+pub async fn put_badge(
+    admin: RequireAdmin,
+    State(state): State<AppState>,
+    Path(badge_id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let def = catalog::validate(&badge_id, catalog::parse_body(&body)?)?;
+    let (badge, created) = state
+        .badges
+        .upsert_definition(&def, &admin.audit_actor_description())
+        .await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(Data::new(AdminBadgeBody { badge }))).into_response())
+}
+
+/// `PATCH /badges/{id}` `{published?, archived?}`.
+pub async fn patch_badge(
+    admin: RequireAdmin,
+    State(state): State<AppState>,
+    Path(badge_id): Path<String>,
+    body: Bytes,
+) -> Result<Json<Data<AdminBadgeBody>>, ApiError> {
+    let target: StateBody = catalog::parse_body(&body)?;
+    if target.published.is_none() && target.archived.is_none() {
+        return Err(ApiError::bad_request(
+            "the body sets published, archived or both",
+        ));
+    }
+    match state
+        .badges
+        .set_definition_state(badge_id.trim(), &target, &admin.audit_actor_description())
+        .await?
+    {
+        Some(badge) => Ok(Json(Data::new(AdminBadgeBody { badge }))),
+        None => Err(ApiError::not_found(format!(
+            "no badge found with id: {}",
+            badge_id.trim()
+        ))),
+    }
 }
 
 pub async fn get_asset(State(state): State<AppState>, Path(path): Path<String>) -> Response {
