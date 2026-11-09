@@ -3096,10 +3096,7 @@
           "sha256": "b7041238fbdd688862a5275a5f2a6a2683a79b502ff09a882743ed0ce5b51951"
         },
         "library/ui/figma/src/install.ts": {
-          "fds": {
-            "path": "dcl-mcp-figma/src/promotion/promote.ts",
-            "sha256": "9a0aead291c7ad0daf492447122e0b6ce87402a223d4309443219424621f55df"
-          },
+          "fds": null,
           "deviation": [
             "port:9c6dfbe6",
             "seal-removed",
