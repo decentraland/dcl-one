@@ -2,13 +2,12 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { aggregateKind, entryBelongsTo, parseAggregate } from './aggregates.js'
 import { removeAggregateEntries } from './aggregate-edits.js'
-import { retiredArtifactPresent } from './reparented-variants.js'
+import { inCaptureCache, retiredArtifactPresent } from './reparented-variants.js'
 import { listFiles, readBytesIfExists, resolveContained, toPosix } from './fs-safe.js'
 import {
   GUARDED_DIRECTORIES,
   GUARDED_FILES,
   GENERATED,
-  SNAPSHOT,
   buildOwnership,
   componentOwner,
   componentNameOfFile,
@@ -55,7 +54,7 @@ async function retirementArtifacts(
       (ownerOf(ownership, file) as { pageId: string }).pageId === target.pageId
     )
       owned.add(file)
-    else if (kind && file !== `${SNAPSHOT}/retirements.json`) {
+    else if (kind && kind !== 'retirements') {
       const parsed = parseAggregate(kind, bytes.toString('utf8'), ownership)
       for (const [key, entry] of parsed?.entries ?? [])
         if (entryBelongsTo(key, entry, target, ownership)) owned.add(`${file}#${key}`)
@@ -127,26 +126,23 @@ async function applyRetirements(root: string, retirements: Retirements): Promise
     throw new Error(
       `Retirement records claim artifacts they do not own:\n${plan.rejected.map((item) => `${item.path}: ${item.reason}`).join('\n')}`
     )
+  // Only tracked outputs change: the capture cache keeps the retired identities (inCaptureCache).
   const owned = retirements.retired.flatMap((record) =>
-    record.owned.filter((artifact) => !record.sharedExclusions.includes(artifact))
+    record.owned.filter(
+      (artifact) => !inCaptureCache(artifact) && !record.sharedExclusions.includes(artifact)
+    )
   )
-  const fileOf = (artifact: string) => artifact.split('#')[0]!
-  const snapshot = (artifact: string) =>
-    fileOf(artifact).startsWith(`${SNAPSHOT}/components/`) && fileOf(artifact).endsWith('.json')
-  const manifest = (artifact: string) => fileOf(artifact) === `${GENERATED}/components/manifest.ts`
-  // Identity anchors remain available until every other owned artifact is gone, so retry can prove ownership.
-  for (const file of plan.delete.filter((file) => !snapshot(file)))
-    await rm(await resolveContained(root, file))
+  const manifest = (artifact: string) =>
+    artifact.split('#')[0] === `${GENERATED}/components/manifest.ts`
+  for (const file of plan.delete) await rm(await resolveContained(root, file))
   const entries = [
     ...(await removeAggregateEntries(
       root,
-      owned.filter((artifact) => !snapshot(artifact) && !manifest(artifact))
+      owned.filter((artifact) => !manifest(artifact))
     )),
     ...(await removeLibraryEntries(root, owned)),
-    ...(await removeAggregateEntries(root, owned.filter(manifest))),
-    ...(await removeAggregateEntries(root, owned.filter(snapshot)))
+    ...(await removeAggregateEntries(root, owned.filter(manifest)))
   ]
-  for (const file of plan.delete.filter(snapshot)) await rm(await resolveContained(root, file))
   return [...plan.delete, ...entries]
 }
 export {

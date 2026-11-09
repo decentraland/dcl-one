@@ -54,7 +54,7 @@ describe('when resolving component and shared-asset ownership', () => {
     }
   })
   it('should remove only the retired user from shared-asset ownership after cleanup', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     ownership = await buildOwnership(root)
     expect(ownerOf(ownership, shared)).toEqual({

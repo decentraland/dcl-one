@@ -83,7 +83,7 @@ impl AsyncComputeTaskPool {
     /// [`TaskPool::spawn_local`].
     pub fn spawn<T>(
         &self,
-        future: impl core::future::Future<Output = T> + Send + 'static,
+        future: impl Future<Output = T> + Send + 'static,
     ) -> crate::Task<T>
     where
         T: Send + 'static,

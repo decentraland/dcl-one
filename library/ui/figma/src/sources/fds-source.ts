@@ -16,6 +16,7 @@ import { stripFileKey } from '../capture/strip-file-key.js'
 import { encodePageFileName } from '../capture/page-file-name.js'
 import { stripImageMetadata, stripSvgImageMetadata } from '../capture/strip-image-metadata.js'
 import type { RawComponentPage } from '../ir/raw-components.js'
+import { retirementsSchema } from '../guard/retirements.js'
 
 const run = promisify(execFile)
 
@@ -25,19 +26,35 @@ const LOCAL_SNAPSHOT = 'figma/figma-snapshot'
 /** Written into the cache next to the capture; it names the revision and digest table the cache was built from. */
 const MARKER = '.fds-source.json'
 /**
- * The orphan ledger records this tree's own generated assets that a recapture stopped referencing, so it is
- * tracked here (figma/ledger) and replaces figma-design-system's copy in the cache. It may hold asset paths and
- * hashes only.
+ * dcl-one's own lifecycle ledgers, tracked here (figma/ledger). Each replaces figma-design-system's copy in the
+ * cache, so the cache holds one effective ledger and a re-fetch never drops a record. The orphan ledger records
+ * this tree's generated assets that a recapture stopped referencing, and may hold asset paths and hashes only.
+ * The retirement ledger holds what `retire` writes: node ids, plain-text names and reasons, and artifact paths.
  */
 const LEDGER = { tracked: 'ledger/orphaned-assets.json', cached: 'orphaned-assets.json' } as const
+const RETIREMENT_LEDGER = {
+  tracked: 'ledger/retirements.json',
+  cached: 'retirements.json'
+} as const
+
+const parseJson = (bytes: Buffer, file: string): unknown => {
+  try {
+    return JSON.parse(bytes.toString('utf8'))
+  } catch {
+    throw new Error(`${file} is not valid JSON`)
+  }
+}
+
+function parseRetirementLedger(bytes: Buffer): Buffer {
+  if (!retirementsSchema.safeParse(parseJson(bytes, RETIREMENT_LEDGER.tracked)).success)
+    throw new Error(
+      `${RETIREMENT_LEDGER.tracked} may hold only { schema: 1, retired: [...] } with node ids, plain-text names and reasons, and repository paths`
+    )
+  return bytes
+}
 
 function parseLedger(bytes: Buffer): Buffer {
-  let value: unknown
-  try {
-    value = JSON.parse(bytes.toString('utf8'))
-  } catch {
-    throw new Error(`${LEDGER.tracked} is not valid JSON`)
-  }
+  const value = parseJson(bytes, LEDGER.tracked)
   const ledger = value as { schema?: unknown; orphaned?: unknown }
   const keys = value && typeof value === 'object' ? Object.keys(value) : []
   const entryOk = (entry: unknown) =>
@@ -75,6 +92,26 @@ class FdsCacheError extends Error {
   override name = 'FdsCacheError'
 }
 
+/**
+ * A capture path from the pinned tree, relative to the snapshot folder. It is joined into the staging folder, and
+ * `--seal` takes the listing as the digest table, so a `..`, empty, `.`, absolute or backslash segment, or a path
+ * that resolves outside the folder, is refused before anything is written.
+ */
+function assertCapturePath(file: string, root: string): void {
+  const segments = file.split('/')
+  const resolved = path.resolve(root, file)
+  if (
+    !file ||
+    file.includes('\\') ||
+    file.includes('\0') ||
+    path.isAbsolute(file) ||
+    path.win32.isAbsolute(file) ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..') ||
+    !resolved.startsWith(root + path.sep)
+  )
+    throw new FdsCacheError('the pinned capture holds a path outside the snapshot folder')
+}
+
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
 
 /** Hash of a digest table, independent of key order. */
@@ -87,7 +124,9 @@ function digestTableHash(digests: Record<string, string>): string {
   )
 }
 
-const SSH_REMOTE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?$/
+/** The only repository a lock may pin, so a lock edit cannot point fetch-source at a fork. */
+const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
+const FDS_REMOTE = 'git@github.com:decentraland/figma-design-system.git'
 
 /** Reads the FDS pin from upstream.lock.json. Throws unless it names a full commit and a non-empty digest table. */
 function readFdsPin(lock: unknown, { sealing = false } = {}): FdsPin {
@@ -101,16 +140,17 @@ function readFdsPin(lock: unknown, { sealing = false } = {}): FdsPin {
   const revision = source.revision
   if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/.test(revision))
     throw new Error('upstream.lock.json must pin figma-design-system to a full 40-hex commit')
-  const match = SSH_REMOTE.exec(String(source.repository))
-  if (!match)
-    throw new Error('upstream.lock.json names an unsupported figma-design-system repository URL')
+  if (source.repository !== FDS_REPOSITORY)
+    throw new Error(
+      `upstream.lock.json must name the figma-design-system repository ${FDS_REPOSITORY}`
+    )
   const snapshot = source.snapshot as { revision?: unknown; digests?: unknown } | undefined
   const snapshotRevision = snapshot?.revision
   if (typeof snapshotRevision !== 'string' || !/^[0-9a-f]{40}$/.test(snapshotRevision))
     throw new Error(
       'upstream.lock.json must pin the capture (snapshot.revision) to a full 40-hex commit'
     )
-  const remote = `git@github.com:${match[1]}/${match[2]}.git`
+  const remote = FDS_REMOTE
   const digests = snapshot?.digests
   if (sealing) return { remote, revision, snapshotRevision, digests: {} }
   if (
@@ -234,6 +274,8 @@ type FetchOptions = {
   /** Overrides the pinned remote; tests use a local repository. */
   remote?: string
   runner?: Git
+  /** Overrides the directory rename of the cache swap; tests use it to fail one step. */
+  rename?: (from: string, to: string) => Promise<void>
   /**
    * Porting only: accept whatever the pinned commit yields and write its digest table into the lock, instead of
    * checking it. The port verification record then has to vouch for the new table.
@@ -294,7 +336,11 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
         const [meta, file] = entry.split('\t') as [string, string]
         const [, type, oid] = meta.split(' ') as [string, string, string]
         if (type !== 'blob') throw new Error('the pinned capture holds a non-file entry')
-        return { file: file.slice(FDS_SNAPSHOT.length + 1), oid }
+        if (!file.startsWith(`${FDS_SNAPSHOT}/`))
+          throw new FdsCacheError('the pinned capture holds a path outside the snapshot folder')
+        const relative = file.slice(FDS_SNAPSHOT.length + 1)
+        assertCapturePath(relative, path.resolve(staging))
+        return { file: relative, oid }
       })
     if (listing.length === 0) throw new Error('the pinned commit holds no capture')
     const oids = [...new Set(listing.map((entry) => entry.oid))]
@@ -307,12 +353,17 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
     const files = new Map<string, Buffer>()
     for (const { file, oid } of listing) {
       const result = keylessSnapshotFile(file, blobs.get(oid)!)
+      assertCapturePath(result.file, path.resolve(staging))
       if (files.has(result.file)) throw new Error('two capture files map to the same local name')
       files.set(result.file, result.bytes)
     }
     files.set(
       LEDGER.cached,
       parseLedger(await readFile(path.join(options.figmaRoot, LEDGER.tracked)))
+    )
+    files.set(
+      RETIREMENT_LEDGER.cached,
+      parseRetirementLedger(await readFile(path.join(options.figmaRoot, RETIREMENT_LEDGER.tracked)))
     )
     const digests = options.seal
       ? Object.fromEntries(
@@ -324,8 +375,8 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
     assertDigests(files, digests)
 
     // Every ported file's counterpart at the pinned commit: hashed in memory, never written anywhere.
-    const source = (lock.sources as Record<string, unknown>[]).find((entry) =>
-      String(entry.repository).endsWith('/figma-design-system')
+    const source = (lock.sources as Record<string, unknown>[]).find(
+      (entry) => entry.repository === FDS_REPOSITORY
     )!
     const ported =
       source.files && typeof source.files === 'object'
@@ -414,9 +465,16 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
         2
       ) + '\n'
     )
+    const move = options.rename ?? rename
     const previous = `${target}.previous-${process.pid}`
-    if (existsSync(target)) await rename(target, previous)
-    await rename(staging, target)
+    const hadCache = existsSync(target)
+    if (hadCache) await move(target, previous)
+    try {
+      await move(staging, target)
+    } catch (error) {
+      if (hadCache) await move(previous, target)
+      throw error
+    }
     await rm(previous, { recursive: true, force: true })
     if (options.seal) {
       source.snapshot = { revision: pin.snapshotRevision, path: FDS_SNAPSHOT, digests }

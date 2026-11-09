@@ -11,7 +11,7 @@ import type { FigmaSource } from './sources/types.js'
 import { pendingRetirements } from './guard/apply-retirements.js'
 import { checkScope, type RunKind } from './guard/check-scope.js'
 import { GENERATED, SNAPSHOT } from './guard/ownership.js'
-import { loadRetirements } from './guard/retirements.js'
+import { RETIREMENTS_PATH, loadRetirements } from './guard/retirements.js'
 import { stageOutput } from './guard/stage.js'
 import { canonicalPath, validateOutputPath } from './guard/fs-safe.js'
 import { diffFiles, writeFiles, type FileDiff } from './sync.js'
@@ -65,7 +65,8 @@ async function createApp(
         configuredPages(config)
           .filter((page) => page.id === null)
           .map((page) => page.name),
-        lock && !options.unverifiedSnapshot ? () => verifyFdsCache(dir, lock) : undefined
+        lock && !options.unverifiedSnapshot ? () => verifyFdsCache(dir, lock) : undefined,
+        path.resolve(cwd, '..', RETIREMENTS_PATH)
       )
     },
     resolveOutDir: (override) => path.resolve(cwd, override ?? config.outDir)
@@ -116,6 +117,15 @@ async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
   const source = app.createSource('snapshot')
   await source.ready?.()
   const root = repositoryRoot(app)
+  // Ownership, retirements and the guard read the capture at figma/figma-snapshot, so that exact directory must be
+  // the one just verified: a config naming another snapshotDir would verify one cache and guard against another.
+  if (
+    (await canonicalPath(path.resolve(app.cwd, app.config.snapshotDir))) !==
+    (await canonicalPath(path.join(root, SNAPSHOT)))
+  )
+    throw new Error(
+      `sync reads the capture at ${SNAPSHOT}, but the config names another snapshotDir`
+    )
   const runKind: RunKind = options.developer ? 'developer' : 'automated'
   const outDir = await validateOutputPath(
     root,
@@ -133,11 +143,7 @@ async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
 
   const generated = await generateAll(source, {}, app.config)
   if (options.applyRetirements) {
-    if (
-      outDir !== (await canonicalPath(path.join(root, GENERATED))) ||
-      (await canonicalPath(path.resolve(app.cwd, app.config.snapshotDir))) !==
-        (await canonicalPath(path.join(root, SNAPSHOT)))
-    )
+    if (outDir !== (await canonicalPath(path.join(root, GENERATED))))
       throw new Error(
         'Retirement cleanup requires the repository snapshot and generated directories'
       )

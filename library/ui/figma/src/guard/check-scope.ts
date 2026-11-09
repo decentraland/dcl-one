@@ -1,9 +1,13 @@
 import { invalidFingerprints } from './fingerprints.js'
 import { sharedInputConflicts } from './shared-inputs.js'
 import { planRetirements, componentForArtifact } from './apply-retirements.js'
-import { isReparentingRemap, retiredArtifactPresent } from './reparented-variants.js'
-import { isRetired, loadRetirements } from './retirements.js'
-import { LEDGER } from './consumers.js'
+import {
+  inCaptureCache,
+  isReparentingRemap,
+  retiredArtifactPresent
+} from './reparented-variants.js'
+import { loadRetirements } from './retirements.js'
+import { CACHED_LEDGERS, LEDGER, RETIREMENTS } from './consumers.js'
 import { checkLedger, type Ledger } from './orphaned-assets.js'
 import { publicExportSet } from './exports.js'
 import path from 'node:path'
@@ -77,7 +81,9 @@ type ScopeInput = {
 
 type ScopeResult = { ok: boolean; violations: Violation[] }
 
-const RETIREMENTS_FILE = `${SNAPSHOT}/retirements.json`
+const RETIREMENTS_FILE = RETIREMENTS
+// The committed retirement ledger and fetch-source's copy of it in the cache: automation edits neither.
+const RETIREMENT_FILES = new Set([RETIREMENTS, CACHED_LEDGERS[1]!])
 
 async function listGuarded(
   root: string,
@@ -196,7 +202,12 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       ...merged.ownership.conflicts
     ])
       add({ path: 'ownership', owner: null, kind: 'out-of-scope-change', cause: remap })
-  const removable = runKind === 'developer' ? authorizedRemovals(retirements) : new Set<string>()
+  // A retired identity may leave the capture on any run: the cleanup never removes it, a later capture does.
+  const removable = new Set(
+    [...authorizedRemovals(retirements)].filter(
+      (artifact) => runKind === 'developer' || inCaptureCache(artifact)
+    )
+  )
   const removalsOnly = input.removalsOnly ?? []
   const directories = [...(input.directories ?? GUARDED_DIRECTORIES), ...removalsOnly]
   // A watched library root includes its entry, as upstream's library src folder does (layout.ts).
@@ -206,9 +217,11 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       ? [LIBRARY_ENTRY]
       : [])
   ]
-  // The orphaned asset ledger is validated against the base on every run that watches the snapshot.
+  // The orphaned asset ledger is validated against the base on every run that watches it or the snapshot it
+  // keeps the books for.
   const ledgerWatched =
-    watched.includes(LEDGER) || directories.some((directory) => LEDGER.startsWith(`${directory}/`))
+    watched.includes(LEDGER) ||
+    directories.some((directory) => directory === SNAPSHOT || LEDGER.startsWith(`${directory}/`))
   if (ledgerWatched) {
     const ledger = await checkLedger({
       baseDir,
@@ -275,7 +288,8 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       }
     if (same(before, after)) continue
     // Checked as a whole by checkLedger above.
-    if (file === LEDGER) continue
+    // The cache's copy of the ledger is pinned by fetch-source's digest table, not by this guard.
+    if (file === LEDGER || file === CACHED_LEDGERS[0]) continue
     // Reported once by the partial-stage library check above.
     if (partial && isLibraryPath(file)) continue
     if (file === 'figma/review/src/review/promotion.json' && after)
@@ -309,7 +323,7 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       continue
     }
 
-    if (file === RETIREMENTS_FILE && runKind === 'automated') {
+    if (RETIREMENT_FILES.has(file) && runKind === 'automated') {
       add({
         path: file,
         owner,
@@ -442,27 +456,6 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
         })
     }
 
-  if (consistencyRetirements.retired.length)
-    for (const file of await listFiles(path.join(stagedDir, SNAPSHOT, 'components'))) {
-      if (!file.endsWith('.json')) continue
-      const data = JSON.parse((await readBytesIfExists(file))!.toString('utf8')) as {
-        page?: { id: string }
-        components?: { id: string }[]
-      }
-      if (!data.page) continue
-      if (
-        isRetired(consistencyRetirements, data.page.id) ||
-        data.components?.some((component) =>
-          isRetired(consistencyRetirements, data.page!.id, component.id)
-        )
-      )
-        add({
-          path: toPosix(path.relative(stagedDir, file)),
-          owner: { pageId: data.page.id },
-          kind: 'pending-retirement',
-          cause: 'retired identity remains in the snapshot'
-        })
-    }
   if ((input.removalsOnly ?? []).some((directory) => directory.startsWith('components'))) {
     const before = await read(baseDir, LIBRARY_INDEX)
     const after = await readStaged(LIBRARY_INDEX)
@@ -496,6 +489,8 @@ async function retiredStillListed(
   if (!retirements.retired.length) return
   for (const aggregate of RETIRABLE_AGGREGATES.filter((kind) => kind !== 'snapshot')) {
     const file = Object.entries(AGGREGATES).find(([, name]) => name === aggregate)![0]
+    // The capture cache keeps listing retired items; generation drops them through the ledger.
+    if (inCaptureCache(file)) continue
     const text = (await read(stagedDir, file))?.toString('utf8')
     if (text === undefined) continue
     let parsed

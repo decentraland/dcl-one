@@ -33,11 +33,11 @@ function Price({ option, quantity, chainId }: { option: PaymentOptionView; quant
   if (option.method === "credits") {
     const each = option.charge;
     const total = each === null ? null : mulCents(each, quantity);
-    return total === null ? <span className="shop-pay__na">Price unavailable</span> : <CreditsAmount credits={creditsFloor(total)} />;
+    return total === null ? <span className="shop-paychoice__na">Price unavailable</span> : <CreditsAmount credits={creditsFloor(total)} />;
   }
   const q = option.quote?.method === "mana" ? option.quote.amount : null;
   const total = q === null ? null : mulMana(q, quantity);
-  return total === null ? <span className="shop-pay__na">Price unavailable</span> : <ManaAmount wei={total} chainId={chainId} />;
+  return total === null ? <span className="shop-paychoice__na">Price unavailable</span> : <ManaAmount wei={total} chainId={chainId} />;
 }
 
 export type PaymentChoiceProps = {
@@ -60,15 +60,15 @@ export default function PaymentChoice({ view, selected, onSelect, quantity, mana
   if (view.manaOnly) {
     const mana = view.options.find((o) => o.method === "mana");
     return (
-      <div className="shop-pay shop-pay--mana-only" data-testid="payment-mana-only">
-        <div className="shop-pay__row">
-          <span className="shop-pay__tag">Paid in MANA on {chainLabel(manaChainId)}</span>
-          {hidePrice ? null : mana ? <Price option={mana} quantity={quantity} chainId={manaChainId} /> : <span className="shop-pay__na">Price unavailable</span>}
+      <div className="shop-paychoice shop-paychoice--mana-only" data-testid="payment-mana-only">
+        <div className="shop-paychoice__row">
+          <span className="shop-paychoice__tag">Paid in MANA on {chainLabel(manaChainId)}</span>
+          {hidePrice ? null : mana ? <Price option={mana} quantity={quantity} chainId={manaChainId} /> : <span className="shop-paychoice__na">Price unavailable</span>}
         </div>
-        {view.reasons.length > 0 ? <p className="shop-pay__why">{view.reasons.map(reasonText).join(" ")}</p> : null}
-        {mana && stateNote(mana) ? <p className="shop-pay__note">{stateNote(mana)}</p> : null}
+        {view.reasons.length > 0 ? <p className="shop-paychoice__why">{view.reasons.map(reasonText).join(" ")}</p> : null}
+        {mana && stateNote(mana) ? <p className="shop-paychoice__note">{stateNote(mana)}</p> : null}
         {hasOutage && onRetry ? (
-          <button type="button" className="shop-pay__retry" onClick={onRetry}>
+          <button type="button" className="shop-paychoice__retry" onClick={onRetry}>
             Check the price again
           </button>
         ) : null}
@@ -77,18 +77,18 @@ export default function PaymentChoice({ view, selected, onSelect, quantity, mana
   }
 
   return (
-    <fieldset className="shop-pay" disabled={disabled} data-testid="payment-choice">
-      <legend className="shop-pay__legend">Pay {label} with</legend>
+    <fieldset className="shop-paychoice" disabled={disabled} data-testid="payment-choice">
+      <legend className="shop-paychoice__legend">Pay {label} with</legend>
       {view.options.map((option) => {
         const note = stateNote(option);
         return (
-          <label key={option.method} className="shop-pay__option" data-method={option.method} data-state={option.state.kind} data-selected={current === option.method || undefined}>
+          <label key={option.method} className="shop-paychoice__option" data-method={option.method} data-state={option.state.kind} data-selected={current === option.method || undefined}>
             <input type="radio" name={name} value={option.method} checked={current === option.method} onChange={() => onSelect(option.method)} />
-            <span className="shop-pay__method">{option.method === "credits" ? "Credits" : `MANA on ${chainLabel(manaChainId)}`}</span>
+            <span className="shop-paychoice__method">{option.method === "credits" ? "Credits" : `MANA on ${chainLabel(manaChainId)}`}</span>
             {hidePrice ? <span /> : <Price option={option} quantity={quantity} chainId={manaChainId} />}
-            {note ? <span className="shop-pay__note">{note}</span> : null}
+            {note ? <span className="shop-paychoice__note">{note}</span> : null}
             {option.method === "mana" && option.mixed ? (
-              <span className="shop-pay__mixed">
+              <span className="shop-paychoice__mixed">
                 Or {option.mixed.credits} Credits and the rest in MANA, from the item page.
               </span>
             ) : null}
@@ -96,7 +96,7 @@ export default function PaymentChoice({ view, selected, onSelect, quantity, mana
         );
       })}
       {hasOutage && onRetry ? (
-        <button type="button" className="shop-pay__retry" onClick={onRetry}>
+        <button type="button" className="shop-paychoice__retry" onClick={onRetry}>
           Check the price again
         </button>
       ) : null}

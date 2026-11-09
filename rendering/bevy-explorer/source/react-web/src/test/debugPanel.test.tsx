@@ -73,7 +73,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
   } finally {
-    resetPopups()
+    act(() => resetPopups())
     vi.useRealTimers()
   }
 })
@@ -144,7 +144,7 @@ it('shows only the next connection action and follows changes from the engine', 
     expect(screen.getByText(/No session/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
   } finally {
-    resetPopups()
+    act(() => resetPopups())
     vi.useRealTimers()
   }
 })

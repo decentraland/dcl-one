@@ -22,7 +22,7 @@ async function runRetirementSync(
     app.configFile ?? path.join(app.cwd, 'figma.config.json')
   )
   try {
-    // The staged copy of the verified cache is about to have retirements applied, so it is read unverified.
+    // The stage copies a cache verified before staging but not its lock, so the copy is read unverified.
     const stagedApp = await createApp(path.dirname(staged.configFile), staged.configFile, {
       unverifiedSnapshot: true
     })

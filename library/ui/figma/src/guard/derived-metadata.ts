@@ -4,6 +4,7 @@ import { reviewComponents } from '../review-manifest.js'
 import { SnapshotSource } from '../sources/snapshot-source.js'
 import { resolveContained } from './fs-safe.js'
 import { CONFIG, SNAPSHOT } from './ownership.js'
+import { RETIREMENTS_PATH } from './retirements.js'
 
 // Non-entry catalog fields that are computed from component trees rather than read from a foundations
 // page. Only these may change without a foundations capture, and only to their recomputed value.
@@ -18,7 +19,9 @@ async function recomputeDerivedCatalogMetadata(stagedDir: string): Promise<Deriv
     await resolveContained(stagedDir, SNAPSHOT),
     configuredPages(config)
       .filter((page) => page.id === null)
-      .map((page) => page.name)
+      .map((page) => page.name),
+    undefined,
+    await resolveContained(stagedDir, RETIREMENTS_PATH)
   )
   const { strokeWidths } = await reviewComponents(source, config)
   return { strokeWidths }

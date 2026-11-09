@@ -103,3 +103,77 @@ describe('when a capture launches its browser', () => {
     assert.ok(browserArgs('/tmp/profile').includes('--disable-features=BraveFarbling'))
   })
 })
+
+// A DevTools endpoint stand-in: the module reads fetch and WebSocket from globalThis when it loads, so a fresh
+// copy is imported while both are stubbed. Every CDP command gets an empty result at once.
+class FakeSocket extends EventTarget {
+  static readonly OPEN = 1
+  static readonly CLOSED = 3
+  static last: FakeSocket | undefined
+  readyState = 0
+  sent: string[] = []
+  constructor() {
+    super()
+    FakeSocket.last = this
+    queueMicrotask(() => {
+      this.readyState = FakeSocket.OPEN
+      this.dispatchEvent(new Event('open'))
+    })
+  }
+  send(data: string) {
+    this.sent.push(data)
+    const { id } = JSON.parse(data) as { id: number }
+    queueMicrotask(() =>
+      this.dispatchEvent(
+        Object.assign(new Event('message'), { data: JSON.stringify({ id, result: {} }) })
+      )
+    )
+  }
+  close() {
+    this.readyState = FakeSocket.CLOSED
+  }
+}
+async function stubbedOpenSession(): Promise<typeof openSession> {
+  const { fetch, WebSocket } = globalThis
+  Object.assign(globalThis, {
+    fetch: async () =>
+      new Response(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools' })),
+    WebSocket: FakeSocket
+  })
+  try {
+    const specifier = new URL('../scripts/capture-browser.mjs?stubbed-cdp', import.meta.url).href
+    return ((await import(specifier)) as { openSession: typeof openSession }).openSession
+  } finally {
+    Object.assign(globalThis, { fetch, WebSocket })
+  }
+}
+// A browser that publishes a DevTools port in its profile and then stays up until it is stopped.
+const PORT_BROWSER =
+  'const dir = process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16); require("node:fs").writeFileSync(dir + "/DevToolsActivePort", "1\\n"); setInterval(()=>{},1000)'
+
+describe('when a command is sent on a capture session that can no longer answer', () => {
+  it('should reject a send after close at once instead of waiting out the CDP timeout', async () => {
+    const open = await stubbedOpenSession()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    await session.close()
+    const sentBefore = FakeSocket.last!.sent.length
+    const begin = Date.now()
+    await assert.rejects(session.send('Runtime.evaluate'), /Capture browser session closed/)
+    assert.ok(Date.now() - begin < 1000)
+    assert.equal(FakeSocket.last!.sent.length, sentBefore)
+  })
+  it('should reject a send on a socket the browser already closed, before the session is closed', async () => {
+    const open = await stubbedOpenSession()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    try {
+      FakeSocket.last!.readyState = FakeSocket.CLOSED
+      const begin = Date.now()
+      await assert.rejects(session.send('Runtime.evaluate'), /Capture browser session closed/)
+      assert.ok(Date.now() - begin < 1000)
+    } finally {
+      await session.close()
+    }
+  })
+})

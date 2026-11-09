@@ -106,7 +106,10 @@ async function openSession(executable, { signal } = {}) {
       for (const reject of pending.values()) reject(signal.reason)
     }
     signal?.addEventListener('abort', abort, { once: true })
+    const requestsById = new Map()
     const session = {
+      requests: [],
+      requestFailures: [],
       runtimeErrors: [],
       consoleErrors: [],
       close: async () => {
@@ -119,6 +122,22 @@ async function openSession(executable, { signal } = {}) {
       if (message.id) {
         pending.get(message.id)?.(undefined, message)
         pending.delete(message.id)
+      } else if (message.method === 'Network.requestWillBeSent') {
+        const request = {
+          url: message.params.request.url,
+          type: message.params.type,
+          initiator: message.params.initiator.type
+        }
+        session.requests.push(request)
+        requestsById.set(`${message.sessionId ?? ''}:${message.params.requestId}`, request)
+      } else if (message.method === 'Network.loadingFailed') {
+        const request = requestsById.get(`${message.sessionId ?? ''}:${message.params.requestId}`)
+        session.requestFailures.push({ ...request, error: message.params.errorText })
+      } else if (message.method === 'Target.attachedToTarget') {
+        // Workers and out-of-process frames have their own Network domain. Pause them until it is enabled.
+        void observeTarget(message.params.sessionId).catch((error) => {
+          session.requestFailures.push({ error: error.message })
+        })
       } else if (message.method === 'Runtime.exceptionThrown')
         session.runtimeErrors.push(
           message.params.exceptionDetails.exception?.description ??
@@ -129,9 +148,12 @@ async function openSession(executable, { signal } = {}) {
           message.params.args.map((arg) => String(arg.value ?? arg.description ?? '')).join(' ')
         )
     })
-    session.send = (method, params = {}) =>
+    const send = (method, params = {}, sessionId) =>
       new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(signal.reason)
+        // A send after close (or on a socket that is no longer open) would only wait out its timeout.
+        if (closing || socket.readyState !== WebSocket.OPEN)
+          return reject(new Error('Capture browser session closed'))
         const id = ++serial
         const timeout = setTimeout(() => {
           pending.delete(id)
@@ -147,8 +169,18 @@ async function openSession(executable, { signal } = {}) {
           if (message.error) reject(new Error(JSON.stringify(message.error)))
           else resolve(message.result)
         })
-        socket.send(JSON.stringify({ id, method, params }))
+        socket.send(JSON.stringify({ id, method, params, sessionId }))
       })
+    session.send = (method, params = {}) => send(method, params)
+    const attachment = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+    const observeTarget = async (sessionId) => {
+      try {
+        await send('Network.enable', {}, sessionId)
+        await send('Target.setAutoAttach', attachment, sessionId)
+      } finally {
+        await send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+      }
+    }
     session.evaluate = async (expression) => {
       const result = await session.send('Runtime.evaluate', {
         expression,
@@ -163,6 +195,8 @@ async function openSession(executable, { signal } = {}) {
     }
     await session.send('Page.enable')
     await session.send('Runtime.enable')
+    await session.send('Network.enable')
+    await session.send('Target.setAutoAttach', attachment)
     await session.send('Emulation.setDefaultBackgroundColorOverride', {
       color: { r: 0, g: 0, b: 0, a: 0 }
     })

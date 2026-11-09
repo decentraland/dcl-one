@@ -139,6 +139,11 @@ across workers:
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key
   events, so a modifier swallowed by an OS chord doesn't stick; `UpdateMode::Reactive` timing
   fix.
+- `WorldId::new` takes `try_update` behind `target_has_atomic = "ptr"` with the `fetch_update`
+  fallback (upstream #26020, **throwaway**); `try_update` needs Rust 1.95, so `bevy`, `bevy_ecs`
+  and `bevy_input_focus` declare `rust-version = "1.95.0"`. The native builds pin 1.99.1 and the
+  web build pins `nightly-2026-04-15` (`apps/bevy-explorer/build-web.py`, `source/justfile`); both
+  are above that floor.
 
 ## UI
 
@@ -172,15 +177,19 @@ across workers:
   vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
   `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16); other warnings stay visible.
   Don't run Clippy inside bevy's own workspace: its code predates this toolchain's lints.
+  A warning the pinned toolchain raises in the tree is fixed at its site when the fix is
+  local (an import our edits left unused, a deprecated `core::f32` constant, a derived
+  `PartialEq` over a function pointer), so a build log only shows what is new.
 - Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
   `git format-patch -1 --stdout <sha> | git apply -3 --directory=rendering/bevy-explorer/bevy`.
   Name the upstream PR on this page, as the entries above do.
 - Our delta over upstream, for a migration: `git fetch https://github.com/bevyengine/bevy tag v0.16.1`,
   then `git diff v0.16.1^{tree} HEAD:rendering/bevy-explorer/bevy` (the import's omissions show
   as deletions).
-- CI reuses a cached bevy build until its files change: Cargo would otherwise rebuild a path
+- CI reuses cached Bevy and engine builds until their inputs change: Cargo would otherwise rebuild a path
   dependency after every checkout, since a checkout makes every file new.
-  `tooling/bevy-mtimes.py` records the files' blob ids and times with the cache and gives
+  `tooling/bevy-mtimes.py` records tracked Bevy, engine and protocol files' blob ids and times with
+  the cache and gives
   unchanged files their times back; every job that caches the explorer's target runs it.
 - Never share a `target/` directory with a checkout that builds a different bevy.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of

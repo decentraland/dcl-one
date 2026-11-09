@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // check-build: functional proof that a built Review gallery works where it is served. It serves <review-dist> from
 // a local server under a URL prefix (default "/"), drives Chromium through the gallery and fails unless:
-//   1. the root entry (<prefix>index.html) and every request it makes answer 2xx or 3xx, from under the prefix;
+//   1. the root entry (<prefix>index.html) and every request it makes answer 2xx or 3xx, from under the prefix,
+//      and every document the page ends on, after any redirect or history change, is under the prefix too;
 //   2. the navigation lists components from the built catalog;
 //   3. following a component link opens that component's page;
 //   4. choosing another variant through the variant selector opens that variant;
@@ -9,7 +10,7 @@
 // with no uncaught page error and no console error along the way. It reads no evidence file: the gallery
 // publishes no Figma imagery. It runs the built files it is given, so only run it on an unprivileged build.
 import { readFile, stat } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer as createHttpServer } from 'node:http'
 import path from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -43,8 +44,11 @@ function normalizePrefix(prefix) {
   return prefix.endsWith('/') ? prefix : `${prefix}/`
 }
 
-/** Serves `dist` under `prefix` on the loopback interface; records every request with its status. */
-async function serve(dist, prefix) {
+/**
+ * Serves `dist` under `prefix` on the loopback interface; records every request with its status. `createServer`
+ * builds the HTTP server.
+ */
+async function serve(dist, prefix, createServer) {
   const requests = []
   const server = createServer((request, response) => {
     void (async () => {
@@ -56,8 +60,15 @@ async function serve(dist, prefix) {
         record(404)
         return void response.writeHead(404).end()
       }
-      let file = path.join(dist, decodeURIComponent(url.pathname.slice(prefix.length)))
-      if (!file.startsWith(dist)) {
+      let file
+      try {
+        file = path.join(dist, decodeURIComponent(url.pathname.slice(prefix.length)))
+      } catch {
+        record(400)
+        return void response.writeHead(400).end()
+      }
+      const relative = path.relative(dist, file)
+      if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
         record(403)
         return void response.writeHead(403).end()
       }
@@ -80,7 +91,12 @@ async function serve(dist, prefix) {
   return {
     origin: `http://127.0.0.1:${port}`,
     requests,
-    close: () => new Promise((resolve) => server.close(() => resolve()))
+    // Drop open keep-alive sockets so they cannot hold the process, and surface a failed close.
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+        server.closeAllConnections()
+      })
   }
 }
 
@@ -97,30 +113,85 @@ async function waitFor(session, expression, what) {
   }
 }
 
-async function navigate(session, url) {
+async function navigate(session, url, check) {
   await session.send('Page.navigate', { url })
-  await waitFor(
+  const loaded = await waitFor(
     session,
     `document.readyState === 'complete' && location.href`,
     `the page at ${url}`
   )
+  check(loaded)
 }
 
 const componentLinks = `[...document.querySelectorAll('a[href*="component="]')].map((a) => ({ href: a.href, name: new URL(a.href).searchParams.get('component') })).filter((l) => l.name)`
 
 /**
  * Runs the five checks. Resolves with a summary; rejects naming the first failed check. `browser` overrides the
- * Chromium executable.
+ * Chromium executable, `open` the function that starts its session and `createServer` the one that builds the
+ * HTTP server.
  */
-async function checkBuild({ dist, prefix = '/', browser } = {}) {
+async function checkBuild({
+  dist,
+  prefix = '/',
+  browser,
+  open = openSession,
+  createServer = createHttpServer
+} = {}) {
   const root = path.resolve(dist)
   const base = normalizePrefix(prefix)
-  const server = await serve(root, base)
+  const server = await serve(root, base, createServer)
   let session
+  let summary
+  let failure
   try {
-    session = await openSession(browser ?? (await findBrowser(BROWSERS)))
+    session = await open(browser ?? (await findBrowser(BROWSERS)))
 
-    await navigate(session, `${server.origin}${base}`)
+    // Keep the existing exception only for Chromium's automatic favicon lookup, not page-initiated assets.
+    const automaticFavicon = (request) => {
+      const url = new URL(request.url)
+      return (
+        request.type === 'Other' &&
+        request.initiator === 'other' &&
+        url.origin === server.origin &&
+        url.pathname === '/favicon.ico'
+      )
+    }
+    const checkRequests = () => {
+      for (const request of session.requests) {
+        if (automaticFavicon(request)) continue
+        const url = new URL(request.url)
+        // Inline resources make no network request. A document must still stay under the served prefix.
+        if (
+          request.type !== 'Document' &&
+          (url.protocol === 'data:' || (url.protocol === 'blob:' && url.origin === server.origin))
+        )
+          continue
+        if (url.origin !== server.origin || !url.pathname.startsWith(base))
+          throw new Error(`a request left the expected origin or prefix: ${request.url}`)
+      }
+      const failed = session.requestFailures.find(
+        (request) => !request.url || !automaticFavicon(request)
+      )
+      if (failed)
+        throw new Error(
+          `browser requests failed, first: ${failed.url ?? 'unknown URL'} (${failed.error})`
+        )
+    }
+    // The document the page holds now, after any redirect or history change, must be served under the prefix too.
+    const checkDocument = (href) => {
+      // Chromium shows its own error page when a document answers an error or fails to load.
+      if (href.startsWith('chrome-error:'))
+        throw new Error(`browser requests failed, first: the document did not load (${href})`)
+      const url = new URL(href)
+      if (url.origin !== server.origin || !url.pathname.startsWith(base))
+        throw new Error(`the document left the expected origin or prefix: ${href}`)
+    }
+    const checkPage = (href) => {
+      checkDocument(href)
+      checkRequests()
+    }
+
+    await navigate(session, `${server.origin}${base}`, checkPage)
     const links = await waitFor(
       session,
       `(${componentLinks}).length ? ${componentLinks} : null`,
@@ -128,7 +199,7 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
     )
     const first = links[0]
 
-    await navigate(session, first.href)
+    await navigate(session, first.href, checkPage)
     await waitFor(
       session,
       `document.querySelector('main h1')?.textContent === ${JSON.stringify(first.name)}`,
@@ -150,11 +221,12 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
       `new URL(location.href).searchParams.has('variant') && document.readyState === 'complete' && document.querySelector('select[name=${JSON.stringify(`variant-${variantSwitch.property}`)}]')?.value === ${JSON.stringify(variantSwitch.value)} && new URL(location.href).searchParams.get('variant')`,
       'variant navigation'
     )
+    checkPage(await session.evaluate('location.href'))
 
     const audit = new URL(first.href)
     audit.searchParams.set('audit', '1')
     audit.searchParams.set('variant', '0')
-    await navigate(session, audit.href)
+    await navigate(session, audit.href, checkPage)
     const box = await waitFor(
       session,
       `(() => { const r = document.querySelector('#audit-render')?.firstElementChild?.getBoundingClientRect(); return r && r.width > 0 && r.height > 0 ? { width: r.width, height: r.height } : null })()`,
@@ -166,11 +238,10 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
       throw new Error(
         `${failed.length} requests failed, first ${failed[0].status} ${failed[0].path}`
       )
-    const outside = server.requests.filter((request) => !request.path.startsWith(base))
-    if (outside.length) throw new Error(`a request left the prefix: ${outside[0].path}`)
+    checkPage(await session.evaluate('location.href'))
     if (session.runtimeErrors.length) throw new Error(`page error: ${session.runtimeErrors[0]}`)
     if (session.consoleErrors.length) throw new Error(`console error: ${session.consoleErrors[0]}`)
-    return {
+    summary = {
       entry: `${base}index.html`,
       components: links.length,
       component: first.name,
@@ -178,10 +249,20 @@ async function checkBuild({ dist, prefix = '/', browser } = {}) {
       audit: box,
       requests: server.requests.length
     }
-  } finally {
-    await session?.close()
-    await server.close()
+  } catch (error) {
+    failure = { error }
   }
+  // Every teardown step runs, so a session that fails to close still releases the server; the first error, from
+  // the check or else from teardown, is what the caller sees.
+  for (const step of [() => session?.close(), () => server.close()]) {
+    try {
+      await step()
+    } catch (error) {
+      failure ??= { error }
+    }
+  }
+  if (failure) throw failure.error
+  return summary
 }
 
 /** Command-line entry point. Returns the exit code. */

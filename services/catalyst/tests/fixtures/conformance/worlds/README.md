@@ -15,7 +15,7 @@ otherwise.
 | upstream | revision |
 | --- | --- |
 | `github.com/decentraland/worlds-content-server` | `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21) |
-| this tree | `2da8b8aea` (origin/main, 2026-11-07) |
+| this tree | the revision that contains this file |
 
 Upstream packages that decide rows were read from their published tarballs at the versions upstream's
 `yarn.lock` pins (never run): `@dcl/http-commons` 2.0.0, `@dcl/http-server` 2.3.0,
@@ -49,7 +49,7 @@ Every upstream route has a route at the same method and path in this tree except
 (WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
 `POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
 `/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
-have no root route (`worlds/src/core/mod.rs:588-603`, `worlds/src/lib.rs:403-447`). The gateway maps the
+have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
 worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1
@@ -58,7 +58,6 @@ No item is P0. The P1 items:
 
 | id | endpoint | what differs |
 | --- | --- | --- |
-| WD-01 | `POST /entities` | A single-request deploy answers the request time as `creationTimestamp`, not the stored publication time. |
 | WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
 | WW-39 | the worlds mirror | A multi-scene world is mirrored with its newest scene only: the scene set is read from the source's `/about`, which lists one. |
 
@@ -71,9 +70,9 @@ No item is P0. The P1 items:
   `{ok:false,message,data}`, built with the content crate's validator (`content::validation`, CR-2).
 - **Absent vs `null`** (WP-03, WR-15, WR-18): several bodies write `null` where upstream
   leaves the key out, or the reverse.
-- **Multipart limits and texts** (WD-04..11): field caps, duplicate fields, 413 vs 400 and
-  timeout texts differ on `POST /entities`; `PUT /settings` answers upstream's (WW-21..23).
+- **Multipart limits and texts** (WD-04..11, WW-21..23): both multipart routes answer upstream's caps,
+  duplicate-field rule, 413 and timeout texts, apart from the intended WD-08, WD-09 and WD-11.
 - **CORS** (WR-06, WW-37, WR-32): every worlds router carries the layer (WR-06; the mints, WC-02);
   the origin is echoed with credentials where upstream answers `*`.
-- **Undocumented intended differences**: the write switch, events not published on SNS (WD-19, WW-26,
-  WP-13) and root mount collisions (WR-23) need lines in `docs/worlds-compatibility.md`.
+- **Intended differences** (WD-03, WD-19, WW-26, WP-13, WR-23): the write switch, events not published
+  on SNS and root mount collisions are listed in `docs/worlds-compatibility.md`.

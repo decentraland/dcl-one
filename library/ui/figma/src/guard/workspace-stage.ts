@@ -11,6 +11,7 @@ import type { Retirements } from './retirements.js'
 // (layout.ts), so all three are staged.
 const WORKSPACE_DIRECTORIES = [
   'figma/figma-snapshot',
+  'figma/ledger',
   'figma/review',
   'components',
   'index.ts',
@@ -46,9 +47,13 @@ async function stageWorkspace(root: string, configFile: string) {
     throw error
   }
 }
+// The capture cache is staged so the cleanup can read it, but it is pinned input: publication never writes it.
+const PUBLISHED_DIRECTORIES = WORKSPACE_DIRECTORIES.filter(
+  (directory) => directory !== 'figma/figma-snapshot'
+)
 async function publishRetirement(root: string, staged: string, retirements: Retirements) {
   await applyRetirements(root, retirements)
-  for (const directory of WORKSPACE_DIRECTORIES)
+  for (const directory of PUBLISHED_DIRECTORIES)
     await copyIfPresent(path.join(staged, directory), path.join(root, directory))
 }
 export { stageWorkspace, publishRetirement }

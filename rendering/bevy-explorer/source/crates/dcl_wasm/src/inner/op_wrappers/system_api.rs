@@ -270,6 +270,22 @@ pub async fn op_get_user_profile(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_compact_profiles(
+    state: &WorkerContext,
+    addresses: JsValue,
+) -> Result<JsValue, WasmError> {
+    let addresses = serde_wasm_bindgen::from_value(addresses)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("getCompactProfiles: {e}")))?;
+    let profiles = dcl_js::system_api::op_get_compact_profiles(state.rc(), addresses).await;
+    profiles
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub fn op_quit(state: &WorkerContext) {
     dcl_js::system_api::op_quit(state.rc());
 }
@@ -433,6 +449,25 @@ pub async fn op_read_proximity_stream(
 ) -> Result<JsValue, WasmError> {
     let proximity_event = dcl_js::system_api::op_read_proximity_stream(state.rc(), rid).await;
     proximity_event
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_photo_mode_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_photo_mode_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_photo_mode_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let photo_mode = dcl_js::system_api::op_read_photo_mode_stream(state.rc(), rid).await;
+    photo_mode
         .map(|v| {
             v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
                 .unwrap()

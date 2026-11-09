@@ -222,7 +222,7 @@ describe('when generating from committed inventory', () => {
     })
   })
 
-  describe('and a retired duplicate was removed from its snapshot', () => {
+  describe('and a duplicate has a permanent retirement record', () => {
     beforeEach(() => {
       config.pages = { '1:1': { id: '1:1', name: 'Page', kind: 'components' } }
       source.getGenerationInventory = async () => ({
@@ -264,6 +264,84 @@ describe('when generating from committed inventory', () => {
             sharedExclusions: []
           }
         ]
+      })
+    })
+    describe('and the pinned cache still contains the retired duplicate', () => {
+      beforeEach(() => {
+        const getPage = source.getComponentPageById!
+        source.getComponentPageById = async (id) => {
+          const data = await getPage(id)
+          if (!data) throw new Error('Missing fixture capture')
+          const survivor = data.components[0]!
+          return {
+            ...data,
+            components: [
+              { ...survivor, id: '2:1', base: { ...survivor.base, id: '2:1' } },
+              survivor
+            ]
+          }
+        }
+      })
+      it.each(['review', 'promotion'] as const)(
+        'should preserve the surviving public name without collisions in %s',
+        async (scope) => {
+          expect(
+            await loadSpecsFromSource(source, config, scope).then(({ specs, nameCollisions }) => ({
+              specs: specs.map(({ name, figmaId }) => ({ name, figmaId })),
+              nameCollisions
+            }))
+          ).toEqual({ specs: [{ name: 'Control2', figmaId: '2:2' }], nameCollisions: [] })
+        }
+      )
+      describe('and the retired component has an excluded primitive binding', () => {
+        beforeEach(() => {
+          config.excludedPrimitives = ['Primitives/Primary/Primary blue TEST']
+          const getCollections = source.getTokenCollections.bind(source)
+          source.getTokenCollections = async () =>
+            (await getCollections()).map((collection) =>
+              collection.name === 'Primitives'
+                ? {
+                    ...collection,
+                    variables: [
+                      ...collection.variables,
+                      {
+                        name: 'Primary/Primary blue TEST',
+                        type: 'COLOR',
+                        values: { Value: { hex: '#0400ff', alpha: 1 } }
+                      }
+                    ]
+                  }
+                : collection
+            )
+          const getPage = source.getComponentPageById!
+          source.getComponentPageById = async (id) => {
+            const data = await getPage(id)
+            if (!data) throw new Error('Missing fixture capture')
+            return {
+              ...data,
+              components: data.components.map((component) =>
+                component.id === '2:1'
+                  ? {
+                      ...component,
+                      name: 'RetiredControl',
+                      base: {
+                        ...component.base,
+                        tree: {
+                          ...component.base.tree,
+                          fills: [{ type: 'SOLID', token: 'Primitives/Primary/Primary blue TEST' }]
+                        }
+                      }
+                    }
+                  : component
+              )
+            }
+          }
+        })
+        it('should generate the survivor without validating the retired binding', async () => {
+          await expect(
+            loadSpecsFromSource(source, config).then(({ specs }) => specs.map((spec) => spec.name))
+          ).resolves.toEqual(['Control2'])
+        })
       })
     })
     describe('and the duplicate was on an earlier retired page', () => {

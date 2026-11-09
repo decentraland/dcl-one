@@ -39,7 +39,7 @@
         "The 58 orphaned Review assets ledgered when the Review was regenerated from the 9c6dfbe6 snapshot are drained with upstream's developer cleanup (sync --developer --apply-retirements): no consumer and no generated owner remains, the ledger is empty, and the Review promotion manifest is resealed over the remaining files. Nothing under components/ changes.",
         "Selective, partial port from figma-design-system main, not a sync to it: the revision above stays the 9c6dfbe6 pin. The ported files were selected at 8bd08165 and re-verified against bed111e8fccff64e9c63c220b5a91c44bc2747a5: rest-capture.ts and views-line-height.test.ts are unchanged there, and rest-capture.test.ts differs only by the cases of its two further commits, #100 (angular-gradient strokes) and #101 (the remaining Shop conic stroke profiles), which build on the unported conic strokes and are excluded: the conic-stroke capture is not required by the installed components or the MCP, and from 8bd08165 to bed111e8 only conic-stroke tooling, its tests and fixtures change, with no public component source. Ported on top of it, one commit each, code only: the REST capture fixes e0f7767 (a rotated leaf rectangle is exported as a drawing), f5662fb (artwork that paints outside its box is exported at its render bounds) and df568f7 (non-positive render bounds are rejected), and the text line tests of 3ad8f26 and 7d6f2d7, whose logic this tree already holds. None changes the generated output of this tree's snapshot (figma diff: no file) or the Review. Adapted: this tree keeps whole-line geometry meaningful in a fixed-height box, so upstream's fixed-height case asserts wrapping instead of a flag. Not imported from 9c6dfbe6..bed111e8, each with the reason it does not apply or what blocks it (fixes that do apply are ported, see the entries below): the component references of 5dd9b51 (a feature that needs instance constraints the capture here does not record; no installed component is a resized instance); the negative-gap fixtures of d384ab5 (they freeze captures for upstream's views-negative-gap tests, which this tree does not carry; its own overlap code is covered by views-regressions.test.ts); the guard parse cache of 06d9f64 (performance only, the guard's result is unchanged); the conic strokes of 8bd0816, 14db730 and bed111e (a gated capture feature for angular gradients that no installed component uses); the promotion identity graph, publication and page replacement guards of e730fbc (except its runtime catch and its per-side aggregate parse), 668a9a1, d882c79 and part of b7f27fb (they store the file key in promotion.json, receipts and page replacements, which this tree never stores); b5e2c5f's promotion-seal test (it asserts the fileKey field of upstream's promotion.json, which this tree's keyless schema does not have; b5e2c5f's mapper fixes and view tests are held in adapted form in views.ts and views.test.ts); the Review gallery changes b435d4e, 6868df8 and b2b2df2 (they change how the gallery presents evidence, not generated output, capture or evidence values); the evidence scoping of a7a9f62 (it changes what the Review signature covers, which re-keys every case; this tree's signature deliberately covers src/review, src/generated, src/components and references); the Shop page f6ccb5d (not in this tree's generation inventory); the workflow-only 7d1a097 and 0907988 (the sync workflows they change are not imported); and every upstream snapshot, Review render, receipt and seal, including the page refreshes 756474d and 3945ee9 (this tree regenerates and reseals its own keyless evidence).",
         "Generated components fail closed on a variant selection Figma never drew: pickView (figma/review/src/components/figma-view-state.ts) throws, naming the component and its axis values, instead of rendering the default view, in every environment and during server rendering (owner decision); interaction flags still fall back by dropping from the end, a boolean axis that is not true or false throws, and the runtime no longer takes a defaultKey. The caller's props reach FigmaView only as attributes={rest}, never spread over the generated configuration, and the runtime drops its own parameter names from them before the DOM. A component whose text overrides are not public (exposeTextSlots: false) lists them in a module constant passed as suppressed, which the runtime drops from attributes before the DOM, instead of binding them to unused aliases. The throw and the caller-prop boundary are local changes pending an upstream patch; exposeTextSlots and the suppression of private text props are a local deviation, upstream pending as FDS opt-in PR #4; the suppressed names are a frozen module constant the generator emits. Generation fails if a component's default selection is not a captured view (assertDrawnDefaults in src/generators/components.ts), so rendering with no props never throws; that guard is generic generator code, pending upstream in the FDS throw PR (step 2, after the variant contract).",
-        "Not imported, each checked against figma-design-system bed111e8 (14db730 plus #101, which changes only the conic-stroke track), because neither the installed components nor the Figma tooling here uses them: the agent skill .claude/skills/dcl-figma-to-code/SKILL.md (it drives the full sync in figma-design-system; figma/agent-kit carries this tree's skills); dcl-mcp-figma/.env.example (this tree documents FIGMA_TOKEN and FIGMA_FILE_KEY in the library README); dcl-mcp-figma/tsconfig.build.json (it emits the standalone dcl-mcp-figma package; this tree runs the tooling with tsx and typechecks with figma/tsconfig.json); figma-snapshot/page-replacements.json and its replacement-evidence/edc12197\u2026.part (inputs of the sync-only page replacement guard, added after the 9c6dfbe6 pin; no code here reads them); src/automation/pr-body.test.ts and scripts/figma-sync-pr-body.mjs (the sync pull request body, part of the sync workflows not imported); src/guard/retirement-version.cases.ts, retirement-version-absent.test.ts and retirement-version-stale.test.ts (they test the retirement publication cache of the per-PR release versioning skipped above); test/fixtures/conic-stroke-samples-rest.json and conic-stroke-samples-2-rest.json (conic strokes, #99 to #101, are not imported); dcl-ui-review references live-16517-1909.png, -1913.png and -1917.png (no Review case or reference record here uses them); dcl-ui-review/scripts/settle-motion.mjs and test/settle-motion.test.ts (later motion settling; this tree's capture keeps its own capture-animations.mjs, which already waits finite transitions out, and changing it requires a recapture and comparison; browser-args.mjs is ported, see below); dcl-ui-review/test/audit-render-model.test.ts (it tests src/review/audit-render-model.ts, the mobile audit render, which is not imported); docs/component-promotion.md, docs/figma-sync-ci.md and docs/skills-registry.md (upstream repository docs; promotion is documented in the library README, maintenance in figma/MAINTENANCE.md, and the sync CI stays in figma-design-system).",
+        "Not imported, each checked against figma-design-system bed111e8 (14db730 plus #101, which changes only the conic-stroke track), because neither the installed components nor the Figma tooling here uses them: the agent skill .claude/skills/dcl-figma-to-code/SKILL.md (it drives the full sync in figma-design-system; figma/agent-kit carries this tree's skills); dcl-mcp-figma/.env.example (this tree documents FIGMA_TOKEN and FIGMA_FILE_KEY in the library README); dcl-mcp-figma/tsconfig.build.json (it emits the standalone dcl-mcp-figma package; this tree runs the tooling with tsx and typechecks with figma/tsconfig.json); figma-snapshot/page-replacements.json and its replacement-evidence/edc12197….part (inputs of the sync-only page replacement guard, added after the 9c6dfbe6 pin; no code here reads them); src/automation/pr-body.test.ts and scripts/figma-sync-pr-body.mjs (the sync pull request body, part of the sync workflows not imported); src/guard/retirement-version.cases.ts, retirement-version-absent.test.ts and retirement-version-stale.test.ts (they test the retirement publication cache of the per-PR release versioning skipped above); test/fixtures/conic-stroke-samples-rest.json and conic-stroke-samples-2-rest.json (conic strokes, #99 to #101, are not imported); dcl-ui-review references live-16517-1909.png, -1913.png and -1917.png (no Review case or reference record here uses them); dcl-ui-review/scripts/settle-motion.mjs and test/settle-motion.test.ts (later motion settling; this tree's capture keeps its own capture-animations.mjs, which already waits finite transitions out, and changing it requires a recapture and comparison; browser-args.mjs is ported, see below); dcl-ui-review/test/audit-render-model.test.ts (it tests src/review/audit-render-model.ts, the mobile audit render, which is not imported); docs/component-promotion.md, docs/figma-sync-ci.md and docs/skills-registry.md (upstream repository docs; promotion is documented in the library README, maintenance in figma/MAINTENANCE.md, and the sync CI stays in figma-design-system).",
         "Text roles are a local addition pending an upstream patch: figma.config.json components.<name>.textRoles binds a typed public prop to captured text layers by Figma node id, checked against the configured path of layer names (src/mappers/text-roles.ts). The raw capture reader accepts an optional node id, Figma's id verbatim: a partial variant drops the ids it inherits from the base tree, so a variant node has one only through its own set.id or replace, and a node without one is unbound, not an error, unless a role points at it. The mapper copies the id to the view node only to bind roles and then drops it, so ids never reach the spec, its hash or generated code; the generator types string roles as text and count roles as a number paired with a label prop, and names the link around a role's text with the href the role declares (never derived), and the runtime validates counts and names the enclosing action with the label. The capture records no descendant text ids yet, so the mechanism is exercised only by test fixtures and no component binds a role.",
         "Generated styles use three cascade layers, a local change pending an upstream patch: dcl.reset (the runtime base styles), dcl.foundations (tokens and text styles) and dcl.components (component CSS), with the order statement repeated at the top of every generated stylesheet (src/generators/css-layers.ts). The runtime reset and the composed text styles are both zero-specificity :where() rules, so before this a bundle that loaded the runtime CSS after the text styles drew text in the inherited font. figma/review/test/runtime-cascade.test.ts checks the drawn font in Chromium under both orders. The Review renders are unchanged.",
         "Ported from ad87b8e (#88), adapted to this tree's paint order: the views mapper emits no CSS gap for a non-wrapping SPACE_BETWEEN auto-layout and no negative-spacing overlap (margins, forced layer order) for any SPACE_BETWEEN one, because Figma ignores itemSpacing there and a CSS gap acted as a minimum that pushed NavBar controls far outside a 390px or 1024px root. Wrapped SPACE_BETWEEN frames keep their gap, as upstream does, until the capture records counterAxisSpacing. views-space-between.test.ts is upstream's, unchanged; this tree keeps overlap layer order in positionDecls rather than in overlapDecls, so the same SPACE_BETWEEN condition is applied there. Against the 2a050e3c Review, 98 gap declarations leave 12 component stylesheets and 20 renders (NavBar, NavMenuDropdown, WebTheme) move closer to their Figma references on every fidelity metric. A local fix pending an upstream patch: the runtime passes React keys on their own instead of inside spread props, which React 19 reported as an error.",
@@ -61,7 +61,13 @@
         "Live Figma access and capture ingest are removed: figma-design-system owns every read of Figma. Gone are pull-live and its automation modules, the REST source and its mappers, the Figma REST client, probe, the figma_screenshot MCP tool, the --source rest option, the capture-ingest and capture-merge commands with merge-component-chunks and split-icon-frames, the figma/capture plugin scripts and ingest-text-metrics, and their tests. The MCP tools that read the fetch-source cache stay. ingest-chunks and png-decode go too: strip-image-metadata keeps its own copy of the transport checksum, and its test proves byte equality instead of decoding. The key guard is the only reader of FIGMA_FILE_KEY: stripFileKey, stripFileKeyText and the CLI and MCP error text replace fileKey fields and Figma file URLs by pattern and read no environment, which also makes fetch-source's keyless transform independent of the environment. image-metadata-scan and its gate (figma/test/image-metadata.test.ts) stay: they check that no raster under library/ui/figma or in the public component assets carries non-rendering metadata, which covers product assets.",
         "The gallery discloses what it does not provide: the catalog records, per component, how many image fills its generated stylesheet replaced with the neutral placeholder (counted from the generated CSS; a missing stylesheet fails the manifest), the component page states that those image fills are not provided and that the gallery makes no claim of visual parity, and the navigation says Figma image fills are not provided. review-notes.json, the per-component visual review statuses and findings the gallery displayed, is removed with the visual review it reported. Affected components: PlaceCard, SearchBar, NavBar, ProfilePic, NavNotificationsButton, NavProfileButton, NavNotificationItem, SearchResultItem, WebTheme, ShopModals, NavProfileMenu, WebThemeDarkMode, NavBarExplorer.",
         "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
-        "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts."
+        "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts.",
+        "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
+        "Build verification also checks the document the page ends on after each navigation, redirect or history change against the served origin and prefix, and Chromium error pages fail as failed requests; regression tests cover a redirect to a second origin that answers 200 and a history move outside the prefix. A deviation code declared as an own key of the code table validates. Build-check teardown attempts every step: a session that fails to close still releases the server, and the first error, from the check or else from teardown, is kept.",
+        "Review findings on the capture-free head: port-verification treats a head with no upstream.lock.json (a branch cut before library/ui existed) as no port to verify, and still fails a changed lock without a matching record; retire writes the committed figma/ledger/retirements.json instead of the gitignored cache, where the next fetch-source erased it and nothing committed it: it is dcl-one-only like the orphan ledger, fetch-source overlays it onto the cache's retirements.json (tracked wins, so one ledger is effective), every reader (loadRetirements, the snapshot source, the guard) reads it, and a strict schema admits only node ids, plain-text names and reasons with no link, and repository-relative paths; it starts byte-identical to figma-design-system's copy, so the pinned capture digest is unchanged; the orphan ledger readers and writers use the committed figma/ledger/orphaned-assets.json; sync refuses a config whose snapshotDir is not the figma/figma-snapshot it guards; fetch-source rejects a capture path that is empty, absolute, holds . or .. or a backslash, or resolves outside the snapshot folder, sealed or not; image fills replace an SVG whose <use> draws raster data and trim a quoted url(); the Foundations icon tiles pass active to icons with an active state; key-guard also scans the bytes of an LFS pointer; the url scan reads its allowlist from the pull request head",
+        "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
+        "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
+        "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -686,19 +692,33 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/key-guard.mjs": {
-          "sha256": "9a22eaada46b1256e012bb53106585718bb6fac32e6f9ba9e1175f1e0027c574",
+          "sha256": "613246427d1af409c3b9d6df82dbfe75031014a57c05d1f426bfdc4b5d141128",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/key-guard.test.ts": {
-          "sha256": "8b068a8866494e4495eb96698519d975e79de9616ed5e84c980010c5f171112a",
+          "sha256": "c4fc56ad0bc9ae54a78db5b6b04a212957e1f01c29eb9a1bb18e02fdd7377f90",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/ledger/orphaned-assets.json": {
           "sha256": "30bcd6cd5a6e5c33e119bc8f92a45946cfd3553b35b6687ab6ecb9012b585f31",
           "fds": null,
           "deviation": "dcl-one-only"
+        },
+        "library/ui/figma/ledger/retirements.json": {
+          "sha256": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
+          "fds": null,
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/lfs-prefetch.d.mts": {
           "sha256": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
@@ -716,24 +736,38 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/lock-digests.mjs": {
-          "sha256": "b54fa8411e9cf8cb3b78cb16f74304a641ab1fc72f16ed3f0f2b244d248d6be5",
+          "sha256": "0907d6c7f77d549baf801592aa7c296acdda2b512df70befda4564d353880e85",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/lock-digests.test.ts": {
-          "sha256": "13f2b19366d15902eb864c8be2307865358e31ecf17443a3a2ad6122f7e60d23",
+          "sha256": "1c996d68702f64f992a32717371f63db6602266725d5c437fdd065140bd9d293",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/port-verification.mjs": {
-          "sha256": "c12a6ac824b71627a10c2f9996f75fa3a7fa4e15fd4cce561f12593b3bcdb475",
+          "sha256": "ac5b77575c9e6f01432b2d11bf364927e4ed19e05d3ff41dd26616dcb7f84663",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/port-verification.test.ts": {
-          "sha256": "9e705cd331f821aed959a89d438856f3a9068446a14c960ace3b5fbc8eb626d1",
+          "sha256": "955e7cd9277174d2e004b0307192f032c8c8705562ed27797a2842531cc4bd2d",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/review/dcl-ui-review/index.html": {
           "sha256": "1637b3d7491fcd7deb7a1aa43396ba05289dce8fa94a51004298120eae8201d0",
@@ -761,9 +795,13 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "1d03b4b7d1d575e55e576735ad150fb3e77caf39b82a2d99e6ad05ce1df9fbf1",
+          "sha256": "b04ea3dde002549a8fd82fe496dcd4594082a4d4e554e2d214d1912b5186e319",
           "fds": null,
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "request-scope-hardening",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/review/scripts/capture-teardown.mjs": {
           "sha256": "b14e71427b3769a62499091b3ba52027adbac5a0363a3e8cb2aaff697166e2f8",
@@ -771,14 +809,22 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/review/scripts/check-build.d.mts": {
-          "sha256": "0e802d959d0ed54a7815c27711d6ff5623ffe275e45d63001be142ef50052fc2",
+          "sha256": "4a1b67d851f87ced0a9955abe51aed63c91753ced7ca3f3fba5dce38828b2b1d",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-2"
+          ]
         },
         "library/ui/figma/review/scripts/check-build.mjs": {
-          "sha256": "5d9d300d3682dfb3c3e1080921baf94a7b2bd5a35bae1be22e6284a154de1df2",
+          "sha256": "db9cdab759c3335a5045924746708dc0250798f9d45c3d0d5e2919c7a59d7ac7",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "request-scope-hardening",
+            "review-followup-2",
+            "bot-review-279-c"
+          ]
         },
         "library/ui/figma/review/src/components/StateMatrix.module.css": {
           "sha256": "b2eaf3fdbb753a4809bb4cc597b21c86abd9afb4b1c1c3c525bfa4e90e5adf96",
@@ -1929,12 +1975,15 @@
           }
         },
         "library/ui/figma/review/src/review/Foundations.tsx": {
-          "sha256": "364a941d52ad666f47497720b5f81ba369d9e5779decc85998eaf8c6a5ace594",
+          "sha256": "6b9b5d477b4e1167664d3bd96ed388f89cd8d138c462682a7cf4f94a398bb995",
           "fds": {
             "path": "dcl-ui-review/src/review/Foundations.tsx",
             "sha256": "987ff1dc0a5fd5a4d6500d0acd282cabd23b0aebe58dca6ee81b489246852b25"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/review/src/review/InteractivePreview.helpers.ts": {
           "sha256": "2ff744fc91f1711f30ffa31237917f95c61a40ad09ed4499552c565f69149acb",
@@ -2031,9 +2080,12 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "9a1333730b723c18cffabbe98ae72dec8e14254d31f85378173879db5d5bf6c2",
+          "sha256": "7ad7ea598a9acadfa464cff91bfc1b6a17e1fc44808afa500975e2fd526650c6",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/review/test/capture-teardown.test.ts": {
           "sha256": "f2e4d4a226cbbeecd69c9f3f87a76ea15fc323f22ee2de5a7ca25f4c32dac208",
@@ -2054,6 +2106,14 @@
           "sha256": "3741fe29fe9e4336965f06715b88cdb0c3377e4d22210b1852fcff9a5618dbff",
           "fds": null,
           "deviation": "dcl-one-only"
+        },
+        "library/ui/figma/review/test/foundations-icons.dom.test.tsx": {
+          "sha256": "1b37351b7e9ab90150e362d49ea13725a1e3791d46de6c4a617c6624f4d7bd82",
+          "fds": null,
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/review/test/interactive-preview.dom.test.tsx": {
           "sha256": "75d6c211860bb78000f6b8731b5936abb61686ed3265891e86040af6c6df56e5",
@@ -2123,7 +2183,7 @@
           ]
         },
         "library/ui/figma/src/app.sync.test.ts": {
-          "sha256": "b713cf7a9747830ae5157174071bc3098eb34bf2ce2dfa0c3bbf1e09955a2748",
+          "sha256": "00f93bcbd562b5023c42390308b7a47bdd87e8c8ca6e5d02ae8c9a0b08e9cc12",
           "fds": {
             "path": "dcl-mcp-figma/src/app.sync.test.ts",
             "sha256": "69a454a036cc65608e162e0184884e9e42fbd61fa44b307115800f8df69d0ca1"
@@ -2131,11 +2191,12 @@
           "deviation": [
             "live-access-removed",
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ]
         },
         "library/ui/figma/src/app.ts": {
-          "sha256": "8157c3cb232e82640dd6e48d2cdffc62072d58e8ddf464b1ad0a598cb0c71297",
+          "sha256": "6c09e5c801e528f82b1225aa7bc0e4d7b536912f72bc832fce3bf68248c2bc9e",
           "fds": {
             "path": "dcl-mcp-figma/src/app.ts",
             "sha256": "93677b44b6566ebac7e9be5088f6399a4f61323557d819f7a1b0b312df6d15f1"
@@ -2143,7 +2204,8 @@
           "deviation": [
             "live-access-removed",
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ]
         },
         "library/ui/figma/src/capture/expand-variants.test.ts": {
@@ -2222,14 +2284,15 @@
           }
         },
         "library/ui/figma/src/cli.guard.test.ts": {
-          "sha256": "fcf440ef6cef83972dd8c401d4740ec7ae2e028793b413f1c9609e52c2895ed3",
+          "sha256": "4e623e1cc6960699eb462e3c7de0eb7bd19e2e4d40da63d0faf7d97bc094076a",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.guard.test.ts",
             "sha256": "6c6057a98dcd6471d1b4d62153b4c52653bc1b0e5781155603b508d1e9e9a424"
           },
           "deviation": [
             "note",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
@@ -2466,14 +2529,22 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/generators/image-fills.test.ts": {
-          "sha256": "919d78625409b35925984a07ffddf116a1ecd0c7470c76c470214149038c34d5",
+          "sha256": "1bce07b8cc8f8eed340df499dd0a6e62ad39ceec2286f1c7c92039dc5604050d",
           "fds": null,
-          "deviation": "port:30ca0608"
+          "deviation": [
+            "port:30ca0608",
+            "bot-review-279",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/generators/image-fills.ts": {
-          "sha256": "ab565a3f69022d0b5ed370dd5b21fc845cb84c803fcbe3698284264b8408545e",
+          "sha256": "8a446b2acfbd8d38744a123d65701053c4552edd0e026277151dff9ec41daacb",
           "fds": null,
-          "deviation": "port:30ca0608"
+          "deviation": [
+            "port:30ca0608",
+            "bot-review-279",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/generators/index.ts": {
           "sha256": "dbabbfd2d88aa83e977a7aad4dfa4a5f8275c7881919fa895e0580cff6eeab21",
@@ -2528,12 +2599,16 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/generators/svg-safety.ts": {
-          "sha256": "08b6b7ae2a938b5f79a981109ce54563902615c8e4df34a84dc9a82fb9058252",
+          "sha256": "0b08bdb90adb6a2bb957b93625fc311f876362b1bfab7a2661750b06cd4f3b6e",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/svg-safety.ts",
             "sha256": "ff6e469ac8fbfe371591230256ce17549143f6c10c699fc6e17350e964c890cc"
           },
-          "deviation": "port:30ca0608"
+          "deviation": [
+            "port:30ca0608",
+            "bot-review-279",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/generators/svg-to-jsx.ts": {
           "sha256": "615b1bb290ec41ea530f1251abb575240f0fba5dcd99ff9b777abc3ea589e310",
@@ -2588,20 +2663,29 @@
           "deviation": "evidence-removed"
         },
         "library/ui/figma/src/guard/apply-retirements.test.ts": {
-          "sha256": "7b32e41b0b92b80457f65b0a6b456213bd706fe1930f5cc8c9bb5f33eb3ee14f",
+          "sha256": "75ff4bf72e0ad9b178535ee426251654420bb165b30a87a570dba9e01656ad1a",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/apply-retirements.test.ts",
             "sha256": "4258811a0782aa1b103ea8afd9912513e3ca3aec36cff188c651b51ea34aaa77"
           },
-          "deviation": "predates"
+          "deviation": [
+            "note",
+            "review-followup-2"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/apply-retirements.ts": {
-          "sha256": "f04fb9fb620bcd6d434cd2e3397ad2812c6e0d87b577c18dc14790ae4885d949",
+          "sha256": "42bfe9252cd6dbec55d2a47874b43ee1e236fa948dbed3c732cdc2a2d5eed7d7",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/apply-retirements.ts",
             "sha256": "393be7c0b15af1187dcf7be0c911000b8c25fc55f4ba8a5ced05ebd77b495a1c"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note",
+            "review-followup-2"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/asset-users.ts": {
           "sha256": "c9dbe18aaa34c571d76e568ece6fb9248f076f93dae72b1a01fb67adeeaaf185",
@@ -2611,20 +2695,27 @@
           }
         },
         "library/ui/figma/src/guard/check-scope.test.ts": {
-          "sha256": "6263cd47a06aeaf5036bc4e178fff5c95a1fa293fe927b4da7df64723238f37f",
+          "sha256": "6da1d33a000e8769b30b9f7852d3571fb5115b2cb067d20c672aead38d250a3a",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/check-scope.test.ts",
             "sha256": "9dcad12d92ed51159d51506ba62198bb8f1b9242ae8c3f743119be2983d8b882"
           },
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/src/guard/check-scope.ts": {
-          "sha256": "b219442d69b084b098bb72238ffd64c7e97935ef82932490b8f1cd36decf2ed5",
+          "sha256": "57558d3a7290da6ece344c40ae59ccf964b0f7f501838b17b4452dea70506113",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/check-scope.ts",
             "sha256": "b67ee19cab85fd6f2adc48f4e5104df7736935e24c27101b4ba16ffdf88a9da8"
           },
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "bot-review-279",
+            "review-followup-2"
+          ]
         },
         "library/ui/figma/src/guard/component-identity.ts": {
           "sha256": "53d430f085db716bd7ee218ae0a67aab42d084546a2ec1a07c52c650523bc80d",
@@ -2634,28 +2725,39 @@
           }
         },
         "library/ui/figma/src/guard/component-ownership.test.ts": {
-          "sha256": "343fc8cb641d3fd4ac273f6fe9c9300bfdf4bcec907e499e4f9a777c8b6a3b61",
+          "sha256": "c70386e08e9e48c0480fe31147654a1bb5a07ad9584da2a316a296e022710001",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/component-ownership.test.ts",
             "sha256": "817b547e280f42b35a74c31327e500fab1fc9d689cca43c45dd6746fd7482721"
           },
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/src/guard/consumers.test.ts": {
-          "sha256": "3a66a1d66cf5e9906099b6a87ca66ee4bd6a85dc29f7f72461a4420d26aa76ef",
+          "sha256": "c4eca213221f7cf27b815e0d30fbdacec6b51d76394336f4be9a1d44136fc535",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/consumers.test.ts",
             "sha256": "28cce2f209eb65bd4c35137aae584efbfe705c449e85f40d93bc281a0844b4ec"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/consumers.ts": {
-          "sha256": "b36e91282cb9ab4231dbde300f74dbae80caf653a867e1b6947db8fef443b91c",
+          "sha256": "b8e3c78e3e1b9c3ee8f06910ddc8f926f359963482da1ee091ed1983d9e926e3",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/consumers.ts",
             "sha256": "cda705a7049c7f72be8dee28277ee337753fd41b3da5c05f4a3087c1b5562c4b"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/copy.test.ts": {
           "sha256": "1cb9edd24dd288e516792aea1ee834b73c31a882207df8edbfda2aae1947fd90",
@@ -2684,11 +2786,12 @@
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/guard/derived-metadata.ts": {
-          "sha256": "ee9f0fa918ebcbadf5453a9a2614eabd0fc33adac57c3c8743ca29b1e313df9a",
+          "sha256": "602c243f5d024c00a72f49cd8aae766fbde49490323dda6c0c2d62bf4758cf58",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/derived-metadata.ts",
             "sha256": "ee9f0fa918ebcbadf5453a9a2614eabd0fc33adac57c3c8743ca29b1e313df9a"
-          }
+          },
+          "deviation": "bot-review-279"
         },
         "library/ui/figma/src/guard/exports.ts": {
           "sha256": "a2ccc4e05ef80fdd1dfabdc2e95f12ab624f825967a7ac463bcbd31eab980ada",
@@ -2733,12 +2836,16 @@
           }
         },
         "library/ui/figma/src/guard/library-consistency.test.ts": {
-          "sha256": "f65b65344d606d8889f2f213b01935192893f6cae09df818cf327fbb65a85812",
+          "sha256": "9c79eb6ddb3791af6f8f598f03ef3750e63fe3dc053c8f1b7980fe813ece92a5",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/library-consistency.test.ts",
             "sha256": "d6dc395b7cb88d89d216e4ce3a6eb871960e1a63d1586d26afac4d2a9fd3f875"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/library.ts": {
           "sha256": "cb0d702f59022bf7249926077db8b063924c64a363bf75a3a5ae0a1b53cdbabd",
@@ -2749,14 +2856,15 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/guard/lifecycle-fixture.ts": {
-          "sha256": "f98d37656ae52780d29d0ab23424bc5392dbdf0bb318725e92b742be495b6bdf",
+          "sha256": "672939a8177dc9b45234033f9bc07b086c96dd3ceb87d88d3e5a3edbc3f8dcd5",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/lifecycle-fixture.ts",
             "sha256": "e6f7203e07db42ee77f31a32083c3f25c1f35bc4b1debbd9d18f7b550c3c515a"
           },
           "deviation": [
             "evidence-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ]
         },
         "library/ui/figma/src/guard/metadata-diagnostics.test.ts": {
@@ -2774,14 +2882,15 @@
           }
         },
         "library/ui/figma/src/guard/orphaned-assets.test.ts": {
-          "sha256": "f4fefefdf74e11b8132bca322a7cc18b88fb9d528d98e434abb8526f29322b65",
+          "sha256": "44f9a898a2459d27aaf9f7725322b6e1cbce8c65a5d72a05bd19bed8c94ac5ec",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/orphaned-assets.test.ts",
             "sha256": "51db6975b6535d977decc0315944ed5937f873950c71a73c33365d4751475f14"
           },
           "deviation": [
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ]
         },
         "library/ui/figma/src/guard/orphaned-assets.ts": {
@@ -2803,73 +2912,94 @@
           ]
         },
         "library/ui/figma/src/guard/ownership.ts": {
-          "sha256": "6ca55aeaafc43c5b672c05ddf1e99e33424bc24c2a345452b01ad498100e1af2",
+          "sha256": "2574ab54f8eaff7bd4f4294bb7841b2b3b6ec36d1f5791837c10e6ada35dc948",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/ownership.ts",
             "sha256": "55e741b867015d2967b3a60823d3847bfa05eb070e376a04270b64224d280694"
           },
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/src/guard/reparented-variants.ts": {
-          "sha256": "5a3f9b1a57d7e42a407d648c7b8699998611b66b49600f19bba0cd292cf2987d",
+          "sha256": "f50b921a8dd5b62b4f4f532eb160922a80930a5f31f7604826aea91db311f845",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/reparented-variants.ts",
             "sha256": "5a3f9b1a57d7e42a407d648c7b8699998611b66b49600f19bba0cd292cf2987d"
-          }
+          },
+          "deviation": "review-followup-2"
         },
         "library/ui/figma/src/guard/retire-cli.test.ts": {
-          "sha256": "0a97ae68a591d0e92f8b87b199ec83ad809a828b95a966c22a15f3a84aab64b9",
+          "sha256": "8487814db25d39ca32d13bd4500e18015ba3ddff1703c28c284d64c3b9247863",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retire-cli.test.ts",
             "sha256": "04c231589364e184d3d18b09c1abe3a1a92a61a4f3c8e6ac0bb1587812169c2b"
           },
           "deviation": [
             "note",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/guard/retirement-lifecycle.test.ts": {
-          "sha256": "3079de0d7b6be2453b739feac0baf6f26c1e3bb6f282e4efaf7351586ff080b3",
+          "sha256": "ddfcd0e07517e692d366fa975b3a24e51255fced599dd8687f9dfbb6b227d9c1",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirement-lifecycle.test.ts",
             "sha256": "c6aa7db325bda7278ccdec24f570fb11c325fbbe546d635dd4961b8b1b2d9f16"
           },
           "deviation": [
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279",
+            "review-followup-2"
           ]
         },
         "library/ui/figma/src/guard/retirement-publication.test.ts": {
-          "sha256": "80d4dfd2f6da6f090d1dabbe73a08904975d4437a266996a65572c91dd092122",
+          "sha256": "02633ce303d411093db8fa13916fc3b7460b01a6745f2810692c8e4b9e9232c2",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirement-publication.test.ts",
             "sha256": "5ed24d28d7d85ae996c46382f0e10dcfa0cf76b93db3fb5b3159e1c0662b8a76"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note",
+            "review-followup-2"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/retirement-verified.test.ts": {
-          "sha256": "e1213ec1d90fd085f272d661872b91c37aab69e27455997425da361b46b1c426",
+          "sha256": "923a6abb21cc79f74c771236486223dd5f9197a867e6006efd93a04f10b4f62e",
           "fds": null,
           "deviation": [
-            "cache-hardening"
+            "cache-hardening",
+            "bot-review-279",
+            "review-followup-2"
           ]
         },
         "library/ui/figma/src/guard/retirements.test.ts": {
-          "sha256": "02c631a94b92e3778e958d6c7288746dc270792ab131e5f1023fe15db421f8c0",
+          "sha256": "200bbfa3d81e7f9767f4065c55eaa3c791d5bf11bf9b79eb3c9156c199bba353",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirements.test.ts",
             "sha256": "729864fe8ade04ef4c1edd2de819e3b387cbd3eb4e81641276efb9363a2a821f"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/retirements.ts": {
-          "sha256": "8b6684746107c46df9bed355827b67796dc79cc334b91ba2ceb9c0d5b3c0645a",
+          "sha256": "58d90853682c7c4f48dbe8075ebd360ec73eb40d724b562413df01c30d50fefe",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirements.ts",
             "sha256": "257f175956390a53753838dc40cf0ed18e66a75e16b5eb24757a611bd791db2f"
           },
-          "deviation": "live-access-removed"
+          "deviation": [
+            "live-access-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/src/guard/shared-inputs.test.ts": {
           "sha256": "0eb2766a9f37c8e503bf674ef4a5154b10d7a582124dd765fa4fb53a66dfda2d",
@@ -2895,28 +3025,41 @@
           }
         },
         "library/ui/figma/src/guard/test-fixtures.ts": {
-          "sha256": "41ae56a5ec6f256c3dd45c57b6a27fb98e67056412a9fbf19ce3a17c2cdd92a9",
+          "sha256": "a7a252dd12da95d7d99bc1a7f54196b2188d729fa63012cc22f361cc57f07997",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/test-fixtures.ts",
             "sha256": "5f6d5f4ded90125654e49eae6f9d5641faa7d8b98ca227f3d8c5354cb9d1ceba"
           },
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "bot-review-279"
+          ]
         },
         "library/ui/figma/src/guard/variant-reparent.test.ts": {
-          "sha256": "66c92b122d4adc7457b5f786449bf95ac0a33e3c7f4e1671b9fdb37db347111b",
+          "sha256": "c8e02fcdc9b7a6ac5f20299c9299d3fb5c9206594293c5ef66ae19117e91260f",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/variant-reparent.test.ts",
             "sha256": "7699227edd6ddbe3ede7b623a83bc2db664905d72579fa4eb59bdd728774a167"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note",
+            "review-followup-2"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/workspace-stage.ts": {
-          "sha256": "8986358e6ad00af4e534bf5766b40b2751a5b9b1c137b6fa53fc0c5d216ba195",
+          "sha256": "a66330680cf960eb1e25dfa670dc638651f763ed9eac647eb9a45c443c574be1",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/workspace-stage.ts",
             "sha256": "d429280c2b0f00f950ee60d0fba3a94ed0b0ecc5765edf8ff729ba47c5fced98"
           },
-          "deviation": "predates"
+          "deviation": [
+            "bot-review-279",
+            "note",
+            "review-followup-2"
+          ],
+          "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
@@ -3176,14 +3319,15 @@
           "deviation": "live-access-removed"
         },
         "library/ui/figma/src/retirement-sync.ts": {
-          "sha256": "19ad6c9ecf55cb9079ee36bc697634dc025b9fe3b1fb6ee0bca6ae8ef506954f",
+          "sha256": "2eaec6765b7ad6914a65c4674d4a6e9ac09f093ec5ca3638b51f8ce36771e26b",
           "fds": {
             "path": "dcl-mcp-figma/src/retirement-sync.ts",
             "sha256": "71784c05cb31871c3b7a767d4a3ef1fe361bbc07e9e49fabb9b146be9a6521e7"
           },
           "deviation": [
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "review-followup-2"
           ]
         },
         "library/ui/figma/src/review-manifest-tokens.test.ts": {
@@ -3203,20 +3347,24 @@
           ]
         },
         "library/ui/figma/src/runtime.test.ts": {
-          "sha256": "7a0e10c788ed9f243cdeeff52a8c1d2506067e36803167c58f11f1c738b3bd25",
+          "sha256": "7c1b45fbdb9b026aff0fd94822dcaa1e06a47e28289c57e1ae9e59ba1dd69359",
           "fds": null,
           "deviation": [
             "capture-removed",
-            "cache-hardening"
+            "cache-hardening",
+            "review-followup-2"
           ]
         },
         "library/ui/figma/src/runtime.ts": {
-          "sha256": "426ebad74c1cc6cd227bc5ace33088afb6943d03b2341257678cb2805552650b",
+          "sha256": "9139f3bf0bf77c8393ff990eddfca267fce8d92c34386fac6dd69a1fb9cd46ab",
           "fds": {
             "path": "dcl-mcp-figma/src/runtime.ts",
             "sha256": "c283e480f8fbc31078dca7fc99a4af2cebb4b3fd6d369bb96b9dd7ceb046f42c"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "review-followup-2"
+          ]
         },
         "library/ui/figma/src/server-errors.test.ts": {
           "sha256": "4a848f5ec5d5a514fa5aabbadfed648dab2f84ed33c768b88aedf2d8d44a374e",
@@ -3256,17 +3404,23 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/sources/fds-source.test.ts": {
-          "sha256": "19da30a00d0f69c14ccf6bbac7741224e26fd1072ba9394b3b4a543f5203c960",
+          "sha256": "7317fe6346f365db1e4a8957190a0078daeead8ee8f86ae17b7aaba74add2014",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "bot-review-279",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/sources/fds-source.ts": {
-          "sha256": "9dabf3ee51be264b5da4aaa38924018f93756ec87a52ccff1357ae07d24c8a33",
+          "sha256": "05fd5cff8c45202579477f03ab9583e6d237abbde145170eab79af923a3e9708",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "live-read-restored",
-            "cache-hardening"
+            "cache-hardening",
+            "bot-review-279",
+            "bot-review-279-b"
           ]
         },
         "library/ui/figma/src/sources/rest-assets.ts": {
@@ -3313,14 +3467,15 @@
           ]
         },
         "library/ui/figma/src/sources/snapshot-source.ts": {
-          "sha256": "724bf6c691a1521cf2b733ba1d4467103c9983e96c159de942e43e7e5a941d89",
+          "sha256": "82ef1c4f3de1ae6f5d254f0e6035d7cbc5ca54d592b5ae3fffab08076f21bbc4",
           "fds": {
             "path": "dcl-mcp-figma/src/sources/snapshot-source.ts",
             "sha256": "40d1fc315ff49783feb469fc7a0fc16bf14b91a3684bac035ace853ab0e98cb3"
           },
           "deviation": [
             "capture-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "bot-review-279"
           ]
         },
         "library/ui/figma/src/sources/types.ts": {
@@ -3335,20 +3490,26 @@
           ]
         },
         "library/ui/figma/src/specs.test.ts": {
-          "sha256": "63429c8a26adf3dc45a095903295fd9841159a1b8a2ff1d7c99678e19b59cdca",
+          "sha256": "b3aaec59ad88aba7e5547706f146fb550843373b7f0715ae696fee5f2adc92b2",
           "fds": {
             "path": "dcl-mcp-figma/src/specs.test.ts",
             "sha256": "6039195aabcfa65df288b5d6f53bf36f6219ffdbebf0a3587f6efcb1ec163357"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/specs.ts": {
-          "sha256": "ab2d1c2bff429baf25d3fc44b9aa03fca06ebfa3abbd9a17d688a3863204effc",
+          "sha256": "167bc938ff2004764b637df39e394218c0cdb2e2a9fee2766337a9c21497f55d",
           "fds": {
             "path": "dcl-mcp-figma/src/specs.ts",
             "sha256": "d3e8fb8619ba640680c0de9bfa7392aa6343d874d67f22dbed82792ef8f4374e"
           },
-          "deviation": "live-access-removed"
+          "deviation": [
+            "live-access-removed",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/src/sync.test.ts": {
           "sha256": "b859de0637aa040bfc00759c79f78a4f0c0817774ff7ce4b778dc48ae9078326",
@@ -3695,9 +3856,14 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "c529cdef58a68003366f8d22a3f08fb0cea955086224d5cce023a82335d34466",
+          "sha256": "9e8d7f30adaef8a2b81f9a8373411644ae7a1888e7942125087e285504990cc6",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-2",
+            "bot-review-279-b",
+            "bot-review-279-c"
+          ]
         },
         "library/ui/figma/test/snapshot.ts": {
           "sha256": "3e3964b8b73d5bf41a13ef38d5232f53ad38d019d39db63222d0cc44fbae81df",
@@ -3716,9 +3882,14 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "8ac5b6c1fe4015abae97ba7ab96198332dde5f77f87c59dddff46c65b7e5f21f",
+          "sha256": "cf36aa5011cd5f9cee769753bab73b95264d15da1ae83c93d89a0e0017e86883",
           "fds": null,
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "bot-review-279",
+            "review-followup-2",
+            "bot-review-279-b"
+          ]
         },
         "library/ui/figma/tsconfig.json": {
           "sha256": "4c6ee0a8826cc097141606303459eb741412aad074655e135c2cc3ffc5608560",
@@ -3741,7 +3912,12 @@
         "gallery-disclosure": 41,
         "note": null,
         "live-read-restored": 42,
-        "cache-hardening": 43
+        "cache-hardening": 43,
+        "request-scope-hardening": 44,
+        "bot-review-279": 46,
+        "review-followup-2": 47,
+        "bot-review-279-b": 48,
+        "bot-review-279-c": 49
       }
     }
   ]

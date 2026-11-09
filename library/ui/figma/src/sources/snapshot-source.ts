@@ -35,11 +35,13 @@ class SnapshotSource implements FigmaSource {
   private verified: Promise<void> | undefined
 
   // `verify`, when given, runs once before the first read: the configured capture is the cache materialized from
-  // figma-design-system, and a missing, stale or edited cache must fail instead of being read.
+  // figma-design-system, and a missing, stale or edited cache must fail instead of being read. `retirementsFile`
+  // names the committed retirement ledger, which is the effective one: the cache holds fetch-source's copy of it.
   constructor(
     private readonly dir: string,
     private readonly legacySnapshotNames: readonly string[] = [],
-    private readonly verify?: () => Promise<void>
+    private readonly verify?: () => Promise<void>,
+    private readonly retirementsFile = path.join(dir, 'retirements.json')
   ) {}
 
   // Public so a command can verify the cache before it reads anything else derived from it.
@@ -80,7 +82,7 @@ class SnapshotSource implements FigmaSource {
 
   async getRetirements() {
     await this.ready()
-    const raw = await readIfExists(path.join(this.dir, 'retirements.json'))
+    const raw = await readIfExists(this.retirementsFile)
     return raw === undefined ? emptyRetirements() : retirementsSchema.parse(JSON.parse(raw))
   }
 

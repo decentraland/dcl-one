@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { compare, main, pinnedFiles } from './lock-digests.mjs'
+import { compare, fdsSource, main, pinnedFiles } from './lock-digests.mjs'
 
 const LOCK = 'library/ui/upstream.lock.json'
 let repo: string
@@ -166,6 +166,39 @@ describe('when the lock pins every tracked figma file', () => {
     expect(out).toContain('deviation code dcl-one-only links to no changes[] entry')
   })
 
+  describe.each(['constructor', 'toString', '__proto__'])(
+    'and a file names inherited deviation %s',
+    (code) => {
+      let value: Lock
+
+      beforeEach(async () => {
+        await annotate((lock) => {
+          lock.sources[0]!.files['library/ui/figma/a.ts']!.deviation = code
+        })
+        value = await lock()
+      })
+
+      it('should reject the code through the real pinned-file validator', () => {
+        expect(pinnedFiles(value).problems).toContain(
+          'library/ui/figma/a.ts names an unknown deviation code'
+        )
+      })
+    }
+  )
+
+  it('should accept a deviation code declared as an own key linked to a changes[] entry', async () => {
+    await annotate((lock) => {
+      const source = lock.sources[0]!
+      source.changes!.push('This file is hardened here.')
+      source.deviationCodes!['hardened'] = 1
+      source.files['library/ui/figma/a.ts']!.deviation = 'hardened'
+    })
+
+    expect(pinnedFiles(await lock()).problems).toEqual([])
+    expect(run()).toBe(0)
+    expect(out).not.toContain('unknown deviation code')
+  })
+
   it('should require a short plain note for the note code', async () => {
     await annotate((value) => {
       value.sources[0].files['library/ui/figma/a.ts'].deviation = 'note'
@@ -263,5 +296,42 @@ describe('when comparing tables', () => {
       missing: ['c'],
       unpinned: ['d']
     })
+  })
+})
+
+describe('when the lock names the figma-design-system repository', () => {
+  const FDS = 'https://github.com/decentraland/figma-design-system'
+
+  it('should accept the decentraland repository', () => {
+    expect(fdsSource({ sources: [{ repository: FDS }] })).toEqual({ repository: FDS })
+  })
+
+  it.each([
+    'https://github.com/someone-else/figma-design-system',
+    `${FDS}/../../someone-else/figma-design-system`,
+    'http://github.com/decentraland/figma-design-system',
+    'https://example.com/decentraland/figma-design-system'
+  ])('should reject %s', (repository) => {
+    expect(() => fdsSource({ sources: [{ repository }] })).toThrow(
+      `must name the figma-design-system repository ${FDS}`
+    )
+  })
+
+  it('should not take a suffixed URL for the figma-design-system source', () => {
+    expect(() => fdsSource({ sources: [{ repository: `${FDS}.git` }] })).toThrow(
+      'no figma-design-system source'
+    )
+  })
+
+  it('should fail the check when the lock points at another owner', async () => {
+    await put(
+      LOCK,
+      JSON.stringify({
+        sources: [{ repository: 'https://github.com/someone-else/figma-design-system' }]
+      })
+    )
+
+    expect(run()).toBe(1)
+    expect(out).toContain('must name the figma-design-system repository')
   })
 })

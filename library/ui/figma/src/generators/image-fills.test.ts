@@ -53,7 +53,37 @@ describe('replaceRasterFills', () => {
       ['a direct PNG', 'url("data:image/png;base64,iVBORw0KGgo=")'],
       ['a direct JPEG', "url('data:image/jpeg;base64,/9j/4AAQ')"],
       ['a direct GIF', 'url(data:image/gif;base64,R0lGODlh)'],
-      ['a direct WebP', 'url( "data:image/webp;base64,UklGRg==" )']
+      ['a direct WebP', 'url( "data:image/webp;base64,UklGRg==" )'],
+      [
+        'a direct PNG behind whitespace inside the quotes',
+        'url(" data:image/png;base64,iVBORw0KGgo=")'
+      ],
+      [
+        'a direct PNG between tab and space padding',
+        "url('\tdata:image/png;base64,iVBORw0KGgo= ')"
+      ],
+      [
+        'an SVG behind whitespace inside the quotes',
+        svgUrl(raster(10)).replace('url("', 'url("  ')
+      ],
+      ['an SVG whose <use> draws a raster', svgUrl(raster(10).replace('<image', '<use'))],
+      [
+        'an SVG whose <use> draws a raster through xlink',
+        svgUrl(raster(10).replace('<image', '<use').replace(' href=', ' xlink:href='))
+      ],
+      ['an uppercase direct PNG', 'url("DATA:IMAGE/PNG;base64,iVBORw0KGgo=")'],
+      ['a direct AVIF', 'url("data:image/avif;base64,AAAAIGZ0eXA=")'],
+      ['a direct BMP', 'url("data:image/bmp;base64,Qk0=")'],
+      [
+        'an SVG with an uppercase PNG image',
+        svgUrl(raster(10).replace('data:image/png', 'DATA:IMAGE/PNG'))
+      ],
+      ['an SVG with an AVIF image', svgUrl(raster(10).replace('image/png', 'image/avif'))],
+      ['an SVG with a BMP image', svgUrl(raster(10).replace('image/png', 'image/bmp'))],
+      [
+        'an SVG whose <use> draws an AVIF',
+        svgUrl(raster(10).replace('<image', '<use').replace('image/png', 'image/avif'))
+      ]
     ])('should replace %s with the placeholder and publish no asset', (_, url) => {
       const { css, assets } = placeholderCss(
         `.a {\n  background: ${url} center / contain no-repeat;\n}\n`
@@ -106,6 +136,14 @@ describe('replaceRasterFills', () => {
       ],
       ['a raster named only in a string', '.a { content: "url(data:image/png;base64,AA)"; }\n'],
       ['an external URL', '.a { background: url("https://example.com/a.png"); }\n'],
+      [
+        'an uppercase vector SVG data URL',
+        `.a { background: ${svgUrl(vector(100)).replace('data:image/svg+xml', 'DATA:IMAGE/SVG+XML')}; }\n`
+      ],
+      [
+        'an image nesting an uppercase vector SVG',
+        `.a { background: ${svgUrl(`<svg xmlns="http://www.w3.org/2000/svg"><image href="DATA:IMAGE/SVG+XML;base64,${Buffer.from(vector(100)).toString('base64')}"/></svg>`)}; }\n`
+      ],
       [
         'raster text in an SVG id',
         `.a { background: ${svgUrl('<svg xmlns="http://www.w3.org/2000/svg"><g id="data:image/png;base64,AA"/></svg>')}; }\n`

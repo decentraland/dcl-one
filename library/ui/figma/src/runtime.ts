@@ -1,11 +1,9 @@
-import { FdsCacheError } from './sources/fds-source.js'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createApp, type App } from './app.js'
 import { resolveContractConfig } from './contract/config.js'
 import { buildFigmaIndex } from './contract/figma-index.js'
-import { LfsPointerError } from './lfs.js'
 import type { ResolveContext } from './contract/resolve.js'
 import { promotionExclusion } from './promotion/eligibility.js'
 import { loadSpecsFromSource } from './specs.js'
@@ -41,16 +39,11 @@ function supersessionCandidates(
   )
 }
 
+// Only reached with a configured capture: a runtime without Figma config is resolve-only and has no
+// loadSyncedComponents at all. Every load failure (an unmaterialized LFS capture, a stale fetch-source cache,
+// an I/O or schema error) propagates, so check-mappings never silently validates only the hand-written mappings.
 async function syncedComponents(app: App): Promise<Map<string, string[]>> {
-  let specs
-  try {
-    specs = (await loadSpecsFromSource(app.createSource('snapshot'), app.config)).specs
-  } catch (error) {
-    // Without a complete capture, hand-written mappings are validated as before; an unmaterialized LFS
-    // capture or a missing, stale or edited fetch-source cache is a broken checkout, not a missing capture.
-    if (error instanceof LfsPointerError || error instanceof FdsCacheError) throw error
-    return new Map()
-  }
+  const { specs } = await loadSpecsFromSource(app.createSource('snapshot'), app.config)
   const record = await readFile(path.resolve(app.cwd, '..', 'components/promotion.json'), 'utf8')
     .then((text) => (JSON.parse(text) as { components: string[] }).components)
     .catch((error: NodeJS.ErrnoException) => {

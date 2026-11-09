@@ -208,6 +208,8 @@ export type PageToScene =
   | GetCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -237,6 +239,8 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | SetPhotoModeRequest
+  | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
 
@@ -1092,6 +1096,8 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
 }
@@ -1137,6 +1143,54 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+}
+
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+}
+
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1161,7 +1215,7 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1745,6 +1799,44 @@ export interface ProximityMessage {
   tips: ProximityTip[]
 }
 
+// ---- photo mode (camera reel capture) --------------------------------------
+
+/** Photo mode as the engine reports it (the `PhotoModeState` stream): whether the in-world camera
+ *  is open, what the last photo is doing, the player's storage, and a one-shot `event` stamped
+ *  with `eventSeq` (a capture carries its preview JPEG, a failed upload its message). */
+export interface PhotoModeSnapshot {
+  active: boolean
+  hudHidden: boolean
+  cursorLocked: boolean
+  phase: 'idle' | 'capturing' | 'encoding' | 'uploading' | string
+  storageCurrent: number
+  storageMax: number
+  storageLoaded: boolean
+  event: 'none' | 'captured' | 'uploaded' | 'uploadFailed' | string
+  eventSeq: number
+  previewJpegBase64: string
+  message: string
+}
+
+export interface PhotoModeMessage {
+  kind: 'photoMode'
+  state: PhotoModeSnapshot
+}
+
+/** Open or close photo mode (the engine's `/photo_mode`); `source` names what asked, for analytics. */
+export interface SetPhotoModeRequest {
+  kind: 'setPhotoMode'
+  enable: boolean
+  source: PhotoModeSource
+}
+
+export type PhotoModeSource = 'button' | 'shortcut'
+
+/** Take a photo in photo mode (the engine's `/take_photo`). */
+export interface TakePhotoRequest {
+  kind: 'takePhoto'
+}
+
 /** A nearby avatar was clicked in the world → open their profile card. Only the address travels;
  *  React resolves the display name (nearby roster) and anchors the card at the live DOM cursor. */
 export interface AvatarClickMessage {
@@ -1760,6 +1852,7 @@ export type SceneToPage =
   | CursorLockMessage
   | SystemActionMessage
   | ProximityMessage
+  | PhotoModeMessage
   | AvatarClickMessage
   | PlayerReadyEvent
   | AnalyticsEventMessage
@@ -1799,6 +1892,8 @@ export type SceneToPage =
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

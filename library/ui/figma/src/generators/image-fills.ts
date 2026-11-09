@@ -1,4 +1,4 @@
-import { embedsRaster, unsafeSvgReason } from './svg-safety.js'
+import { embedsRaster, isRasterData, mentionsRasterData, unsafeSvgReason } from './svg-safety.js'
 
 // A neutral fill a consumer can theme. It keeps the layer's box, position, size and repeat.
 const IMAGE_PLACEHOLDER =
@@ -7,8 +7,6 @@ const FILL_PROPERTIES = new Set(['background', 'background-image'])
 // Functions whose string arguments are image URLs, not text.
 const IMAGE_SOURCE_FUNCTIONS = new Set(['image-set', '-webkit-image-set', 'image'])
 const SVG_DATA = /^data:image\/svg\+xml(;[^,]*)?,/i
-const RASTER_DATA = /^data:image\/(?!svg\+xml[;,])/i
-const RASTER_MENTION = /data:image\/(?:png|jpeg|gif|webp)/i
 // A nested SVG is a whole quoted attribute value, so its payload ends at the matching quote.
 const NESTED_SVG = /(["'])\s*data:image\/svg\+xml(;[^,"']*)?,([\s\S]*?)\1/gi
 const SVG_MENTION = /data:image\/svg\+xml/gi
@@ -24,7 +22,7 @@ function decodeSvgPayload(params: string | undefined, payload: string): string {
 // Whether raster data sits in the SVG or in any SVG nested in it. Each nested payload is decoded and
 // classified, so a nested vector-only SVG, percent-encoded or base64, does not count as a raster.
 function containsRaster(svg: string, depth = 0): boolean {
-  if (RASTER_MENTION.test(svg)) return true
+  if (mentionsRasterData(svg)) return true
   const nestedSvgs = [...svg.matchAll(NESTED_SVG)]
   if (nestedSvgs.length !== (svg.match(SVG_MENTION)?.length ?? 0))
     throw new Error(
@@ -63,7 +61,8 @@ function readUrl(css: string, start: number): { end: number; value: string } {
   let value: string
   if (css[index] === '"' || css[index] === "'") {
     const end = stringEnd(css, index)
-    value = css.slice(index + 1, end - 1)
+    // A browser strips the whitespace around a quoted URL, so the anchored data: checks must see it stripped.
+    value = css.slice(index + 1, end - 1).trim()
     index = end
   } else {
     const end = css.slice(index).search(/[\s)"'(]/)
@@ -84,9 +83,10 @@ function decodeSvg(url: string, params: string | undefined): string {
   return decodeSvgPayload(params, url.slice(url.indexOf(',') + 1))
 }
 
-// Raster content decides, not size: a data image that is not SVG, or a safe SVG drawing a raster <image>.
+// Raster content decides, not size: a data image that is not SVG, or a safe SVG whose element (an <image>, a
+// <use>, any element the safe-SVG rules let carry an href) references embedded raster data.
 function isRaster(url: string): boolean {
-  if (RASTER_DATA.test(url)) return true
+  if (isRasterData(url)) return true
   const svgData = SVG_DATA.exec(url)
   if (!svgData) return false
   const svg = decodeSvg(url, svgData[1])

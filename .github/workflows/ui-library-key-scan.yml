@@ -44,17 +44,17 @@ jobs:
           set -o pipefail
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
           echo "head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          # Every skip reports a failed check: a required check must not pass on commits nobody scanned.
           skip() {
             echo "scan=false" >> "$GITHUB_OUTPUT"
             echo "reason=$1" >> "$GITHUB_OUTPUT"
-            echo "conclusion=${2:-failure}" >> "$GITHUB_OUTPUT"
             exit 0
           }
           [ "$WORKFLOW_PATH" = .github/workflows/ui-library.yml ] || skip "triggered by another workflow file"
           expected_id=$(gh api "repos/$REPOSITORY/actions/workflows/ui-library.yml" --jq .id) || skip "workflow id unavailable"
           [ "$WORKFLOW_ID" = "$expected_id" ] || skip "triggered by another workflow id"
           [ "$CONCLUSION" = success ] || skip "the run concluded $CONCLUSION"
-          [ "$HEAD_REPO" = "$REPOSITORY" ] || skip "fork run: the private key is unavailable to fork code" neutral
+          [ "$HEAD_REPO" = "$REPOSITORY" ] || skip "fork run: the key check could not run, because FIGMA_FILE_KEY is never given to fork code. Push these commits to a branch of this repository to scan them before merging"
           if [ "$EVENT" = pull_request ]; then
             if [ "$(jq 'length' <<< "$PULL_REQUESTS")" = 0 ]; then
               PULL_REQUESTS=$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/pulls" --jq "[.[] | select(.head.sha == \"$HEAD_SHA\" and .base.repo.full_name == \"$REPOSITORY\")]") || skip "pull request lookup failed"
@@ -168,6 +168,9 @@ jobs:
 
       # The only step that holds the key: main's key guard over the scanned commits, their library/ui tree and
       # the unpacked Review build (enumerated without following links, and size and count limited), all as data.
+      # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
+      # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
+      # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
       - name: Scan for the Figma file key
         id: scan
         if: steps.trigger.outputs.scan == 'true'
@@ -187,7 +190,7 @@ jobs:
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
           node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
-            --range "$range" --allowlist-from "$HEAD_SHA" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
+            --range "$range" --allowlist-from HEAD "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
       # The summary is the scanner's stdout alone, which the scanner redacts: the key never appears in a path,
@@ -199,7 +202,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
           OUTCOME: ${{ steps.scan.outcome }}
-          SKIP_CONCLUSION: ${{ steps.trigger.outputs.conclusion }}
           SKIP_REASON: ${{ steps.trigger.outputs.reason }}
           FETCH_OUTCOME: ${{ steps.inputs.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact_check.outcome }}
@@ -212,7 +214,7 @@ jobs:
           if [ "$ARTIFACT_OUTCOME" = failure ]; then summary="The required Review artifact was missing or could not be verified."; fi
           if [ "$DOWNLOAD_OUTCOME" = failure ]; then summary="The verified Review artifact could not be downloaded."; fi
           if [ -n "$SKIP_REASON" ]; then
-            conclusion="$SKIP_CONCLUSION"
+            conclusion=failure
             summary="Not scanned: $SKIP_REASON"
           fi
           gh api --method POST "repos/$REPOSITORY/check-runs" \

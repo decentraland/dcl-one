@@ -88,6 +88,37 @@ describe('when the pull request does not change the lock', () => {
   })
 })
 
+describe('when the head has no lock', () => {
+  it('should pass for a head branched before the library existed', async () => {
+    const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
+    const head = git('commit-tree', emptyTree, '-m', 'old branch')
+
+    expect(main(['--base', base, '--head', head], repo)).toBe(0)
+    expect(out).toContain('no upstream.lock.json at this head')
+  })
+
+  it('should pass when neither the base nor the head has the library', async () => {
+    const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
+    const empty = git('commit-tree', emptyTree, '-m', 'empty')
+    const head = git('commit-tree', emptyTree, '-p', empty, '-m', 'unrelated')
+
+    expect(main(['--base', empty, '--head', head], repo)).toBe(0)
+  })
+
+  it('should pass for a head that keeps library/ui but has no lock', async () => {
+    await rm(path.join(repo, LOCK))
+    const head = commit('no lock')
+
+    expect(main(['--base', base, '--head', head], repo)).toBe(0)
+  })
+
+  it('should fail on a head that is not a commit', () => {
+    expect(main(['--base', base, '--head', 'f'.repeat(40)], repo)).toBe(1)
+    expect(out).toContain('the head')
+    expect(out).toContain('not a commit')
+  })
+})
+
 describe('when the pull request changes the lock', () => {
   beforeEach(async () => {
     await put('library/ui/figma/a.ts', 'export const a = 2\n')

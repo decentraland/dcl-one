@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -17,13 +17,24 @@ let records: unknown
 
 beforeEach(async () => {
   ;({ root, records } = await lifecycleFixture())
-  await put(root, `${SNAP}/retirements.json`, records)
+  await put(root, `figma/ledger/retirements.json`, records)
   await pinTestCapture(path.join(root, 'figma'))
 })
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
+
+const cacheBytes = async () => {
+  const cache = path.join(root, SNAP)
+  const files = (await readdir(cache, { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(cache, path.join(entry.parentPath, entry.name)))
+    .sort()
+  return Promise.all(
+    files.map(async (file) => [file, await readFile(path.join(cache, file))] as const)
+  )
+}
 
 describe('when a developer applies retirements through the production App', () => {
   it('should stage and publish from a verified cache', async () => {
@@ -39,6 +50,23 @@ describe('when a developer applies retirements through the production App', () =
     await expect(readFile(path.join(root, `${LIB}/page/First.figma.ts`))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+  })
+
+  it('should leave the pinned cache byte-identical, so the next command still verifies it', async () => {
+    const before = await cacheBytes()
+
+    const report = await runSync(await createApp(path.join(root, 'figma')), {
+      source: 'snapshot',
+      developer: true,
+      applyRetirements: true
+    })
+
+    expect(report.retired?.length).toBeGreaterThan(0)
+    expect(report.retired?.filter((file) => file.startsWith(`${SNAP}/`))).toEqual([])
+    expect(await cacheBytes()).toEqual(before)
+    await expect(
+      (await createApp(path.join(root, 'figma'))).createSource().listPages()
+    ).resolves.not.toHaveLength(0)
   })
 
   it('should refuse an edited cache before staging or writing anything', async () => {

@@ -140,9 +140,13 @@ function materializeLfs(root, pointer) {
 
 function scanContent(root, buffer, key, allowedIds, materialize = false) {
   if (!isLfsPointer(buffer)) return scanBuffer(buffer, key, allowedIds)
-  if (!materialize) return ['lfs']
+  // The pointer bytes are scanned too: a valid pointer line may be followed by any text.
+  const pointer = scanBuffer(buffer, key, allowedIds)
+  if (!materialize) return [...pointer, 'lfs']
   const content = materializeLfs(root, buffer)
-  return content && !isLfsPointer(content) ? scanBuffer(content, key, allowedIds) : ['lfs']
+  return content && !isLfsPointer(content)
+    ? [...new Set([...pointer, ...scanBuffer(content, key, allowedIds)])]
+    : [...pointer, 'lfs']
 }
 
 function scanWorktree(root, key, allowed, report) {

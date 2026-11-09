@@ -3,7 +3,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findConsumers, readTree, type Tree } from './consumers.js'
+import {
+  CACHED_LEDGERS,
+  LEDGER,
+  RETIREMENTS,
+  findConsumers,
+  readTree,
+  type Tree
+} from './consumers.js'
 
 const REVIEW = 'figma/review/src/generated/components/assets/0123456789abcdef.svg'
 const LIBRARY = 'components/assets/0123456789abcdef.svg'
@@ -15,6 +22,35 @@ const tree = (texts: Record<string, string>): Tree => ({
 })
 const users = (texts: Record<string, string>) =>
   findConsumers(tree(texts), REVIEW).map((item) => item.file)
+
+describe('the lifecycle ledgers', () => {
+  // The snapshot folder is the gitignored fetch-source cache: a ledger there is never committed and a re-fetch
+  // replaces it, so readers and writers use the committed copies that fetch-source overlays onto the cache.
+  it('should live outside the gitignored capture cache, in the committed figma/ledger', () => {
+    const libraryRoot = path.resolve(import.meta.dirname, '../../..')
+    for (const file of [LEDGER, RETIREMENTS]) {
+      expect(file.startsWith('figma/ledger/')).toBe(true)
+      expect(() =>
+        execFileSync('git', ['-C', libraryRoot, 'check-ignore', '-q', file], { stdio: 'pipe' })
+      ).toThrow()
+    }
+    for (const file of CACHED_LEDGERS)
+      expect(
+        execFileSync('git', ['-C', libraryRoot, 'check-ignore', file], { stdio: 'pipe' })
+          .toString()
+          .trim()
+      ).toBe(file)
+  })
+
+  it("should not count the cache's copies of the ledgers as consumers", () => {
+    expect(
+      users({
+        [CACHED_LEDGERS[0]!]: JSON.stringify({ orphaned: [{ path: REVIEW }] }),
+        [CACHED_LEDGERS[1]!]: JSON.stringify({ owned: [REVIEW] })
+      })
+    ).toEqual([])
+  })
+})
 
 describe('findConsumers', () => {
   describe('when a reference resolves to a path', () => {
@@ -91,10 +127,10 @@ describe('findConsumers', () => {
     it('should ignore the ledger, retirements and the files keys of integrity manifests', () => {
       expect(
         users({
-          'figma/figma-snapshot/orphaned-assets.json': JSON.stringify({
+          'figma/ledger/orphaned-assets.json': JSON.stringify({
             orphaned: [{ path: REVIEW }]
           }),
-          'figma/figma-snapshot/retirements.json': JSON.stringify({ owned: [REVIEW] }),
+          'figma/ledger/retirements.json': JSON.stringify({ owned: [REVIEW] }),
           'figma/review/src/review/promotion.json': JSON.stringify({
             files: { [REVIEW]: 'f'.repeat(64) }
           }),

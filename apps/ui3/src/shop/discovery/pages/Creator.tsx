@@ -122,7 +122,7 @@ export default function Creator() {
   if (!address) return null;
 
   return (
-    <div className="shop-page shop-creator" data-testid="creator-page">
+    <div className="shop-page shop-creatorpage" data-testid="creator-page">
       <nav className="shop-crumbs" aria-label={t("creator.breadcrumbAria")}>
         <Link to={`${SHOP_BASE}/items`}>{t("creator.breadcrumb")}</Link>
         <span aria-hidden>/</span>

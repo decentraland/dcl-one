@@ -26,6 +26,11 @@ function reparentedTo(
   return parent.componentId
 }
 
+// The capture cache is pinned input that fetch-source verifies byte for byte, so a retirement never removes
+// anything from it: generation drops the retired items by reading the committed ledger (specs.ts). A cache
+// artifact stays in the record only as the identity that proves which outputs the retirement owns.
+const inCaptureCache = (artifact: string) => artifact.split('#')[0]!.startsWith(`${SNAPSHOT}/`)
+
 const variantOf = (artifact: string) =>
   artifact.startsWith(`${SNAPSHOT}/components/`) && artifact.includes(VARIANT)
     ? artifact.slice(artifact.indexOf(VARIANT) + VARIANT.length)
@@ -41,6 +46,7 @@ async function retiredArtifactPresent(
   retirements: Retirements,
   parents: Ownership = ownership
 ): Promise<boolean> {
+  if (inCaptureCache(artifact)) return false
   const variant = variantOf(artifact)
   if (variant !== undefined && reparentedTo(parents, retirements, record, variant)) return false
   return artifactPresent(root, artifact, ownership)
@@ -67,4 +73,4 @@ function isReparentingRemap(remap: Remap, staged: Ownership, retirements: Retire
   )
 }
 
-export { isReparentingRemap, reparentedTo, retiredArtifactPresent }
+export { inCaptureCache, isReparentingRemap, reparentedTo, retiredArtifactPresent }

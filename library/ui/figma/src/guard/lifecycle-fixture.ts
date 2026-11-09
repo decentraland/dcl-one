@@ -80,6 +80,8 @@ async function buildLifecycleFixture(splitPages: boolean, duplicateNames: boolea
     }
   }))
     await put(root, `${SNAP}/${file}`, value)
+  // The committed ledger is the effective one; the cache holds fetch-source's copy of the same bytes.
+  await put(root, 'figma/ledger/retirements.json', emptyRetirements())
   if (splitPages) {
     const config = await json(root, 'figma/figma.config.json')
     config.pages['1:2'] = { id: '1:2', name: 'Other', kind: 'components' }

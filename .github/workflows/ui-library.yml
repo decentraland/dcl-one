@@ -71,10 +71,13 @@ jobs:
           node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
           LFS_AUTHORIZATION="$authorization" node library/ui/figma/lfs-prefetch.mjs \
             --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
+      # This unprivileged scan reads the allowlist from the pull request head, never from the merge commit. The
+      # privileged scan in ui-library-key-scan.yml reads it from the default branch, so only main can suppress a url.
       - name: Scan every outgoing commit for Figma urls
         env:
           RANGE: ${{ steps.scope.outputs.range }}
-        run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --allowlist-from "$HEAD_SHA"
       # A change to upstream.lock.json is a port from figma-design-system, where the Figma capture lives. The
       # checks against that capture run there and locally (pnpm figma fetch-source); this step requires the record
       # of their results for this exact lock, FDS commit and library tree, and passes untouched for any other change.
