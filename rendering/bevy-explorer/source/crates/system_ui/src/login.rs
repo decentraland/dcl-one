@@ -283,11 +283,7 @@ fn update_profile_for_realm(
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => {
-                current_profile.profile = Some(profile);
-                current_profile.is_deployed = true;
-                current_profile.deploy_held = false;
-            }
+            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
@@ -845,6 +841,7 @@ fn process_login_bridge(
                 });
                 current_profile.is_deployed = true;
                 current_profile.deploy_held = false;
+                current_profile.revert_to = None;
             }
             SystemApi::LoginCancel => {
                 *login_task = None;
@@ -856,6 +853,7 @@ fn process_login_bridge(
                 segment_config.reset_identity();
                 current_profile.profile = None;
                 current_profile.deploy_held = false;
+                current_profile.revert_to = None;
             }
             _ => (),
         }
@@ -906,6 +904,7 @@ fn process_login_bridge(
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
+                current_profile.revert_to = None;
 
                 sender.send(Ok(()));
             }
