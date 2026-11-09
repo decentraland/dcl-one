@@ -46,7 +46,7 @@ import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
   parseOperationRef,
-  SHOP_BUSY,
+  shopBusy,
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
@@ -1240,7 +1240,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || slot.open()) throw new Error(SHOP_BUSY)
+    if (starting || running || slot.open()) throw shopBusy()
     starting = true
     try {
       const who = signedIn()
@@ -1269,14 +1269,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const capabilities = (): ShopCapabilities => {
     const login = deps.login()
-    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut' }
+    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut', codedErrors: true }
     const buyer = rootAddress(login.identity).toLowerCase()
-    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest' }
+    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest', codedErrors: true }
     const wallet = deps.wallet?.kind(buyer) ?? null
     const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
     const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
     const namesMode = canPay ? nameSession()?.mode : undefined
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }) }
+    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }), codedErrors: true }
   }
 
   const balance = async (): Promise<ShopBalance | null> => {

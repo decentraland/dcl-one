@@ -19,7 +19,7 @@ import { CHAIN } from '@shop/model/chain'
 import { creditsCeil, type UsdCents } from '@shop/model/money'
 import {
   parseBuyNameRequest,
-  SHOP_BUSY,
+  shopBusy,
   SHOP_EVENT,
   SHOP_PROTOCOL,
   TERMINAL_STATES,
@@ -262,7 +262,7 @@ export function createNamePurchase(ctx: NamePurchaseContext): NamePurchase {
       // Refused where capabilities says nothing of NAMEs, or something else than the HUD was told.
       if (!session) throw new Error('NAMEs are not bought here')
       if (req.mode !== session.mode) throw new Error(`NAMEs are bought here in ${session.mode} mode`)
-      if (ctx.busy() || ctx.slot.open()) throw new Error(SHOP_BUSY)
+      if (ctx.busy() || ctx.slot.open()) throw shopBusy()
       const op: NameOperation = { kind: 'name', id: svc.newId(), buyer: session.buyer, login: session.login, name: req.name, mode: session.mode, state: 'reviewing', createdAt: svc.now(), input: req.input }
       ops.set(op.id, op)
       publish(op)
