@@ -680,7 +680,8 @@
             "unblock"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Button",
@@ -6689,7 +6690,8 @@
           "height": 44,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "JumpInCTA",
@@ -7618,7 +7620,8 @@
           "height": 44,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CreditsButton",
@@ -7841,7 +7844,8 @@
           "height": 48,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CardActionButton",
@@ -7885,7 +7889,8 @@
           "height": 46,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "InputExplorerNames",
@@ -8060,7 +8065,8 @@
             "password123"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "InputWebCreatorTools",
@@ -8473,7 +8479,8 @@
             "0/50"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ShopModals",
@@ -8634,7 +8641,8 @@
             "BUY"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 3
     },
     {
       "name": "ConnectionStatus",
@@ -8679,7 +8687,8 @@
           "height": 10,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ProfilePic",
@@ -8832,7 +8841,8 @@
           "height": 20,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 8
     },
     {
       "name": "ProgressBar",
@@ -8921,7 +8931,8 @@
             "Completed"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "SearchBar",
@@ -9274,7 +9285,8 @@
             "See more results"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 20
     },
     {
       "name": "SearchResultItem",
@@ -9373,7 +9385,8 @@
             "By OHDE"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "BlogSearchResultItem",
@@ -9472,7 +9485,8 @@
             "Learn how to spot scams in Decentraland. Protect your wallet, NAMEs, and assets with tips on impersonation, phishing, fake giveaways and more."
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Spinner",
@@ -9646,7 +9660,8 @@
           "height": 30,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Skeleton",
@@ -9691,7 +9706,8 @@
           "height": 112,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "PlaceCard",
@@ -11005,7 +11021,8 @@
           "height": 135,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 101
     },
     {
       "name": "WebTheme",
@@ -11208,7 +11225,8 @@
             "© 2026 Decentraland"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "WebThemeDarkMode",
@@ -11315,7 +11333,8 @@
             "© 2026 Decentraland"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 2
     },
     {
       "name": "NavMenuTab",
@@ -11959,7 +11978,8 @@
             "Merch"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuItem",
@@ -12009,7 +12029,8 @@
             "Whats On"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuTabMobile",
@@ -12061,7 +12082,8 @@
             "Learn"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavMenuDropdown",
@@ -12261,7 +12283,8 @@
             "Whats On"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavBar",
@@ -12776,7 +12799,8 @@
             "12"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 12
     },
     {
       "name": "NavCreditsBalance",
@@ -12850,7 +12874,8 @@
             "0"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavProfileButton",
@@ -12965,7 +12990,8 @@
           "height": 40,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 6
     },
     {
       "name": "NavProfileMenu",
@@ -13096,7 +13122,8 @@
             "Logout"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 2
     },
     {
       "name": "NavNetworkSelector",
@@ -13203,7 +13230,8 @@
             "NETWORK 1"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavNetworkOption",
@@ -13270,7 +13298,8 @@
             "Ethereum"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "NavNotificationsButton",
@@ -13362,7 +13391,8 @@
             "12"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 6
     },
     {
       "name": "NavNotificationItem",
@@ -13461,7 +13491,8 @@
             "Just now"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 4
     },
     {
       "name": "NavBarExplorer",
@@ -13497,7 +13528,8 @@
             "Lobby"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 1
     },
     {
       "name": "Settings",
@@ -13546,7 +13578,8 @@
             "settings [P] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Communities",
@@ -13595,7 +13628,8 @@
             "Communities [O] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Market",
@@ -13644,7 +13678,8 @@
             "shop [-] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CameraReel",
@@ -13693,7 +13728,8 @@
             "Gallery [K] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Map",
@@ -13742,7 +13778,8 @@
             "map [m]"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Backpack",
@@ -13793,7 +13830,8 @@
             "1"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Quest",
@@ -13842,7 +13880,8 @@
             "quest [p]"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Events",
@@ -13893,7 +13932,8 @@
             "3"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Places",
@@ -13942,7 +13982,8 @@
             "Places [z] "
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "CloseCTA",
@@ -13986,7 +14027,8 @@
           "height": 46,
           "texts": []
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "TabsBar",
@@ -14239,7 +14281,8 @@
             "Sort by"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "Tabs",
@@ -14356,7 +14399,8 @@
             "Overview"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "TitleBar",
@@ -14500,7 +14544,8 @@
             "Names"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     },
     {
       "name": "ShopFilters",
@@ -14626,7 +14671,8 @@
             "sort by"
           ]
         }
-      ]
+      ],
+      "imageFillsOmitted": 0
     }
   ],
   "pages": [

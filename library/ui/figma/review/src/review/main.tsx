@@ -8,7 +8,6 @@ import * as library from '../generated/components'
 import { StatePreview } from '../components/StateMatrix'
 import data from './catalog.json'
 import { breakpoints } from '../generated/tokens/tokens'
-import review from './review-notes.json'
 import styles from './ReviewGallery.module.css'
 import { useSelector } from '@tanstack/react-store'
 import { InteractivePreview } from './InteractivePreview'
@@ -39,7 +38,6 @@ const variant = selected.variants[index]!
 const Component = (library as unknown as Record<string, ComponentType<Record<string, unknown>>>)[
   selected.name
 ]!
-const finding = (review as Record<string, { status: string; finding: string }>)[selected.name]
 const background =
   selected.page === 'Search Bar'
     ? '#5e5b67'
@@ -225,10 +223,13 @@ function App() {
               <p>
                 {variant.width} × {variant.height} · {variant.state}
               </p>
-              <p className={styles.status}>
-                {selected.page === 'Progress Bar' ? 'Pending owner review' : finding?.status}
-              </p>
-              <p>{finding?.finding}</p>
+              {selected.imageFillsOmitted > 0 && (
+                <p className={styles.status}>
+                  Image fills not provided: {selected.imageFillsOmitted} Figma image{' '}
+                  {selected.imageFillsOmitted === 1 ? 'fill shows' : 'fills show'} a neutral fill.
+                  This gallery publishes no Figma imagery and makes no claim of visual parity.
+                </p>
+              )}
               {selected.needsManual.length > 0 && (
                 <ul className={styles.issues}>
                   {selected.needsManual.map((reason) => (

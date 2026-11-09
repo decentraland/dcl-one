@@ -581,5 +581,5 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
 // Figma names are free text; a line terminator would end the `//` comment and turn the rest into code.
 const commentText = (text: string) => text.replace(/[\r\n\u2028\u2029]/g, ' ')
 
-export { externalizeSvgs, generateComponents }
+export { externalizeSvgs, generateComponents, pageFolder }
 export type { ManifestEntry }

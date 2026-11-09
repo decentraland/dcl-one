@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "c915e3a523879fa2c63c28e482390491d6df14ce624e5890b87662c5cc398408",
+  "lockHash": "e2ff4d2a956abea000918b6196f036ba39ce1360dd7331c8e7d610f3c678034d",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "1771d348b83ba7091bada6f8bb12141d5f94d9bc",
+  "figmaTree": "888fc05134ded678d7a7dbce16d8c0853ca751ba",
   "checks": {
     "fetch-source": {
       "result": "pass",
@@ -11,7 +11,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "420 files pinned, every difference names a code"
+      "detail": "419 files pinned, every difference names a code"
     },
     "diff": {
       "result": "pass",

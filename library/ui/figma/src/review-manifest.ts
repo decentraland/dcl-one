@@ -1,8 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { App } from './app.js'
 import type { FigmaConfig } from './config.js'
 import { expandVariants } from './capture/expand-variants.js'
+import { pageFolder } from './generators/components.js'
+import { IMAGE_PLACEHOLDER } from './generators/image-fills.js'
 import { cssName, excludePrimitives, TokenIndex } from './generators/tokens.js'
 import { textStyleClass } from './generators/naming.js'
 import type { RawNode } from './ir/raw-components.js'
@@ -98,7 +100,19 @@ function foundationTokens(collections: TokenCollection[], excluded: readonly str
 
 async function writeReviewManifest(app: App, root?: string) {
   const source = app.createSource('snapshot')
-  const { components, strokeWidths } = await reviewComponents(source, app.config)
+  const { components: reviewed, strokeWidths } = await reviewComponents(source, app.config)
+  // The gallery publishes no Figma imagery: it says, per component, how many image fills its generated
+  // stylesheet replaced with the neutral placeholder, so a missing image is disclosed instead of passing as design.
+  const generated = path.join(app.resolveOutDir(), 'components')
+  const components = await Promise.all(
+    reviewed.map(async (component) => {
+      const css = await readFile(
+        path.join(generated, pageFolder(component.page), `${component.name}.module.css`),
+        'utf8'
+      )
+      return { ...component, imageFillsOmitted: css.split(IMAGE_PLACEHOLDER).length - 1 }
+    })
+  )
   const [collections, textStyles, icons, syncState] = await Promise.all([
     source.getTokenCollections(),
     source.getTextStyles(),
