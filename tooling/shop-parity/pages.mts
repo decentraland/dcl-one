@@ -485,11 +485,41 @@ PAGES.push(
   plain("not-found", "A path the Shop does not have", "/shop/no-such-page"),
 );
 
+/** The cart's checkout dialog (upstream's CartCheckoutModal, labelled for its whole flow). */
+const CART_CHECKOUT = "[role=dialog][aria-label='Check out your cart']";
+
 const SIGNED_IN_ONLY: PageSpec[] = [
   plain("my-items", "My Items", "/shop/my-items"),
   plain("my-favorites", "My Favorites", "/shop/my-favorites"),
   plain("activity", "Activity", "/shop/activity"),
   plain("my-store", "My Store", "/shop/my-store"),
+  {
+    id: "cart-checkout",
+    title: "Checkout from the cart, short on Credits (the reference opens its CartCheckoutModal on the packs)",
+    path: "/shop/cart",
+    // The test wallet holds no Credits, so Checkout opens the packs that finish the purchase.
+    ready: both(CART_CHECKOUT),
+    setup: async (page, _side, targets) => {
+      await addToCart(page, targets.item ?? "/shop/items");
+      await page.goto(new URL("/shop/cart", page.url()).href, { waitUntil: "load" });
+      const checkout = page.locator(byText("button", "Checkout"));
+      await checkout.first().waitFor({ state: "visible", timeout: 20_000 });
+      await waitUntil(async () => (await checkout.first().isEnabled()) || undefined, { timeoutMs: 20_000, description: "Checkout enabled once the cart is priced" });
+      await checkout.first().click();
+    },
+    // The dialog is fixed over the page: one screen holds it.
+    maxHeight: 800,
+    keys: [
+      ...FRAME_KEYS,
+      { name: "dialog", selector: both(CART_CHECKOUT) },
+      { name: "dialog.title", selector: both(`xpath=//*[@role='dialog']//h2`) },
+      { name: "dialog.packs", selector: both(`${CART_CHECKOUT} [data-testid=credit-pack]`), max: 4 },
+    ],
+    masks: [WEBGL],
+    regions: FRAME_REGIONS,
+    expected: FRAME_EXPECTED,
+    unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
+  },
   {
     id: "item-buy",
     title: "Buy now on the item detail (the reference opens its BuyModal over the page)",
