@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "f92513e4e93dcaa681cbe787a5a035983766b12130094979c556aea452e3d886",
+  "lockHash": "da5c5a55559533a430103fcdc768756b7cc4481928d1613fd63e98f180d2cac7",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "ed0c2d5f8c8358f5feeddb0a0d18060626cb510e",
+  "figmaTree": "5ebc7e3e2c34707717fc8e8195c9f47583e6afb1",
   "checks": {
     "fetch-source": {
       "result": "pass",
@@ -31,7 +31,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "clean verified-cache install reproduces all 39 tracked foundation files byte for byte, repeat changes nothing"
+      "detail": "clean verified-cache install regenerates provenance and reproduces all 39 tracked foundation files byte for byte"
     }
   }
 }

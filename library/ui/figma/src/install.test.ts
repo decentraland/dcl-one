@@ -36,10 +36,30 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     await pinTestCapture(figma)
     lockPath = path.join(figma, 'test-capture.lock.json')
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    await mkdir(path.join(figma, 'src/generators'), { recursive: true })
+    await writeFile(path.join(figma, 'src/generators/demo.ts'), 'export const fixture = true\n')
+    const metadata = JSON.stringify({
+      schema: 1,
+      toolingCommit: 'a'.repeat(40),
+      capture: {
+        repository: 'https://github.com/decentraland/figma-design-system',
+        revision: 'a'.repeat(40),
+        inputs: { 'variables.json': '0'.repeat(64) }
+      },
+      generatorModules: [
+        { path: 'figma/src/generators/demo.ts', sha256: '0'.repeat(64), blob: '0'.repeat(40) }
+      ],
+      families: {},
+      output: []
+    })
     lock.publicFoundations = {
       files: {
         'foundations.css': {
           sha256: createHash('sha256').update(entry).digest('hex'),
+          origin: { kind: 'source' }
+        },
+        'source.json': {
+          sha256: createHash('sha256').update(metadata).digest('hex'),
           origin: { kind: 'source' }
         }
       }
@@ -47,6 +67,7 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     await writeFile(lockPath, JSON.stringify(lock))
     await mkdir(path.join(root, 'foundations'))
     await writeFile(path.join(root, 'foundations/foundations.css'), entry)
+    await writeFile(path.join(root, 'foundations/source.json'), metadata)
     await initializeFixtureGit(root)
     app = await createApp(figma)
     baseline = await readdir(path.join(root, 'foundations'))
@@ -88,6 +109,48 @@ describe('when foundations are installed from a verified synthetic cache', () =>
       expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
     }
   )
+
+  it('should regenerate capture, output and generator provenance from committed inputs', async () => {
+    const result = await runInstall(app, { target: 'foundations' })
+    const metadata = JSON.parse(await readFile(path.join(root, 'foundations/source.json'), 'utf8'))
+    expect(metadata.capture.revision).toBe('c'.repeat(40))
+    expect(metadata.capture.inputs['variables.json']).not.toBe('0'.repeat(64))
+    expect(metadata.generatorModules[0].sha256).toBe(
+      createHash('sha256').update('export const fixture = true\n').digest('hex')
+    )
+    expect(metadata.output).toEqual(
+      result.files.filter((file) => file.path !== 'source.json' && file.path !== 'foundations.css')
+    )
+  })
+
+  it('should reject an uncommitted generator edit before writing provenance', async () => {
+    await writeFile(path.join(figma, 'src/generators/demo.ts'), 'changed')
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'Commit generator changes'
+    )
+    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+  })
+
+  it('should reject a provenance template that does not match its pin', async () => {
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock.publicFoundations.files['source.json'].sha256 = '0'.repeat(64)
+    await writeFile(lockPath, JSON.stringify(lock))
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'Unverified provenance template'
+    )
+    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+  })
+
+  it('should reject hand-edited provenance instead of accepting a self-consistent template', async () => {
+    const file = path.join(root, 'foundations/source.json')
+    const metadata = JSON.parse(await readFile(file, 'utf8'))
+    metadata.families = { unexpected: {} }
+    await writeFile(file, JSON.stringify(metadata))
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'Unverified static foundation source: source.json'
+    )
+    expect(JSON.parse(await readFile(file, 'utf8')).families).toEqual({ unexpected: {} })
+  })
 
   it('should refuse the live source without writing', async () => {
     await expect(runInstall(app, { target: 'foundations', source: 'rest' })).rejects.toThrow(

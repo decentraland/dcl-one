@@ -1,5 +1,5 @@
 // port:9c6dfbe6, promotion/promote.ts installation subset. Seal, manifest verification and release publication removed.
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   lstat,
@@ -105,7 +105,7 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   const lock = JSON.parse(lockBytes.toString('utf8')) as {
     publicFoundations?: { files: Record<string, { sha256: string; origin: { kind: string } }> }
   }
-  readFdsPin(lock)
+  const pin = readFdsPin(lock)
   const source = app.createSource('snapshot')
   if (source.name !== 'snapshot') throw new Error('install requires a snapshot source')
   await source.ready?.()
@@ -134,14 +134,36 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   const publicFiles = lock.publicFoundations?.files
   if (!publicFiles || !Object.keys(publicFiles).length)
     throw new Error('install requires pinned public foundation sources')
+  const generatedPaths = new Set(planned.keys())
+  const staticInputs = new Map<string, Buffer>()
   // Static composition, declarations and licensed assets are maintained sources, never generator output.
   for (const [file, entry] of Object.entries(publicFiles)) {
     if (entry.origin.kind === 'generated') continue
     if (planned.has(file)) throw new Error('Generated output overlaps a maintained source')
     const bytes = await readFile(await resolveContained(path.join(root, 'foundations'), file))
-    if (bytes.subarray(0, POINTER.length).equals(POINTER) || digest(bytes) !== entry.sha256)
+    if (
+      bytes.subarray(0, POINTER.length).equals(POINTER) ||
+      (file !== 'source.json' && digest(bytes) !== entry.sha256)
+    )
       throw new Error('Unverified static foundation source: ' + file)
+    staticInputs.set(file, bytes)
     planned.set(file, bytes)
+  }
+  if (staticInputs.has('source.json')) {
+    const original = staticInputs.get('source.json')!
+    const prefix = (await execute('git', ['-C', root, 'rev-parse', '--show-prefix'])).stdout.trim()
+    const template = execFileSync('git', [
+      '-C',
+      root,
+      'show',
+      ':' + prefix + 'foundations/source.json'
+    ])
+    if (digest(template) !== publicFiles['source.json']!.sha256)
+      throw new Error('Unverified provenance template')
+    const regenerated = await regenerateSource(root, template, pin, planned, generatedPaths)
+    if (digest(original) !== publicFiles['source.json']!.sha256 && !original.equals(regenerated))
+      throw new Error('Unverified static foundation source: source.json')
+    planned.set('source.json', regenerated)
   }
   const verifyInputs = async () => {
     await verifyFdsCache(snapshot, lockPath)
@@ -150,7 +172,7 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
     for (const [file, entry] of Object.entries(publicFiles)) {
       if (
         entry.origin.kind !== 'generated' &&
-        !planned
+        !staticInputs
           .get(file)!
           .equals(await readFile(await resolveContained(path.join(root, 'foundations'), file)))
       )
@@ -158,6 +180,63 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
     }
   }
   return publishInstall(root, options.target, outDir, planned, verifyInputs)
+}
+
+type FoundationSource = {
+  toolingCommit: string
+  capture: { repository: string; revision: string; inputs: Record<string, string> }
+  generatorModules: { path: string; sha256: string; blob: string }[]
+  output: { path: string; sha256: string }[]
+}
+
+async function regenerateSource(
+  root: string,
+  original: Buffer,
+  pin: ReturnType<typeof readFdsPin>,
+  files: Map<string, Buffer>,
+  generatedPaths: Set<string>
+): Promise<Buffer> {
+  const metadata = JSON.parse(original.toString('utf8')) as FoundationSource
+  const repository = (
+    await execute('git', ['-C', root, 'rev-parse', '--show-toplevel'])
+  ).stdout.trim()
+  const modules = []
+  for (const module of metadata.generatorModules) {
+    const bytes = await readFile(await resolveContained(repository, module.path))
+    modules.push({
+      path: module.path,
+      sha256: digest(bytes),
+      blob: execFileSync('git', ['-C', repository, 'hash-object', '--stdin'], {
+        input: bytes,
+        encoding: 'utf8'
+      }).trim()
+    })
+  }
+  if (JSON.stringify(modules) !== JSON.stringify(metadata.generatorModules)) {
+    const paths = modules.map((module) => module.path)
+    const commit = (
+      await execute('git', ['-C', repository, 'log', '-1', '--format=%H', 'HEAD', '--', ...paths])
+    ).stdout.trim()
+    for (const module of modules) {
+      const committed = execFileSync('git', ['-C', repository, 'show', `${commit}:${module.path}`])
+      if (digest(committed) !== module.sha256)
+        throw new Error('Commit generator changes before installing their output')
+    }
+    metadata.toolingCommit = commit
+  }
+  metadata.generatorModules = modules
+  metadata.capture.revision = pin.snapshotRevision
+  metadata.capture.inputs = Object.fromEntries(
+    Object.keys(metadata.capture.inputs).map((file) => {
+      if (!pin.digests[file]) throw new Error('Missing foundation capture input: ' + file)
+      return [file, pin.digests[file]]
+    })
+  )
+  metadata.output = [...files]
+    .filter(([file]) => generatedPaths.has(file))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([file, bytes]) => ({ path: file, sha256: digest(bytes) }))
+  return Buffer.from(JSON.stringify(metadata, null, 2) + '\n')
 }
 
 async function publishInstall(
