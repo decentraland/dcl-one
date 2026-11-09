@@ -180,6 +180,11 @@ describe("packs", () => {
     t = 0;
     const gateway = createFakeShop({ packOrder: () => ({ status: 404, body: "Not Found" }) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, gateway.client)).toEqual({ status: "pending" });
+    // A gateway's 404 in between is not the node's word: it neither shows the order exists nor turns "missing" off.
+    t = 0;
+    let hops = 0;
+    const mixed = createFakeShop({ packOrder: () => (++hops === 1 ? { status: 404, body: "Not Found" } : ORDER_NOT_FOUND) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, mixed.client)).toEqual({ status: "missing" });
     // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
     t = 0;
     let calls = 0;
