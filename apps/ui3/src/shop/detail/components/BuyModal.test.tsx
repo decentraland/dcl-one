@@ -400,9 +400,13 @@ describe("Buy now's dialog", () => {
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-    // The credit it reserved went into nothing that mined: released at once, not left to its expiry.
-    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("The purchase failed on-chain, so nothing was bought, and your Credits were returned.");
-    expect(demo.shop.log.find((r) => r.name === "cancelCreditAuthorizations")).toBeTruthy();
+    // The credit it reserved went into nothing that mined: retired now, that one and no other. Retired Credits come back
+    // with the expiry sweep, which is what the copy says.
+    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent(
+      "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.",
+    );
+    const cancels = demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations");
+    expect(cancels.at(-1)?.body).toEqual({ salts: [sent.creditId] });
     expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
   });
 
@@ -434,14 +438,28 @@ describe("Buy now's dialog", () => {
     }
   });
 
-  it("a split held without a transaction to read (the first format's record) shows it confirming with Check again off", async () => {
-    const { lineId } = renderBuy({ session: "web2" });
-    cleanup();
-    resetBuyNowCarts();
-    sessionStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
-    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
-    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
+  it("a split held without a transaction to read shows it confirming with Check again off, until the hold runs out", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { lineId } = renderBuy({ session: "web2" });
+      cleanup();
+      resetBuyNowCarts();
+      // The first format's record: a bare timestamp, no hash.
+      sessionStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
+      renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+      const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+      expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
+      // The hold runs out while the dialog is open: Check again comes on and lets the item go.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SENT_HOLD_MS + 10);
+      });
+      const check = within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" });
+      expect(check).toBeEnabled();
+      await act(async () => fireEvent.click(check));
+      expect(await within(screen.getByTestId("buy-modal")).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("MANA picked, failed, and Try again: the step comes back with MANA still ticked", async () => {
