@@ -24,7 +24,7 @@ use crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER;
 /// What an order lookup answers when the order has no record for this signer. The shop UI tells "no such order" from
 /// any other 404 (a gateway's route) by it (apps/ui3 `credits/payments-stripe.ts`, `isOrderNotFound`), so the two
 /// must change together; `order_not_found_wire_body` pins it.
-pub(crate) const ORDER_NOT_FOUND: &str = "order not found";
+const ORDER_NOT_FOUND: &str = "order not found";
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutRequestBody {

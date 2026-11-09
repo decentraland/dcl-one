@@ -44,12 +44,14 @@ const delay = (ms: number, signal?: AbortSignal) =>
   });
 
 /**
- * The node's answer for an order it has no record of for this signer: `ORDER_NOT_FOUND` in
- * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins this body.
+ * The node's error for an order it has no record of for this signer: `ORDER_NOT_FOUND` in
+ * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins its body.
  */
-function isOrderNotFound(body: unknown): boolean {
-  const b = body as { error?: unknown; message?: unknown } | null;
-  return !!b && (b.error === "order not found" || b.message === "order not found");
+export const ORDER_NOT_FOUND = "order not found";
+
+/** That error, as the client reads any of the node's errors (its code, as `creditsDisabled` does). */
+function isOrderNotFound(e: unknown): boolean {
+  return isShopApiError(e) && e.status === 404 && e.code === ORDER_NOT_FOUND;
 }
 
 /** A poll's answer. `heard`: the node itself gave this status, so the order exists for this signer. */
@@ -62,7 +64,8 @@ async function fetchOrderStatus(orderId: string, client: ShopClient, signal?: Ab
   } catch (e) {
     // The node's own "order not found": no order by that id for this signer. Any other 404 (a gateway's route during a
     // deploy) says nothing about the order, so the poll keeps waiting on it as before, and it is not the node's word.
-    if (isShopApiError(e) && e.status === 404) return { status: { status: isOrderNotFound(e.body) ? "missing" : "processing" }, heard: false };
+    if (isOrderNotFound(e)) return { status: { status: "missing" }, heard: false };
+    if (isShopApiError(e) && e.status === 404) return { status: { status: "processing" }, heard: false };
     throw e;
   }
 }
