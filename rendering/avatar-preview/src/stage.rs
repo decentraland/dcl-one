@@ -48,7 +48,7 @@ impl Default for StageLight {
             shadow: 0.35,
             shadow_reach: 6.0,
             exposure: -0.4,
-            glow: 0.0,
+            glow: 1.0,
             platform_base: 0.5,
             platform_emission: 1.67,
         }

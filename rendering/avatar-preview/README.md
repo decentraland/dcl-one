@@ -124,9 +124,9 @@ so the host page shows through around the avatar, with the avatar's shadow on it
 The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, raised to 8000, and the ambient its
 camera layer overrides to) and the Unity renderer's framing and light placement, measured with
 `web/compare.html`: the camera and the key light stay put and the subject turns under them, and bloom
-takes only what is brighter than white (emissive parts). Open differences from the Unity
-renderer: its colours are deeper and more saturated, and it draws a soft light pool under the
-feet.
+takes only what is brighter than white (emissive parts). The default background is
+wearable-preview's `#4b4852`. Open difference from the Unity renderer: its colours are deeper and
+more saturated.
 
 ## Parity with the Unity renderer
 
@@ -148,8 +148,9 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   `changeCameraPosition`'s radius step in Babylon's metres within that range;
   `disableAutoCenter` aims at the subject's own origin (an avatar's feet) instead of its middle,
   the offsets acting from there;
-- its floor: the shadow catcher and, under it, the glow around the feet (the light rig's `glow`, 0 by
-  default for now);
+- its floor: the shadow catcher and, under it, the glow around the feet at the renderer's strength
+  (the light rig's `glow`, 1), in marketplace and builder modes; the profile modes show the shadow
+  alone;
 - its framing of avatars too big for the default view, set once before the avatar is seen: after the
   avatar or outfit changes, the page keeps its loading state while the preview waits for the outfit
   and the emote, steps the paused emote through its clip, measures the skinned surface at each pose
@@ -235,8 +236,10 @@ Windows Chrome can be driven headless from WSL over the DevTools protocol
 
 ## Next work
 
-1. Look parity against the Explorer's Backpack preview: light rig, ambient, bloom.
-2. Emote pause, seek and length; audio; inline (base64,
-   blob) items for unpublished wearables.
-3. A workflow that builds, size-checks and publishes the module, and runs on changes to the
-   Explorer crates it links.
+1. A full release build of both modules and their size measured again.
+2. A workflow that builds both modules, fails over a size limit, publishes them, and runs on
+   changes to the Explorer crates it links.
+3. Where the page and modules are served from, and how hosts switch to it: their preview url
+   pointed at this page, or a Bevy renderer inside `wearable-preview`. The shop sends `mode` only
+   with its Unity flag on.
+4. Social emotes and spring bones, once the Explorer renders them.

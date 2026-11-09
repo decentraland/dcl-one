@@ -41,7 +41,7 @@ const DEFAULT_RADIUS = 4.6; // metres at the default 26.2 degree field of view
 const DEFAULT_TARGET_Y = 0.95;
 const DEFAULT_FOV = 26.2;
 const DEFAULT_BETA = 0.12;
-const DEFAULT_BACKGROUND = '#1a1720';
+const DEFAULT_BACKGROUND = '#4b4852'; // wearable-preview's
 // wearable-preview's emote names (PreviewEmote) that the catalyst's base-emotes collection has;
 // the rest (idle, walk, run, jump, fashion poses, love) are its own files and fall back to idle
 const BASE_EMOTES = {
@@ -637,6 +637,9 @@ async function apply() {
     command({ op: 'platform', shown: modeOf(o) === 'authentication' });
     // the Unity renderer's jesus mode (the download page): its particles off the avatar
     command({ op: 'effect', shown: modeOf(o) === 'jesus' });
+    // the Unity renderer's glow around the feet, at its own strength, where the shop and the
+    // builder show the avatar; the profile modes keep the shadow alone
+    command({ op: 'light', glow: ['marketplace', 'builder'].includes(modeOf(o)) ? 1 : 0 });
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
     command(solo
