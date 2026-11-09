@@ -736,7 +736,14 @@ describe('when selecting a main push range', () => {
     const args = path.join(root, 'scanner-args')
     const selected = spawnSync(
       'bash',
-      ['-e', '-c', `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` + scan],
+      [
+        '-e',
+        '-c',
+        // This repository stands in for trusted/: the step's fresh copy of the guard is not needed here.
+        `git() { case " $* " in *' cat-file '*) return 0;; esac; command git "$@"; }\n` +
+          `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` +
+          scan
+      ],
       {
         cwd: root,
         encoding: 'utf8',
