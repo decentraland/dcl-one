@@ -73,7 +73,10 @@ type Workflow = {
   on: Record<string, unknown> | string | string[]
   permissions?: Record<string, string>
   env?: Record<string, unknown>
-  jobs: Record<string, { name?: string; env?: Record<string, unknown>; steps: WorkflowStep[] }>
+  jobs: Record<
+    string,
+    { name?: string; env?: Record<string, unknown>; environment?: string; steps: WorkflowStep[] }
+  >
 }
 const workflowFiles = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))
 const load = (file: string) => parse(readFileSync(path.join(workflows, file), 'utf8')) as Workflow
@@ -143,6 +146,20 @@ describe('ui-library-key-scan.yml', () => {
   it('should run only from workflow_run, with the least permissions it needs', () => {
     expect(triggers(workflow)).toEqual(['workflow_run'])
     expect(workflow.permissions).toEqual({ actions: 'read', checks: 'write', contents: 'read' })
+  })
+
+  it('should take the key from the main-only web-preview environment, on the key-scan job only', () => {
+    expect(workflow.jobs['key-scan']!.environment).toBe('web-preview')
+    expect(Object.keys(workflow.jobs)).toEqual(['key-scan'])
+  })
+
+  it('should count the Review artifacts with a gh call gh accepts', () => {
+    const check = allSteps.find((step) => step.id === 'artifact_check')!
+    // gh rejects --slurp together with --jq before calling the API, which failed every artifact check.
+    expect(check.run).not.toMatch(/--slurp/)
+    expect(check.run).toContain('--paginate')
+    expect(check.run).toMatch(/\| \.id" \| wc -l/)
+    expect(check.run).toMatch(/^set -o pipefail$/m)
   })
 
   it('should check out only the default branch, into trusted/', () => {

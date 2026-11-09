@@ -109,16 +109,24 @@ describe('when a trusted scan cannot run', () => {
       'required Review artifact was missing'
     )
   })
-  it('should reject an absent or duplicate Review artifact', async () => {
+  // gh prints one artifact id per line for the matching artifacts; the fake stands in for that output.
+  const countArtifacts = (ids: string[], status = 0) => {
     const step = steps.find((step) => step.id === 'artifact_check')!
-    for (const count of [0, 2]) {
-      const result = spawnSync(
-        'bash',
-        ['-e', '-o', 'pipefail', '-c', `gh() { echo ${count}; }\n` + step.run],
-        { cwd: root, encoding: 'utf8', env: defaults() }
-      )
-      expect(result.status).not.toBe(0)
-    }
+    const gh = `gh() { printf '%s' '${ids.map((id) => `${id}\n`).join('')}'; return ${status}; }\n`
+    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', gh + step.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: defaults()
+    })
+  }
+  it('should reject an absent or duplicate Review artifact', async () => {
+    for (const ids of [[], ['1', '2']]) expect(countArtifacts(ids).status).not.toBe(0)
+  })
+  it('should accept exactly one Review artifact', async () => {
+    expect(countArtifacts(['7']).status).toBe(0)
+  })
+  it('should fail when the artifact listing itself fails', async () => {
+    expect(countArtifacts(['7'], 1).status).not.toBe(0)
   })
 })
 describe('when selecting the LFS inputs of the scan', () => {

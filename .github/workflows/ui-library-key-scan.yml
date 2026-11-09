@@ -21,6 +21,9 @@ concurrency:
 jobs:
   key-scan:
     runs-on: ubuntu-26.04
+    # FIGMA_FILE_KEY lives only in web-preview, which admits the default branch only. workflow_run runs from
+    # main, so the job qualifies; each scan waits for a web-preview approval before any step runs.
+    environment: web-preview
     steps:
       # No FIGMA_FILE_KEY is in scope here. Anything unexpected ends the job before the key is read. The
       # triggering workflow is pinned by its file path and by the id GitHub assigns to that file, resolved
@@ -153,8 +156,9 @@ jobs:
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
         run: |
           set -o pipefail
-          count=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate --slurp \
-            --jq "[.[].artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\")] | length")
+          # gh does not combine slurping pages with --jq, so each page prints one id per matching artifact.
+          count=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\") | .id" | wc -l | tr -d ' ')
           [ "$count" = 1 ] || { echo "The run must provide exactly one Review artifact for its head" >&2; exit 1; }
 
       - id: artifact_download
