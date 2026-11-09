@@ -1,7 +1,7 @@
 # Oddities
 
-Things that look wrong and aren't, or that work differently from what a reader who knows bevy,
-Unity or the SDK would expect. Several of these have been "fixed" by well-meaning agents more
+Things that look wrong and aren't, or that work differently from what a reader who knows bevy
+or the SDK would expect. Several of these have been "fixed" by well-meaning agents more
 than once. Check here before correcting something surprising.
 
 ## Rendering
@@ -54,26 +54,23 @@ than once. Check here before correcting something surprising.
   content map before parsing as an emote URN, because `EmoteUrn::new("models/foo.glb")`
   succeeds (zero colons gets the base-collection prefix), so URN-first swallows every
   scene-file emote.
-- **Entity-targeted pointer results are stricter than Unity's.** Bevy writes an
-  entity-targeted result only for a declared matching entry (event type, button, distance).
-  Unity writes every button transition to a hovered entity with any `PointerEvents`, gated by
-  the last entry's distance. A scene that registers only `PET_DOWN` and polls `PET_UP` on the
-  entity works on Unity and not here. Unity's behaviour is considered wrong; the scene fix is
-  to declare the entry.
+- **Entity-targeted pointer results require a matching declaration.** The engine writes a
+  result only for a declared matching entry (event type, button, distance). A scene that
+  registers only `PET_DOWN` cannot poll `PET_UP` on the entity; declare both entries when both
+  transitions are needed.
 - **`restricted_actions.proto` is a dead mirror.** The RestrictedActions interface is
   hand-wired JS plus ops, not protobuf-decoded; editing that proto here changes nothing.
-- **Avatar-attach transforms are written back to the scene** every frame, Unity-style:
+- **Avatar-attach transforms are written back to the scene** every frame:
   rotation player-relative, position an unrotated world-axis delta. The SDK's
-  `getWorldTransform` special-cases attach, and scenes in the wild invert Unity's quirk by hand,
-  so bug-for-bug parity is the only convention that doesn't break them.
+  `getWorldTransform` special-cases attach, and existing scenes invert this convention by hand,
+  so changing it breaks their transforms.
 - **Scene UI pointer target survives a drag across other nodes.** A held node stays
   `Pressed` and never re-emits `HoverEnter`, so on exit of the current target the engine falls
   back to the highest-stamped node still hovered (`UiHoverTime`) rather than `None`.
 
-## Unity, for comparison
+## Asset semantics
 
-- Unity alpha-blends MASK wearables after the cutoff; bevy stays spec-correct. See decisions.
-- Unity never parses `KHR_materials_emissive_strength`; bevy honours it.
-- Unity can leave a player's avatar hidden after a scene removes its `AvatarModifierArea`
-  (a cleanup race latches a global flag). Not our bug, but it explains reports that "bevy
-  shows the avatar and Unity doesn't".
+- MASK wearables use binary alpha, as glTF specifies. See decisions.
+- `KHR_materials_emissive_strength` is honored; high authored values can produce strong glow.
+- Removing an `AvatarModifierArea` must release its visibility effect. Diagnose a persistently
+  hidden avatar through the remaining modifier owners and their cleanup.

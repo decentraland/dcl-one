@@ -59,7 +59,7 @@ places where its copy was behind `main`.
 
 - The Explorer, the HUD and later the SDK describe one protocol, the one dcl-one ships.
   A proto change and the engine change that implements it land in one pull request.
-- Consumers of `@dcl/protocol@next` outside this repository (Unity, Godot) gain messages
+- Consumers of `@dcl/protocol@next` outside this repository gain messages
   their explorer does not implement once the reconciliation reaches `protocol/main`, as the
   Explorer already lives with the five `main`-only components. Additive only.
 - Deleting the Explorer's copy changes `rendering/bevy-explorer/source`; its workflows build

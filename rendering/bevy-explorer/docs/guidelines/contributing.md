@@ -28,11 +28,8 @@ understand the change in one sitting.
 - When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
   comments that explain constraints still in force and rename tests that now prove a different
   contract.
-- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
-  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
-  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
-  code is clear. Unity sources go in the PR description; who decided goes there or in
-  [decisions](decisions.md).
+- Comments explain current invariants and constraints. Keep implementation provenance and
+  decision history out of them; apply the [public-prose rule](#public-prose).
 - Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
@@ -76,9 +73,24 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
-- A port from Unity names the Unity files it follows, the constants carried over, and every
-  divergence with its reason. See [porting from Unity](porting-from-unity.md).
+- Explain the chosen behavior, constants, alternatives and verification in this engine's own
+  terms. Follow [public prose](#public-prose) and [implementing features](implementing-features.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
+
+## Public prose
+
+Document the Explorer's current behavior, ownership, constraints and reasons directly. Keep
+Unity names, repository or file references, source revisions, copied-constant provenance and
+comparison language out of code comments, tracked documentation (including ADRs), and PR titles
+and descriptions. This rule supersedes older instructions to put that material in PRs. Keep
+source inventories and compatibility evidence in ignored task/review reports instead; retain
+required legal attribution in licenses and dependency manifests.
+
+Before committing or updating a PR, search every changed documentation file and the complete
+PR text with `rg -ni '\bunity(?:\b|[-_])'` and check the diff for indirect provenance wording.
+Remove matches outside this prohibition and explain each behavior using this implementation's
+requirements and tests. A source comparison is evidence for a decision, not public design
+rationale.
 
 ## Before pushing
 

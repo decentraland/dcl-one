@@ -45,5 +45,4 @@
   scene backend can trust who is asking.
 - **Guest**: a session with a throwaway wallet and no login.
 - **SDK / js-sdk-toolchain**: the scene authoring library and CLI. **Creator Hub**: the
-  desktop editor that embeds this client. **Unity explorer**: the reference client, used for
-  behaviour comparisons.
+  desktop editor that embeds this client.

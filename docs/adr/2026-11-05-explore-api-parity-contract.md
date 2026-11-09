@@ -195,12 +195,10 @@ exception:
 
 ## Callers
 
-The caller dimension is pinned to the clients production serves:
-`decentraland/unity-explorer@707055ad` (`DecentralandUrlsSource.cs`, `PlacesAPIClient.cs`,
-`HttpEventsApiService.cs`) and `decentraland/sites@17b3535`. Both resolve `/api/places`,
-`/api/worlds`, `/api/destinations`, `/api/map` and `/api/events` on the places and events
-hosts, or `/places/api/…` and `/events/api/…` through the gateway; neither requests `/v1`.
-Unity sends integers, `true` flags, repeated `categories`, `positions` and `names`,
+The supported caller contract resolves `/api/places`, `/api/worlds`, `/api/destinations`,
+`/api/map` and `/api/events` on the places and events hosts, or `/places/api/…` and
+`/events/api/…` through the gateway; it does not use `/v1`.
+Explorer requests use integers, `true` flags, repeated `categories`, `positions` and `names`,
 `order_by` with `order`, `owner`, `only_sdk7`, `with_live_events`, `with_connected_users`,
 and on events `list=live` or `highlight`, `positions[]`, `places_ids[]`, `community_id`,
 `from` and `to`, and `POST /api/events/search`. The sites send `only_highlighted=true`,
