@@ -9,7 +9,7 @@
 import { encodeAbiParameters, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import type { ChainId } from "@shop/model/chain";
 import { COLLECTION_DISCOUNT_COUPON, COUPON_MANAGER_ABI, COUPON_MANAGERS, type ContractData } from "@shop/market/lib/contracts";
 import { readContract } from "../../market/lib/rpc";

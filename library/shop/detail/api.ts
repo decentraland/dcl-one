@@ -5,9 +5,9 @@
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
 import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
-import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "@shop/discovery/lib/catalogItem";
+import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
 import { type ShopClient } from "../api/shop";
-import { isResale } from "@shop/market/access-rule";
+import { isResale } from "../market/access-rule";
 
 function c(opts: Opts): ShopClient {
   return opts.client;

@@ -8,9 +8,9 @@
 // registrar) re-checks it, and a credits quote the server cannot give is shown as unavailable, never
 // replaced by MANA.
 
-import { isShopApiError } from "../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { missingOfferRoute, type OfferSource } from "../detail/offers";
-import { type ShopClient } from "../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import { evmAddress } from "@shop/model/address";
 import { nameAsset, parseNameLabel, type NameLabel } from "@shop/model/asset";
 import { CHAIN, type ChainId } from "@shop/model/chain";

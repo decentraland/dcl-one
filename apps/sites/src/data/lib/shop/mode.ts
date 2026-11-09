@@ -3,7 +3,7 @@
 // /shop-api. The SSR loaders read it here; root hands it to the browser as window.__SHOP_API_MODE__,
 // which ui3's one Shop client reads (ui3/src/shop/api/client.ts).
 
-import type { ShopApiMode } from "@ui/shop/api/client";
+import type { ShopApiMode } from "@shop/api/client";
 
 import { processEnv, type BaseEnv } from "../catalyst/bases";
 

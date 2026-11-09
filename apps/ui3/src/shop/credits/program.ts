@@ -8,9 +8,9 @@
 
 import type { CreditsProgramProgressResponse } from "@catalyst-api/credits/CreditsProgramProgressResponse";
 import type { SeasonsData } from "@catalyst-api/credits/SeasonsData";
-import { type ShopClient } from "../api/shop";
-import type { ShopSigner } from "../api/signer";
-import { decodeUserCredits, type UserCreditsResponse } from "./credits";
+import { type ShopClient } from "@shop/api/shop";
+import type { ShopSigner } from "@shop/api/signer";
+import { decodeUserCredits, type UserCreditsResponse } from "@shop/credits/credits";
 import { shopClient } from "../api/host";
 
 /** GET /shop-api/v1/credit-program/season: the current season (null when the program is off). */

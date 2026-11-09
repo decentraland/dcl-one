@@ -12,7 +12,7 @@ import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { creditsCeil } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { presentPayment } from "@shop/payment/present";

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { manaWei } from "@shop/model/money";
 import { SIGNED_OUT, web2, web3 } from "@shop/payment/fixtures";
-import { shopListingToItem, unifiedListingToItem } from "./api";
+import { shopListingToItem, unifiedListingToItem } from "@shop/discovery/api";
 import { cardEligibility, cardPrice } from "@shop/discovery/cardPrice";
 import { catalogRow, L1_MINT, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE, UNPRICED_WEARABLE, saleWearable } from "./fixtures";
 import { toCatalogItem, type CatalogItem } from "@shop/discovery/lib/catalogItem";

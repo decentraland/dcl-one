@@ -9,7 +9,7 @@ import Button from "../../atoms/Button";
 import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
-import { fetchCatalogByIds, fetchListings } from "../discovery/api";
+import { fetchCatalogByIds, fetchListings } from "@shop/discovery/api";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { useShopQuery } from "../discovery/query";

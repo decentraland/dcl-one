@@ -8,10 +8,10 @@
 import type { AuthIdentity } from "../../data/auth/identity";
 import { signAuthChain } from "../../data/auth/signerCore";
 import { catalystBase, signedFetch } from "../../data/catalyst/client";
-import type { ShopPeers, UrnNetwork } from "../detail/lib/urn";
-import type { ShopApiMode, ShopApiOptions } from "./client";
-import { createShopClient, type ShopClient } from "./shop";
-import type { ShopSigner, ShopTransport } from "./signer";
+import type { ShopPeers, UrnNetwork } from "@shop/detail/lib/urn";
+import type { ShopApiMode, ShopApiOptions } from "@shop/api/client";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { ShopSigner, ShopTransport } from "@shop/api/signer";
 
 type ShopWindow = Window &
   typeof globalThis & { __SHOP_API_MODE__?: string; __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };

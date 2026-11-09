@@ -8,20 +8,9 @@ import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "..", "..");
-const SEAM = [
-  "shop/api/client.ts",
-  "shop/api/shop.ts",
-  "shop/api/signer.ts",
-  "shop/checkout/lib/api.ts",
-  "shop/credits/credits.ts",
-  "shop/detail/api.ts",
-  "shop/detail/lib/urn.ts",
-  "shop/discovery/api.ts",
-  "shop/discovery/lib/categories.ts",
-  "shop/discovery/lib/iconName.ts",
-  "shop/discovery/lib/rolloutFlags.ts",
-  "shop/checkout/lib/trade.ts",
-];
+// The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file)
+// are held by library/shop/boundary.test.ts, which compiles them without a host at all.
+const SEAM = ["shop/checkout/lib/api.ts", "shop/checkout/lib/trade.ts"];
 
 // The code only: a comment may name what the module no longer reaches for.
 const code = (source: string): string => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");

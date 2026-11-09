@@ -22,7 +22,7 @@ import { useShopWallet } from "../../wallet/context";
 import { landCategoryOf } from "../../land/contracts";
 import { readEstateFingerprint } from "../../land/estate";
 import { rpcReader, type ChainReader } from "../../land/evm";
-import type { LegacyOrderRef } from "../api";
+import type { LegacyOrderRef } from "@shop/detail/api";
 import "./legacyorderbuy.css";
 
 export type LegacyOrderBuyProps = {

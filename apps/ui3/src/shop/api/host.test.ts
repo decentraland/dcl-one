@@ -1,10 +1,10 @@
 // The browser host's wiring: what it reads from the page and passes to the client, which reads nothing itself.
 import { afterEach, describe, expect, it } from "vitest";
 import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
-import { createShopApi } from "./client";
+import { createShopApi } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { hostApiOptions, identitySigner, shopApiMode, shopPeers } from "./host";
-import type { TransportRequest } from "./signer";
+import type { TransportRequest } from "@shop/api/signer";
 
 type HostWindow = { __SHOP_PEERS__?: Record<string, string>; __CATALYST_BASE__?: string; __SHOP_API_MODE__?: string };
 const w = window as unknown as HostWindow;
