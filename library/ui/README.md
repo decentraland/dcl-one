@@ -8,15 +8,30 @@ The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standard
 | `figma/`               | Node-only: CLI and MCP server (`dcl-figma`), Review gallery (`review/`), consumer skill kit (`agent-kit/`), `key-guard.mjs`, `lock-digests.mjs`, `port-verification.mjs`. Never imported by browser code. Maintenance notes: [`figma/MAINTENANCE.md`](figma/MAINTENANCE.md). |
 | `templates/component/` | Starting point for a new shared component.                                                                                                                                                                                                                                   |
 
+## Shared foundations
+
+The public `@dcl/one-ui` entry exports colors, icons, typography, responsive layouts and spacing, including semantic CSS references through `theme`. Load `@dcl/one-ui/foundations.css` once from the consumer's global stylesheet; it provides the shared CSS variables and bundled Inter fonts. Import typography classes from `@dcl/one-ui/text-styles.module.css` as a CSS Module. Components and the CLI remain separate from these browser exports.
+
+The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five families use four source pages: Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
+
+`semantic` exposes resolved Dark-mode values for inspection. Use `theme.color` for semantic CSS references. A text style's `fontSize` references the responsive CSS variable; `fontSizePx` is the captured tablet-and-larger value for responsive headings, not the current viewport measurement. Use the generated CSS classes for rendering and computed styles for viewport-specific pixel measurements.
+
+Consumers configure `@dcl/one-ui` and its CSS subpaths in their TypeScript and bundler aliases before importing this source library. Application adoption, including alignment of existing Inter font registrations, is separate from this package.
+
+Inter variable normal faces (weights 100–900) come from `@fontsource-variable/inter` 5.3.0 under the SIL Open Font License in `foundations/typography/fonts/OFL.txt`. `foundations/typography/font-source.json` pins their materialized payloads; Git LFS stores the WOFF2 assets. Font ownership is independent of the Figma capture. Do not remove the font faces or replace them with a network font dependency.
+
+Monochrome icons inherit `currentColor`, and active-state pairs expose `active`. Icons preserve their captured intrinsic dimensions unless `size` is supplied. Give informative icons an accessible name with SVG attributes such as `role="img"` and `aria-label`; mark decorative icons `aria-hidden="true"`. Skipped source records are listed in `skippedIcons` rather than silently substituted.
+
 ## Work on it
 
 Node 24 and pnpm (`corepack enable`). The Figma capture is not in this repository: it lives in [figma-design-system](https://github.com/decentraland/figma-design-system) (FDS). `upstream.lock.json` pins two FDS commits: `revision`, the code base every ported file is compared against, and `snapshot.revision`, the capture `fetch-source` reads, with its digest table.
 
 ```sh
 cd library/ui
+git lfs pull --include "library/ui/foundations/typography/fonts/*.woff2"
 pnpm install --frozen-lockfile
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
-node figma/lock-digests.mjs  # every file under figma/ matches the digest upstream.lock.json pins
+node figma/lock-digests.mjs  # ported tooling and public foundations match their pinned bytes and origins
 pnpm review                  # Review gallery on http://localhost:6019/dcl-ui-review/
 pnpm review:build --base <BASE>  # static Review; BASE is / (default), ./, or an absolute nested prefix
 pnpm review:check-build      # the built gallery navigates and renders in Chromium
@@ -71,3 +86,9 @@ A generated component throws during render when it receives a variant combinatio
 ## Provenance
 
 `upstream.lock.json` records the imported sources, their revisions and licenses, the digest of every ported file and of every file of the pinned capture.
+
+This tree ships the pinned `9c6dfbe6` capture. Reported live differences in colors (89 primitives and 42 semantics), text styles (34 rather than 32), spacing (18 rather than 16) and body/sm line height await a coordinated capture refresh. They are not included until the capture is refreshed and foundations are regenerated.
+
+### Regenerate foundations
+
+Maintainers run `pnpm figma fetch-source` to materialize the pinned cache, then `pnpm figma install foundations`. This single install boundary regenerates the five families and `source.json`, preserves maintained CSS and licensed assets, and refuses unverified input or dirty targets. For an isolated reproduction, use `pnpm figma install foundations --out ../.agent-work/figma-install/proof/foundations`. Repeating installation makes no changes.
