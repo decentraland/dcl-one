@@ -4,6 +4,7 @@
 // whether the creator blocked VRM export. Fail-soft: no answer leaves the avatar alone and shows no
 // badge.
 
+import { shopPeers } from "../../api/host";
 import { peerUrlFor } from "./urn";
 
 export type WearableRule = { urn: string; category: string; hides: string[]; replaces: string[] };
@@ -43,7 +44,7 @@ type ActiveEntity = {
 };
 
 async function fetchActiveEntities(urns: string[], signal?: AbortSignal): Promise<ActiveEntity[]> {
-  const res = await fetch(`${peerUrlFor(urns)}/content/entities/active`, {
+  const res = await fetch(`${peerUrlFor(urns, shopPeers())}/content/entities/active`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ pointers: urns }),

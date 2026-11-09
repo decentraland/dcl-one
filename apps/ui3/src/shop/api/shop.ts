@@ -3,7 +3,6 @@
 // Shop URL. Response types are the frozen generated v2 types where v2 serves the route today, the
 // pinned fixture shapes in ./types for the credits routes, and `unknown` where neither pins one yet.
 
-import type { QueryParams } from "../../data/catalyst/client";
 import type { CartOut } from "@catalyst-api/credits/CartOut";
 import type { CheckoutOut } from "@catalyst-api/credits/CheckoutOut";
 import type { CheckoutStartOut } from "@catalyst-api/credits/CheckoutStartOut";
@@ -38,9 +37,8 @@ import type { SuggestionsResponse } from "@catalyst-api/market/SuggestionsRespon
 import type { TopCreatorsResponseBody } from "@catalyst-api/market/TopCreatorsResponseBody";
 import type { TrendingResponseBody } from "@catalyst-api/market/TrendingResponseBody";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
-import { createShopApi, type RequestInput, type ShopApi, type ShopApiOptions } from "./client";
+import { createShopApi, type QueryParams, type RequestInput, type ShopApi, type ShopApiOptions } from "./client";
 import { ENDPOINTS as E } from "@shop/api/endpoints";
-import { storedIdentitySigner } from "./signer";
 import type {
   CancelCreditsRequest,
   CancelCreditsResult,
@@ -58,7 +56,7 @@ import type {
 type Opts = Pick<RequestInput, "signal" | "headers">;
 type Q = QueryParams;
 
-export function createShopClient(options: ShopApiOptions | ShopApi = {}) {
+export function createShopClient(options: ShopApiOptions | ShopApi) {
   const api: ShopApi = "request" in options ? options : createShopApi(options);
   const get = <T>(endpoint: (typeof E)[keyof typeof E], input: RequestInput = {}) => api.request<T>(endpoint, input);
 
@@ -235,16 +233,3 @@ export function createShopClient(options: ShopApiOptions | ShopApi = {}) {
 }
 
 export type ShopClient = ReturnType<typeof createShopClient>;
-
-let shared: ShopClient | null = null;
-
-/** The document's client: canonical paths (or the legacy flag), signed with ui3's stored identity. */
-export function shopClient(): ShopClient {
-  shared ??= createShopClient({ signer: () => storedIdentitySigner() });
-  return shared;
-}
-
-/** Hosts that own the session (sites, the native contract) install their own client once. */
-export function setShopClient(client: ShopClient | null): void {
-  shared = client;
-}

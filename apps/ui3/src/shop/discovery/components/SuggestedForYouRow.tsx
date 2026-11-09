@@ -22,6 +22,7 @@ import { useShopQuery } from "../query";
 import AssetCard from "./AssetCard";
 import Rail from "./Rail";
 import { isResale } from "@shop/market/access-rule";
+import { shopClient } from "../../api/host";
 
 const RAIL_SIZE = 12;
 
@@ -36,7 +37,7 @@ export function useSuggestedForYou(first: number, { exclude }: { exclude?: strin
   }, [cartLines, recentlyViewed]);
   const hasSignal = !!account || seeds.length > 0;
   const key = enabled && hasSignal ? ["suggested", account ?? "-", seedsKey(seeds), first, (exclude ?? []).join(",")] : null;
-  const query = useShopQuery(key, (signal) => fetchSuggestedItems({ address: account ?? undefined, seeds, exclude, first }, { signal }), { staleMs: 60_000 });
+  const query = useShopQuery(key, (signal) => fetchSuggestedItems({ address: account ?? undefined, seeds, exclude, first }, { client: shopClient(), signal }), { staleMs: 60_000 });
   // A resale is the Marketplace's (market/access.tsx): without it the rail keeps creators' primary sales only. The
   // suggestions route reads no listing type, so the rows are narrowed here.
   const marketplace = useMarketplace();
@@ -51,7 +52,7 @@ export default function SuggestedForYouRow({ exclude, title, first = RAIL_SIZE }
   const { result, isLoading, isError, enabled, hasSignal } = useSuggestedForYou(first, { exclude });
   const items = useMemo(() => result?.data ?? [], [result]);
   const triggerIds = useMemo(() => [...new Set(items.filter((i) => i.reason.itemId && reasonInterpolatesItemName(i.reason.kind)).map((i) => i.reason.itemId!))], [items]);
-  const { data: triggers } = useShopQuery(triggerIds.length ? ["suggested-triggers", ...triggerIds] : null, (signal) => fetchCatalogByIds(triggerIds, { signal }), { staleMs: 5 * 60_000 });
+  const { data: triggers } = useShopQuery(triggerIds.length ? ["suggested-triggers", ...triggerIds] : null, (signal) => fetchCatalogByIds(triggerIds, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
   const names = useMemo(() => new Map((triggers ?? []).map((i) => [`${i.contractAddress.toLowerCase()}-${i.itemId}`, i.name])), [triggers]);
 
   const hidden = suggestedHiddenReason({ enabled, hasSignal, isLoading, isError, personalized: result?.personalized, rowCount: items.length });

@@ -5,7 +5,6 @@
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { shopClient } from '../../../shop/api/shop'
 import { pageCount } from './catalogueQuery'
 import type { ChainId } from '@shop/model/chain'
 import { creditsCeil, parseManaWei, type ManaWei } from '@shop/model/money'
@@ -14,6 +13,7 @@ import { landChainId } from '../../../shop/land/contracts'
 import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
 import type { ShopNameStatus } from './ui'
+import { shopClient } from '../../../shop/api/host'
 
 export const nameQueries = {
   banned: () =>

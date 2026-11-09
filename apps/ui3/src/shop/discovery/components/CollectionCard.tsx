@@ -12,12 +12,13 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { useShopQuery } from "../query";
 import "./collectioncard.css";
+import { shopClient } from "../../api/host";
 
 const MOSAIC_COUNT = 4;
 
 /** upstream's useCollectionPreview: a collection's first items, one request per collection for its mosaic and count. */
 export function useCollectionPreview(contractAddress: string, enabled = true) {
-  return useShopQuery(enabled ? ["collection-preview", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: MOSAIC_COUNT }, { signal }), {
+  return useShopQuery(enabled ? ["collection-preview", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: MOSAIC_COUNT }, { client: shopClient(), signal }), {
     staleMs: 5 * 60_000,
   });
 }

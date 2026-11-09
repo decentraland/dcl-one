@@ -83,7 +83,7 @@ export function createFakeShop(handlers: FakeHandlers, opts: { signed?: boolean 
     return { status: answer.status ?? 200, body: answer.body === undefined ? "" : JSON.stringify(answer.body) };
   };
   const signer = opts.signed === false ? null : { address: BOOK.buyer, sign: async () => ({ "x-identity-auth-chain-0": "fake" }) };
-  const client = createShopClient({ base: "https://node.test", transport, signer });
+  const client = createShopClient({ base: "https://node.test", mode: "canonical", transport, signer });
   return { client, transport, log };
 }
 

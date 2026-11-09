@@ -5,7 +5,7 @@
 // under the exact key the ui3 page asks for, so the first paint and hydration show it and the page's
 // own hooks keep it current (a money read such as a listing is refetched on mount, never trusted).
 
-import { createShopClient, type ShopClient } from "@ui/shop/api";
+import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
 import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@ui/shop/discovery/api";
 import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@ui/shop/detail/api";
 import { LAND_NETWORKS } from "@ui/shop/land/contracts";
@@ -32,8 +32,8 @@ export function serverShopClient(env: BaseEnv = processEnv(), fetchImpl?: typeof
   const base = catalystUrl(undefined, env);
   const mode = serverShopApiMode(env);
   const key = `${base}|${mode}`;
-  if (fetchImpl) return createShopClient({ base, mode, signer: null, fetchImpl });
-  if (!shared || shared.key !== key) shared = { key, client: createShopClient({ base, mode, signer: null }) };
+  if (fetchImpl) return createShopClient(hostApiOptions({ base, mode, signer: null, fetchImpl }));
+  if (!shared || shared.key !== key) shared = { key, client: createShopClient(hostApiOptions({ base, mode, signer: null })) };
   return shared.client;
 }
 

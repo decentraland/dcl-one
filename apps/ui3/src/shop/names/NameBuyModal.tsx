@@ -9,7 +9,7 @@ import Button from "../../atoms/Button";
 import Modal from "../../components/Modal";
 import type { UnityCreditPack } from "@catalyst-api/credits/UnityCreditPack";
 import { isShopApiError } from "../api/client";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import { chainLabel } from "@shop/model/chain";
 import { creditsCeil, creditsFloor, formatMana, usdCents, type ManaWei } from "@shop/model/money";
 import { offerQuote, type PurchaseOffer } from "@shop/model/purchase";
@@ -37,6 +37,7 @@ import {
 } from "./names";
 import { stashNameResume, clearNameResume } from "./resume";
 import "./names.css";
+import { shopClient } from "../api/host";
 
 type Rail = "credits" | "mana" | "mixed";
 type Phase = "choose" | "confirm" | "completing" | "success" | "pending" | "error";
