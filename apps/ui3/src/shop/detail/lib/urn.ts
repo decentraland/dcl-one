@@ -1,9 +1,8 @@
 // from: shop@94584a5c:app/src/lib/urn.ts
 // Item URNs for the preview, and the Catalyst that holds a URN list's content. The v2 node serves
-// its own content, so the peer is the node (catalystBase) unless the host names one per network
-// (`window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`).
+// its own content, so the peer is the node (the host's base) unless the host names one per network
+// (the browser host reads `window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`: api/host.ts).
 
-import { catalystBase } from "../../../data/catalyst/client";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { CHAIN } from "@shop/model/chain";
 
@@ -30,9 +29,9 @@ export function urnNetwork(urns: string[], fallback: UrnNetwork = "matic"): UrnN
   return fallback;
 }
 
-type PeerWindow = Window & typeof globalThis & { __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };
+/** The peers a host offers: one per network it names, else its base. */
+export type ShopPeers = { byNetwork: Partial<Record<UrnNetwork, string>>; base: string };
 
-export function peerUrlFor(urns: string[]): string {
-  const peers = typeof window !== "undefined" ? (window as PeerWindow).__SHOP_PEERS__ : undefined;
-  return (peers?.[urnNetwork(urns)] ?? catalystBase()).replace(/\/$/, "");
+export function peerUrlFor(urns: string[], peers: ShopPeers): string {
+  return (peers.byNetwork[urnNetwork(urns)] ?? peers.base).replace(/\/$/, "");
 }

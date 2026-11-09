@@ -10,7 +10,8 @@ import { setupServer } from "msw/node";
 import { FIXTURE_BUYER, fixtureTransport, wireHandlers } from "./fixtures";
 import { build, OUTPUT } from "./fixtures/generate.mjs";
 import { createShopClient } from "./shop";
-import { identitySigner, type ShopSigner, type TransportRequest } from "./signer";
+import { hostApiOptions, identitySigner } from "./host";
+import type { ShopSigner, TransportRequest } from "./signer";
 
 const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["DELETE /shop-api/v1/cart/items/{}/{}", ["DELETE /credits/cart/items/{}/{}"]],
@@ -186,7 +187,7 @@ function recorder(status = 200, body = "{}") {
 describe("the client", () => {
   it("calls the canonical path, or the legacy alias behind the flag", async () => {
     const canonical = recorder();
-    await createShopApi({ base: "https://node.test", transport: canonical.transport }).request(ENDPOINTS.userNames, {
+    await createShopApi({ base: "https://node.test", mode: "canonical", transport: canonical.transport }).request(ENDPOINTS.userNames, {
       params: { address: "0xabc" },
       query: { first: 5, skip: undefined },
     });
@@ -194,7 +195,7 @@ describe("the client", () => {
     const legacy = recorder();
     await createShopApi({ base: "https://node.test", mode: "legacy", transport: legacy.transport }).request(ENDPOINTS.packs);
     expect(legacy.log[0]!.url).toBe("https://node.test/credits/credits/packs");
-    expect(() => createShopApi({ mode: "legacy" }).path(ENDPOINTS.outfits)).toThrow(ShopApiError);
+    expect(() => createShopApi({ base: "https://node.test", mode: "legacy", transport: recorder().transport }).path(ENDPOINTS.outfits)).toThrow(ShopApiError);
   });
 
   it("signs over the method and the exact path requested, alias included", async () => {
@@ -215,7 +216,7 @@ describe("the client", () => {
 
   it("a signed route without a session asks for sign-in; an optional one goes unsigned", async () => {
     const rec = recorder();
-    const api = createShopApi({ transport: rec.transport, signer: null });
+    const api = createShopApi({ base: "https://node.test", mode: "canonical", transport: rec.transport, signer: null });
     await expect(api.request(ENDPOINTS.userCredits, { params: { address: "0xabc" } })).rejects.toMatchObject({ status: 401, code: "signInRequired" });
     await api.request(ENDPOINTS.nfts);
     expect(rec.log[0]!.signed).toBe(false);
@@ -224,7 +225,7 @@ describe("the client", () => {
   it("marketplace writes carry the signed intent metadata upstream requires", async () => {
     const seen: Record<string, unknown>[] = [];
     const signer: ShopSigner = { address: "0xabc", sign: async (_m, _p, metadata) => (seen.push(metadata), {}) };
-    const client = createShopClient({ signer, transport: recorder().transport });
+    const client = createShopClient({ base: "https://node.test", mode: "canonical", signer, transport: recorder().transport });
     await client.market.createTrade({});
     await client.market.activity();
     expect(seen).toEqual([{ signer: "dcl:marketplace", intent: "dcl:create-trade" }, { signer: "dcl:marketplace" }]);
@@ -240,7 +241,7 @@ describe("fixture-backed mocks (tests/fixtures/shop/credits-server@465e628bc/wir
   });
 
   it("answers the authorization routes with the pinned cases", async () => {
-    const client = createShopClient({ signer, transport: fixtureTransport({ now }) });
+    const client = createShopClient({ base: "https://node.test", mode: "canonical", signer, transport: fixtureTransport({ now }) });
     const one = await client.authorizations.authorize({ usdPriceCents: 200, tradeId: "trade-99" });
     expect(one).toMatchObject({ usdCents: 200, maxCreditedValue: "1851851835000000000", credit: { signature: "0xsignature" } });
     expect(one.credit.expiresAt).toBe(1_800_000_000 + 900);
@@ -263,14 +264,14 @@ describe("fixture-backed mocks (tests/fixtures/shop/credits-server@465e628bc/wir
 
   it("the refusals are typed: 402 insufficient, 404 disabled, 409 too many live", async () => {
     const at = (scenario: string) =>
-      createShopClient({ signer, transport: fixtureTransport({ scenario: { authorize: scenario } }) }).authorizations.authorize({ usdPriceCents: 200 });
+      createShopClient({ base: "https://node.test", mode: "canonical", signer, transport: fixtureTransport({ scenario: { authorize: scenario } }) }).authorizations.authorize({ usdPriceCents: 200 });
     expect(insufficientCredits(await at("balance below the rounded price").catch((e: unknown) => e))).toEqual({ balanceCents: 150, requiredCents: 200 });
     expect(creditsDisabled(await at("USD credits flag off").catch((e: unknown) => e))).toBe(true);
     expect(tooManyLiveCredits(await at("too many live credits").catch((e: unknown) => e))).toBe(true);
   });
 
   it("the legacy alias is answered by the same cases; anything unpinned is 501", async () => {
-    const legacy = createShopClient({ mode: "legacy", signer, transport: fixtureTransport({ now }) });
+    const legacy = createShopClient({ base: "https://node.test", mode: "legacy", signer, transport: fixtureTransport({ now }) });
     expect((await legacy.authorizations.authorize({ usdPriceCents: 184 })).usdCents).toBe(190);
     await expect(legacy.authorizations.authorize({ usdPriceCents: 7 })).rejects.toMatchObject({ status: 501 });
   });
@@ -283,7 +284,8 @@ describe("the same fixtures as MSW handlers", () => {
     try {
       const signer: ShopSigner = { address: FIXTURE_BUYER, sign: async () => ({ "x-identity-auth-chain-0": "{}" }) };
       for (const mode of ["canonical", "legacy"] as const) {
-        const client = createShopClient({ base: "https://node.test", mode, signer });
+        // Over fetch, which the MSW server answers: the browser host's transport.
+        const client = createShopClient(hostApiOptions({ base: "https://node.test", mode, signer }));
         expect((await client.authorizations.authorize({ usdPriceCents: 200, tradeId: "trade-99" })).usdCents).toBe(200);
       }
     } finally {

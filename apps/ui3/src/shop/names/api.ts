@@ -8,8 +8,9 @@ import { catalystBase } from "../../data/catalyst/client";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
 import type { ProfileName } from "@catalyst-api/market/ProfileName";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import { parseManaInput } from "../market/lib/mana";
+import { shopClient } from "../api/host";
 
 export type { NftResult };
 

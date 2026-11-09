@@ -67,7 +67,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   message on the community card, like the card's other actions, instead of as a toast. A
   picture saved by an edit is kept by the HUD for the session, as unity-explorer's image cache
   does, since its URL does not change and the CDN (CloudFront on .org) ignores a version query.
-  The places picker is not ported yet.
+  The places picker links the LANDs and Worlds the user owns or operates, as unity-explorer's does.
+  An edit sends `placeIds` only when the linked places changed, and the service keeps them when the
+  field is absent; unity-explorer sends them on every save. When the community's linked places
+  could not be read, the picker and its remove buttons are disabled, so a save cannot replace them
+  with a partial list; unity-explorer leaves them editable. Linked places the places service does
+  not return (a disabled one, say) are kept on every save without being shown, and the community's
+  places are read a page at a time; unity-explorer reads one page and would unlink the rest. As in
+  unity-explorer, the picker also lists LANDs the user only operates, which the service refuses to
+  link: the save fails with the generic error. That a moderator can unlink only the places they own
+  is a HUD rule, as in unity-explorer; the service checks ownership only of places being added.
+  On the card's Places tab, owners and moderators get unity-explorer's ADD PLACE tile (it opens the
+  edit form) and delete on the places they own, asked first. A failed delete shows its message on
+  the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
+  PLACES tab button for owners and moderators is not ported.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

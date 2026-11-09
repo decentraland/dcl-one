@@ -25,7 +25,6 @@ import { dateText, epochMs, manaText } from "../../land/format";
 import { distanceText, estateProximity, parcelProximity, proximityIndex, type Proximity } from "../../land/proximity";
 import { canBeClaimed, fetchRentalListings, hasRentalEnded, isOwnedBy, isRentalExecuted, isRentalOpen, maxPriceOfPeriods, rentalEndDate, type RentalListing } from "../../land/rentals";
 import { fetchBidsByAsset } from "../../market/lib/api";
-import { shopClient } from "../../api/shop";
 import type { Bid, Sale } from "../../market/lib/api";
 import { fetchTiles, type Tiles } from "../../land/tiles";
 import { sameAddress, shortAddress } from "@shop/model/address";
@@ -47,6 +46,7 @@ import plazaIcon from "./landbranch-assets/plaza.svg";
 import roadIcon from "./landbranch-assets/road.svg";
 import districtIcon from "./landbranch-assets/district.svg";
 import "./landbranch.css";
+import { shopClient } from "../../api/host";
 
 export function isLandToken(contractAddress: string | null | undefined, tokenId: string | null | undefined): boolean {
   return !!tokenId && !!contractAddress && !!landCategoryOf(contractAddress);

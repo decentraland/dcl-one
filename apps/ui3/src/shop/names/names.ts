@@ -20,7 +20,7 @@ import { keccak256, parseAbi, stringToHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { isShopApiError } from "../api/client";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import type { AuthorizedCredit, CreditAuthorization } from "@shop/api/types";
 import { CHAIN, type ChainId } from "@shop/model/chain";
 import { manaUsdCentsCeil, type ManaUsdRate, type ManaWei, type UsdCents } from "@shop/model/money";
@@ -41,6 +41,7 @@ import {
   walletReader,
   type ChainReader,
 } from "../land/evm";
+import { shopClient } from "../api/host";
 
 /** 100 MANA: DCLControllerV2's `PRICE` and the useCredits `maxCreditedValue` of a NAME. */
 export const NAME_PRICE_IN_WEI = "100000000000000000000";

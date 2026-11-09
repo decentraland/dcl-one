@@ -10,7 +10,7 @@ import { createElement, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import type { AuthIdentity } from "../../data/auth/identity";
-import { createShopClient, setShopClient, type ShopClient } from "../api/shop";
+import { createShopClient, type ShopClient } from "../api/shop";
 import { shopCart, type CartStore } from "../cart/store";
 import type { EvmAddress } from "@shop/model/address";
 import { ShopOfferProvider, missingOfferRoute, type OfferSource } from "../detail/offers";
@@ -22,6 +22,7 @@ import type { UnifiedListingRaw } from "./api";
 import { resetShopQueries } from "./query";
 import { primeRemoteFlags } from "./lib/remoteFlags";
 import type { RawCollectionItem } from "@shop/discovery/lib/catalogItem";
+import { setShopClient } from "../api/host";
 
 export type CatalogScenario = "ok" | "empty" | "error" | "outage" | "loading";
 

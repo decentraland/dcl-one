@@ -10,7 +10,7 @@
 
 import { isShopApiError } from "../api/client";
 import { missingOfferRoute, type OfferSource } from "../detail/offers";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import { evmAddress } from "@shop/model/address";
 import { nameAsset, parseNameLabel, type NameLabel } from "@shop/model/asset";
 import { CHAIN, type ChainId } from "@shop/model/chain";
@@ -22,6 +22,7 @@ import { present, restrictions } from "@shop/payment/rule";
 import { landChainId, landNetwork } from "../land/contracts";
 import type { ChainReader } from "../land/evm";
 import { checkNameAvailability, creditsChainFor, NAME_PRICE_IN_WEI, NAME_PRICE_WEI } from "./names";
+import { shopClient } from "../api/host";
 
 export type NameOfferSource = (label: NameLabel, session: Session, signal: AbortSignal) => Promise<PurchaseOffer>;
 
