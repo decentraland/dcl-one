@@ -43,6 +43,9 @@ in-app purchases cannot be clawed back by a later Apple refund
 - **Badge art.** The node embeds the art of its seed badges only; mirror
   upstream's badge art into `BADGES_ASSETS_DIR` so every imported badge's
   images resolve (`sources/badges/MAPPING.md`).
+- **Badge schema.** The badges steps need the badge catalog schema
+  (publication columns, `criteria_steps`, the progress document,
+  `social.presence_badges`) and stop without it.
 - **Mirrors off.** Turn off the node's mirrors of a migrated service
   (`PLACES_MIRROR_UPSTREAM`, `EVENTS_MIRROR_UPSTREAM`,
   `COMMUNITIES_MIRROR_UPSTREAM`, `WORLDS_MIRROR_UPSTREAM`, ...) before its

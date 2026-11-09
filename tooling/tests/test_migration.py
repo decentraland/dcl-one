@@ -1209,6 +1209,214 @@ class AgainstPostgres(unittest.TestCase):
         self.assertEqual(self.count(tgt, 'social.subscription_opt_outs'), 2)
 
 
+    # ── badges: catalog, presence configuration, progress ──
+
+    BADGES_SCHEMA = textwrap.dedent("""
+        CREATE TABLE badge_definitions (id text PRIMARY KEY, name text NOT NULL, category text NOT NULL,
+          description text NOT NULL, has_3d boolean NOT NULL, published_at timestamptz, archived_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+          updated_at timestamptz NOT NULL DEFAULT clock_timestamp());
+        CREATE TABLE badge_tiers (badge_id text NOT NULL REFERENCES badge_definitions ON DELETE CASCADE,
+          tier_id text NOT NULL, position integer NOT NULL, name text NOT NULL, description text NOT NULL,
+          steps integer NOT NULL, asset_slot text NOT NULL, PRIMARY KEY (badge_id, tier_id));
+        CREATE TABLE presence_badges (badge_id text PRIMARY KEY REFERENCES badge_definitions,
+          location_kind varchar(16) NOT NULL, parcel varchar(32), world_name varchar(255),
+          window_start timestamptz NOT NULL, window_end timestamptz NOT NULL, mode varchar(16) NOT NULL,
+          required_seconds integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE user_progress (user_address varchar(255) NOT NULL, badge_id varchar(255) NOT NULL,
+          progress jsonb NOT NULL, achieved_tiers jsonb, completed_at bigint, updated_at bigint NOT NULL,
+          PRIMARY KEY (user_address, badge_id));
+    """)
+
+    # The badge catalog schema, for a schemas/ that predates it (a no-op once it has it).
+    BADGES_TARGET = textwrap.dedent("""
+        ALTER TABLE social.badge_definitions
+          ADD COLUMN IF NOT EXISTS criteria_steps integer CHECK (criteria_steps > 0),
+          ADD COLUMN IF NOT EXISTS published_at timestamp,
+          ADD COLUMN IF NOT EXISTS archived_at timestamp,
+          ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now();
+        ALTER TABLE social.user_badge_progress ADD COLUMN IF NOT EXISTS progress jsonb NOT NULL DEFAULT '{}';
+        ALTER TABLE social.badge_tiers ADD CONSTRAINT test_badge_tiers_steps CHECK (criteria_steps > 0);
+        CREATE UNIQUE INDEX IF NOT EXISTS test_badge_tiers_ordinal ON social.badge_tiers (badge_id, ordinal);
+        CREATE TABLE IF NOT EXISTS social.presence_badges (
+          badge_id text PRIMARY KEY REFERENCES social.badge_definitions (id), location_kind varchar(16) NOT NULL,
+          parcel varchar(32), world_name varchar(255), window_start timestamptz NOT NULL,
+          window_end timestamptz NOT NULL, mode varchar(16) NOT NULL, required_seconds integer NOT NULL DEFAULT 0,
+          created_at timestamptz NOT NULL DEFAULT now());
+    """)
+
+    T0 = 1767225600000  # 2026-01-01T00:00:00Z
+
+    @staticmethod
+    def tiered(badge, slots):
+        prefix = badge.replace('_', '-')
+        return ', '.join(f"('{badge}', '{prefix}-{slot}', {i + 1}, '{slot.title()}', '{slot}', {steps}, '{slot}')"
+                         for i, (slot, steps) in enumerate(slots))
+
+    def badges_dbs(self, target_schema=True):
+        src, tgt = self.fresh_db('badges_src'), self.catalyst_db('badges_tgt')
+        self.sql(src, self.BADGES_SCHEMA)
+        t = self.T0
+        self.sql(src, textwrap.dedent(f"""
+            INSERT INTO badge_definitions (id, name, category, description, has_3d, published_at, archived_at,
+                                           created_at) VALUES
+              ('dclcitizen', 'Decentraland Citizen', 'Explorer', 'Landed', true, to_timestamp({t} / 1000.0), NULL,
+               to_timestamp({t} / 1000.0)),
+              ('open_for_business', 'Open for Business', 'Creator', 'Store and collection', true,
+               to_timestamp({t} / 1000.0), NULL, to_timestamp(({t} + 1) / 1000.0)),
+              ('emotionista', 'Emotionista', 'Collector', 'Emotes purchased', true, to_timestamp({t} / 1000.0), NULL,
+               to_timestamp(({t} + 2) / 1000.0)),
+              ('walkabout_wanderer', 'Walkabout Wanderer', 'Explorer', 'Steps', true, to_timestamp({t} / 1000.0),
+               NULL, to_timestamp(({t} + 3) / 1000.0)),
+              ('halloweeks_2026', 'Halloweeks 2026', 'Explorer', 'Visited', true, to_timestamp({t} / 1000.0),
+               timestamptz '2026-11-08 12:00:00+00', to_timestamp(({t} + 4) / 1000.0)),
+              ('stay_fest', 'Stay Fest', 'Explorer', 'Stayed', true, NULL, NULL, to_timestamp(({t} + 5) / 1000.0));
+            INSERT INTO badge_tiers VALUES
+              ('dclcitizen', 'dclcitizen-root', 1, 'Decentraland Citizen', 'Landed', 1, 'root'),
+              ('open_for_business', 'open-for-business-root', 1, 'Open for Business', 'x', 2, 'root'),
+              ('halloweeks_2026', 'halloweeks-2026-root', 1, 'Halloweeks 2026', 'Visited', 1, 'root'),
+              ('stay_fest', 'stay-fest-root', 1, 'Stay Fest', 'Stayed', 600, 'root'),
+              {self.tiered('emotionista', [('starter', 1), ('bronze', 5), ('silver', 10)])},
+              {self.tiered('walkabout_wanderer', [('starter', 10000), ('bronze', 50000)])};
+            INSERT INTO presence_badges VALUES
+              ('stay_fest', 'scene', '10,-20', NULL, '2026-11-01 00:00:00+00', '2026-11-02 00:00:00+00', 'stay', 600,
+               '2026-10-30 00:00:00+00');
+        """))
+        if target_schema:
+            self.sql(tgt, self.BADGES_TARGET)
+        env = {'BADGES_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
+        patcher = unittest.mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return src, tgt
+
+    def progress(self, src, address, badge, document, tiers=None, completed=None, updated=0):
+        tiers_sql = 'NULL' if tiers is None else "'" + json.dumps(
+            [{'tier_id': k, 'completed_at': self.T0 + v} for k, v in tiers]) + "'"
+        completed_sql = 'NULL' if completed is None else str(self.T0 + completed)
+        self.sql(src, f"INSERT INTO user_progress VALUES ('{address}', '{badge}', '{json.dumps(document)}', "
+                      f"{tiers_sql}, {completed_sql}, {self.T0 + updated});\n")
+
+    def test_when_importing_the_catalog_it_should_keep_publication_steps_and_upstream_asset_urls(self):
+        _, tgt = self.badges_dbs()
+        code, out = self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        rows = self.sql(tgt, "SELECT id, is_tier, criteria_steps, published_at IS NOT NULL, archived_at, "
+                             "to_char(created_at, 'YYYY-MM-DD HH24:MI:SS.MS') FROM social.badge_definitions "
+                             "ORDER BY created_at, id;\n").splitlines()
+        self.assertEqual(rows, [
+            'dclcitizen\tf\t1\tt\t\t2026-01-01 00:00:00.000',
+            'open_for_business\tf\t2\tt\t\t2026-01-01 00:00:00.001',
+            'emotionista\tt\t\tt\t\t2026-01-01 00:00:00.002',
+            'walkabout_wanderer\tt\t\tt\t\t2026-01-01 00:00:00.003',
+            'halloweeks_2026\tf\t1\tt\t2026-11-08 12:00:00\t2026-01-01 00:00:00.004',
+            'stay_fest\tf\t600\tf\t\t2026-01-01 00:00:00.005',
+        ])
+        cdn = 'https://assets-cdn.decentraland.org'
+        assets = self.sql(tgt, "SELECT id, assets FROM social.badge_definitions WHERE id IN "
+                               "('dclcitizen', 'emotionista') ORDER BY id;\n").splitlines()
+        self.assertEqual(json.loads(assets[0].split('\t')[1]), {
+            '2d': {'normal': f'{cdn}/dclcitizen/2d/normal.png'},
+            '3d': {'normal': f'{cdn}/dclcitizen/3d/normal.png', 'hrm': f'{cdn}/dclcitizen/3d/hrm.png',
+                   'basecolor': f'{cdn}/dclcitizen/3d/basecolor.png'}})
+        self.assertEqual(assets[1], 'emotionista\t{}')
+        tiers = self.sql(tgt, "SELECT tier_id, ordinal, criteria_steps, assets->'2d'->>'normal' FROM social.badge_tiers "
+                              "WHERE badge_id = 'emotionista' ORDER BY ordinal;\n").splitlines()
+        self.assertEqual(tiers, [f'emotionista-starter\t0\t1\t{cdn}/emotionista/starter/2d/normal.png',
+                                 f'emotionista-bronze\t1\t5\t{cdn}/emotionista/bronze/2d/normal.png',
+                                 f'emotionista-silver\t2\t10\t{cdn}/emotionista/silver/2d/normal.png'])
+        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_tiers WHERE badge_id IN "
+                                       "('dclcitizen', 'open_for_business', 'halloweeks_2026');\n").strip(), '0')
+        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_definitions WHERE id IN "
+                                       "('decentraland_citizen', 'walkabout');\n").strip(), '0')
+        code, out = self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('catalog: done, 6 rows in this walk; no writes', out)
+
+    def test_when_importing_presence_badges_it_should_copy_their_configuration(self):
+        _, tgt = self.badges_dbs()
+        code, out = self.migrate('run', 'badges', '--step', 'catalog', '--step', 'presence_badge',
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT badge_id, location_kind, parcel, world_name, window_start, window_end, '
+                                       'mode, required_seconds, created_at FROM social.presence_badges;\n').strip(),
+                         'stay_fest\tscene\t10,-20\t\t2026-11-01 00:00:00+00\t2026-11-02 00:00:00+00\tstay\t600\t'
+                         '2026-10-30 00:00:00+00')
+
+    def test_when_importing_progress_it_should_keep_the_document_partial_steps_and_archived_badges(self):
+        src, tgt = self.badges_dbs()
+        w1, w2 = self.wallet('1'), self.wallet('2')
+        self.progress(src, w1, 'open_for_business', {'steps': 1, 'store_completed': True})
+        self.progress(src, w1, 'emotionista', {'steps': 6, 'transactions_emotes_purchase': ['0xa', '0xb']},
+                      tiers=[('emotionista-starter', 10), ('emotionista-bronze', 20)], updated=30)
+        self.progress(src, w2, 'halloweeks_2026', {'steps': 1}, completed=5, updated=5)
+        self.progress(src, w2, 'stay_fest', {'steps': 120, 'intervals': [[1, 121]]}, updated=7)
+        code, out = self.migrate('run', 'badges', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        rows = self.sql(tgt, 'SELECT address, badge_id, steps_done, progress, completed_at IS NOT NULL, '
+                             'last_completed_tier_id FROM social.user_badge_progress ORDER BY 1, 2;\n').splitlines()
+        self.assertEqual([r.split('\t') for r in rows], [
+            [w1, 'emotionista', '6', '{"steps": 6, "transactions_emotes_purchase": ["0xa", "0xb"]}', 'f',
+             'emotionista-bronze'],
+            [w1, 'open_for_business', '1', '{"steps": 1, "store_completed": true}', 'f', ''],
+            [w2, 'halloweeks_2026', '1', '{"steps": 1}', 't', ''],
+            [w2, 'stay_fest', '120', '{"steps": 120, "intervals": [[1, 121]]}', 'f', ''],
+        ])
+        self.assertEqual(self.sql(tgt, 'SELECT tier_id FROM social.user_achieved_tiers ORDER BY 1;\n').split(),
+                         ['emotionista-bronze', 'emotionista-starter'])
+
+    def test_when_a_wallet_has_rows_in_two_cases_it_should_merge_them(self):
+        src, tgt = self.badges_dbs()
+        lower = self.wallet('a')
+        mixed = '0x' + 'A' * 40
+        self.progress(src, lower, 'emotionista', {'steps': 2, 'transactions_emotes_purchase': ['0xa', '0xb']},
+                      tiers=[('emotionista-starter', 10)], updated=40)
+        self.progress(src, mixed, 'emotionista',
+                      {'steps': 7, 'transactions_emotes_purchase': ['0xc', '0xa'], 'note': 'mixed'},
+                      tiers=[('emotionista-starter', 5), ('emotionista-bronze', 30)], updated=35)
+        code, out = self.migrate('run', 'badges', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        row = self.sql(tgt, "SELECT address, steps_done, progress, last_completed_tier_id, "
+                            "extract(epoch FROM updated_at) * 1000 FROM social.user_badge_progress;\n").strip()
+        address, steps, document, last, updated = row.split('\t')
+        self.assertEqual((address, steps, last, int(float(updated))), (lower, '7', 'emotionista-bronze', self.T0 + 40))
+        self.assertEqual(json.loads(document),
+                         {'steps': 7, 'note': 'mixed', 'transactions_emotes_purchase': ['0xa', '0xb', '0xc']})
+        tiers = self.sql(tgt, "SELECT tier_id, (extract(epoch FROM completed_at) * 1000)::bigint "
+                              "FROM social.user_achieved_tiers ORDER BY 1;\n").splitlines()
+        self.assertEqual(tiers, [f'emotionista-bronze\t{self.T0 + 30}', f'emotionista-starter\t{self.T0 + 5}'])
+
+    def test_when_the_node_holds_more_steps_it_should_keep_them_and_take_the_source_document(self):
+        src, tgt = self.badges_dbs()
+        w = self.wallet('3')
+        self.assertEqual(self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)[0], 0)
+        self.sql(tgt, f"INSERT INTO social.user_badge_progress (address, badge_id, steps_done, granted_by) "
+                      f"VALUES ('{w}', 'open_for_business', 2, 'console');\n")
+        self.progress(src, w, 'open_for_business', {'steps': 1, 'collection_submitted': True})
+        code, out = self.migrate('run', 'badges', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT steps_done, progress, granted_by FROM social.user_badge_progress;\n')
+                         .strip(), '2\t{"steps": 1, "collection_submitted": true}\tconsole')
+
+    def test_when_the_schema_lacks_the_badge_columns_it_should_stop_instead_of_dropping_data(self):
+        src, tgt = self.badges_dbs()
+        self.progress(src, self.wallet('4'), 'dclcitizen', {'steps': 1}, completed=1, updated=1)
+        self.sql(tgt, 'ALTER TABLE social.badge_definitions DROP COLUMN archived_at;\n')
+        code, out = self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_definitions WHERE id = 'dclcitizen';\n")
+                         .strip(), '0')
+        self.sql(tgt, 'ALTER TABLE social.badge_definitions ADD COLUMN archived_at timestamp;\n'
+                      'ALTER TABLE social.user_badge_progress DROP COLUMN progress;\n'
+                      'ALTER TABLE social.presence_badges RENAME TO presence_badges_aside;\n')
+        self.assertEqual(self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)[0], 0)
+        code, out = self.migrate('run', 'badges', '--step', 'presence_badge', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        code, out = self.migrate('run', 'badges', '--step', 'user_progress', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.count(tgt, 'social.user_badge_progress'), 0)
+
+
 import unittest.mock  # noqa: E402
 
 if __name__ == '__main__':
