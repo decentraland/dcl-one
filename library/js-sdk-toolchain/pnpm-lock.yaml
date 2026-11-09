@@ -109,34 +109,6 @@ importers:
         version: 7.0.2
 
   packages/@dcl/inspector-service:
-    dependencies:
-      '@dcl/smart-items':
-        specifier: workspace:*
-        version: link:../smart-items
-      '@protobufjs/utf8':
-        specifier: 1.1.2
-        version: 1.1.2
-      '@well-known-components/pushable-channel':
-        specifier: 1.0.3
-        version: 1.0.3
-      ajv:
-        specifier: 8.18.0
-        version: 8.18.0
-      ethereum-cryptography:
-        specifier: 2.2.1
-        version: 2.2.1
-      ignore:
-        specifier: 7.0.5
-        version: 7.0.5
-      long:
-        specifier: 5.3.2
-        version: 5.3.2
-      protobufjs:
-        specifier: ^7.6.3
-        version: 7.6.5
-      ts-deepmerge:
-        specifier: 7.0.3
-        version: 7.0.3
     devDependencies:
       '@dcl/ecs':
         specifier: workspace:*
@@ -153,21 +125,54 @@ importers:
       '@dcl/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@dcl/smart-items':
+        specifier: workspace:*
+        version: link:../smart-items
+      '@protobufjs/utf8':
+        specifier: 1.1.2
+        version: 1.1.2
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.3
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
+      '@well-known-components/pushable-channel':
+        specifier: 1.0.3
+        version: 1.0.3
+      ajv:
+        specifier: 8.18.0
+        version: 8.18.0
       esbuild:
         specifier: 0.28.0
         version: 0.28.0
+      ethereum-cryptography:
+        specifier: 2.2.1
+        version: 2.2.1
       fp-future:
         specifier: 1.0.1
         version: 1.0.1
+      ignore:
+        specifier: 7.0.5
+        version: 7.0.5
+      long:
+        specifier: 5.3.2
+        version: 5.3.2
+      protobufjs:
+        specifier: ^7.6.3
+        version: 7.6.5
+      ts-deepmerge:
+        specifier: 7.0.3
+        version: 7.0.3
       typescript:
         specifier: 7.0.2
         version: 7.0.2
       vitest:
         specifier: 1.6.0
         version: 1.6.0(@types/node@24.13.3)(happy-dom@14.12.3)(supports-color@8.1.1)
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
 
   packages/@dcl/js-runtime:
     dependencies:

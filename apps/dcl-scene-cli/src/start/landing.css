@@ -400,6 +400,8 @@ body.editing .lay__hint { display: block; }
 .panel--warn { border-color: var(--warn-line); }
 .reqs .st { color: var(--ink-45); }
 #sign-panel .jn__cta { margin-top: var(--s-3); }
+.jn__cta--quiet { background: transparent; color: var(--ink-6); border-color: var(--line); box-shadow: none; margin-left: var(--s-3); }
+.jn__cta--quiet:hover { background: var(--fill-2); color: inherit; }
 .sign-status { white-space: pre-wrap; }
 .dep__cid { display: block; font-family: var(--font-mono); font-size: var(--fs-13); color: var(--ink-6); overflow-wrap: anywhere; margin-bottom: var(--s-3); }
 .sign-progress { margin-top: var(--s-4); display: grid; gap: var(--s-2); max-width: var(--measure); }

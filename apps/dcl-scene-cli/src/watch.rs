@@ -406,6 +406,8 @@ impl BuiltinWatchSession {
                     skip_type_check: !self.type_checking,
                     out_root: None,
                     quiet: false,
+                    emit_declaration: false,
+                    preview: true,
                 };
                 let mut steps = ux::Steps::silent();
                 // Keep this session on failure so the next edit can retry.

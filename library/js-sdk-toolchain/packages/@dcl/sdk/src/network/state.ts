@@ -53,9 +53,9 @@ export const NOT_SYNC_COMPONENTS: ComponentDefinition<unknown>[] = [
 
 export const NOT_SYNC_COMPONENTS_IDS = NOT_SYNC_COMPONENTS.map(($) => $.componentId)
 export const NOT_SYNC_COMPONENTS_NAMES: string[] = [
-  'smart-items::Script', // BaseComponentNames in @dcl/smart-items (src/constants.ts)
+  'smart-items::Script', // BaseComponentNames from ../smart-items/constants.ts
   'smart-items::ActionTypes',
-  'asset-packs::Script', // the same components under the legacy prefix (@dcl/smart-items src/legacy.ts)
+  'asset-packs::Script', // the same components under the legacy prefix (../smart-items/legacy.ts)
   'asset-packs::ActionTypes'
 ]
 

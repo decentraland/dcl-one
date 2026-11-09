@@ -79,9 +79,9 @@ function __dclOneDecode(__dclOneBytes) {
 // 1. globalThis.__dclOneAuthoritative tells the chunk whether the scene has a
 //    server to trust. The auth-server @dcl/sdk line applies CRDT, state
 //    responses and room events only from the sender 'authoritative-server';
-//    without the flag the blob's overlay (scripts/blob_overlays.py,
-//    patch_sdk_peer_trust) falls back to mainline's peer trust so a
-//    serverless-multiplayer scene keeps syncing.
+//    without the flag the tree's transport (fromAuthority in
+//    library/js-sdk-toolchain/packages/@dcl/sdk/src/network/message-bus-sync.ts)
+//    falls back to peer trust so a serverless-multiplayer scene keeps syncing.
 // 2. With the flag, CommunicationsController is wrapped so inbound frames
 //    the engine stamped with the preview host's zero address (mini-comms
 //    HOST_ADDRESS) are re-labelled as 'authoritative-server': the engine
@@ -139,12 +139,27 @@ function __dclOneMpWrap(__dclOneHostRequire) {
   }
 }
 
+// `@dcl/asset-packs` is the name the smart-item runtime was published under
+// before it moved into `@dcl/sdk`, and scene code still imports it that way.
+// The package root and its scene entrypoint are '@dcl/smart-items'; a
+// 'dist/<module>' (with or without '.js') is '@dcl/smart-items/<module>'.
+// Kept in step with `smart_items_spec` in src/split.rs.
+function __dclOneSmartItemsSpec(__dclOneSpec) {
+  if (__dclOneSpec === '@dcl/asset-packs') return '@dcl/smart-items'
+  if (__dclOneSpec.lastIndexOf('@dcl/asset-packs/dist/', 0) !== 0) return __dclOneSpec
+  var __dclOneModule = __dclOneSpec.slice('@dcl/asset-packs/dist/'.length)
+  if (__dclOneModule.slice(-3) === '.js') __dclOneModule = __dclOneModule.slice(0, -3)
+  if (__dclOneModule === '' || __dclOneModule === 'scene-entrypoint') return '@dcl/smart-items'
+  return '@dcl/smart-items/' + __dclOneModule
+}
+
 // ~system/* passes through to the host require; everything else must be a
 // registry key or fail loudly (design section 4: wildcard externals are broader
 // than the registry on purpose).
 function __dclOneMakeRequire(__dclOneRegistry, __dclOneHostRequire) {
   return function (__dclOneSpec) {
     if (__dclOneSpec.lastIndexOf('~system/', 0) === 0) return __dclOneHostRequire(__dclOneSpec)
+    __dclOneSpec = __dclOneSmartItemsSpec(__dclOneSpec)
     if (__dclOneSpec in __dclOneRegistry) return __dclOneRegistry[__dclOneSpec]
     throw new Error(
       'dcl-one split bundle: "' + __dclOneSpec + '" is not in the sdk runtime registry'

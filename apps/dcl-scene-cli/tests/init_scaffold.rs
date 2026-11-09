@@ -14,8 +14,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(tag: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("dcl-scene-cli-initgate-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "dcl-scene-cli-initgate-{tag}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Fixture(dir)
@@ -189,6 +191,11 @@ fn smart_wearable_scaffold_has_wearable_skeleton() {
     let pkg = f.json("package.json");
     assert!(pkg["scripts"]["pack"].is_string());
     assert!(f.read("README.md").contains("model.glb"));
+    let glb = std::fs::read(f.path().join("model.glb")).unwrap();
+    assert_eq!(&glb[..4], b"glTF", "model.glb is a glTF binary");
+    let png = std::fs::read(f.path().join("thumbnail.png")).unwrap();
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&png[16..24], &[0, 0, 1, 0, 0, 0, 1, 0], "256x256");
     let second = Fixture::new("sw2");
     let dir2 = second.dir_arg();
     let out2 = run(&["init", "--dir", &dir2, "--project", "smart-wearable"]);
@@ -207,6 +214,301 @@ fn init_creates_a_missing_target_directory() {
     let scene: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(nested.join("scene.json")).unwrap()).unwrap();
     assert_eq!(scene["display"]["title"], "scene");
+}
+
+/// `node` on PATH, or the gate's refusal: the vendored toolchain type-checks
+/// through it.
+#[cfg(unix)]
+fn node_available() -> Option<()> {
+    match dcl_scene_cli::build::find_node() {
+        Some(_) => Some(()),
+        None => common::testgate::unavailable("node", "no node binary on PATH"),
+    }
+}
+
+#[cfg(unix)]
+fn run_with_path(args: &[&str]) -> Output {
+    let mut cmd = Command::new(BIN);
+    cmd.args(args).stdin(Stdio::null()).env_remove("RUST_LOG");
+    cmd.output().unwrap()
+}
+
+/// The scaffold builds with nothing but the vendored node_modules: SDK
+/// chunk, scene chunk, loader stub and a passing type check.
+#[cfg(unix)]
+#[test]
+fn scene_scaffold_builds_with_the_vendored_toolchain() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("vendored-build");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "build failed\nstdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    assert!(stdout.contains("SDK chunk installed"), "{stdout}");
+    assert!(stdout.contains("Scene chunk saved"), "{stdout}");
+    assert!(stdout.contains("Type check passed"), "{stdout}");
+    for (rel, min) in [
+        ("bin/sdk-runtime.js", 100_000usize),
+        ("bin/index.js", 1_000),
+        ("bin/scene.js", 100),
+    ] {
+        let bytes = std::fs::read(f.path().join(rel)).unwrap();
+        assert!(
+            bytes.len() > min,
+            "{rel} suspiciously small: {} bytes",
+            bytes.len()
+        );
+    }
+}
+
+/// A scene tsconfig from before the template moved to `bundler`:
+/// `"moduleResolution": "node"`, which the vendored TypeScript 6 deprecates
+/// as a value (TS5107, reported as `node10`). The build repeats the check
+/// with `--ignoreDeprecations 6.0` and says which value needed it.
+#[cfg(unix)]
+#[test]
+fn scene_with_a_deprecated_module_resolution_builds_with_the_vendored_toolchain() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("vendored-node10");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let tsconfig = f.read("tsconfig.json").replace(
+        "\"moduleResolution\": \"bundler\"",
+        "\"moduleResolution\": \"node\"",
+    );
+    assert!(
+        tsconfig.contains("\"moduleResolution\": \"node\""),
+        "{tsconfig}"
+    );
+    std::fs::write(f.path().join("tsconfig.json"), tsconfig).unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+    assert!(
+        out.status.success(),
+        "build failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stdout.contains("Type check passed"), "{stdout}");
+    assert!(
+        stderr.contains("--ignoreDeprecations 6.0") && stderr.contains("moduleResolution=node10"),
+        "{stderr}"
+    );
+}
+
+/// init, then code-to-composite: the scaffold's cube comes out as a
+/// composite the editor can read (with a generated name), the code is
+/// commented out once, and a second run keeps the composite instead of
+/// wiping it (the existing main.crdt is part of the capture).
+#[cfg(unix)]
+#[test]
+fn code_to_composite_converts_the_scaffold_and_survives_a_second_run() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("code-to-composite");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let out = run_with_path(&["code-to-composite", "--dir", &dir]);
+    assert!(
+        !out.status.success(),
+        "no terminal and no --yes must refuse"
+    );
+    assert!(stderr_of(&out).contains("--yes"), "{}", stderr_of(&out));
+    assert!(!f.path().join("assets/scene/main.composite").exists());
+
+    let out = run_with_path(&["code-to-composite", "--dir", &dir, "-y"]);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "conversion failed\nstdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    assert!(stdout.contains("1 entity in 3 component types"), "{stdout}");
+    assert!(stdout.contains("Commented out 1 source file"), "{stdout}");
+    assert!(
+        stdout.contains("converted to the visual-editor format"),
+        "{stdout}"
+    );
+    let composite = f.json("assets/scene/main.composite");
+    assert_eq!(composite["version"], 1);
+    let names: Vec<&str> = composite["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["core::Transform", "core::MeshRenderer", "core-schema::Name"],
+        "{composite}"
+    );
+    let raw = f.read("assets/scene/main.composite");
+    assert!(
+        raw.contains("\"Box\""),
+        "the cube is named after its mesh: {raw}"
+    );
+    assert!(raw.contains("\"box\""), "{raw}");
+    assert!(
+        std::fs::metadata(f.path().join("main.crdt")).unwrap().len() > 0,
+        "main.crdt is written"
+    );
+    let index = f.read("src/index.ts");
+    assert_eq!(
+        index
+            .matches(dcl_scene_cli::code_to_composite::COMMENT_MARKER)
+            .count(),
+        1,
+        "{index}"
+    );
+    assert!(index.contains("// export function main() {"), "{index}");
+    assert!(index.ends_with("export {}\n"), "{index}");
+    assert!(f.read("assets/scene/entity-names.ts").contains("Box"));
+    assert!(
+        f.path().join("bin/index.js").exists(),
+        "rebuilt from the composite"
+    );
+
+    let out = run_with_path(&["code-to-composite", "--dir", &dir, "--yes"]);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "second conversion failed\nstdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    assert!(stdout.contains("Commented out 0 source files"), "{stdout}");
+    let again = f.json("assets/scene/main.composite");
+    assert_eq!(again, composite, "a converted scene round-trips unchanged");
+    assert_eq!(f.read("src/index.ts"), index, "sources are commented once");
+}
+
+/// A model whose glTF names one dependency plainly, one with `..` and one by
+/// URL: the sibling moves with the model, the other two are left as they
+/// are and reported, and nothing lands where the `..` path would point.
+#[cfg(unix)]
+#[test]
+fn code_to_composite_copies_only_gltf_dependencies_inside_the_model_folder() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("code-to-composite-gltf");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    std::fs::create_dir_all(f.path().join("models")).unwrap();
+    std::fs::write(
+        f.path().join("models/evil.gltf"),
+        r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"evil.bin","byteLength":4},{"uri":"../secret.bin","byteLength":4},{"uri":"https://cdn.example/far.bin","byteLength":4}]}"#,
+    )
+    .unwrap();
+    std::fs::write(f.path().join("models/evil.bin"), b"next").unwrap();
+    std::fs::write(f.path().join("secret.bin"), b"keep").unwrap();
+    std::fs::write(
+        f.path().join("src/index.ts"),
+        r#"import { engine, GltfContainer, Transform } from '@dcl/sdk/ecs'
+import { Vector3 } from '@dcl/sdk/math'
+
+export function main() {
+  const model = engine.addEntity()
+  Transform.create(model, { position: Vector3.create(8, 0, 8) })
+  GltfContainer.create(model, { src: 'models/evil.gltf' })
+}
+"#,
+    )
+    .unwrap();
+    let out = run_with_path(&["code-to-composite", "--dir", &dir, "--yes"]);
+    let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+    assert!(
+        out.status.success(),
+        "conversion failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("models/evil.gltf -> assets/scene/Models/evil/evil.gltf"),
+        "{stdout}"
+    );
+    assert!(
+        f.path()
+            .join("assets/scene/Models/evil/evil.gltf")
+            .is_file()
+    );
+    assert!(
+        f.path().join("assets/scene/Models/evil/evil.bin").is_file(),
+        "a plain sibling moves with its model"
+    );
+    assert!(
+        !f.path().join("assets/scene/Models/secret.bin").exists(),
+        "a .. dependency is not copied to where its path lands"
+    );
+    assert!(f.path().join("secret.bin").is_file());
+    for left in [
+        "models/evil.gltf: ../secret.bin",
+        "models/evil.gltf: https://cdn.example/far.bin",
+    ] {
+        assert!(stderr.contains(left), "{left} not reported:\n{stderr}");
+    }
+    assert!(
+        f.read("assets/scene/main.composite")
+            .contains("assets/scene/Models/evil/evil.gltf"),
+        "the component path follows the model"
+    );
+}
+
+/// init, then pack, with no edits in between: the zip the builder takes
+/// carries the manifest, the placeholder assets and the production bundle.
+#[cfg(unix)]
+#[test]
+fn smart_wearable_scaffold_packs_end_to_end() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("vendored-pack");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir, "--project", "smart-wearable"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let out = run_with_path(&["pack", "--dir", &dir]);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "pack failed\nstdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    let zip = std::fs::File::open(f.path().join("smart-wearable.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    let mut names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
+        .collect();
+    names.sort();
+    for required in [
+        "bin/index.js",
+        "bin/scene.js",
+        "bin/sdk-runtime.js",
+        "model.glb",
+        "scene.json",
+        "thumbnail.png",
+        "wearable.json",
+    ] {
+        assert!(
+            names.iter().any(|n| n == required),
+            "{required} missing from {names:?}"
+        );
+    }
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.starts_with("src/") || n.starts_with("node_modules/")),
+        "{names:?}"
+    );
+    let total: u64 = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().size())
+        .sum();
+    assert!(
+        total < 2_097_152,
+        "the scaffold must pack under the 2 MiB limit, got {total}"
+    );
+    assert!(
+        !f.path().join("bin/index.js").exists(),
+        "pack builds into the release tree, not the working tree"
+    );
 }
 
 // Unix only: the borrowed node_modules is linked in by symlink.
@@ -251,6 +553,271 @@ fn init_scene_is_immediately_buildable_with_provisioned_node_modules() {
             bytes.len() > min,
             "{rel} suspiciously small: {} bytes",
             bytes.len()
+        );
+    }
+}
+
+#[test]
+fn px_template_scaffold_is_a_portable_experience() {
+    let f = Fixture::new("px");
+    let dir = f.dir_arg();
+    let out = run(&[
+        "init",
+        "--dir",
+        &dir,
+        "--project",
+        "px-template",
+        "--skip-install",
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let scene = f.json("scene.json");
+    assert_eq!(scene["isPortableExperience"], true);
+    assert_eq!(scene["requiredPermissions"], serde_json::json!([]));
+    assert_eq!(scene["scene"]["parcels"], serde_json::json!(["0,0"]));
+    assert!(f.path().join("src/index.ts").is_file());
+    assert!(
+        !f.path().join("images").exists(),
+        "a portable experience has no thumbnail folder"
+    );
+    assert!(
+        !f.path().join("node_modules").exists(),
+        "--skip-install leaves node_modules out"
+    );
+    assert!(
+        stdout_of(&out).contains("Skipped node_modules"),
+        "{}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+fn scene_template_is_an_alias_for_scene() {
+    let f = Fixture::new("scene-alias");
+    let dir = f.dir_arg();
+    let out = run(&[
+        "init",
+        "--dir",
+        &dir,
+        "--project",
+        "scene-template",
+        "--skip-install",
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert_eq!(
+        f.json("scene.json")["isPortableExperience"],
+        serde_json::Value::Null
+    );
+    assert!(f.path().join("images/scene-thumbnail.png").is_file());
+}
+
+#[test]
+fn library_scaffold_exports_an_engine_taking_init() {
+    let f = Fixture::new("library");
+    let dir = f.dir_arg();
+    let out = run(&[
+        "init",
+        "--dir",
+        &dir,
+        "--project",
+        "library",
+        "--skip-install",
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let index = f.read("src/index.ts");
+    assert!(
+        index.contains("export function initLibrary(scene: IEngine)"),
+        "{index}"
+    );
+    assert!(
+        index.contains("export function main()"),
+        "previewable as a scene: {index}"
+    );
+    let package = f.json("package.json");
+    assert_eq!(package["types"], "dist/index.d.ts");
+    assert!(
+        package["scripts"]["build:lib"]
+            .as_str()
+            .unwrap()
+            .contains("--single src/index.ts --emitDeclaration")
+    );
+    let tsconfig = f.json("tsconfig.json");
+    assert_eq!(tsconfig["compilerOptions"]["declarationDir"], "dist");
+    assert!(stdout_of(&out).contains("build:lib"), "{}", stdout_of(&out));
+}
+
+/// `build --single` on the library scaffold: the type check writes the
+/// declarations and each entry bundles beside its source.
+#[cfg(unix)]
+#[test]
+fn library_scaffold_bundles_single_files_with_declarations() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("library-single");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir, "--project", "library"]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let out = run_with_path(&[
+        "build",
+        "--built-in",
+        "--dir",
+        &dir,
+        "--single",
+        "src/**/*.ts",
+        "--emitDeclaration",
+    ]);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "build failed\nstdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    assert!(stdout.contains("declarations emitted"), "{stdout}");
+    let bundle = f.read("src/index.js");
+    assert!(bundle.contains("initLibrary"), "{bundle}");
+    assert!(
+        bundle.contains("require(\"@dcl/sdk/ecs\")") || bundle.contains("require('@dcl/sdk/ecs')"),
+        "the SDK stays external: {}",
+        &bundle[..bundle.len().min(600)]
+    );
+    let dts = f.read("dist/index.d.ts");
+    assert!(dts.contains("export declare function initLibrary"), "{dts}");
+    assert!(
+        !f.path().join("bin/index.js").exists(),
+        "--single does not build the scene"
+    );
+
+    // A pattern that matches nothing is an error, not an empty success.
+    let out = run_with_path(&["build", "--built-in", "--dir", &dir, "--single", "lib/*.ts"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("matches no .ts"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+fn template_zip(top: &str, files: &[(&str, &str)]) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "dcl-scene-cli-template-{top}-{}.zip",
+        std::process::id()
+    ));
+    let file = std::fs::File::create(&path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default();
+    zip.add_directory(format!("{top}/"), opts).unwrap();
+    for (rel, body) in files {
+        use std::io::Write;
+        zip.start_file(format!("{top}/{rel}"), opts).unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    path
+}
+
+/// `--template` with a local zip: the one top-level folder's contents become
+/// the project, and dependencies the vendored SDK lacks are named.
+#[test]
+fn template_zip_unpacks_its_top_level_folder() {
+    let f = Fixture::new("template-zip");
+    let dir = f.dir_arg();
+    let zip = template_zip(
+        "my-template-main",
+        &[
+            (
+                "scene.json",
+                r#"{"main":"bin/index.js","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
+            ),
+            ("src/index.ts", "export function main() {}\n"),
+            ("src/nested/util.ts", "export const x = 1\n"),
+            (
+                "package.json",
+                r#"{"name":"t","dependencies":{"@dcl/sdk":"7","@dcl-sdk/utils":"1"}}"#,
+            ),
+        ],
+    );
+    let out = run(&["init", "--dir", &dir, "--template", zip.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&zip);
+    let stdout = stdout_of(&out);
+    assert!(
+        out.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        stderr_of(&out)
+    );
+    assert_eq!(f.read("src/nested/util.ts"), "export const x = 1\n");
+    assert!(f.path().join("scene.json").is_file());
+    assert!(
+        !f.path().join("my-template-main").exists(),
+        "the top folder is stripped"
+    );
+    assert!(
+        f.path()
+            .join("node_modules/@dcl/sdk/package.json")
+            .is_file()
+    );
+    assert!(stdout.contains("Unpacked 4 files"), "{stdout}");
+    assert!(
+        stdout.contains("@dcl-sdk/utils"),
+        "missing dependency named: {stdout}"
+    );
+    assert!(
+        !stdout.contains("@dcl/sdk,"),
+        "vendored packages are not missing: {stdout}"
+    );
+}
+
+#[test]
+fn template_zip_must_hold_exactly_one_top_level_folder() {
+    let f = Fixture::new("template-flat");
+    let dir = f.dir_arg();
+    let path = std::env::temp_dir().join(format!("dcl-scene-cli-flat-{}.zip", std::process::id()));
+    {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("scene.json", opts).unwrap();
+        zip.write_all(b"{}").unwrap();
+        zip.start_file("src/index.ts", opts).unwrap();
+        zip.write_all(b"").unwrap();
+        zip.finish().unwrap();
+    }
+    let out = run(&["init", "--dir", &dir, "--template", path.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&path);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("exactly one top-level folder"),
+        "{}",
+        stderr_of(&out)
+    );
+
+    let out = run(&[
+        "init",
+        "--dir",
+        &dir,
+        "--template",
+        "/nonexistent/template.zip",
+    ]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("neither a file nor an http(s) URL"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+#[test]
+fn github_repo_url_must_name_a_repository() {
+    let f = Fixture::new("github-bad");
+    let dir = f.dir_arg();
+    for url in [
+        "https://gitlab.com/a/b",
+        "https://github.com/onlyowner",
+        "https://github.com/a/b/blob/main/x",
+    ] {
+        let out = run(&["init", "--dir", &dir, "--github-repo", url]);
+        assert!(!out.status.success(), "{url} accepted");
+        assert!(
+            stderr_of(&out).contains("not a GitHub repository URL"),
+            "{url}: {}",
+            stderr_of(&out)
         );
     }
 }

@@ -36,7 +36,7 @@ class DevCiTest(unittest.TestCase):
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql']):
+                        ['schemas/50_create.sql'], ['apps/dcl-scene-cli/src/typescript.rs']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
@@ -147,13 +147,26 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, web]', gate)
+        self.assertIn('needs: [changes, rust, web, cli]', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'web'):
+        for job in ('rust', 'smoke', 'web', 'cli'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
+
+    def test_the_scene_cli_job_cannot_pass_by_skipping(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        cli = workflow.split('\n  cli:\n', 1)[1].split('\n  gate:\n', 1)[0]
+        # Under this variable a missing node or livekit-server turns the golden, scaffold and
+        # embedded-LiveKit tests into passing no-ops; the shell provides both, so nothing may skip.
+        self.assertNotIn('ALLOW_SKIPPED_INTEGRATION', cli)
+        # The TypeScript-line test is ignored by default and needs the three installs.
+        self.assertIn('--test typescript_versions -- --ignored', cli)
+        self.assertIn('DCL_SCENE_CLI_TEST_TYPESCRIPT: ${{ github.workspace }}/.cache/typescript/5.9.3:', cli)
+        for version in ('5.9.3', '6.0.3', '7.0.2'):
+            self.assertIn(f'.cache/typescript/{version}', cli)
+        self.assertNotIn('ALLOW_SKIPPED_INTEGRATION', (dev.ROOT / 'tooling/ci-local.py').read_text())
 
     def run_main(self, summary):
         with tempfile.TemporaryDirectory() as directory:

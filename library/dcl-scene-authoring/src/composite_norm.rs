@@ -1,8 +1,108 @@
 use crate::jsjson::{self, JsValue, array_index, ordered_entries};
+use crate::schema_crdt::component_number_from_name;
 use anyhow::{Result, bail};
 use base64::Engine;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
+
+/// The composite namespace of the smart-item components `@dcl/smart-items`
+/// defines (`smart-items::Actions`, `smart-items::Triggers`, ...).
+pub const SMART_ITEMS_PREFIX: &str = "smart-items::";
+
+/// The namespace composites carried while the smart-item runtime was the
+/// registry package `@dcl/asset-packs`. Scenes saved by the Creator Hub before
+/// the move still name their components this way, so every reader renames the
+/// prefix on load; the runtime defines only [`SMART_ITEMS_PREFIX`] names, and
+/// a component's number is hashed from its name.
+pub const LEGACY_PREFIX: &str = "asset-packs::";
+
+/// A composite component name as the runtime defines it: a [`LEGACY_PREFIX`]
+/// name moved under [`SMART_ITEMS_PREFIX`], every other name unchanged.
+pub fn smart_item_name(name: &str) -> Cow<'_, str> {
+    match name.strip_prefix(LEGACY_PREFIX) {
+        Some(rest) => Cow::Owned(format!("{SMART_ITEMS_PREFIX}{rest}")),
+        None => Cow::Borrowed(name),
+    }
+}
+
+/// The smart-item components `@dcl/smart-items` defines, by bare name:
+/// `smart-items::<Name>` in a composite the runtime wrote, `asset-packs::<Name>`
+/// in one the registry `@dcl/inspector` wrote.
+pub const SMART_ITEM_NAMES: [&str; 13] = [
+    "ActionTypes",
+    "Actions",
+    "Counter",
+    "Triggers",
+    "States",
+    "CounterBar",
+    "AdminTools",
+    "VideoScreen",
+    "Rewards",
+    "TextAnnouncements",
+    "VideoControlState",
+    "Script",
+    "Placeholder",
+];
+
+/// The component whose `componentIds` value names other components by number.
+pub const SYNC_COMPONENTS: &str = "core-schema::Sync-Components";
+
+/// Each smart-item component's number under its [`LEGACY_PREFIX`] name and
+/// under its [`SMART_ITEMS_PREFIX`] name, in [`SMART_ITEM_NAMES`] order. A
+/// component's number is hashed from its name, so the rename moves every one.
+pub fn legacy_component_numbers() -> &'static [(u32, u32); 13] {
+    static TABLE: OnceLock<[(u32, u32); 13]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        SMART_ITEM_NAMES.map(|name| {
+            (
+                component_number_from_name(&format!("{LEGACY_PREFIX}{name}")),
+                component_number_from_name(&format!("{SMART_ITEMS_PREFIX}{name}")),
+            )
+        })
+    })
+}
+
+/// A component number as the runtime defines it: a smart-item component's
+/// [`LEGACY_PREFIX`] number moved to its [`SMART_ITEMS_PREFIX`] number, every
+/// other number unchanged.
+pub fn current_component_number(id: u32) -> u32 {
+    legacy_component_numbers()
+        .iter()
+        .find(|(legacy, _)| *legacy == id)
+        .map_or(id, |(_, current)| *current)
+}
+
+fn as_u32(n: f64) -> Option<u32> {
+    (n.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&n)).then_some(n as u32)
+}
+
+fn get_mut<'a>(value: &'a mut JsValue, key: &str) -> Option<&'a mut JsValue> {
+    match value {
+        JsValue::Object(entries) => entries.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    }
+}
+
+/// A [`SYNC_COMPONENTS`] value lists components by number: each legacy
+/// smart-item number becomes the current one ([`current_component_number`]);
+/// other numbers and strings pass through.
+fn remap_sync_component_ids(data: &mut [(String, JsValue)]) {
+    for (_, entry) in data.iter_mut() {
+        let Some(JsValue::Array(ids)) =
+            get_mut(entry, "json").and_then(|j| get_mut(j, "componentIds"))
+        else {
+            continue;
+        };
+        for id in ids.iter_mut() {
+            if let JsValue::Number(n) = id
+                && let Some(number) = as_u32(*n)
+            {
+                *n = f64::from(current_component_number(number));
+            }
+        }
+    }
+}
 
 fn get_set<'a>(value: &'a JsValue, key: &str) -> Option<&'a JsValue> {
     value.get(key).filter(|v| !matches!(v, JsValue::Null))
@@ -220,7 +320,7 @@ fn normalize_data_entry(value: &JsValue) -> Result<JsValue> {
 
 /// Entity keys are re-spelled through `Number` → `String`, so `"512"`, `"5.12e2"`
 /// and `" 512 "` all land on the index 512; non-index survivors keep insertion order.
-fn normalize_data(pairs: &[(String, &JsValue)]) -> Result<JsValue> {
+fn normalize_data(pairs: &[(String, &JsValue)]) -> Result<Vec<(String, JsValue)>> {
     let mut indexed: BTreeMap<u32, JsValue> = BTreeMap::new();
     let mut plain: Vec<(String, JsValue)> = Vec::new();
     for (key, value) in ordered_entries(pairs) {
@@ -238,14 +338,65 @@ fn normalize_data(pairs: &[(String, &JsValue)]) -> Result<JsValue> {
         .map(|(n, e)| (n.to_string(), e))
         .collect();
     entries.extend(plain);
-    Ok(JsValue::Object(entries))
+    Ok(entries)
 }
 
-fn normalize_component(component: &JsValue) -> Result<JsValue> {
+/// One normalized component block.
+struct Block {
+    name: String,
+    schema: Option<JsValue>,
+    data: Vec<(String, JsValue)>,
+    /// The file spelled the name `smart-items::` itself (not renamed here).
+    current: bool,
+    /// `schema` came from a block the file spelled `smart-items::`.
+    schema_current: bool,
+    /// Entities whose entry came from a block the file spelled `smart-items::`.
+    current_entities: HashSet<String>,
+}
+
+impl Block {
+    /// Fold a later block of the same name in: per entity the block the file
+    /// already spelled `smart-items::` wins, and so does its `jsonSchema`
+    /// (else the first block that has one).
+    fn merge(&mut self, other: Block) {
+        if other.schema.is_some()
+            && (self.schema.is_none() || (other.current && !self.schema_current))
+        {
+            self.schema = other.schema;
+            self.schema_current = other.current;
+        }
+        for (key, value) in other.data {
+            match self.data.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) if other.current && !self.current_entities.contains(&key) => {
+                    slot.1 = value;
+                }
+                Some(_) => {}
+                None => self.data.push((key.clone(), value)),
+            }
+            if other.current {
+                self.current_entities.insert(key);
+            }
+        }
+        self.data = ordered_entries(&self.data).into_iter().cloned().collect();
+    }
+
+    fn into_value(self) -> JsValue {
+        let mut entries = vec![("name", JsValue::String(self.name))];
+        if let Some(schema) = self.schema {
+            entries.push(("jsonSchema", schema));
+        }
+        entries.push(("data", JsValue::Object(self.data)));
+        obj(entries)
+    }
+}
+
+fn normalize_component(component: &JsValue) -> Result<Block> {
     if matches!(component, JsValue::Null) {
         bail!("component is null");
     }
     let name = get_set(component, "name").map_or_else(String::new, js_string);
+    let current = name.starts_with(SMART_ITEMS_PREFIX);
+    let name = smart_item_name(&name).into_owned();
     let pairs: Vec<(String, &JsValue)> = match component.get("data") {
         Some(JsValue::Object(entries)) => entries.iter().map(|(k, v)| (k.clone(), v)).collect(),
         Some(JsValue::Array(items)) => items
@@ -255,14 +406,27 @@ fn normalize_component(component: &JsValue) -> Result<JsValue> {
             .collect(),
         _ => Vec::new(),
     };
-    let mut entries = vec![("name", JsValue::String(name))];
-    if let Some(schema) = get_set(component, "jsonSchema") {
-        entries.push(("jsonSchema", schema.clone()));
+    let schema = get_set(component, "jsonSchema").cloned();
+    let mut data = normalize_data(&pairs)?;
+    if name == SYNC_COMPONENTS {
+        remap_sync_component_ids(&mut data);
     }
-    entries.push(("data", normalize_data(&pairs)?));
-    Ok(obj(entries))
+    let current_entities = match current {
+        true => data.iter().map(|(k, _)| k.clone()).collect(),
+        false => HashSet::new(),
+    };
+    Ok(Block {
+        schema_current: current && schema.is_some(),
+        name,
+        schema,
+        data,
+        current,
+        current_entities,
+    })
 }
 
+/// Blocks that end with the same `smart-items::` name after the rename
+/// become one block where the first stood ([`Block::merge`]).
 fn normalize_definition(root: &JsValue) -> Result<JsValue> {
     if matches!(root, JsValue::Null) {
         bail!("composite root is null");
@@ -273,13 +437,20 @@ fn normalize_definition(root: &JsValue) -> Result<JsValue> {
     } else {
         JsValue::Null
     };
-    let components = match root.get("components") {
-        Some(JsValue::Array(items)) => items
-            .iter()
-            .map(normalize_component)
-            .collect::<Result<Vec<_>>>()?,
-        _ => Vec::new(),
-    };
+    let mut blocks: Vec<Block> = Vec::new();
+    if let Some(JsValue::Array(items)) = root.get("components") {
+        for item in items {
+            let block = normalize_component(item)?;
+            if block.name.starts_with(SMART_ITEMS_PREFIX)
+                && let Some(first) = blocks.iter_mut().find(|b| b.name == block.name)
+            {
+                first.merge(block);
+                continue;
+            }
+            blocks.push(block);
+        }
+    }
+    let components = blocks.into_iter().map(Block::into_value).collect();
     Ok(obj(vec![
         ("version", version_value),
         ("components", JsValue::Array(components)),
@@ -304,7 +475,12 @@ fn static_core_table() -> &'static HashSet<String> {
 }
 
 /// Normalizes composites the way `@dcl/ecs` `Composite.toJson` does, tracking
-/// which component names earlier composites have already defined.
+/// which component names earlier composites have already defined. Smart-item
+/// components come out under [`SMART_ITEMS_PREFIX`] whichever prefix the file
+/// carries ([`smart_item_name`]), [`SYNC_COMPONENTS`] values point at their
+/// current numbers ([`current_component_number`]), and blocks that end with
+/// the same smart-item name merge into one; the result
+/// normalizes to itself.
 pub struct CompositeNormalizer {
     defined: HashSet<String>,
 }
@@ -473,6 +649,143 @@ mod tests {
             n.normalize(r#"{"components":[{"name":"core::Transform","data":{"512":null}}]}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn legacy_smart_item_names_normalize_to_the_runtime_namespace() {
+        assert_eq!(
+            smart_item_name("asset-packs::Actions"),
+            "smart-items::Actions"
+        );
+        assert_eq!(
+            smart_item_name("smart-items::Actions"),
+            "smart-items::Actions"
+        );
+        assert_eq!(smart_item_name("core::Transform"), "core::Transform");
+        let mut n = CompositeNormalizer::new();
+        let raw = r#"{"version":1,"components":[{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}}]}"#;
+        let out = n.normalize(raw).unwrap();
+        assert!(out.contains(r#""name":"smart-items::Actions""#), "{out}");
+        assert!(
+            !out.contains(&format!("\"name\":\"{LEGACY_PREFIX}")),
+            "{out}"
+        );
+        // The first definition registered the renamed name, so a later composite
+        // may use either spelling without carrying the schema again.
+        let later = r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#;
+        assert!(n.normalize(later).is_ok());
+    }
+
+    /// A Creator Hub capture from before the move: every component it inlines
+    /// for the runtime has to come out under the namespace the runtime defines,
+    /// and its `Sync-Components` under the numbers of those names. Other values
+    /// are not touched — its `inspector::Config` data names the components its
+    /// fields edit, and that stays as written.
+    #[test]
+    fn creator_hub_capture_normalizes_without_a_legacy_component_name_left() {
+        let raw = include_str!("../testdata/gather-main.composite");
+        assert!(raw.contains("\"asset-packs::Actions\""));
+        assert!(raw.contains("4149214247"), "Script under its legacy number");
+        let out = CompositeNormalizer::new().normalize(raw).unwrap();
+        assert!(out.contains(r#""name":"smart-items::Actions""#));
+        assert!(out.contains(r#""name":"smart-items::Script""#));
+        assert!(!out.contains(&format!("\"name\":\"{LEGACY_PREFIX}")));
+        assert!(out.contains(r#""type":"asset-packs::AdminTools""#));
+        assert!(
+            out.contains(r#""componentIds":[2884627400]"#) && out.contains(r#"[1043,1498732997]"#),
+            "{out}"
+        );
+        assert!(
+            !out.contains("99929642") && !out.contains("4149214247"),
+            "{out}"
+        );
+        assert_eq!(CompositeNormalizer::new().normalize(&out).unwrap(), out);
+    }
+
+    /// The numbers the renumbering moves, as the component-number hash gives
+    /// them (and as the review of the rename listed them).
+    #[test]
+    fn legacy_numbers_follow_the_component_number_hash() {
+        let table = legacy_component_numbers();
+        assert_eq!(table.len(), SMART_ITEM_NAMES.len());
+        for (name, (legacy, current)) in SMART_ITEM_NAMES.iter().zip(table) {
+            assert_eq!(
+                *legacy,
+                component_number_from_name(&format!("asset-packs::{name}"))
+            );
+            assert_eq!(
+                *current,
+                component_number_from_name(&format!("smart-items::{name}"))
+            );
+            assert_eq!(current_component_number(*legacy), *current, "{name}");
+            assert_eq!(current_component_number(*current), *current, "{name}");
+        }
+        assert_eq!(current_component_number(2709697014), 261723156, "States");
+        assert_eq!(current_component_number(2193198513), 748857427, "Actions");
+        assert_eq!(current_component_number(1043), 1043);
+    }
+
+    const SYNC_SCHEMA: &str = r#"{"type":"object","properties":{"componentIds":{"type":"array","items":{"type":"integer","serializationType":"int64"},"serializationType":"array"}},"serializationType":"map"}"#;
+
+    #[test]
+    fn sync_components_point_at_the_runtime_numbers() {
+        let raw = format!(
+            r#"{{"version":1,"components":[{{"name":"core-schema::Sync-Components","jsonSchema":{SYNC_SCHEMA},"data":{{"512":{{"json":{{"componentIds":[2709697014,1043,"asset-packs::Actions",261723156]}}}},"513":{{"binary":"AQID"}}}}}}]}}"#
+        );
+        let out = CompositeNormalizer::new().normalize(&raw).unwrap();
+        assert!(
+            out.contains(r#""componentIds":[261723156,1043,"asset-packs::Actions",261723156]"#),
+            "{out}"
+        );
+        assert_eq!(CompositeNormalizer::new().normalize(&out).unwrap(), out);
+    }
+
+    const STATES_SCHEMA: &str = r#"{"type":"object","properties":{"value":{"type":"string","serializationType":"utf8-string"}},"serializationType":"map"}"#;
+
+    #[test]
+    fn same_named_blocks_merge_into_the_first_and_the_current_spelling_wins() {
+        let raw = format!(
+            r#"{{"version":1,"components":[{{"name":"core::Transform","data":{{"512":{{"json":{{}}}}}}}},{{"name":"asset-packs::States","jsonSchema":{{"legacy":true}},"data":{{"513":{{"json":"legacy-513"}},"512":{{"json":"legacy-512"}}}}}},{{"name":"smart-items::States","jsonSchema":{STATES_SCHEMA},"data":{{"513":{{"json":"current-513"}},"514":{{"json":"current-514"}}}}}},{{"name":"asset-packs::States","data":{{"514":{{"json":"legacy-514"}},"515":{{"json":"legacy-515"}}}}}}]}}"#
+        );
+        let out = CompositeNormalizer::new().normalize(&raw).unwrap();
+        let expected = format!(
+            r#"{{"version":1,"components":[{{"name":"core::Transform","data":{{"512":{{"json":{{}}}}}}}},{{"name":"smart-items::States","jsonSchema":{STATES_SCHEMA},"data":{{"512":{{"json":"legacy-512"}},"513":{{"json":"current-513"}},"514":{{"json":"current-514"}},"515":{{"json":"legacy-515"}}}}}}]}}"#
+        );
+        assert_eq!(out, expected);
+        assert_eq!(CompositeNormalizer::new().normalize(&out).unwrap(), out);
+    }
+
+    #[test]
+    fn a_current_block_first_keeps_its_entries_and_schema() {
+        let raw = format!(
+            r#"{{"version":1,"components":[{{"name":"smart-items::Counter","jsonSchema":{STATES_SCHEMA},"data":{{"512":{{"json":"current"}}}}}},{{"name":"asset-packs::Counter","jsonSchema":{{"legacy":true}},"data":{{"512":{{"json":"legacy"}},"600":{{"json":"legacy-600"}}}}}}]}}"#
+        );
+        let out = CompositeNormalizer::new().normalize(&raw).unwrap();
+        assert_eq!(
+            out,
+            format!(
+                r#"{{"version":1,"components":[{{"name":"smart-items::Counter","jsonSchema":{STATES_SCHEMA},"data":{{"512":{{"json":"current"}},"600":{{"json":"legacy-600"}}}}}}]}}"#
+            )
+        );
+    }
+
+    /// Two legacy blocks: the first keeps its entries, the first schema wins,
+    /// and only a block without a schema borrows one.
+    #[test]
+    fn legacy_blocks_merge_first_wins() {
+        let raw = r#"{"version":1,"components":[{"name":"asset-packs::Counter","data":{"512":{"json":"first"}}},{"name":"asset-packs::Counter","jsonSchema":{"type":"object"},"data":{"512":{"json":"second"},"513":{"json":"second-513"}}}]}"#;
+        let out = CompositeNormalizer::new().normalize(raw).unwrap();
+        assert_eq!(
+            out,
+            r#"{"version":1,"components":[{"name":"smart-items::Counter","jsonSchema":{"type":"object"},"data":{"512":{"json":"first"},"513":{"json":"second-513"}}}]}"#
+        );
+    }
+
+    #[test]
+    fn other_components_never_merge() {
+        let raw = r#"{"version":1,"components":[{"name":"my::Thing","jsonSchema":{"type":"object"},"data":{"512":{"json":1}}},{"name":"my::Thing","data":{"512":{"json":2}}}]}"#;
+        let out = CompositeNormalizer::new().normalize(raw).unwrap();
+        assert_eq!(out.matches(r#""name":"my::Thing""#).count(), 2, "{out}");
     }
 
     #[test]

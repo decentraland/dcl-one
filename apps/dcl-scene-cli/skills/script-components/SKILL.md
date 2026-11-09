@@ -54,7 +54,7 @@ export class MyScript {
 
 The Creator Hub Script component has a `priority` field (separate from constructor params — it's set in the component UI, not in your class). It **defaults to `0`**, and this has non-obvious consequences:
 
-- **Default priority `0` = scripts run LAST each frame.** At build time `@dcl/sdk-commands` groups all scripts by their `priority` value and registers ONE engine system per group via `engine.addSystem(updateLoop, Number(priority))`. Because engine systems run **highest-priority-first** (regular systems use `100000`, UI uses `100000`), priority `0` runs after everything else.
+- **Default priority `0` = scripts run LAST each frame.** At scene start `runScripts` from `@dcl/smart-items/scripts` groups all scripts by their `priority` value and registers ONE engine system per group via `engine.addSystem(updateLoop, Number(priority))`. Because engine systems run **highest-priority-first** (regular systems use `100000`, UI uses `100000`), priority `0` runs after everything else.
 - **All scripts sharing the same `priority` share ONE system callback** and run **sequentially** inside it. A single heavy script's `update()` therefore delays every other script in the same priority group that frame.
 - **To run a script's `update()` before regular systems**, raise its `priority` (e.g. `1000000`) in the Script component. This also gives it its own dedicated system. This is how you'd step a physics library (cannon.js) inside `update(dt)` ahead of systems that read the result — there is no separate physics loop.
 
@@ -119,13 +119,13 @@ constructor(
 
 ### The `layout` field — how params are stored and resolved at runtime
 
-The `asset-packs::Script` component value has the shape `{ value: [{ path: string, priority: number, layout?: string }] }`. The `layout` field is a JSON string:
+The `smart-items::Script` component value has the shape `{ value: [{ path: string, priority: number, layout?: string }] }`. The `layout` field is a JSON string:
 
 ```json
 {"params":{"paramName":{"type":"string|number|boolean|action","value":<value>}}}
 ```
 
-At runtime, `@dcl/sdk-commands/dist/logic/runtime-script.js` resolves params like this:
+At runtime, `@dcl/smart-items/scripts` resolves params like this:
 
 1. `JSON.parse(layout)` to get a `ScriptLayout` object.
 2. `Object.values(layout.params)` extracts param values **in insertion order**.
@@ -135,13 +135,13 @@ At runtime, `@dcl/sdk-commands/dist/logic/runtime-script.js` resolves params lik
 
 Params with `type: "action"` have `value: {entity: Entity, action: string}` and are converted to `ActionCallback` functions via `createActionCallback` (which calls `getActionEvents(entity).emit(action, {})` when invoked).
 
-This is relevant for agents/MCP tools setting Script params programmatically via `set_component` on `asset-packs::Script` — the full ordered params object must be provided. Example layout for a script with 14 constructor params (after `src`/`entity`):
+This is relevant for agents/MCP tools setting Script params programmatically via `set_component` on `smart-items::Script` — the full ordered params object must be provided. Example layout for a script with 14 constructor params (after `src`/`entity`):
 
 ```json
 {"params":{"colorA":{"type":"string","value":"#ff33e6"},"colorB":{"type":"string","value":"#33e6ff"},"rate":{"type":"number","value":35},"lifetime":{"type":"number","value":2.5},"sizeMin":{"type":"number","value":0.3},"sizeMax":{"type":"number","value":0.6},"speedMin":{"type":"number","value":2.5},"speedMax":{"type":"number","value":4},"gravity":{"type":"number","value":-0.3},"spin":{"type":"number","value":0},"shape":{"type":"string","value":"sphere"},"shapeSize":{"type":"number","value":0.4},"maxParticles":{"type":"number","value":150},"startPlaying":{"type":"boolean","value":true}}}
 ```
 
-**Verified in:** `@dcl/sdk-commands/dist/logic/runtime-script.js` — `resolveScriptParams` uses `Object.values(params).map(...)` and the result is spread as `new ScriptClass(src, entity, ...params)`.
+**Source:** `@dcl/smart-items/scripts` — `resolveScriptParams` uses `Object.values(params).map(...)` and the result is spread as `new ScriptClass(src, entity, ...params)`.
 
 ## Referencing assets with `this.src`
 

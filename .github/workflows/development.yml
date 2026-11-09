@@ -17,6 +17,7 @@ on:
       - '.cargo/**'
       - 'apps/sites/**'
       - 'apps/ui3/**'
+      - 'apps/dcl-scene-cli/**'
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
@@ -314,24 +315,104 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-  # The one check to mark required on main. It always reports: green when the Rust and web jobs passed or were
-  # skipped because nothing they test changed, red when either failed, was cancelled or is missing. Smoke is left
-  # out: it also fails on hosted-runner limits that are not the change's.
+  cli:
+    name: Scene CLI tests and vendored SDK
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      # The SDK's make install takes the shell's protoc instead of downloading one.
+      SDK_PROTOC: protoc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-default-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-default-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Put the Nix Rust toolchain on PATH for the cache action
+        run: |
+          toolchain=$(dirname "$(nix develop --command bash -c 'command -v cargo')")
+          test -x "$toolchain/rustc"
+          echo "$toolchain" >> "$GITHUB_PATH"
+      - name: Restore the Rust dependency cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          RUSTUP_HOME: /dev/null
+        with:
+          # As the Rust job's: dependencies only, flake.lock in the key, saved from main's first attempts.
+          workspaces: services/catalyst
+          shared-key: scene-cli-${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          cache-on-failure: true
+      - name: Build the development shell and locate the pnpm store
+        run: echo "PNPM_STORE=$(nix develop --command pnpm store path)" >> "$GITHUB_ENV"
+      - name: Restore the pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: foundation-dev-pnpm-sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('library/js-sdk-toolchain/pnpm-lock.yaml', 'library/protocol/pnpm-lock.yaml', 'apps/dcl-scene-cli/src/vendor/registry/pnpm-lock.yaml') }}
+          restore-keys: |
+            foundation-dev-pnpm-sdk-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the SDK packages from the tree
+        timeout-minutes: 20
+        run: nix develop --command make -C library/js-sdk-toolchain install build
+      # No skip variable: the shell carries node and livekit-server, so a test that cannot find
+      # them fails instead of logging a skip under a green check.
+      - name: Test the scene CLI crates
+        timeout-minutes: 30
+        run: nix develop --command cargo test --locked --manifest-path services/catalyst/Cargo.toml -p dcl-scene-cli -p dcl-scene-build -p dcl-scene-authoring
+      - name: Install the TypeScript lines a scene may check with
+        run: |
+          for version in 5.9.3 6.0.3 7.0.2; do
+            mkdir -p ".cache/typescript/$version"
+            echo '{"name":"typescript-line","private":true}' > ".cache/typescript/$version/package.json"
+            nix develop --command pnpm --dir ".cache/typescript/$version" add --save-exact "typescript@$version"
+          done
+      - name: Type-check the scaffolds under TypeScript 5, 6 and 7
+        timeout-minutes: 10
+        env:
+          DCL_SCENE_CLI_TEST_TYPESCRIPT: ${{ github.workspace }}/.cache/typescript/5.9.3:${{ github.workspace }}/.cache/typescript/6.0.3:${{ github.workspace }}/.cache/typescript/7.0.2
+        run: nix develop --command cargo test --locked --manifest-path services/catalyst/Cargo.toml -p dcl-scene-cli --test typescript_versions -- --ignored
+      - name: Check the vendored SDK against the tree
+        timeout-minutes: 10
+        run: nix develop --command python3 -I apps/dcl-scene-cli/scripts/build-base-blob.py --check
+      - name: Save the pnpm store from main
+        if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+  # The one check to mark required on main. It always reports: green when the Rust, web and scene CLI jobs passed
+  # or were skipped because nothing they test changed, red when any failed, was cancelled or is missing. Smoke is
+  # left out: it also fails on hosted-runner limits that are not the change's.
   gate:
     name: CI gate
-    needs: [changes, rust, web]
+    needs: [changes, rust, web, cli]
     if: ${{ always() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - name: Require the Rust and web jobs to pass or be skipped
+      - name: Require the Rust, web and scene CLI jobs to pass or be skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RUST: ${{ needs.rust.result }}
           WEB: ${{ needs.web.result }}
+          CLI: ${{ needs.cli.result }}
         run: |
-          echo "changes=$CHANGES rust=$RUST web=$WEB"
-          for result in "$CHANGES" "$RUST" "$WEB"; do
+          echo "changes=$CHANGES rust=$RUST web=$WEB cli=$CLI"
+          for result in "$CHANGES" "$RUST" "$WEB" "$CLI"; do
             case "$result" in
               success|skipped) ;;
               *) echo "::error::A required job ended as '$result'"; exit 1 ;;

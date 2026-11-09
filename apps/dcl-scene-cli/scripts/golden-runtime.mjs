@@ -9,10 +9,8 @@ const sceneJson = JSON.parse(fs.readFileSync(path.join(root, 'scene.json'), 'utf
 const mainFile = sceneJson.main
 
 const sceneRequire = createRequire(path.join(root, 'golden-runtime-anchor.js'))
-const { ReadWriteByteBuffer } = sceneRequire('@dcl/ecs/dist-cjs/serialization/ByteBuffer')
-const { readMessage } = sceneRequire('@dcl/ecs/dist-cjs/serialization/crdt/message')
-const { CrdtMessageType } = sceneRequire('@dcl/ecs/dist-cjs/serialization/crdt/types')
-const hostEngine = sceneRequire('@dcl/ecs/dist-cjs').engine
+const { ReadWriteByteBuffer, readMessage, CrdtMessageType, engine: hostEngine } =
+  sceneRequire('@dcl/inspector-service').ecs
 
 function serializeMessage(prefix, msg) {
   const type = CrdtMessageType[msg.type] ?? `UNKNOWN(${msg.type})`

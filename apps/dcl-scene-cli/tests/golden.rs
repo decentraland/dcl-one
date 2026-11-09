@@ -20,10 +20,11 @@
 //! by design. The cost axis is exact per-artifact bytes, deploy total, per-run
 //! CRDT message/byte counts, host-call counts and console output.
 //!
-//! Stale golden: `UPDATE_GOLDEN=1 cargo test -p dcl-scene-cli --test golden`, or
-//! scripts/update-goldens.sh. A MISSING golden fails too — this repo's CI
-//! backstop counts passing tests and never checks for a dirty tree, so an
-//! auto-written golden would report green having asserted nothing.
+//! Stale golden: `UPDATE_GOLDEN=1 cargo test -p dcl-scene-cli --test golden`
+//! rewrites them all; the TOOLCHAIN line carries the vendored SDK's hash, so a
+//! vendored-SDK change moves every golden. A MISSING golden fails too — this
+//! repo's CI backstop counts passing tests and never checks for a dirty tree, so
+//! an auto-written golden would report green having asserted nothing.
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
 
@@ -162,6 +163,8 @@ async fn golden(fixture: Fixture) {
         skip_type_check: false,
         out_root: None,
         quiet: false,
+        emit_declaration: false,
+        preview: false,
     })
     .await
     .unwrap_or_else(|e| panic!("{} failed to build: {e:#}", fixture.stem()));
@@ -224,6 +227,7 @@ fn node_modules_src() -> &'static Path {
             project: None,
             yes: true,
             node_modules_only: true,
+            skip_install: false,
         })
         .expect("extracting the vendored node_modules");
         dir
@@ -496,12 +500,19 @@ fn compare(fixture: &Fixture, actual: &str) {
     let dump = work_dir().join(format!("{}.actual", fixture.stem()));
     let _ = std::fs::create_dir_all(work_dir());
     let _ = std::fs::write(&dump, &actual);
+    let toolchain_moved = expected.lines().nth(1) != actual.lines().nth(1);
     panic!(
-        "{} is stale\n{}\nfull output: {}\nregenerate with:\n  {}",
+        "{} is stale\n{}\nfull output: {}\n{}",
         path.display(),
         first_difference(&expected, &actual),
         dump.display(),
-        update_command(fixture)
+        if toolchain_moved {
+            "the TOOLCHAIN line moved (the vendored SDK changed), so every golden is stale; \
+             regenerate them all with:\n  UPDATE_GOLDEN=1 cargo test -p dcl-scene-cli --test golden"
+                .to_string()
+        } else {
+            format!("regenerate with:\n  {}", update_command(fixture))
+        }
     );
 }
 

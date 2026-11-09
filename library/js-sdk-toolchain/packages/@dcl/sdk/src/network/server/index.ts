@@ -202,6 +202,16 @@ export function createServerValidator(config: ServerValidationConfig) {
     return false
   }
 
+  /** A malformed buffer from one peer yields no messages rather than escaping the handler. */
+  function readPeerMessages(value: Uint8Array, sender: string): (utils.NetworkMessage | utils.RegularMessage)[] {
+    try {
+      return utils.readMessages(value)
+    } catch (error) {
+      DEBUG_NETWORK_MESSAGES() && console.error(`Error reading messages from ${sender}:`, error)
+      return []
+    }
+  }
+
   function broadcastBatchedMessages(messages: utils.NetworkMessage[], excludeSender: string) {
     if (messages.length === 0) return
 
@@ -282,7 +292,7 @@ export function createServerValidator(config: ServerValidationConfig) {
       const combinedBuffer = new ReadWriteByteBuffer()
 
       // Clients process network messages from server and convert them to regular messages
-      for (const message of utils.readMessages(value)) {
+      for (const message of readPeerMessages(value, sender)) {
         // Only process network messages in client message handler
         if (utils.isNetworkMessage(message)) {
           const networkMessage = message as utils.NetworkMessage
@@ -308,7 +318,7 @@ export function createServerValidator(config: ServerValidationConfig) {
       const messagesToBroadcast: utils.NetworkMessage[] = []
       const regularMessagesBuffer = new ReadWriteByteBuffer()
 
-      for (const message of utils.readMessages(value)) {
+      for (const message of readPeerMessages(value, sender)) {
         try {
           // Only process network messages in server message handler
           if (utils.isNetworkMessage(message)) {

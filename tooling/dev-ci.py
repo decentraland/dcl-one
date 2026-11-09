@@ -25,10 +25,12 @@ WORKFLOW = 'development.yml'
 MACOS = ('tooling/dev*', 'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
          'tooling/tests/test_enet_provenance.py', '**/Cargo.toml', '**/Cargo.lock', '**/build.rs',
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
-# Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
-# source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
-LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'rendering/bevy-explorer/upstream.lock.json',
-              'tooling/*.py', 'tooling/tests/**', 'services/catalyst/**', 'library/**', 'schemas/**')
+# Inputs whose Rust-job behaviour the Linux leg covers: web apps, the scene CLI (its own Linux job),
+# other Python tooling and Rust/SQL source whose compiled code is the same on both platforms. Main
+# pushes still run them on macOS.
+LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'apps/dcl-scene-cli/**',
+              'rendering/bevy-explorer/upstream.lock.json', 'tooling/*.py', 'tooling/tests/**',
+              'services/catalyst/**', 'library/**', 'schemas/**')
 
 
 def load_ci_local():

@@ -5,7 +5,10 @@
 //! Core components (`core::Foo`) are protobuf, encoded here against the
 //! @dcl/protocol descriptors in library/protocol (see build.rs); everything else is
 //! encoded by [`crate::schema_crdt`] against the `jsonSchema` the composite
-//! carries.
+//! carries, under the number hashed from its name. Smart-item components are
+//! numbered by their `smart-items::` name whichever prefix the composite
+//! carries ([`smart_item_name`]): the runtime defines only those, and `@dcl/ecs`
+//! drops a message for a number no component owns.
 //!
 //! ts-proto writer semantics reproduced deliberately (verified against
 //! main.crdt files produced by @dcl/ecs 7.24.5):
@@ -19,11 +22,14 @@
 //!   selected, even when empty
 //! - fields encode in field-number order
 
+use crate::composite_norm::{
+    SMART_ITEMS_PREFIX, SYNC_COMPONENTS, current_component_number, smart_item_name,
+};
 use crate::jsjson::JsValue;
 use crate::schema_crdt::{self, Schema, SchemaError};
 use crate::{SceneFiles, find_composites, read_composite_text};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 include!(concat!(env!("OUT_DIR"), "/components_schema.rs"));
@@ -103,6 +109,11 @@ pub struct Generated {
 /// Instance every `.composite` the scene ships (direct entity mapping, later
 /// files override earlier ones per entity+component) as main.crdt
 /// PUT_COMPONENT messages. None when the scene has no composites.
+///
+/// Within one file, blocks that end with the same smart-item name after the
+/// rename merge the way `composite_norm` merges them: per entity the block
+/// the file spelled `smart-items::` wins. [`SYNC_COMPONENTS`] values point at
+/// the current numbers ([`current_component_number`]).
 pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
     let files = find_composites(scene);
     if files.is_empty() {
@@ -125,11 +136,15 @@ pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
             .get("components")
             .and_then(|c| c.as_array())
             .ok_or_else(|| GenError::Invalid(format!("{file}: no components array")))?;
+        let mut current_owned: HashSet<(String, u32)> = HashSet::new();
         for (index, comp) in components.iter().enumerate() {
             let name = comp
                 .get("name")
                 .and_then(|n| n.as_str())
                 .ok_or_else(|| GenError::Invalid(format!("{file}: component without a name")))?;
+            let current = name.starts_with(SMART_ITEMS_PREFIX);
+            let name = &*smart_item_name(name);
+            let smart_item = name.starts_with(SMART_ITEMS_PREFIX);
             if name == COMPOSITE_ROOT {
                 if references_nested_composite(comp) {
                     return Err(GenError::Unsupported(format!(
@@ -162,7 +177,20 @@ pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
                         "'{name}' entity {entity} has no json value (binary composites are not supported)"
                     ))
                 })?;
-                slot.insert(entity, json.clone());
+                if smart_item {
+                    let owner = (name.to_string(), entity);
+                    if !current && current_owned.contains(&owner) {
+                        continue;
+                    }
+                    if current {
+                        current_owned.insert(owner);
+                    }
+                }
+                let mut json = json.clone();
+                if name == SYNC_COMPONENTS {
+                    remap_sync_component_ids(&mut json);
+                }
+                slot.insert(entity, json);
             }
         }
     }
@@ -186,6 +214,19 @@ pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
 
 fn component_by_name(name: &str) -> Option<&'static ComponentDef> {
     COMPONENTS.iter().find(|c| c.name == name)
+}
+
+/// Each legacy smart-item number in a [`SYNC_COMPONENTS`] value becomes the
+/// current one; other numbers and strings pass through.
+fn remap_sync_component_ids(json: &mut Value) {
+    let Some(Value::Array(ids)) = json.get_mut("componentIds") else {
+        return;
+    };
+    for id in ids.iter_mut() {
+        if let Some(number) = id.as_u64().and_then(|n| u32::try_from(n).ok()) {
+            *id = Value::from(current_component_number(number));
+        }
+    }
 }
 
 /// A `composite::root` entry naming another composite means nested instancing,
@@ -226,7 +267,11 @@ fn register_schema(
     }
     let json_schema = ordered
         .get(index)
-        .filter(|c| c.get("name").and_then(JsValue::as_str) == Some(name))
+        .filter(|c| {
+            c.get("name")
+                .and_then(JsValue::as_str)
+                .is_some_and(|n| smart_item_name(n) == name)
+        })
         .and_then(|c| c.get("jsonSchema"))
         .ok_or_else(|| {
             GenError::Unsupported(format!(
@@ -360,8 +405,9 @@ fn component_names(scene: &dyn SceneFiles) -> HashMap<u32, String> {
             .flatten()
         {
             if let Some(name) = comp.get("name").and_then(|n| n.as_str()) {
-                out.entry(schema_crdt::component_number_from_name(name))
-                    .or_insert_with(|| name.to_string());
+                let name = smart_item_name(name);
+                out.entry(schema_crdt::component_number_from_name(&name))
+                    .or_insert_with(|| name.into_owned());
             }
         }
     }
@@ -651,6 +697,129 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The reference streams were produced while the smart-item components
+    /// were still named `asset-packs::*`, which is also how the captures name
+    /// them. This crate numbers those by their `smart-items::*` name and
+    /// nothing else in a message moves, so the reference is compared with each
+    /// legacy number replaced by the new one in the message header and in the
+    /// `Sync-Components` payload (a `u32` count, then each id as an `int64`).
+    fn with_smart_item_numbers(reference: &[u8], composite: &str) -> Vec<u8> {
+        let doc: Value = serde_json::from_str(composite).unwrap();
+        let renumbered: HashMap<u32, u32> = doc["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["name"].as_str())
+            .filter(|n| n.starts_with(crate::composite_norm::LEGACY_PREFIX))
+            .map(|n| {
+                (
+                    schema_crdt::component_number_from_name(n),
+                    schema_crdt::component_number_from_name(&smart_item_name(n)),
+                )
+            })
+            .collect();
+        let sync = schema_crdt::component_number_from_name(SYNC_COMPONENTS);
+        let mut out = reference.to_vec();
+        let mut offset = 0usize;
+        while offset + CRDT_HEADER_LEN as usize <= out.len() {
+            let word = |at: usize| u32::from_le_bytes(out[at..at + 4].try_into().unwrap());
+            let length = word(offset) as usize;
+            let component = word(offset + 12);
+            if let Some(new) = renumbered.get(&component) {
+                out[offset + 12..offset + 16].copy_from_slice(&new.to_le_bytes());
+            }
+            if component == sync {
+                let payload = offset + CRDT_HEADER_LEN as usize;
+                let count =
+                    u32::from_le_bytes(out[payload..payload + 4].try_into().unwrap()) as usize;
+                for i in 0..count {
+                    let at = payload + 4 + i * 8;
+                    let id = i64::from_le_bytes(out[at..at + 8].try_into().unwrap());
+                    if let Ok(id) = u32::try_from(id) {
+                        let new = i64::from(current_component_number(id));
+                        out[at..at + 8].copy_from_slice(&new.to_le_bytes());
+                    }
+                }
+            }
+            offset += length;
+        }
+        out
+    }
+
+    fn component_messages(bytes: &[u8], component: u32) -> Vec<(u32, Vec<u8>)> {
+        parse_messages(bytes)
+            .into_iter()
+            .filter(|m| m.1 == component)
+            .map(|m| (m.0, m.2.to_vec()))
+            .collect()
+    }
+
+    /// The capture's `Sync-Components` names `AdminTools` and `Script` by their
+    /// legacy numbers; main.crdt has to carry the numbers of the renamed
+    /// components, or those entities stop syncing.
+    #[test]
+    fn sync_components_values_are_renumbered_with_the_components() {
+        let composite = include_str!("../testdata/gather-main.composite");
+        let files = scene(&[("assets/scene/main.composite", composite)]);
+        let generated = generate(&files).unwrap().unwrap();
+        let sync = schema_crdt::component_number_from_name(SYNC_COMPONENTS);
+        let messages = component_messages(&generated.bytes, sync);
+        let ids = |payload: &[u8]| -> Vec<i64> {
+            let count = u32::from_le_bytes(payload[..4].try_into().unwrap()) as usize;
+            (0..count)
+                .map(|i| i64::from_le_bytes(payload[4 + i * 8..12 + i * 8].try_into().unwrap()))
+                .collect()
+        };
+        let by_entity: HashMap<u32, Vec<i64>> =
+            messages.iter().map(|(e, p)| (*e, ids(p))).collect();
+        assert_eq!(by_entity[&513], vec![2884627400], "AdminTools");
+        assert_eq!(by_entity[&516], vec![1043, 1498732997], "Script");
+    }
+
+    /// Two blocks that end with the same smart-item name: the block the file
+    /// spelled `smart-items::` wins per entity whichever comes first.
+    #[test]
+    fn same_named_smart_item_blocks_merge_with_the_current_spelling_winning() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "value": { "type": "string", "serializationType": "utf8-string" } },
+            "serializationType": "map"
+        });
+        let generated = generate_from(json!({
+            "version": 1,
+            "components": [
+                { "name": "asset-packs::States", "jsonSchema": schema, "data": {
+                    "512": { "json": { "value": "legacy-512" } },
+                    "513": { "json": { "value": "legacy-513" } }
+                } },
+                { "name": "smart-items::States", "data": {
+                    "513": { "json": { "value": "current-513" } },
+                    "514": { "json": { "value": "current-514" } }
+                } },
+                { "name": "asset-packs::States", "data": {
+                    "514": { "json": { "value": "legacy-514" } },
+                    "515": { "json": { "value": "legacy-515" } }
+                } }
+            ]
+        }))
+        .unwrap()
+        .unwrap();
+        let states = schema_crdt::component_number_from_name("smart-items::States");
+        let values: Vec<(u32, String)> = component_messages(&generated.bytes, states)
+            .into_iter()
+            .map(|(e, p)| (e, String::from_utf8(p[4..].to_vec()).unwrap()))
+            .collect();
+        assert_eq!(
+            values,
+            vec![
+                (512, "legacy-512".to_string()),
+                (513, "current-513".to_string()),
+                (514, "current-514".to_string()),
+                (515, "legacy-515".to_string()),
+            ]
+        );
+    }
+
     /// Every golden here was regenerated through the node data-layer
     /// (`data-layer-host.mjs <scene> dump-crdt`) when committed — a scene's
     /// checked-in main.crdt can predate its own composite, so it is not a
@@ -686,10 +855,34 @@ mod tests {
             let generated = generate(&files).unwrap().unwrap();
             assert_eq!(generated.composites, 1);
             assert_eq!(
-                generated.bytes, expected,
+                generated.bytes,
+                with_smart_item_numbers(expected, composite),
                 "native main.crdt for '{name}' must match the node data-layer's"
             );
         }
+    }
+
+    /// A Creator Hub capture from before the move carries `asset-packs::*`
+    /// names; its main.crdt has to number them as `smart-items::*`, or the
+    /// runtime never sees them.
+    #[test]
+    fn legacy_smart_item_components_are_numbered_by_their_new_name() {
+        let composite = include_str!("../testdata/gather-main.composite");
+        assert!(composite.contains("\"asset-packs::Actions\""));
+        let files = scene(&[("assets/scene/main.composite", composite)]);
+        let generated = generate(&files).unwrap().unwrap();
+        let ids: Vec<u32> = parse_messages(&generated.bytes)
+            .iter()
+            .map(|m| m.1)
+            .collect();
+        let new = schema_crdt::component_number_from_name("smart-items::Actions");
+        let old = schema_crdt::component_number_from_name("asset-packs::Actions");
+        assert!(ids.contains(&new), "{ids:?}");
+        assert!(!ids.contains(&old), "{ids:?}");
+        assert_eq!(
+            component_names(&files).get(&new).map(String::as_str),
+            Some("smart-items::Actions")
+        );
     }
 
     #[test]

@@ -46,6 +46,7 @@ base64 = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 if-addrs = "=0.15.0"
 ignore = "0.4.33"
+globset = "0.4.20"
 notify = "8"
 prost = { workspace = true }
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }

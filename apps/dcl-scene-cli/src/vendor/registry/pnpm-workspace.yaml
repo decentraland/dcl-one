@@ -1,0 +1,5 @@
+# No workspace members: this file carries the install setting the lockfile
+# records, which pnpm 12 reads only from here, so `pnpm install --lockfile-only`
+# in this directory writes a lock the blob build's frozen install accepts.
+packages: []
+autoInstallPeers: false

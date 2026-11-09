@@ -18,7 +18,9 @@ use super::deploy_status::{
     self, Dest, LiveStatus, Remote, RemoteScene, RemoteState, ago, cache_get, cache_put,
     cached_status, lock, payload_drawer, plural, resolve_dest, split_size,
 };
-use super::{AppState, cross_origin_refusal, forwarded_prefix, remote_peer};
+use super::{
+    AppState, cross_origin_refusal, forwarded_prefix, rebound_origin_refusal, remote_peer,
+};
 use crate::deploy::{self, MainBundle};
 use crate::scene::Project;
 use axum::Json;
@@ -305,6 +307,11 @@ async fn cached_preview(st: &AppState, project: &Project) -> Arc<PreviewResult> 
 
 /// A CLI publish hosting itself on this server: the signer is live from the
 /// first request, and the run slot says so.
+/// The CLI run this server signs for, while one is adopted.
+pub(super) fn cli_signer(st: &AppState) -> Option<Arc<crate::linker::LinkerState>> {
+    signer_slot(st).clone()
+}
+
 pub(super) fn adopt_cli_signing(st: &AppState, signer: Arc<crate::linker::LinkerState>) {
     let target = signer.target_content().to_string();
     *signer_slot(st) = Some(signer);
@@ -314,9 +321,12 @@ pub(super) fn adopt_cli_signing(st: &AppState, signer: Arc<crate::linker::Linker
     });
 }
 
-pub(super) fn finish_cli_signing(st: &AppState, outcome: &anyhow::Result<String>) {
+pub(super) fn finish_cli_signing(
+    st: &AppState,
+    outcome: &anyhow::Result<crate::linker::Published>,
+) {
     let state = match outcome {
-        Ok(message) => RunState::Done(message.clone()),
+        Ok(published) => RunState::Done(published.message.clone()),
         Err(error) => RunState::Failed(format!("{error:#}")),
     };
     finish(st, 0, state);
@@ -697,6 +707,8 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         target_content: None,
         sign_key: None,
         skip_build: false,
+        skip_validations: false,
+        force_upload: false,
         dry_run: st.deploy_dry_run,
         timestamp: None,
         entity_out: None,
@@ -709,11 +721,13 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         quiet: true,
         host_signer,
         identity,
+        programmatic: false,
+        deploy_token: None,
     };
     tokio::spawn(async move {
         let handle = tokio::spawn(async move { deploy::deploy(&opts).await });
         let state = match handle.await {
-            Ok(Ok(message)) => RunState::Done(message),
+            Ok(Ok(published)) => RunState::Done(published.message),
             Ok(Err(e)) => {
                 let rendered = crate::ux::render(&e, false, false);
                 let rendered = rendered
@@ -834,15 +848,26 @@ async fn reviewed_remote(st: &AppState, dest: &Dest) -> Arc<LiveStatus> {
 }
 
 /// The gate every signing route shares: the wallet signs on the hosting
-/// machine, so only a same-origin loopback peer that is not a tunnel replay
-/// reaches the signer — unless --allow-remote-deploy opened it up.
-fn signing_blocked(st: &AppState, peer: SocketAddr, headers: &HeaderMap) -> Option<Response> {
+/// machine, so only a same-origin loopback peer that is not a tunnel replay,
+/// from a page on a loopback origin (a rebound domain agrees with `Host` but
+/// is not one), reaches the signer — unless --allow-remote-deploy opened it up.
+pub(super) fn signing_blocked(
+    st: &AppState,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+) -> Option<Response> {
     if remote_peer(st.allow_remote_deploy, peer, headers) {
         return Some(forbidden(
             "signing happens on the machine hosting this preview",
         ));
     }
-    cross_origin_refusal(headers).map(forbidden)
+    if let Some(why) = cross_origin_refusal(headers) {
+        return Some(forbidden(why));
+    }
+    if st.allow_remote_deploy {
+        return None;
+    }
+    rebound_origin_refusal(headers).map(forbidden)
 }
 
 /// `POST /deploy/sign` — the one signing endpoint; its panel is

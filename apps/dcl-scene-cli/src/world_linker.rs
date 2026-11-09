@@ -8,7 +8,7 @@
 //! instead of killing the CLI.
 
 use crate::deploy::{caused, read_server_message, refusal};
-use crate::linker::{DoneSender, LinkerOptions, finish, fmt_wait, linker_bind_host, spawn_browser};
+use crate::linker::{LinkerOptions, finish, fmt_wait, linker_bind_host, spawn_browser};
 use crate::ux::{self, TrySteps, UserError};
 use crate::world::{WorldAction, browser_headers, signed_fetch_payload_meta};
 use anyhow::{Context, Result};
@@ -28,6 +28,9 @@ pub struct WorldSignRequest {
     pub name: String,
     pub action: WorldAction,
 }
+
+/// The world flows answer the CLI with the outcome line alone.
+pub(crate) type DoneSender = tokio::sync::oneshot::Sender<Result<String>>;
 
 pub struct WorldLinkerState {
     req: WorldSignRequest,
@@ -458,6 +461,7 @@ mod tests {
                 port: Some(port),
                 open_browser: false,
                 timeout: std::time::Duration::from_secs(5),
+                programmatic: false,
                 host: None,
             },
         ));

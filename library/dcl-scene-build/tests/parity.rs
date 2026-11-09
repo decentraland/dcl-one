@@ -12,8 +12,8 @@
 //! decentraland/sdk7-scene-template at 7c2a0285, the scene every new project
 //! starts from; it is built in both modes.
 
-use dcl_scene_cli::build::BuildOptions;
 use dcl_scene_build::{MainCrdt, Options, build, install_sdk};
+use dcl_scene_cli::build::BuildOptions;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -140,6 +140,7 @@ fn check(name: &str, sources: &Path, staged: &[(PathBuf, &str)], production: boo
         project: None,
         yes: true,
         node_modules_only: true,
+        skip_install: false,
     })
     .expect("extracting the vendored node_modules");
     tokio::runtime::Runtime::new()
@@ -153,6 +154,8 @@ fn check(name: &str, sources: &Path, staged: &[(PathBuf, &str)], production: boo
             skip_type_check: true,
             out_root: None,
             quiet: true,
+            emit_declaration: false,
+            preview: false,
         }))
         .unwrap_or_else(|e| panic!("{name}.{mode}: dcl-scene-cli failed: {e:#}"));
 

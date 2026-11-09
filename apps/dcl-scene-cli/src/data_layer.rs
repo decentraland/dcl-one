@@ -230,9 +230,9 @@ async fn launch(node: &Path, driver: &Path, root: &Path) -> Result<Driver> {
             Err(UserError::new(
                 "the data-layer host did not come up",
                 TrySteps::one(
-                    "run dcl-scene-cli init --node-modules-only \u{2014} the host, @dcl/rpc and ws are vendored",
+                    "run dcl-scene-cli init --node-modules-only \u{2014} the host and its server are vendored",
                 )
-                .and("or npm install in the scene (@dcl/inspector, @dcl/rpc and ws must resolve)")
+                .and("or npm install in the scene (@dcl/inspector-service must resolve)")
                 .and("re-run with --verbose for the full driver log"),
             )
             .why(why)
@@ -333,7 +333,7 @@ pub async fn dump_crdt(root: &Path) -> Result<u64> {
         return Err(UserError::new(
             "main.crdt regeneration failed \u{2014} keeping the existing main.crdt",
             TrySteps::one("check the composite files named below")
-                .and("run npm install if @dcl/inspector cannot be resolved"),
+                .and("run npm install if @dcl/inspector-service cannot be resolved"),
         )
         .why(format!("{}{}", stdout.trim(), stderr.trim()))
         .into());
@@ -358,7 +358,7 @@ pub async fn dump_crdt(root: &Path) -> Result<u64> {
 }
 
 /// Which generator produced main.crdt; the node fallback is slower and needs
-/// `@dcl/inspector` resolvable, so the build reports it.
+/// `@dcl/inspector-service` resolvable, so the build reports it.
 pub enum CrdtRegen {
     /// Generated in-process, from this many composite files.
     Native(u64),
@@ -483,25 +483,28 @@ mod tests {
     }
 
     #[test]
-    fn configured_inspector_overrides_the_scene_shim_and_reports_broken_configuration() {
+    fn configured_inspector_overrides_the_scene_service_and_reports_broken_configuration() {
         let t = TestDir::new("datalayer-override");
         t.write("scene/package.json", "{}");
         t.write(
-            "scene/node_modules/@dcl/inspector/package.json",
+            "scene/node_modules/@dcl/inspector-service/package.json",
             r#"{"main":"index.js"}"#,
         );
+        // The scene's service carries its ecs; an editor's host (upstream's
+        // @dcl/inspector) resolves @dcl/ecs from its own node_modules.
         t.write(
-            "scene/node_modules/@dcl/inspector/index.js",
-            "exports.dumpEngineToCrdtCommands=()=>Buffer.from('scene shim')",
-        );
-        t.write(
-            "scene/node_modules/@dcl/ecs/dist-cjs.js",
-            "exports.Engine=()=>({});exports.Composite={};exports.EntityMappingMode={}",
+            "scene/node_modules/@dcl/inspector-service/index.js",
+            "exports.ecs={Engine:()=>({}),Composite:{},EntityMappingMode:{}};\
+             exports.dumpEngineToCrdtCommands=()=>Buffer.from('scene service')",
         );
         t.write("host/package.json", r#"{"main":"index.js"}"#);
         t.write(
             "host/index.js",
             "exports.dumpEngineToCrdtCommands=()=>Buffer.from('configured inspector')",
+        );
+        t.write(
+            "host/node_modules/@dcl/ecs/dist-cjs.js",
+            "exports.Engine=()=>({});exports.Composite={};exports.EntityMappingMode={}",
         );
         let root = t.0.join("scene");
         let driver = write_driver(&root).unwrap();
@@ -517,7 +520,7 @@ mod tests {
             }
             command.output().unwrap()
         };
-        for (configured, expected) in [(false, "scene shim"), (true, "configured inspector")] {
+        for (configured, expected) in [(false, "scene service"), (true, "configured inspector")] {
             let output = run(configured);
             assert!(
                 output.status.success(),
@@ -529,13 +532,24 @@ mod tests {
                 expected
             );
         }
-        t.write(
-            "host/index.js",
-            "throw new Error('configured inspector broken')",
-        );
+        // A downloaded package has no node_modules: its host cannot load,
+        // the scene's host carries the protocol, and stderr says why.
+        t.write("host/index.js", "require('a-dependency-the-tarball-lacks')");
         let output = run(true);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("configured inspector broken"));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("main.crdt")).unwrap(),
+            "scene service"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("did not load") && stderr.contains("a-dependency-the-tarball-lacks"),
+            "{stderr}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { IEngine } from '@dcl/ecs'
 import { CommsMessage } from '../binary-message-bus'
-import { AUTH_SERVER_PEER_ID } from '../message-bus-sync'
+import { AUTH_SERVER_PEER_ID, sceneHasAuthoritativeServer } from '../message-bus-sync'
 import { EventTypes, EventSchemaRegistry } from './registry'
 import { encodeEvent, decodeEvent } from './protocol'
 import { Atom } from '../../atom'
@@ -75,14 +75,15 @@ export class Room<T extends EventSchemaRegistry = EventSchemaRegistry> {
     if (!callbacks) return
 
     const isServer = await this.isServerFuture
-    // Clients only process events from the authoritative server
-    if (!isServer && sender !== AUTH_SERVER_PEER_ID) return
+    // Clients only process events from the authoritative server. Without one there is no
+    // server to trust, so peers are (see fromAuthority in ../message-bus-sync).
+    if (!isServer && sender !== AUTH_SERVER_PEER_ID && sceneHasAuthoritativeServer()) return
 
     await Promise.all(
       Array.from(callbacks, async (cb) => {
         try {
-          // Server handlers receive sender context
-          await (isServer ? cb(payload, { from: sender }) : cb(payload))
+          // Server handlers, and peers trusting each other, receive the sender context
+          await (isServer || sender !== AUTH_SERVER_PEER_ID ? cb(payload, { from: sender }) : cb(payload))
         } catch (error) {
           console.error(`[EventBus] Listener for '${String(eventType)}' failed:`, error)
         }

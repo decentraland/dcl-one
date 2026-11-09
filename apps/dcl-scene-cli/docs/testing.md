@@ -19,11 +19,13 @@ Under `--include-ignored` a missing variable fails naming it (`tests/common/test
 | --- | --- | --- |
 | `DCL_SCENE_CLI_TEST_NODE_MODULES` | `data_layer_rpc`, `initial_build_recovery`, `workspace_e2e` | a scene `node_modules` with `@dcl/sdk`, `@dcl/rpc`, `@dcl/inspector`, `ws`, on the same filesystem as `$TMPDIR` |
 | `DCL_SCENE_CLI_TEST_SCENE` | `init_scaffold` provisioned build, `error_contract` `t2`/`t6` | an installed scene checkout (`node_modules/@dcl/sdk` exists) |
+| `DCL_SCENE_CLI_TEST_TYPESCRIPT` | `typescript_versions` | colon-separated directories, each with a `node_modules/typescript` of another line; 5.x, 6.x and 7.x are all required (the `Development` workflow's scene CLI job installs the three and runs it) |
 | `DCL1_TUNNEL_PUBLIC_URL` | `tunnel_live` | a deployed preview tunnel's public URL |
 | `DCL1_TUNNEL_LOCAL_URL`, `DCL1_TUNNEL_TOUCH_FILE` | optional for `tunnel_live` | the local preview behind it; a served file to touch |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_HTTP_URL` (optional) | `livekit_live` | a LiveKit server (`livekit-server --dev`: `ws://127.0.0.1:7880`, `devkey`, `secret`) |
 
-`livekit_embedded` fails without a `livekit-server` unless `ALLOW_SKIPPED_INTEGRATION=1`. A new test
+`livekit_embedded` fails without a `livekit-server` unless `ALLOW_SKIPPED_INTEGRATION=1`; CI sets no
+such variable, since the development shell carries `node` and `livekit-server`. A new test
 that runs a script under `scripts/` must add it to the export assembler's `KEEP_RE`.
 
 ## Escape hatch

@@ -89,6 +89,7 @@ async fn build_flagged_scene() -> PathBuf {
         project: Some(init::ProjectKind::Scene),
         yes: true,
         node_modules_only: false,
+        skip_install: false,
     })
     .expect("scaffolding the proof scene");
     std::fs::write(root.join("src/index.ts"), SCENE).unwrap();
@@ -106,6 +107,8 @@ async fn build_flagged_scene() -> PathBuf {
         skip_type_check: false,
         out_root: None,
         quiet: true,
+        emit_declaration: false,
+        preview: false,
     })
     .await
     .expect("building the proof scene");

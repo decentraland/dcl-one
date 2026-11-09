@@ -68,11 +68,10 @@ if (isServer()) {
 ### Pattern 4 — Admin-only writes
 ```typescript
 import { isServer } from '@dcl/sdk/network'
-// isPreview and getSceneAdmins are NOT exported from @dcl/sdk. The only working
-// import paths are the deep dist paths below (the asset-packs package has no
-// exports field and no top-level re-export).
-import { isPreview } from '@dcl/asset-packs/dist/admin-toolkit-ui/fetch-utils'
-import { getSceneAdmins } from '@dcl/asset-packs/dist/admin-toolkit-ui/ModerationControl/api'
+// isPreview and getSceneAdmins live on the smart-item runtime's subpaths below;
+// neither @dcl/sdk nor @dcl/smart-items re-exports them.
+import { isPreview } from '@dcl/smart-items/admin-toolkit-ui/fetch-utils'
+import { getSceneAdmins } from '@dcl/smart-items/admin-toolkit-ui/ModerationControl/api'
 
 if (isServer()) {
   let adminAddresses = new Set<string>()

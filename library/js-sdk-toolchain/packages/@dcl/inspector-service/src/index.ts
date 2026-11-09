@@ -6,6 +6,9 @@ export * from './lib/data-layer/host/utils/engine-to-composite';
 export * from './lib/data-layer/host/utils/engine';
 export * from './lib/data-layer/types';
 export * from './lib/sdk/components';
+export { serveDataLayer } from './lib/data-layer/host/serve';
+export type { DataLayerServer, ServeDataLayerOptions } from './lib/data-layer/host/serve';
+export * as ecs from './lib/ecs';
 
 export {
   DIRECTORY,
@@ -68,7 +71,7 @@ export { AllComponents } from './lib/sdk/components/types';
 export { VERSIONS_REGISTRY } from './lib/sdk/components/versioning/registry';
 export { createEnumEntityId } from './lib/sdk/enum-entity';
 export type { EnumEntity } from './lib/sdk/enum-entity';
-export { renameLegacyComponentName } from './lib/sdk/legacy';
+export { renameLegacyComponentName, renameLegacyComposite } from './lib/sdk/legacy';
 export {
   getAncestors,
   getNodes,

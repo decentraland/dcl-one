@@ -84,7 +84,7 @@ On PRs, macOS runs the Rust tests only for build and dev-stack inputs: Cargo
 manifests and lockfiles, build scripts, toolchain files, `.cargo`,
 `library/vendor/rusty_enet`, Nix, `infra/dev`, the Makefile, the dev tooling and
 `.github/workflows/development.yml` (`tooling/dev-ci.py`). Catalyst, library and
-schema source, the web apps and other Python tooling stay on Linux. On `main`,
+schema source, the web apps, the scene CLI and other Python tooling stay on Linux. On `main`,
 the Rust tests and smoke run on macOS, and a new push does not cancel a running
 Development run: it waits, replacing any run already waiting, so each completed
 run tests every earlier commit and a macOS-only failure in source shows up

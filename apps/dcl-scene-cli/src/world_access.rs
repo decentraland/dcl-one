@@ -16,9 +16,10 @@
 use crate::deploy::{
     encode_segment, now_ms, read_server_message, refusal, send_text, with_headers,
 };
-use crate::linker::{DoneSender, LinkerOptions};
+use crate::linker::LinkerOptions;
 use crate::ux::{self, TrySteps, UserError};
 use crate::world::{self, BrowserOptions, WorldAction, signed_fetch_payload_meta};
+use crate::world_linker::DoneSender;
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
@@ -1011,6 +1012,7 @@ pub async fn edit(name: &str, target_content: Option<&str>, browser: BrowserOpti
         port: browser.port,
         open_browser: !browser.no_browser && !browser.ci,
         timeout: crate::linker::linker_timeout(),
+        programmatic: false,
         host: None,
     };
     let message =

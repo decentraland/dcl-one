@@ -190,6 +190,11 @@ def pre_push_steps(changed):
         steps.append(Step('dev stack smoke', 'bash tooling/dev-smoke.sh', tools=('nix',)))
         steps += web_steps()
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
+        steps.append(Step('scene CLI tests and vendored SDK',
+                          'SDK_PROTOC=protoc make -C library/js-sdk-toolchain install build && '
+                          'cargo test --locked --manifest-path services/catalyst/Cargo.toml '
+                          '-p dcl-scene-cli -p dcl-scene-build -p dcl-scene-authoring && '
+                          'python3 -I apps/dcl-scene-cli/scripts/build-base-blob.py --check', tools=('nix',)))
     if images:
         system = image_system()
         if system is None:

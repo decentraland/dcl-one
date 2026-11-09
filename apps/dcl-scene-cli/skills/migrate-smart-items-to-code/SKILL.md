@@ -1,6 +1,6 @@
 ---
 name: migrate-smart-items-to-code
-description: Port Creator Hub smart items — the no-code Actions/Triggers palette from `@dcl/asset-packs` — to plain SDK7 TypeScript. Covers all 63 ActionTypes, 19 TriggerTypes, and 9 TriggerConditionTypes with a verified SDK7 equivalent for each, plus the wiring the editor used to supply (delays, loops, counters, states, sequences). Use when the user wants a smart item's behavior in code, is extending a Creator-Hub-authored scene beyond what the palette allows, asks "how do I do X when Y" and X or Y is a palette entry, or names smart items, the Actions panel, no-code triggers, or `@dcl/asset-packs`. Do NOT use to author smart-item data in a composite (see composites), to write a Creator Hub Script component class (see script-components), or as the general reference for the underlying components — each section points at the topic skill that owns it.
+description: Port Creator Hub smart items — the no-code Actions/Triggers palette of `@dcl/smart-items` — to plain SDK7 TypeScript. Covers all 63 ActionTypes, 19 TriggerTypes, and 9 TriggerConditionTypes with a verified SDK7 equivalent for each, plus the wiring the editor used to supply (delays, loops, counters, states, sequences). Use when the user wants a smart item's behavior in code, is extending a Creator-Hub-authored scene beyond what the palette allows, asks "how do I do X when Y" and X or Y is a palette entry, or names smart items, the Actions panel, no-code triggers, or `@dcl/smart-items`. Do NOT use to author smart-item data in a composite (see composites), to write a Creator Hub Script component class (see script-components), or as the general reference for the underlying components — each section points at the topic skill that owns it.
 ---
 
 # Migrate Creator Hub Smart Items to SDK7 Code
@@ -12,7 +12,7 @@ description: Port Creator Hub smart items — the no-code Actions/Triggers palet
 
 Decentraland's smart items are a fixed no-code palette: 63 action types, 19 trigger types,
 9 trigger conditions, wired in the Creator Hub GUI and interpreted at runtime by
-`@dcl/asset-packs`. Every one of them is a thin wrapper over an SDK7 component or a
+`@dcl/smart-items`. Every one of them is a thin wrapper over an SDK7 component or a
 `~system/*` call. Writing the SDK7 directly is smaller, readable, debuggable, and not
 capped by the palette.
 
@@ -52,19 +52,19 @@ export function main() {
 `main()` or later — composite entities do not exist before that. See [[add-interactivity]]
 and [[composites]].
 
-## RULE: Do not strip `@dcl/asset-packs` until the composite is clean
+## RULE: Do not strip `initSmartItems` until the composite is clean
 
-Removing `initAssetPacks` from `src/index.ts` is only half the job. If the composite still
-carries `asset-packs::Actions`, `asset-packs::Triggers`, `asset-packs::States` or
-`asset-packs::Counter`, the no-code behavior is still declared in the scene and (on older
-SDKs) the package is still a build dependency. Remove the ported entities' asset-packs
-components and their `Counter` bookkeeping together with the import, then build. **Leave
-`asset-packs::ActionTypes` and every `inspector::*` component alone** — those are Creator
+Removing `initSmartItems` from `src/index.ts` is only half the job. If the composite still
+carries `smart-items::Actions`, `smart-items::Triggers`, `smart-items::States` or
+`smart-items::Counter`, the no-code behavior is still declared in the scene. Remove the
+ported entities' smart-item components and their `Counter` bookkeeping together with the
+import, then build. **Leave `smart-items::ActionTypes` and every `inspector::*` component
+alone** — those are Creator
 Hub-managed and deleting them breaks the editor view of the scene. The exact edit-mode
 rules are in [[composites]].
 
 If the user will keep opening the scene in the Creator Hub, the safe end state is: entities
-and their placement stay in the composite, behavior moves to TypeScript, asset-packs data
+and their placement stay in the composite, behavior moves to TypeScript, smart-item data
 is removed only for the entities you actually ported.
 
 ## Method
@@ -76,11 +76,11 @@ is removed only for the entities you actually ported.
 5. Type-check with `npm run build`, then run `npm start` and exercise the behavior.
 
 **Done when:** every trigger and action from the original item has a counterpart in code,
-`npm run build` exits 0, and the ported entities no longer carry `asset-packs::Actions` /
-`asset-packs::Triggers` / `asset-packs::States` in the composite. If the scene still calls
-`initAssetPacks`, that is only correct while some *other* entity still uses the palette.
+`npm run build` exits 0, and the ported entities no longer carry `smart-items::Actions` /
+`smart-items::Triggers` / `smart-items::States` in the composite. If the scene still calls
+`initSmartItems`, that is only correct while some *other* entity still uses the palette.
 
-Do not reproduce asset-packs' architecture. It carries a generic action-dispatch engine
+Do not reproduce the smart-item runtime's architecture. It carries a generic action-dispatch engine
 (`Actions`/`Triggers` components, string action names, an event bus, a queue) because it
 interprets editor data at runtime. Code that is written, not interpreted, calls the
 function directly.
@@ -210,7 +210,7 @@ pending = timers.setTimeout(() => closeDoor(), 3000)
 if (pending !== undefined) timers.clearTimeout(pending) // STOP_DELAY
 ```
 
-Do not build a per-frame countdown system for this; that is what asset-packs does
+Do not build a per-frame countdown system for this; that is what the smart-item runtime does
 internally only because it must key timers by entity and action name.
 
 ### Loop (START_LOOP / STOP_LOOP)
@@ -424,7 +424,7 @@ Say so rather than inventing an API. See the reference entries for details.
   ATTACH_TO_PLAYER)
 - [[build-ui]] — React-ECS overlays (SHOW_TEXT / SHOW_IMAGE / ON_CLICK_IMAGE)
 - [[scene-runtime]] — `timers`, restricted actions, system priority
-- [[composites]] — the `asset-packs::*` components this skill removes, and the edit-mode
+- [[composites]] — the `smart-items::*` components this skill removes, and the edit-mode
   rules for touching a Creator Hub composite at all
 - [[script-components]] — the other way to write a smart item: a class on a Script component
 - [[migrate-sdk6-to-sdk7]] — for an SDK6 scene, port to SDK7 first; this skill covers the

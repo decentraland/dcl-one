@@ -2998,6 +2998,7 @@ dependencies = [
  "dunce",
  "flate2",
  "futures",
+ "globset",
  "hex",
  "hmac 0.13.0",
  "if-addrs",

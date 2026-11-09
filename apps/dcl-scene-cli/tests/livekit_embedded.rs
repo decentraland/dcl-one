@@ -44,8 +44,10 @@ fn write(path: &Path, contents: &str) {
 }
 
 fn fresh_tmp(name: &str) -> PathBuf {
-    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("dcl-scene-cli-livekit-{name}-{}", std::process::id()));
+    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "dcl-scene-cli-livekit-{name}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     tmp

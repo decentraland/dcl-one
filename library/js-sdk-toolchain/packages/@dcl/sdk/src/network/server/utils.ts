@@ -5,6 +5,7 @@ import { ReceiveNetworkMessage } from '@dcl/ecs/dist/systems/crdt/types'
 import { ByteBuffer, ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer'
 import { AuthoritativePutComponentOperation, PutComponentOperation } from '@dcl/ecs/dist/serialization/crdt'
 import {
+  CRDT_MESSAGE_HEADER_LENGTH,
   CrdtMessage,
   CrdtMessageBody,
   CrdtMessageHeader,
@@ -39,35 +40,50 @@ export type RegularMessage = (
 ) & {
   messageBuffer: Uint8Array
 }
+/**
+ * Reads the CRDT messages framed in `data`. Each record's declared length is the
+ * frame: the next header is read from there, whatever the record's reader consumed.
+ * Reading stops at the first malformed record (a header length below the header
+ * size, a record that does not advance the buffer, or a known record truncated
+ * inside its body) and the records read so far are returned, so a bad buffer from
+ * one peer never throws out of the reader.
+ */
 export function readMessages(data: Uint8Array): (NetworkMessage | RegularMessage)[] {
   const buffer = new ReadWriteByteBuffer(data)
   const messages: (NetworkMessage | RegularMessage)[] = []
   let header: CrdtMessageHeader | null
   while ((header = CrdtMessageProtocol.getHeader(buffer))) {
+    if (header.length < CRDT_MESSAGE_HEADER_LENGTH) break
     const offset = buffer.currentReadOffset()
     let message: CrdtMessage | undefined = undefined
 
-    // Network messages
-    if (header.type === CrdtMessageType.DELETE_COMPONENT_NETWORK) {
-      message = DeleteComponentNetwork.read(buffer)!
-    } else if (header.type === CrdtMessageType.PUT_COMPONENT_NETWORK) {
-      message = PutNetworkComponentOperation.read(buffer)!
-    } else if (header.type === CrdtMessageType.DELETE_ENTITY_NETWORK) {
-      message = DeleteEntityNetwork.read(buffer)!
+    try {
+      // Network messages
+      if (header.type === CrdtMessageType.DELETE_COMPONENT_NETWORK) {
+        message = DeleteComponentNetwork.read(buffer)!
+      } else if (header.type === CrdtMessageType.PUT_COMPONENT_NETWORK) {
+        message = PutNetworkComponentOperation.read(buffer)!
+      } else if (header.type === CrdtMessageType.DELETE_ENTITY_NETWORK) {
+        message = DeleteEntityNetwork.read(buffer)!
+      }
+      // Regular messages
+      else if (header.type === CrdtMessageType.PUT_COMPONENT) {
+        message = PutComponentOperation.read(buffer)!
+      } else if (header.type === CrdtMessageType.AUTHORITATIVE_PUT_COMPONENT) {
+        message = AuthoritativePutComponentOperation.read(buffer)!
+      } else if (header.type === CrdtMessageType.DELETE_COMPONENT) {
+        message = DeleteComponent.read(buffer)!
+      } else if (header.type === CrdtMessageType.DELETE_ENTITY) {
+        message = DeleteEntity.read(buffer)!
+      } else {
+        // consume unknown messages
+        buffer.incrementReadOffset(header.length)
+      }
+    } catch {
+      break
     }
-    // Regular messages
-    else if (header.type === CrdtMessageType.PUT_COMPONENT) {
-      message = PutComponentOperation.read(buffer)!
-    } else if (header.type === CrdtMessageType.AUTHORITATIVE_PUT_COMPONENT) {
-      message = AuthoritativePutComponentOperation.read(buffer)!
-    } else if (header.type === CrdtMessageType.DELETE_COMPONENT) {
-      message = DeleteComponent.read(buffer)!
-    } else if (header.type === CrdtMessageType.DELETE_ENTITY) {
-      message = DeleteEntity.read(buffer)!
-    } else {
-      // consume unknown messages
-      buffer.incrementReadOffset(header.length)
-    }
+
+    if (buffer.currentReadOffset() <= offset) break
 
     if (message) {
       messages.push({
@@ -75,6 +91,8 @@ export function readMessages(data: Uint8Array): (NetworkMessage | RegularMessage
         messageBuffer: buffer.buffer().subarray(offset, buffer.currentReadOffset())
       })
     }
+    // the next header starts where this record's declared length ends, whatever its reader consumed
+    buffer.incrementReadOffset(offset + header.length - buffer.currentReadOffset())
   }
   return messages
 }

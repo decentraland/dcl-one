@@ -1,38 +1,16 @@
-const child_process = require('child_process');
 const { builtinModules } = require('module');
 
-const esmModulesToBundle = [
-  '@dcl/sdk',
-  '@dcl/ecs',
-  '@dcl/smart-items',
-  '@dcl-sdk/utils',
-  '@dcl/gltf-validator-ts',
-  '@dcl/ecs-math',
-];
+// Optional native accelerators `ws` requires inside a try/catch; left as
+// runtime requires so the bundle never carries platform binaries.
+const optionalNative = ['bufferutil', 'utf-8-validate'];
 
-/** Modules left as runtime `require`s in the Node tooling bundle. */
+/**
+ * Modules left as runtime `require`s in the Node bundle: node's own and the optional natives.
+ * Everything else, the SDK packages and every npm dependency, is bundled, so `dist/index.js`
+ * loads with no `node_modules` beside it.
+ */
 function getNotBundledModules() {
-  const child = child_process.execSync('pnpm ls --json --depth Infinity', {
-    stdio: ['ignore', 'pipe', 'ignore'],
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const [ret] = JSON.parse(child.toString());
-
-  const externalModules = new Set();
-  function traverseDependencies(obj) {
-    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies'])
-      if (obj[field])
-        for (let depName in obj[field]) {
-          const dep = obj[field][depName];
-          externalModules.add(depName);
-          traverseDependencies(dep);
-        }
-  }
-  traverseDependencies(ret);
-
-  return Array.from(externalModules)
-    .concat(builtinModules)
-    .filter($ => !esmModulesToBundle.includes($));
+  return builtinModules.concat(builtinModules.map($ => `node:${$}`)).concat(optionalNative);
 }
 
 module.exports = { getNotBundledModules };

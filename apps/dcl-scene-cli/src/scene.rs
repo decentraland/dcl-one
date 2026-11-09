@@ -1,5 +1,6 @@
 use crate::ux::{TrySteps, UserError};
 use anyhow::{Context, Result};
+use dcl_scene_authoring::composite_norm::{SMART_ITEMS_PREFIX, smart_item_name};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -148,23 +149,29 @@ impl Project {
     }
 
     pub fn node_module(&self, rel: &str) -> Option<PathBuf> {
-        let p = self.root.join("node_modules").join(rel);
-        p.exists().then_some(p)
+        find_node_module(&self.root, rel)
     }
 
     pub fn require_node_module(&self, rel: &str) -> Result<PathBuf> {
-        let p = self.root.join("node_modules").join(rel);
-        if p.exists() {
+        if let Some(p) = self.node_module(rel) {
             return Ok(p);
         }
         Err(UserError::new(
             format!("{rel} is not installed in this scene"),
-            TrySteps::one("run dcl-scene-cli init --node-modules-only to restore the vendored node_modules (or npm install)"),
+            TrySteps::one(
+                "run dcl-scene-cli init --node-modules-only to restore the vendored node_modules",
+            ),
         )
-        .why(format!("{} does not exist", p.display()))
+        .why(format!(
+            "{} does not exist, nor does a parent directory's node_modules carry it",
+            self.root.join("node_modules").join(rel).display()
+        ))
         .into())
     }
 
+    /// A scene the Creator Hub authored smart items into: its main composite
+    /// carries a `smart-items::*` component other than the script list, under
+    /// either spelling of the prefix (`composite_norm::smart_item_name`).
     pub fn is_editor_scene(&self) -> bool {
         let Ok(raw) = std::fs::read(self.root.join("assets/scene/main.composite")) else {
             return false;
@@ -177,7 +184,8 @@ impl Project {
             .is_some_and(|comps| {
                 comps.iter().any(|c| {
                     c.get("name").and_then(|n| n.as_str()).is_some_and(|n| {
-                        n.starts_with("asset-packs::") && n != "asset-packs::Script"
+                        let n = smart_item_name(n);
+                        n.starts_with(SMART_ITEMS_PREFIX) && n != "smart-items::Script"
                     })
                 })
             })
@@ -199,11 +207,25 @@ impl Project {
     }
 }
 
+/// `node_modules` of the project and of every directory above it: the
+/// resolution Node applies, which is where a workspace's package manager
+/// hoists shared packages.
+pub fn node_modules_dirs(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    root.ancestors().map(|dir| dir.join("node_modules"))
+}
+
+/// The first `node_modules/<rel>` found walking up from `root`.
+pub fn find_node_module(root: &Path, rel: &str) -> Option<PathBuf> {
+    node_modules_dirs(root)
+        .map(|dir| dir.join(rel))
+        .find(|p| p.exists())
+}
+
 pub const TRACKED_MIN_CLI: &str = "3.14.1";
 
 pub fn min_cli_warning(root: &Path) -> Option<String> {
     let declared = package_min_cli(&root.join("package.json"))
-        .or_else(|| package_min_cli(&root.join("node_modules/@dcl/sdk/package.json")))?;
+        .or_else(|| package_min_cli(&find_node_module(root, "@dcl/sdk/package.json")?))?;
     let min = parse_semver(&declared)?;
     let tracked = parse_semver(TRACKED_MIN_CLI)?;
     if min > tracked {
@@ -509,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_scene_requires_a_runtime_asset_packs_component() {
+    fn editor_scene_requires_a_runtime_smart_item_component() {
         let t = Tmp::new("editorscene");
         let project = |root: &Path| Project {
             root: root.to_path_buf(),
@@ -520,14 +542,33 @@ mod tests {
         assert!(!project(&t.0).is_editor_scene());
         t.write(
             "assets/scene/main.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{}},{"name":"core::Transform","data":{}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","data":{}},{"name":"core::Transform","data":{}}]}"#,
         );
         assert!(!project(&t.0).is_editor_scene());
         t.write(
             "assets/scene/main.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Actions","data":{}}]}"#,
         );
         assert!(project(&t.0).is_editor_scene());
+    }
+
+    #[test]
+    fn editor_scene_detection_reads_the_legacy_prefix() {
+        let t = Tmp::new("editorscene-legacy");
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{}}]}"#,
+        );
+        assert!(!project.is_editor_scene());
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#,
+        );
+        assert!(project.is_editor_scene());
     }
 
     #[test]
@@ -691,6 +732,36 @@ mod tests {
             first,
             b64_content_hash(&abs, "m"),
             "the memo is gone: every entity request would re-read the whole scene"
+        );
+    }
+
+    /// A workspace's package manager hoists shared packages to the root
+    /// node_modules; a member scene resolves them the way Node does, and a
+    /// copy of its own still wins.
+    #[test]
+    fn node_modules_resolve_through_parent_directories() {
+        let tmp = Tmp::new("hoisted");
+        let scene = tmp.0.join("packages/scene");
+        std::fs::create_dir_all(&scene).unwrap();
+        assert_eq!(find_node_module(&scene, "@dcl/sdk/package.json"), None);
+        tmp.write("node_modules/@dcl/sdk/package.json", "{}");
+        assert_eq!(
+            find_node_module(&scene, "@dcl/sdk/package.json"),
+            Some(tmp.0.join("node_modules/@dcl/sdk/package.json"))
+        );
+        tmp.write("packages/scene/node_modules/@dcl/sdk/package.json", "{}");
+        assert_eq!(
+            find_node_module(&scene, "@dcl/sdk/package.json"),
+            Some(scene.join("node_modules/@dcl/sdk/package.json"))
+        );
+        let dirs: Vec<PathBuf> = node_modules_dirs(&scene).take(3).collect();
+        assert_eq!(
+            dirs,
+            vec![
+                scene.join("node_modules"),
+                tmp.0.join("packages/node_modules"),
+                tmp.0.join("node_modules")
+            ]
         );
     }
 

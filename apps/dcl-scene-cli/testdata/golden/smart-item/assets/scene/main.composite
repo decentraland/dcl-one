@@ -34,7 +34,7 @@
       }
     },
     {
-      "name": "asset-packs::Counter",
+      "name": "smart-items::Counter",
       "jsonSchema": {
         "type": "object",
         "properties": {
@@ -48,7 +48,7 @@
       }
     },
     {
-      "name": "asset-packs::Script",
+      "name": "smart-items::Script",
       "jsonSchema": {
         "type": "object",
         "properties": {

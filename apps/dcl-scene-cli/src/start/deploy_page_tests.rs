@@ -163,6 +163,8 @@ fn linker_deploy(target: &str, world: Option<&str>) -> crate::linker::LinkerDepl
         base_parcel: "0,0".into(),
         multi_scene: true,
         gate: crate::deploy::PermissionGate::off(),
+        deploy_token: "0123456789abcdef".into(),
+        skip_validations: false,
     }
 }
 
@@ -2770,7 +2772,10 @@ async fn moving_to_land_selects_land_but_a_world_coordinate_edit_keeps_its_world
 #[test]
 fn cli_publish_releases_the_signer_and_allows_another_web_publish() {
     for outcome in [
-        Ok("Published".to_string()),
+        Ok(crate::linker::Published {
+            entity_id: "bafy".into(),
+            message: "Published".into(),
+        }),
         Err(anyhow::anyhow!("Upload failed")),
     ] {
         let st = AppState::new(vec![], 8000, tokio::sync::broadcast::channel(32).0);
@@ -2787,7 +2792,10 @@ fn cli_publish_releases_the_signer_and_allows_another_web_publish() {
 #[tokio::test]
 async fn standalone_browser_server_stays_available_after_publish() {
     for outcome in [
-        Ok("Published test scene".to_string()),
+        Ok(crate::linker::Published {
+            entity_id: "bafy".into(),
+            message: "Published test scene".into(),
+        }),
         Err(anyhow::anyhow!("Upload rejected")),
     ] {
         let (_tree, project) = scene(
@@ -2808,6 +2816,7 @@ async fn standalone_browser_server_stays_available_after_publish() {
                 (port, listener),
                 false,
                 Duration::from_secs(5),
+                false,
                 signer,
                 rx,
             )
@@ -2933,5 +2942,44 @@ async fn scene_removal_is_gated_and_bound_to_the_selected_world() {
             .await
             .status(),
         StatusCode::CONFLICT
+    );
+}
+
+/// After a DNS rebind `Origin` and `Host` agree on the attacker's domain and
+/// the peer is still loopback: the signing gate wants a loopback `Origin`
+/// host too, unless remote peers are admitted on purpose.
+#[test]
+fn signing_refuses_an_origin_that_is_not_a_loopback_host() {
+    let (_tree, project) = gather("rebound-origin");
+    let mut st = crate::start::testkit::state(vec![project]);
+    let blocked = |st: &AppState, host: &str, origin: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, host.parse().unwrap());
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        signing_blocked(st, LOCAL, &headers).is_some()
+    };
+    assert!(blocked(
+        &st,
+        "evil.example:8000",
+        "http://evil.example:8000"
+    ));
+    assert!(blocked(&st, "10.1.2.3:8000", "http://10.1.2.3:8000"));
+    assert!(!blocked(&st, "localhost:8000", "http://localhost:8000"));
+    assert!(!blocked(&st, "127.0.0.1:8000", "http://127.0.0.1:8000"));
+    assert!(!blocked(&st, "[::1]:8000", "http://[::1]:8000"));
+    let mut none = HeaderMap::new();
+    none.insert(header::HOST, "evil.example:8000".parse().unwrap());
+    assert!(
+        signing_blocked(&st, LOCAL, &none).is_none(),
+        "no Origin is a non-browser request"
+    );
+    st.allow_remote_deploy = true;
+    assert!(
+        !blocked(&st, "10.1.2.3:8000", "http://10.1.2.3:8000"),
+        "an admitted remote signs from its own address"
+    );
+    assert!(
+        blocked(&st, "10.1.2.3:8000", "http://evil.example:8000"),
+        "and still only from the page it was served"
     );
 }

@@ -14,8 +14,9 @@
 //! cases whose bytes were compared. The oracle includes where @dcl/ecs throws:
 //! a value it refuses must make us refuse too, never encode something.
 //!
-//! Skipped when node is unavailable; @dcl/ecs comes from the crate's own
-//! vendored node_modules, so the test does not need a scene installed.
+//! Skipped when node is unavailable; @dcl/ecs is the one inside the crate's
+//! own vendored @dcl/inspector-service bundle (its `ecs` export), so the test
+//! does not need a scene installed.
 
 use dcl_scene_authoring::schema_crdt::{compile, encode_component_value};
 use std::io::Write;
@@ -564,8 +565,7 @@ const RUNNER: &str = r#"
 const fs = require('fs')
 const path = require('path')
 const root = process.argv[2]
-const { Schemas } = require(path.join(root, 'node_modules/@dcl/ecs/dist-cjs/schemas'))
-const { ReadWriteByteBuffer } = require(path.join(root, 'node_modules/@dcl/ecs/dist-cjs/serialization/ByteBuffer'))
+const { Schemas, ReadWriteByteBuffer } = require(path.join(root, 'node_modules/@dcl/inspector-service')).ecs
 const out = []
 for (const line of fs.readFileSync(process.argv[3], 'utf8').split('\n')) {
   if (!line) continue
@@ -597,9 +597,7 @@ fn vendored_ecs(dir: &Path) -> bool {
         let Some(name) = entry.enclosed_name() else {
             continue;
         };
-        let wanted = name.starts_with("node_modules/@dcl/ecs")
-            || name.starts_with("node_modules/@protobufjs");
-        if !wanted || !entry.is_file() {
+        if !name.starts_with("node_modules/@dcl/inspector-service/") || !entry.is_file() {
             continue;
         }
         let target = dir.join(&name);
@@ -607,7 +605,7 @@ fn vendored_ecs(dir: &Path) -> bool {
         let mut sink = std::fs::File::create(&target).unwrap();
         std::io::copy(&mut entry, &mut sink).unwrap();
     }
-    dir.join("node_modules/@dcl/ecs/dist-cjs/schemas/index.js")
+    dir.join("node_modules/@dcl/inspector-service/dist/index.js")
         .is_file()
 }
 
@@ -625,8 +623,10 @@ fn the_rust_encoder_agrees_with_dcl_ecs_on_generated_schemas() {
         eprintln!("skipping: node is not on PATH");
         return;
     }
-    let tmp =
-        Tmp(std::env::temp_dir().join(format!("dcl-scene-cli-schema-parity-{}", std::process::id())));
+    let tmp = Tmp(std::env::temp_dir().join(format!(
+        "dcl-scene-cli-schema-parity-{}",
+        std::process::id()
+    )));
     let _ = std::fs::remove_dir_all(&tmp.0);
     std::fs::create_dir_all(&tmp.0).unwrap();
     assert!(
@@ -724,10 +724,7 @@ const NETWORK_DELETE_RUNNER: &str = r#"
 const fs = require('fs')
 const path = require('path')
 const root = process.argv[2]
-const crdt = 'node_modules/@dcl/ecs/dist-cjs/serialization/crdt'
-const { ReadWriteByteBuffer } = require(path.join(root, 'node_modules/@dcl/ecs/dist-cjs/serialization/ByteBuffer'))
-const { DeleteEntityNetwork } = require(path.join(root, crdt, 'network/deleteEntityNetwork'))
-const { DeleteEntity } = require(path.join(root, crdt, 'deleteEntity'))
+const { ReadWriteByteBuffer, DeleteEntityNetwork, DeleteEntity } = require(path.join(root, 'node_modules/@dcl/inspector-service')).ecs
 const buffer = new ReadWriteByteBuffer()
 DeleteEntityNetwork.write(512, 7, buffer)
 DeleteEntityNetwork.write(513, 9, buffer)
@@ -778,8 +775,8 @@ fn strict_frames(bytes: &[u8]) -> Vec<(u32, &[u8])> {
 
 /// Upstream 7.27.0 declared a network entity delete as 12 bytes and wrote 16;
 /// the blob overlaid the #1595 fix until the auth-server 7.29.1 line carried it
-/// upstream. Runs the vendored `dist-cjs` for real, so the fix is proven on
-/// bytes the runtime produced, whichever side it comes from.
+/// upstream. Runs the vendored @dcl/ecs for real (the service bundle's), so
+/// the fix is proven on bytes the runtime produced, whichever side it comes from.
 #[test]
 fn the_vendored_ecs_frames_a_network_entity_delete_by_its_declared_length() {
     if Command::new("node").arg("--version").output().is_err() {

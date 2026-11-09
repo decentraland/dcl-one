@@ -18,6 +18,30 @@ import { setGlobalRoom, Room } from './events/implementation'
 export type IProfile = { networkId: number; userId: string }
 // user that we asked for the inital crdt state
 export const AUTH_SERVER_PEER_ID = 'authoritative-server'
+
+/**
+ * Whether this scene has an authoritative server.
+ *
+ * The scene bundle sets `globalThis.__dclOneAuthoritative` before any SDK code runs:
+ * `true` when scene.json has `authoritativeMultiplayer: true`, `false` otherwise. A
+ * missing flag counts as `true`, so a bundle that does not set it fails closed.
+ */
+export function sceneHasAuthoritativeServer(): boolean {
+  return (globalThis as { __dclOneAuthoritative?: boolean }).__dclOneAuthoritative !== false
+}
+
+/**
+ * Whether `sender` has authority over this scene's synced state.
+ *
+ * With an authoritative server (see `sceneHasAuthoritativeServer`) CRDT, state
+ * responses and room events are applied only from the `authoritative-server` peer.
+ * Without one there is no server to trust, so every peer has authority and every
+ * peer answers `REQ_CRDT_STATE`. `CRDT_AUTHORITATIVE` (server corrections) stays
+ * server-only either way.
+ */
+export function fromAuthority(sender: string): boolean {
+  return sender === AUTH_SERVER_PEER_ID || !sceneHasAuthoritativeServer()
+}
 export const DEBUG_NETWORK_MESSAGES = () => (globalThis as any).DEBUG_NETWORK_MESSAGES ?? false
 
 // Test environment detection without 'as any'
@@ -121,8 +145,9 @@ export function addSyncTransport(
 
   // Receive & Process CRDT_STATE
   binaryMessageBus.on(CommsMessage.REQ_CRDT_STATE, async (data, sender) => {
-    // Requests arriving before role resolution are recovered by the requester's retry.
-    if (!isServerAtom.getOrNull()) return
+    // With an authoritative server only the server answers; requests arriving before
+    // role resolution are recovered by the requester's retry. Without one every peer answers.
+    if (sceneHasAuthoritativeServer() && !isServerAtom.getOrNull()) return
 
     DEBUG_NETWORK_MESSAGES() && console.log('[REQ_CRDT_STATE]', sender, Date.now())
     const chunks = engineToCrdt(engine)
@@ -137,7 +162,7 @@ export function addSyncTransport(
     }
   })
   binaryMessageBus.on(CommsMessage.RES_CRDT_STATE, async (data, sender) => {
-    if (isServerAtom.getOrNull() || sender !== AUTH_SERVER_PEER_ID) return
+    if (isServerAtom.getOrNull() || !fromAuthority(sender)) return
 
     requestingState = false
     elapsedTimeSinceRequest = 0
@@ -168,7 +193,7 @@ export function addSyncTransport(
       )
     if (isServer) {
       transport.onmessage!(serverValidator.processServerMessages(value, sender))
-    } else if (sender === AUTH_SERVER_PEER_ID) {
+    } else if (fromAuthority(sender)) {
       // Process network messages from server and convert to regular messages
       transport.onmessage!(serverValidator.processClientMessages(value, sender))
     }
@@ -179,8 +204,8 @@ export function addSyncTransport(
     // Only accept authoritative messages from authoritative server
     if (sender !== AUTH_SERVER_PEER_ID) return
 
-    // DEBUG_NETWORK_MESSAGES() &&
-    console.log('[AUTHORITATIVE] Received authoritative message from server:', value.byteLength, 'bytes')
+    DEBUG_NETWORK_MESSAGES() &&
+      console.log('[AUTHORITATIVE] Received authoritative message from server:', value.byteLength, 'bytes')
 
     // Process authoritative messages by forcing them through normal CRDT processing
     // but with a timestamp that's guaranteed to be accepted

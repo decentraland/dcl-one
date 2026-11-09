@@ -40,6 +40,22 @@
       "default": "./dist/versioning/index.js"
     },
     "./package.json": "./package.json",
+    "./admin-toolkit-ui/ModerationControl": {
+      "types": "./dist/admin-toolkit-ui/ModerationControl/index.d.ts",
+      "default": "./dist/admin-toolkit-ui/ModerationControl/index.js"
+    },
+    "./admin-toolkit-ui/VideoControl": {
+      "types": "./dist/admin-toolkit-ui/VideoControl/index.d.ts",
+      "default": "./dist/admin-toolkit-ui/VideoControl/index.js"
+    },
+    "./admin-toolkit-ui/VideoControl/DclCast": {
+      "types": "./dist/admin-toolkit-ui/VideoControl/DclCast/index.d.ts",
+      "default": "./dist/admin-toolkit-ui/VideoControl/DclCast/index.js"
+    },
+    "./admin-toolkit-ui/VideoControl/LiveStream": {
+      "types": "./dist/admin-toolkit-ui/VideoControl/LiveStream/index.d.ts",
+      "default": "./dist/admin-toolkit-ui/VideoControl/LiveStream/index.js"
+    },
     "./*": {
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
