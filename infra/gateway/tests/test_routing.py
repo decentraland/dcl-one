@@ -42,6 +42,17 @@ class HostAliasTest(unittest.TestCase):
         self.assertEqual(route("gateway.example.test", "/comms-gatekeeper-local/get-scene-adapter"),
                          ("/comms-gatekeeper/get-scene-adapter", "/get-scene-adapter"))
 
+    def test_badges_host_carries_upstreams_whole_surface(self):
+        # <node>/badges is the badges base: upstream's own /badges/... paths
+        # are prefixed on this host too. The node root aliases only the
+        # wallet reads (root-aliases.nix).
+        for path in ["/badges", "/badges/traveler", "/badges/traveler/tiers",
+                     "/badges/halloweeks_2026/backfill", "/categories", "/status",
+                     "/users/0x1234567890abcdef1234567890abcdef12345678/preview"]:
+            with self.subTest(path=path):
+                self.assertEqual(route("badges.example.test", path), ("/badges" + path, path))
+                self.assertEqual(route("gateway.example.test", "/badges" + path), ("/badges" + path, path))
+
     def test_worlds_host_reaches_the_prefixed_worlds_routes(self):
         for path in ["/world/w.dcl.eth/settings", "/livekit-webhook", "/health/live",
                      "/contents/bafy", "/entities"]:

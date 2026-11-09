@@ -122,6 +122,8 @@ def render(table, cfg, mime):
                     "asset-bundle-registry-abgen": "/asset-bundle-registry",
                     "rpc-social-service-ea": "/social-rpc", "market": "/shop",
                     "storage": "/world-storage", "comms-gatekeeper-local": "/comms-gatekeeper"}
+    # A host whose path already carries its prefix is not prefixed again, except
+    # badges.: upstream's own paths start with /badges (/badges/<id>/tiers).
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -292,6 +294,7 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
