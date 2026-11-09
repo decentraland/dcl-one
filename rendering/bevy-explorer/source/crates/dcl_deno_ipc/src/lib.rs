@@ -9,23 +9,20 @@ use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore},
     RendererResponse, SceneId, SceneResponse, SceneResponseSender, TaggedSceneResponseSender,
 };
-use interprocess::local_socket::{
-    traits::tokio::{Listener, Stream as _},
-    GenericFilePath, ListenerOptions, ToFsName,
-};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::RefCell,
-    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        RwLock,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 use system_bridge::SystemApi;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+mod pool;
+pub use pool::{init_runtime_with, HostOptions, Placement};
 
 // A frame over this ends the scene host. It must stay above the largest frame a host builds:
 // a CRDT snapshot carries a scene's whole store, which the scene runtime caps at 512 MiB.
@@ -213,10 +210,6 @@ fn reject_host_message(rejected: &AtomicU64, message: std::fmt::Arguments) {
     }
 }
 
-thread_local! {
-    static HOST_SCENES: RefCell<HostScenes> = RefCell::new(HostScenes::default());
-}
-
 pub struct NewSceneCommand {
     id: u64,
     info: NewSceneInfo,
@@ -225,11 +218,6 @@ pub struct NewSceneCommand {
     response_channel: SceneResponseSender,
     system_api_sender: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
 }
-
-#[allow(clippy::type_complexity)]
-pub static NEW_SCENE_SENDER: Lazy<
-    RwLock<Option<tokio::sync::mpsc::UnboundedSender<NewSceneCommand>>>,
-> = Lazy::new(Default::default);
 
 /// Opt-in for the orchestrated headless server ONLY: when set, a runtime whose IPC
 /// loops end (the JS sidecar was lost) hard-exits the process so the supervisor can
@@ -258,102 +246,16 @@ fn ipc_socket_name() -> String {
 }
 
 pub fn init_runtime() -> anyhow::Result<()> {
-    let (init_sx, init_rx) = tokio::sync::oneshot::channel::<anyhow::Result<()>>();
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        let name_str = ipc_socket_name();
-        let name = name_str.clone().to_fs_name::<GenericFilePath>().unwrap();
-
-        let listener = rt.block_on(async { ListenerOptions::new().name(name).create_tokio() });
-        let listener = match listener {
-            Ok(l) => l,
-            Err(e) => {
-                error!("failed to create listener: {e}");
-                let _ = init_sx.send(Err(anyhow!(e)));
-                return;
-            }
-        };
-
-        let mut target = std::env::current_exe().unwrap();
-        target.pop();
-
-        // pop an extra folder when running tests
-        if target.file_name().and_then(|s| s.to_str()) == Some("deps") {
-            target.pop();
-        }
-
-        let mut target = target.join("dcl_deno_ipc");
-        if cfg!(windows) {
-            target.set_extension("exe");
-        }
-
-        let mut command = Command::new(&target);
-        command
-            .arg(name_str)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        // A console-subsystem child spawned by the GUI-subsystem app has no console to
-        // inherit, so windows pops a visible one; suppress it. The inherited handles
-        // still carry output to the parent's console when it has one (console builds).
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut child = command
-            .spawn()
-            .unwrap_or_else(|_| panic!("failed to spawn deno binary at {target:?}"));
-
-        let stream = match rt.block_on(async { listener.accept().await }) {
-            Ok(stream) => stream,
-            Err(e) => {
-                error!("runtime initialization failed: {e}");
-                let _ = init_sx.send(Err(e.into()));
-                child.wait().unwrap();
-                return;
-            }
-        };
-
-        let (ipc_inbound, ipc_outbound) = stream.split();
-
-        let (new_scene_sx, new_scene_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        *NEW_SCENE_SENDER.write().unwrap() = Some(new_scene_sx);
-
-        let _ = init_sx.send(Ok(()));
-
-        rt.block_on(run_host_connection(ipc_inbound, ipc_outbound, new_scene_rx));
-        let _ = child.kill();
-        let _ = child.wait();
-
-        // Orchestrated headless server only (EXIT_ON_SIDECAR_LOSS): the IPC loops ended,
-        // so the JS sidecar is gone and the engine can run no scene code. Nothing here
-        // can respawn it, and the parent's engine-down recovery never fires for a still-
-        // running process — so exit hard and let the supervisor restart the whole engine.
-        // Desktop/tests leave the flag false and end quietly (tests build a fresh runtime
-        // per app, where this is a normal shutdown, not a crash).
-        if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-            error!("dcl_deno_ipc runtime terminated (JS sidecar lost); exiting process");
-            std::process::exit(1);
-        }
-    });
-
-    init_rx.blocking_recv()?
+    init_runtime_with(HostOptions::default())
 }
 
 // Serves one scene host until either direction ends, and returns how many of its messages were
-// rejected. Runs on a current-thread runtime, since the IPC context and the scene senders are
-// thread-locals.
+// rejected. Runs on a current-thread runtime, since the IPC context is thread-local.
 async fn run_host_connection(
     inbound: impl AsyncRead + Unpin + Send + 'static,
     outbound: impl AsyncWrite + Unpin + Send + 'static,
     new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
+    scenes: Arc<Mutex<HostScenes>>,
 ) -> u64 {
     let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
     let channels_open = CancellationToken::new();
@@ -365,9 +267,14 @@ async fn run_host_connection(
     }));
     let _close_channels = channels_open.drop_guard();
 
-    let rejected = std::sync::Arc::new(AtomicU64::new(0));
-    let mut f_out = tokio::spawn(renderer_ipc_out(outbound, new_scene, router_rx));
-    let mut f_in = tokio::spawn(renderer_ipc_in(inbound, rejected.clone()));
+    let rejected = Arc::new(AtomicU64::new(0));
+    let mut f_out = tokio::spawn(renderer_ipc_out(
+        outbound,
+        new_scene,
+        router_rx,
+        scenes.clone(),
+    ));
+    let mut f_in = tokio::spawn(renderer_ipc_in(inbound, scenes, rejected.clone()));
 
     let ended = tokio::select! {
         ended = &mut f_out => {
@@ -408,10 +315,11 @@ mod endpoint_tests {
 }
 
 #[allow(clippy::type_complexity)]
-pub async fn renderer_ipc_out(
+async fn renderer_ipc_out(
     mut stream: impl AsyncWrite + Unpin,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
     mut ipc_router: tokio::sync::mpsc::UnboundedReceiver<(u64, IpcMessage)>,
+    scenes: Arc<Mutex<HostScenes>>,
 ) -> anyhow::Result<()> {
     let (renderer_sx, mut renderer_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -436,7 +344,7 @@ pub async fn renderer_ipc_out(
                     return Ok(());
                 };
 
-                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone(), system_api_sender, Instant::now()));
+                scenes.lock().unwrap().start(id, response_channel.channel().clone(), system_api_sender, Instant::now());
 
                 let presence_context = info.presence_context;
                 if let Some(mut old_rx) = global_receivers.remove(&presence_context) {
@@ -471,7 +379,7 @@ pub async fn renderer_ipc_out(
                     return Ok(());
                 };
                 if let EngineToScene::KillScene(id) = &engine_to_scene {
-                    HOST_SCENES.with_borrow_mut(|scenes| scenes.kill(*id, Instant::now()));
+                    scenes.lock().unwrap().kill(*id, Instant::now());
                 }
                 write_msg(&mut stream, &engine_to_scene).await?;
             }
@@ -553,9 +461,10 @@ async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Opt
     Ok(Some(buffer))
 }
 
-pub async fn renderer_ipc_in(
+async fn renderer_ipc_in(
     mut stream: impl AsyncRead + Unpin,
-    rejected: std::sync::Arc<AtomicU64>,
+    scenes: Arc<Mutex<HostScenes>>,
+    rejected: Arc<AtomicU64>,
 ) -> anyhow::Result<()> {
     while let Some(buffer) = read_frame(&mut stream).await? {
         let mut decoder = rmp_serde::Deserializer::from_read_ref(&buffer);
@@ -565,30 +474,28 @@ pub async fn renderer_ipc_in(
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => {
-                HOST_SCENES.with_borrow(|scenes| {
-                    let Some(sender) = scenes.responses(id.0.to_bits(), Instant::now()) else {
-                        reject_host_message(
-                            &rejected,
-                            format_args!(
-                                "a response for scene {id:?}, which this scene host does not run"
-                            ),
-                        );
-                        return Ok(());
-                    };
-                    // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                    // where every scene shares one engine. There, ending this connection trips the
-                    // process exit above — killing the whole engine and every co-tenant scene. So
-                    // shed the response instead: a scene that outruns the bevy-side drain only
-                    // stalls itself. Desktop and tests (flag unset) end the connection.
-                    if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                        if let Err(e) = sender.try_send((id, scene_response)) {
-                            warn!("dropping scene response: renderer channel unavailable ({e})");
-                        }
-                    } else if let Err(e) = sender.try_send((id, scene_response)) {
-                        bail!("renderer channel unavailable ({e})");
+                let scenes = scenes.lock().unwrap();
+                let Some(sender) = scenes.responses(id.0.to_bits(), Instant::now()) else {
+                    reject_host_message(
+                        &rejected,
+                        format_args!(
+                            "a response for scene {id:?}, which this scene host does not run"
+                        ),
+                    );
+                    continue;
+                };
+                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
+                // where every scene shares one engine. There, ending this connection trips the
+                // process exit — killing the whole engine and every co-tenant scene. So
+                // shed the response instead: a scene that outruns the bevy-side drain only
+                // stalls itself. Desktop and tests (flag unset) end the connection.
+                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
+                    if let Err(e) = sender.try_send((id, scene_response)) {
+                        warn!("dropping scene response: renderer channel unavailable ({e})");
                     }
-                    Ok(())
-                })?
+                } else if let Err(e) = sender.try_send((id, scene_response)) {
+                    bail!("renderer channel unavailable ({e})");
+                }
             }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
@@ -606,11 +513,13 @@ pub async fn renderer_ipc_in(
                 })
             }
             SceneToEngine::SystemApi(system_command) => {
-                let forwarded = HOST_SCENES.with_borrow(|scenes| {
-                    let sender = scenes.system_api(Instant::now())?;
-                    let _ = sender.send(system_command);
-                    Some(())
-                });
+                let forwarded = scenes
+                    .lock()
+                    .unwrap()
+                    .system_api(Instant::now())
+                    .map(|sender| {
+                        let _ = sender.send(system_command);
+                    });
                 if forwarded.is_none() {
                     reject_host_message(
                         &rejected,
@@ -647,13 +556,13 @@ pub fn spawn_scene(
 
     let (main_sx, thread_rx) = tokio::sync::mpsc::unbounded_channel::<RendererResponse>();
 
-    let ipc_out = NEW_SCENE_SENDER.read().unwrap();
-    let Some(ipc_out) = ipc_out.as_ref() else {
+    let pool = pool::POOL.read().unwrap();
+    let Some(pool) = pool.as_ref() else {
         error!("scene {id:?} not started: ipc runtime is not initialized");
         return (main_sx, None);
     };
 
-    if let Err(e) = ipc_out.send(NewSceneCommand {
+    if let Err(e) = pool.place(NewSceneCommand {
         id: id.0.to_bits(),
         info: NewSceneInfo {
             initial_crdt_store,
@@ -671,7 +580,7 @@ pub fn spawn_scene(
         response_channel: renderer_sender,
         system_api_sender: super_user,
     }) {
-        error!("scene {id:?} not started: ipc channel closed ({e})");
+        error!("scene {id:?} not started: {e}");
     }
 
     (main_sx, None)
@@ -698,3 +607,5 @@ pub async fn write_frame(
 
 #[cfg(test)]
 mod engine_ipc_tests;
+#[cfg(test)]
+mod pool_tests;

@@ -42,7 +42,12 @@ impl Host {
                 .enable_all()
                 .build()
                 .unwrap();
-            let rejected = rt.block_on(run_host_connection(engine_in, engine_out, new_scene_rx));
+            let rejected = rt.block_on(run_host_connection(
+                engine_in,
+                engine_out,
+                new_scene_rx,
+                Default::default(),
+            ));
             let _ = ended_sx.send(rejected);
         });
         // the context the host's reply channels are serialized in
