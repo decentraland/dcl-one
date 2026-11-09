@@ -3,25 +3,29 @@ import type { PortableInfoKind } from "./PortableInfoKind";
 import type { PortableState } from "./PortableState";
 import type { SmartWearableSource } from "./SmartWearableSource";
 
+/**
+ * A portable the player can see and stop: every portable but startup ones and the HUD's own
+ * scene, and the smart wearables stopped while still equipped.
+ */
 export type PortableInfo = { 
 /**
- * the live scene hash; `/stop_portable` takes it. None for a smart wearable not loaded
- * (stopped, or waiting for its wearable data)
+ * The live scene hash, which `/stop_portable` takes. `None` for a smart wearable that is not
+ * loaded (stopped, or waiting for its wearable data).
  */
 hash: string | null, 
 /**
- * a smart wearable's urn; a scene portable's urn or ens
+ * A smart wearable's urn; a scene portable's urn or ens.
  */
 pid: string, 
 /**
- * the wearable's name; a scene portable's title, else its ens or pid
+ * The wearable's name; a scene portable's title, else its ens or pid.
  */
 name: string, kind: PortableInfoKind, state: PortableState, 
 /**
- * failed: why, when known
+ * Why a portable failed, when known.
  */
 reason: string | null, 
 /**
- * smart wearables only
+ * Smart wearables only: why the engine holds it.
  */
 source: SmartWearableSource | null, };
