@@ -931,6 +931,8 @@ CREATE TABLE social.badge_cursor_gaps (
     CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
     CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)
         REFERENCES social.badge_cursors (source) ON DELETE CASCADE
+);
+
 -- Append-only; one row per catalog write of the admin routes
 -- (badges::catalog): an upsert with the definition it wrote, or one
 -- publication or archive transition. No foreign key: it outlives the row.

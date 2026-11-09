@@ -2,30 +2,21 @@
 //! `/badges/{id}`, `/badges/{id}/tiers`, `/categories`, `/status`,
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
 //! admin read, grant, revoke and [`backfill`] (grant and revoke with an
-//! audit row), and badge art mirrored into `BADGES_ASSETS_DIR` at
+//! audit row), the bearer-gated catalog writes ([`catalog`]: `PUT` and
+//! `PATCH /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
 //! `/assets/{path}`. Revoke answers 200 with a body in every environment;
 //! upstream registers it in dev and test only, with a bare 204. A missing,
 //! wrong or unconfigured bearer is 403 on every admin route (the shared
 //! `RequireAdmin`); upstream answers backfill 401 and does not register it
-//! without a token. Tables:
-//! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
-//! the schema), `user_badge_progress`, `user_achieved_tiers`,
-//! `badge_admin_audit`, `presence_badges`. Every progress write goes through
-//! [`progress::apply_progress`]: the console grant and the backfill here.
-//! `badge_admin_audit`, `presence_badges`, `badge_cursors`. Every progress
-//! write goes through [`progress::apply_progress`]: the console grant and the
-//! processor's [`jobs`], which feed upstream's observers ([`evaluators`]).
-//! [`progress::apply_progress`]: the console grant and the presence flow
-//! ([`presence`], with its runtime tables `presence_events`, `presence_visits`
-//! and the applied, pending-leave and absence facts).
-//! admin read, grant and revoke (the last two with an audit row), the
-//! bearer-gated catalog writes ([`catalog`]: `PUT` and `PATCH
-//! /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
-//! `/assets/{path}`. Tables: `social.badge_definitions`, `badge_tiers`
+//! without a token. Tables: `social.badge_definitions`, `badge_tiers`
 //! (upstream's catalog, seeded by the schema), `user_badge_progress`,
 //! `user_achieved_tiers`, `badge_admin_audit`, `badge_catalog_audit`,
-//! `presence_badges`. Every progress write goes through
-//! [`progress::apply_progress`]; the console grant is its only caller here.
+//! `presence_badges`, `badge_cursors`. Every progress write goes through
+//! [`progress::apply_progress`]: the console grant, the backfill, the
+//! processor's [`jobs`], which feed upstream's observers ([`evaluators`]),
+//! and the presence flow ([`presence`], with its runtime tables
+//! `presence_events`, `presence_visits` and the applied, pending-leave and
+//! absence facts).
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix), so `<node>/badges` is the base URL of upstream's
@@ -36,8 +27,8 @@
 
 pub mod assets;
 pub mod backfill;
-pub mod evaluators;
 pub mod catalog;
+pub mod evaluators;
 pub mod handlers;
 pub mod jobs;
 pub mod presence;
@@ -49,9 +40,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::{get, post};
 use axum::extract::DefaultBodyLimit;
-use axum::routing::get;
+use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::notifications::admin::AdminSecretSource;

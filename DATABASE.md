@@ -1259,16 +1259,11 @@ gains it from the object pass, so no step exists.
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
 `schemas/40_social.sql`) is reference data: upstream's 34 badges and 84 tiers,
-seeded by the bootstrap, a few dozen rows that change only with a release or
-the TS database import. Every read route reads the published rows in
-`created_at, id` order per request, as upstream does: one statement of about
-0.3 ms and 30 KB, so an import or a catalog edit shows at once
-(`social/src/badges/store.rs`). Per
 seeded by the bootstrap, a few dozen rows that change through the admin catalog
-routes (below) or the TS database import. Every read route shares one 300 s
-snapshot of the published rows in `created_at, id` order
-(`social/src/badges/store.rs`); a catalog write drops the snapshot of the
-replica that served it, and other replicas pick it up within 300 s. Per
+routes (below) or the TS database import. Every read route reads the published
+rows in `created_at, id` order per request, as upstream does: one statement of
+about 0.3 ms and 30 KB, so an import or a catalog edit shows at once
+(`social/src/badges/store.rs`). Per
 wallet, `user_badge_progress` holds one row per badge touched (its
 `steps_done` plus upstream's `progress` document verbatim: the evaluators'
 dedup and resume state, a few KB at most) and `user_achieved_tiers` one row per
