@@ -390,7 +390,14 @@ fn begin_frame(
     let now = Instant::now();
     budget.started = Some(now);
     budget.deadline = Some(now + settings.frame_budget);
-    budget.start_cache = budget.next_cache;
+    budget.start_cache = (budget.next_cache..budget.caches.len())
+        .chain(0..budget.next_cache)
+        .find(|&index| {
+            state.ram_active
+                || (state.gpu_active
+                    && matches!(budget.caches[index].spec.domains, ReclaimDomains::RamAndGpu))
+        })
+        .unwrap_or(0);
     budget.ram = state.ram_active;
     budget.gpu = state.gpu_active;
     budget.budget_exhausted = false;

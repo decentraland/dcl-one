@@ -1067,6 +1067,8 @@ fn drive_profile_fetches(
             if ram_pressure {
                 // Keep idle due entries available to the bounded Last cleanup instead of
                 // making them ineligible with another fetch. Readers can still refresh them.
+                // This includes the normal 300-second expiry: under pressure, dropping a
+                // large stale batch here would bypass the shared frame allowance.
                 if entry.evictable_under_pressure(now) {
                     return true;
                 }

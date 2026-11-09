@@ -318,6 +318,51 @@ fn exhausted_budget_resumes_at_later_cache_instead_of_starving_it() {
 }
 
 #[test]
+fn gpu_pressure_wraps_past_an_ineligible_tail_without_an_idle_frame() {
+    for initial_ram_pressure in [false, true] {
+        let mut app = app();
+        app.init_resource::<Visits>()
+            .add_memory_reclaimer(spec("a", 10, ReclaimDomains::RamAndGpu), slow_a)
+            .add_memory_reclaimer(
+                spec("gpu-tail", 20, ReclaimDomains::RamAndGpu),
+                |mut budget: ResMut<ReclaimBudget>, mut visits: ResMut<Visits>| {
+                    if let Some(mut turn) = budget.begin("gpu-tail", 10) {
+                        if turn.inspect() {
+                            visits.0.push("gpu-tail");
+                            budget.deadline = Some(Instant::now());
+                        }
+                        budget.finish_turn(turn, 10);
+                    }
+                },
+            )
+            .add_memory_reclaimer(spec("b", 30, ReclaimDomains::Ram), clean_b);
+        app.world_mut()
+            .resource_mut::<MemoryReclaimSettings>()
+            .frame_budget = Duration::from_secs(10);
+        ready(&mut app);
+        ram(&mut app, Some(if initial_ram_pressure { 800 } else { 400 }));
+        gpu(&mut app, &[800]);
+        app.update();
+        app.update();
+        assert_eq!(app.world().resource::<Visits>().0, ["a", "gpu-tail"]);
+
+        // The next cursor is the RAM-only tail, including when RAM pressure just ended.
+        ram(&mut app, Some(400));
+        app.update();
+        assert_eq!(
+            app.world().resource::<Visits>().0,
+            ["a", "gpu-tail", "a"],
+            "GPU cleanup must resume in the next frame without visiting the RAM-only tail"
+        );
+        app.update();
+        assert_eq!(
+            app.world().resource::<Visits>().0,
+            ["a", "gpu-tail", "a", "gpu-tail"]
+        );
+    }
+}
+
+#[test]
 fn reclaimers_use_the_same_frame_count_as_update() {
     use bevy::diagnostic::{FrameCount, FrameCountPlugin};
     #[derive(Resource, Default)]
