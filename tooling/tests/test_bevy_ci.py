@@ -179,14 +179,14 @@ class WorkflowTest(unittest.TestCase):
                       "github.head_ref != 'main' && github.head_ref != 'master' && "
                       "contains(github.event.pull_request.labels.*.name, 'ci:preview')) }}\n", job)
         self.assertIn('      publish: ${{ env.BEVY_WEB_PUBLISH }}\n', job)
-        # The package upload and the publish job read only that answer.
+        # The package job and the publish job read only that answer.
         self.assertIn("      - name: Upload the stamped package for publication\n"
-                      "        if: env.BEVY_WEB_PUBLISH == 'true'\n", job)
+                      "        if: needs.build-deploy-web.outputs.publish == 'true'\n", job)
         self.assertIn("\n  publish-web:\n    if: needs.build-deploy-web.outputs.publish == 'true'\n", workflow)
         notice = job[job.index('      - name: Say how to get a preview\n'):
                      job.index('      - name: Upload the stamped package for publication\n')]
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository && "
-                      "env.BEVY_WEB_PUBLISH != 'true'\n", notice)
+                      "needs.build-deploy-web.outputs.publish != 'true'\n", notice)
         self.assertIn('Add the ci:preview label, then push or reopen', notice)
         # A closed pull request removes its tag with or without the label.
         cleanup = workflow.split('\n  preview-cleanup:\n', 1)[1].split('\n    name:', 1)[0]
@@ -734,7 +734,7 @@ class SelectionTest(unittest.TestCase):
             'apps/bevy-explorer/Dockerfile.headless': {'headless'},
             'apps/bevy-explorer/image-smoke.py': {'web', 'headless'},
             '.github/workflows/bevy-explorer-images.yml': {'web', 'headless'},
-            'apps/bevy-explorer/prepare-native-cache.py': {'clippy', 'test', 'headless', 'native-matrix', 'scenes'},
+            'apps/bevy-explorer/prepare-native-cache.py': {'headless', 'native-matrix', 'scenes'},
             'apps/bevy-explorer/install-linux-deps.py': {*ci.LANES, 'scenes'},
             'apps/bevy-explorer/install-web-tools.py': {'web'},
             ci.SCENES_WORKFLOW: {'scenes'},
@@ -751,7 +751,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
-                     'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py'):
+                     'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py'):
             before = self.git('rev-parse', 'HEAD')
             self.write(path, 'changed')
             result = ci.select(before, self.commit())

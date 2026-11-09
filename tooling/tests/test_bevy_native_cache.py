@@ -1,6 +1,7 @@
 """Unused runner compilers must not change the native Rust cache identity; vendored sources must."""
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,9 @@ SPEC = importlib.util.spec_from_file_location(
 cache = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(cache)
 ROOT = Path(__file__).resolve().parents[2]
+TARGET_SPEC = importlib.util.spec_from_file_location('bevy_target_cache', ROOT / 'tooling/bevy-target-cache.py')
+target_cache = importlib.util.module_from_spec(TARGET_SPEC)
+TARGET_SPEC.loader.exec_module(target_cache)
 WORKSPACE = 'workspaces: rendering/bevy-explorer/source -> target'
 # The key file works because this version hashes each .cargo/config.toml below the workspace into
 # the last part of its key. Check that again before a change of this pin.
@@ -160,7 +164,13 @@ class NativeCacheKeyTest(unittest.TestCase):
                     self.assertTrue(('Swatinem/rust-cache@' + step).startswith(RUST_CACHE), workflow.name)
                     self.assertIn('prepare-native-cache.py', before.rsplit('actions/checkout@', 1)[-1], workflow.name)
                 before = step
-        self.assertGreaterEqual(uses, 6)
+        self.assertGreaterEqual(uses, 3)
+        # Bevy Explorer / CI keys its native caches with tooling/bevy-target-cache.py, which puts
+        # the same trees in each key.
+        ci = (ROOT / '.github/workflows/bevy-explorer-ci.yml').read_text()
+        self.assertNotIn('Swatinem/rust-cache@', ci)
+        self.assertEqual(len(re.findall(r'bevy-target-cache\.py" key --lane \w+\n', ci)), 3)
+        self.assertLessEqual(set(cache.VENDORED), set(target_cache.VENDORED))
 
 
 if __name__ == '__main__':

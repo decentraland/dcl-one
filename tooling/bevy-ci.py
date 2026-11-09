@@ -33,7 +33,7 @@ PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenanc
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', 'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -116,7 +116,7 @@ APP_INPUTS = {
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
     'install-tools.sh': (*LANES, 'native-matrix'),
-    'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'prepare-native-cache.py': ('headless', 'native-matrix', 'scenes'),
     'scene-tests.txt': ('scenes',),
 }
 

@@ -7,9 +7,10 @@
 # (the run attempt's metadata), JOBS_FILE (the run's /jobs response), ARTIFACTS_FILE (its
 # /artifacts response) and OUT_DIR (where build.md and tests.md are written).
 #
-# The build section covers the products: the web app (*Web engine, HUD and bridge scene*) and the
-# headless engine (*Headless Smoke*), with their artifacts' download links, and the `benchmark`
-# runners the *Test Suite* uploads. The tests section covers *Test Suite* on each platform and
+# The build section covers the products: the web app (*Web engine, HUD and bridge scene*), its
+# package (*Web package for the CDN*, a row only when the job ran) and the headless engine
+# (*Headless Smoke*), with their artifacts' download links, and the `benchmark` runners the
+# *Test Suite* uploads. The tests section covers *Test Suite* on each platform and
 # *Headless Smoke*. A job *Changes* did not select (`skipped`) is reported as not selected; a
 # section none of whose jobs ran says its inputs are unchanged.
 #
@@ -28,6 +29,7 @@ set -euo pipefail
 OUT_DIR="${OUT_DIR:-.}"
 
 WEB_JOB='Web engine, HUD and bridge scene'
+WEB_PACKAGE_JOB='Web package for the CDN'
 HEADLESS_JOB='Headless Smoke'
 TEST_JOB_PREFIX='Test Suite'
 BADGE_STYLE='logoColor=white&style=for-the-badge'
@@ -184,6 +186,12 @@ if [ -n "${url:-}${conclusion:-}" ]; then
     fi
   fi
   rows="$rows| $(job_cell 'Web app' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
+fi
+# The package job follows the web job: it is skipped when the web app was not built.
+IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$WEB_PACKAGE_JOB")" || true
+if [ -n "${url:-}${conclusion:-}" ] && [ "$conclusion" != skipped ]; then
+  state=$(fold_state "$state" "$conclusion")
+  rows="$rows| $(job_cell 'Web package' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | — |"$'\n'
 fi
 IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$HEADLESS_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then

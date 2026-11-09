@@ -73,7 +73,8 @@ run_metadata push
 jobs "$(job 'Integration guards' success 30)" "$(job Changes success 40)" \
   "$(job 'Test Suite (windows-2025)' success 2700)" "$(job 'Test Suite (ubuntu-24.04)' success 1500)" \
   "$(job 'Test Suite (macos-15)' success 3700)" "$(job 'Headless Smoke' success 900)" \
-  "$(job 'Web engine, HUD and bridge scene' success 1300)" "$(job Rustfmt success 20)"
+  "$(job 'Web engine, HUD and bridge scene' success 1300)" "$(job 'Web package for the CDN' success 240)" \
+  "$(job Rustfmt success 20)"
 artifacts "bevy-explorer-web-$SHA:11" "bevy-headless-linux-x64-$SHA:12" \
   "bevy-explorer-headless-linux-amd64-$SHA:13" "bevy-explorer-benchmark-linux-amd64-$SHA:14" \
   "bevy-explorer-benchmark-windows-amd64-$SHA:15" "bevy-explorer-benchmark-macos-arm64-$SHA:16" \
@@ -82,6 +83,8 @@ compose
 check "green build badge" build.md 'Build-Success!-3fb950'
 check "web app row links the job, the result and the artifact" build.md \
   '| [Web app](https://github.com/o/r/actions/runs/1/job/Web-engine--HUD-and-bridge-scene) | ✅ Built | 21m 40s | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
+check "web package row links the job and the result" build.md \
+  '| [Web package](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | ✅ Built | 4m 0s | — |'
 check "headless row lists both artifacts" build.md \
   '| ✅ Built | 15m 0s | [npm package](https://github.com/o/r/actions/runs/1/artifacts/12) · [engine](https://github.com/o/r/actions/runs/1/artifacts/13) |'
 check "benchmark runners by platform, sorted" build.md \
@@ -98,12 +101,13 @@ check "footer names the run and the commit" tests.md '<sub>[Run summary](https:/
 # 2. A failed Linux suite, a cancelled Windows one, a web build that failed with no artifact.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (windows-2025)' cancelled 100)" \
   "$(job 'Test Suite (ubuntu-24.04)' failure 1500)" "$(job 'Web engine, HUD and bridge scene' failure 300)" \
-  "$(job 'Headless Smoke' skipped)"
+  "$(job 'Web package for the CDN' skipped)" "$(job 'Headless Smoke' skipped)"
 artifacts "bevy-explorer-benchmark-linux-amd64-$SHA:14"
 compose
 check "red build badge" build.md 'Build-Failed!-ff0000'
 check "a failed web build has no download" build.md '| ❌ Failed | 5m 0s | — |'
 check "a skipped product is not selected" build.md '| — Not selected | — | — |'
+check_absent "a skipped web package has no row" build.md 'Web package'
 check "red tests badge" tests.md 'Tests-Failed!-ff0000'
 check "a cancelled suite" tests.md '| ⚠️ Cancelled | 1m 40s |'
 check "a failed suite" tests.md '| ❌ Failed | 25m 0s |'
@@ -236,7 +240,17 @@ jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' skipp
 TAG_VERSION="$VERSION" preview_compose "$SHA"
 check_absent "a skipped web build does not link an artifact" build.md 'artifacts/11'
 
-# 7. A job name with table furniture renders as text.
+# 7. The web app built and its package failed: the build failed.
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 1300)" \
+  "$(job 'Web package for the CDN' failure 200)"
+artifacts "bevy-explorer-web-$SHA:11"
+compose
+check "a failed web package gives the red build badge" build.md 'Build-Failed!-ff0000'
+check "the web app row still passes" build.md '| ✅ Built | 21m 40s | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
+check "the failed web package row" build.md \
+  '| [Web package](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | ❌ Failed | 3m 20s | — |'
+
+# 8. A job name with table furniture renders as text.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (ubuntu|24.04)' success 10)"
 artifacts
 compose
