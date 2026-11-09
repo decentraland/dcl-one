@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 
-/** A rail popover (scene permissions, smart wearables): centred on the button that opened it and kept
+/** A rail popover (scene permissions, portable experiences): centred on the button that opened it and kept
  *  on screen, closed by an outside click or Cancel. Put `ref` and `style` on the panel, which is
  *  `position: fixed` and translateY(-50%) around its top (PermissionsPopover.module.css `.panel`). */
 export function useRailPopover(anchor: HTMLElement | null, onClose: () => void): { ref: RefObject<HTMLDivElement | null>; style: CSSProperties } {

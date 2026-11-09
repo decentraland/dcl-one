@@ -52,7 +52,7 @@ export type IconName =
   | 'create'
   | 'permissions'
   | 'dice'
-  | 'smart-wearables'
+  | 'portables'
   | 'camera'
 
 const MASK_ART: Partial<Record<IconName, string>> = {
@@ -90,8 +90,8 @@ const PATHS: Partial<Record<IconName, string>> = {
   // a padlock: the scene permissions the player has granted or refused
   permissions:
     'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z',
-  // sparkles: a wearable that runs code (a smart wearable)
-  'smart-wearables':
+  // sparkles: code running beside the scene (portable experiences, smart wearables)
+  portables:
     'M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z',
   // a camera: photo mode
   camera:

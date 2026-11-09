@@ -237,25 +237,26 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
-## Smart wearables
+## Portables
 
-A smart wearable carries an SDK7 scene the engine runs while it is worn; the engine decides
-everything and the HUD shows and answers (`bridge-scene/src/domains/smartWearables.ts`).
-Expectations:
+A portable experience runs beside the scene the player stands in: a smart wearable's scene
+while it is worn, or a portable another scene spawned. The engine decides and lists them; the HUD
+shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`). Expectations:
 
-- **Authorization**: the engine's request (`smartWearableAuthRequest`, one at a time) opens the
-  `Smart wearable permissions` dialog once the player is in world: the wearable's name, why it asks
-  (logged in wearing it / equipped it) and its declared scene.json permissions in the scene
-  permission dialog's wording (unknown names verbatim). Allow / Deny post `smartWearableAuthAnswer`;
-  Escape or the scrim deny.
-- **Rail**: the `Smart wearables` button shows only while one is running, blocked, killed, denied
-  or awaiting authorization; its tooltip reads `N active / M inactive`, or `Smart wearables are
-  disabled in this scene` when the scene vetoes them. Its popover lists each with `Stop <name>` /
-  `Restart <name>`, sent as the console's `/smart_wearable kill|restart <urn>`; the HUD's own
-  command replies stay out of chat.
-- **Toasts**: entering running, blocked, killed or denied is toasted, from the state the player
+- **List**: the engine's `portables` message (`getPortablesStream`), sent on subscribe and on every
+  change, never the HUD's own scene or a startup portable. No polling and no prompt of its own: a
+  portable's permissions are asked on use through the scene permission dialog.
+- **Rail**: the `Portable experiences` button shows while the list is non-empty; its tooltip reads
+  `N running`, plus `, M paused in this scene` while the scene the player stands in disables
+  portable experiences. Its popover lists one row per portable: name, kind (`Smart wearable` /
+  `Portable experience`) and state (`Loading`, `Running`, `Failed: <reason>`, `Paused in this
+  scene`, `Stopped`). `Stop <name>` on every row with a scene hash runs the console's
+  `/stop_portable <hash>`; a stopped smart wearable (still worn) shows `Restart <name>` instead,
+  `/smart_wearable restart <urn>`. The HUD's own command replies stay out of chat; a failed one is
+  toasted.
+- **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
   arrived with (no burst at login).
-- Mock: `?mock=1&smartwearables=1`. Tests: `src/test/smartWearables.test.tsx`.
+- Mock: `?mock=1&mockportables=1`. Tests: `src/test/portables.test.tsx`.
 
 ## Analytics
 

@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '../../engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '../../engine/driver'
 import type { LaunchHostOptions } from '../../engine/engineRpc'
 import { recordVisit } from '../lobby/lobbyApi'
-import type { SatelliteView, SmartWearableState, SmartWearableStateInfo } from '../../engine/generated'
+import type { PortableInfo, PortableState, SatelliteView } from '../../engine/generated'
 import type { AvatarLook } from '../../engine/avatarEquip'
 import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '../../engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '../../lib/analytics'
@@ -29,7 +29,7 @@ import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
-import { toastSmartWearableChanges } from '../smartWearables/smartWearableToasts'
+import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { bootMode } from '../../lib/bootMode'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -85,7 +85,6 @@ import type {
   PermissionRulesMessage,
   PermissionRuleValue,
   PermissionUsedMessage,
-  SmartWearableAuthRequestMessage,
   WorldPasswordRequestMessage,
   ProximityTip,
   Profile,
@@ -516,18 +515,14 @@ export interface WorldPasswordState {
   resolve: (password: string | null) => void
 }
 
-export interface SmartWearablesState extends SmartWearableStateInfo {
-  /** The smart wearable waiting for the player's consent to run (the engine asks one at a time). */
-  pendingAuth: SmartWearableAuthRequestMessage | null
-  /** Answer the authorization request `id`. */
-  answerAuth: (id: number, allow: boolean) => void
-  /** Stop a running smart wearable (`/smart_wearable kill`). */
-  kill: (urn: string) => void
-  /** Run a stopped or refused smart wearable again (`/smart_wearable restart`). */
+export interface PortablesState {
+  /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
+  list: PortableInfo[]
+  /** Stop a listed portable by its scene hash (`/stop_portable`). */
+  stop: (hash: string) => void
+  /** Start a stopped smart wearable again (`/smart_wearable restart`). */
   restart: (urn: string) => void
 }
-
-const NO_SMART_WEARABLES: SmartWearableStateInfo = { entries: [], currentSceneAllows: true, currentSceneHidesUi: false }
 
 export type ChatLine = ChatMessage & {
   id: number
@@ -869,8 +864,8 @@ export interface EngineSession {
   permissions: PermissionsState
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
-  /** Smart wearables the engine runs for the player, and its authorization prompt. */
-  smartWearables: SmartWearablesState
+  /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
+  portables: PortablesState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
@@ -1260,15 +1255,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // dismissed prompt asks again; an "Always …" answer is the engine's stored rule from here on).
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
-  const [smartWearables, setSmartWearables] = useState<SmartWearableStateInfo>(NO_SMART_WEARABLES)
-  const [smartWearableAuth, setSmartWearableAuth] = useState<SmartWearableAuthRequestMessage | null>(null)
-  // Each smart wearable's last reported state, for the change toasts (null: no report yet). Toasts
-  // start once the player is in world from a known baseline: the state the player arrived with, or
-  // the first report after arriving, so logging in wearing several does not burst toasts.
-  const smartWearableStates = useRef<Map<string, SmartWearableState> | null>(null)
-  const smartWearableToasts = useRef(false)
+  const [portables, setPortables] = useState<PortableInfo[]>([])
+  // Each portable's last reported state, for the change toasts (null: no list yet). Toasts start
+  // once the player is in world from a known baseline: the list the player arrived with, or the
+  // first list after arriving, so logging in wearing several smart wearables does not burst toasts.
+  const portableStates = useRef<Map<string, PortableState> | null>(null)
+  const portableToasts = useRef(false)
   // Stop/Restart lines the HUD ran itself: their console reply is not echoed into the chat (the
-  // state report's toast says what happened); a typed /smart_wearable command still is.
+  // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
   const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
   // when each conversation last pinged, per kind of ping
@@ -1353,7 +1347,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (msg.name === 'playerReady') {
             playerReadyRef.current = true
             setPlayerReady(true)
-            smartWearableToasts.current = smartWearableStates.current != null
+            portableToasts.current = portableStates.current != null
             bootPollStop.current = true // world reached → stop watching for a boot panic
             // The bridge pushes bindings at registration, but that can race the page's channel
             // subscription — re-request now that both ends are up (shortcut hints need them).
@@ -2014,18 +2008,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
           break
-        case 'smartWearableAuthRequest':
-          setSmartWearableAuth(msg)
-          break
-        case 'smartWearableState': {
-          const { kind: _kind, ...info } = msg
-          const before = smartWearableStates.current
-          smartWearableStates.current = new Map(info.entries.map((e) => [e.urn, e.state]))
+        case 'portables': {
+          const before = portableStates.current
+          portableStates.current = new Map(msg.portables.map((p) => [portableKey(p), p.state]))
           if (playerReadyRef.current) {
-            if (smartWearableToasts.current && before != null) toastSmartWearableChanges(before, info.entries)
-            smartWearableToasts.current = true
+            if (portableToasts.current && before != null) toastPortableChanges(before, msg.portables)
+            portableToasts.current = true
           }
-          setSmartWearables(info)
+          setPortables(msg.portables)
           break
         }
       }
@@ -2421,9 +2411,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const menuPageOpen =
     settingsOpen || backpackOpen || communitiesOpen || mapOpen || placesOpen || eventsOpen || shopOpen || galleryOpen || lobbyOpen || createOpen
   // What takes the screen from the chat, for requestFocusChat: the main menu, the emote wheel, and
-  // the modals App renders above everything (permission and smart wearable prompts, fatal error).
+  // the two modals App renders above everything (permission prompt, fatal error).
   chatCoveredRef.current =
-    menuPageOpen || emotesOpen || permissionQueue.length > 0 || smartWearableAuth != null || fatalError != null || (EDITOR_BUILD && editorMode !== 'off')
+    menuPageOpen || emotesOpen || permissionQueue.length > 0 || fatalError != null || (EDITOR_BUILD && editorMode !== 'off')
 
   // In-world, cancel is an ENGINE action: the cancel key flows to the engine like any other
   // input, resolves to 'Cancel', and comes back on the action stream — the dispatcher below
@@ -2690,16 +2680,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
-  const answerSmartWearableAuth = useCallback((id: number, allow: boolean) => {
-    setSmartWearableAuth((p) => (p?.id === id ? null : p))
-    driverRef.current?.send({ kind: 'smartWearableAuthAnswer', id, allow })
+  const ownConsoleCommand = useCallback((command: string, args: string[]) => {
+    ownConsoleCommands.current.push([command, ...args].join(' '))
+    driverRef.current?.send({ kind: 'consoleCommand', command, args })
   }, [])
-  const smartWearableCommand = useCallback((verb: 'kill' | 'restart', urn: string) => {
-    ownConsoleCommands.current.push(`smart_wearable ${verb} ${urn}`)
-    driverRef.current?.send({ kind: 'consoleCommand', command: 'smart_wearable', args: [verb, urn] })
-  }, [])
-  const killSmartWearable = useCallback((urn: string) => smartWearableCommand('kill', urn), [smartWearableCommand])
-  const restartSmartWearable = useCallback((urn: string) => smartWearableCommand('restart', urn), [smartWearableCommand])
+  const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
+  const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
     setWorldPassword((p) => {
       if (p == null) return p
@@ -3328,10 +3314,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setDmLines({})
     setChatUnread(0)
     setNearbyUnread(0)
-    setSmartWearables(NO_SMART_WEARABLES)
-    setSmartWearableAuth(null)
-    smartWearableStates.current = null
-    smartWearableToasts.current = false
+    setPortables([])
+    portableStates.current = null
+    portableToasts.current = false
   }, [closeAllPanels])
 
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
@@ -4155,7 +4140,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       resolve: resolvePermission
     },
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
-    smartWearables: { ...smartWearables, pendingAuth: smartWearableAuth, answerAuth: answerSmartWearableAuth, kill: killSmartWearable, restart: restartSmartWearable },
+    portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
     nav,

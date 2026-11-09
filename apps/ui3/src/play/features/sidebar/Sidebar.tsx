@@ -40,7 +40,7 @@ import { bugReportUrl } from '../../lib/bugReport'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
-import { SmartWearablesPopover, showSmartWearables, smartWearablesTooltip } from '../smartWearables/SmartWearablesPopover'
+import { PortablesPopover, portablesTooltip, showPortables } from '../portables/PortablesPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '../../lib/utm'
 import { siteUrl } from '../../lib/baseDomain'
@@ -62,7 +62,7 @@ type Item =
   | { kind: 'events'; icon: IconName; label: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
-  | { kind: 'smartWearables'; icon: IconName; label: string }
+  | { kind: 'portables'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'shop'; icon: IconName; label: string }
   | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
@@ -118,7 +118,7 @@ const BOTTOM: Item[] = [
   { kind: 'mic', icon: 'mic', label: 'Voice chat' },
   { kind: 'skybox', icon: 'skybox', label: 'Skybox' },
   { kind: 'permissions', icon: 'permissions', label: 'Scene permissions' },
-  { kind: 'smartWearables', icon: 'smart-wearables', label: 'Smart wearables' },
+  { kind: 'portables', icon: 'portables', label: 'Portable experiences' },
   { kind: 'divider' },
   { kind: 'emotes', icon: 'emotes', label: 'Emotes', hotkey: 'Emote' },
   { kind: 'divider' },
@@ -128,7 +128,7 @@ const BOTTOM: Item[] = [
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
 type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
-type Popovers = { permissions: PopoverProps; smartWearables: PopoverProps }
+type Popovers = { permissions: PopoverProps; portables: PopoverProps }
 
 function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, popovers: Popovers, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
   if (item.kind === 'divider') return <div key={`d${i}`} className={styles.divider} />
@@ -298,17 +298,17 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       />
     )
   }
-  if (item.kind === 'smartWearables') {
-    // only while a smart wearable runs, is held back or waits for the player's answer
-    if (!showSmartWearables(session.smartWearables.entries)) return null
+  if (item.kind === 'portables') {
+    // only while the engine lists a portable (a smart wearable, or one a scene spawned)
+    if (!showPortables(session.portables.list)) return null
     return (
       <RailButton
-        key="smartWearables"
+        key="portables"
         icon={item.icon}
         label={item.label}
-        tooltip={smartWearablesTooltip(session.smartWearables)}
-        active={popovers.smartWearables.open}
-        onClick={(e) => popovers.smartWearables.onOpen(e.currentTarget)}
+        tooltip={portablesTooltip(session.portables.list)}
+        active={popovers.portables.open}
+        onClick={(e) => popovers.portables.onOpen(e.currentTarget)}
       />
     )
   }
@@ -369,8 +369,8 @@ export function Sidebar({
   const debugPanel = useDebugPanel(session)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
-  const [smartWearablesAnchor, setSmartWearablesAnchor] = useState<HTMLElement | null>(null)
-  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || smartWearablesAnchor != null)
+  const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
+  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
   const nearby = useNearbyVoice(session)
   const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
@@ -383,18 +383,18 @@ export function Sidebar({
         setPermissionsAnchor((a) => (a == null ? button : null))
       }
     },
-    smartWearables: {
-      open: smartWearablesAnchor != null,
-      onOpen: (button) => setSmartWearablesAnchor((a) => (a == null ? button : null))
+    portables: {
+      open: portablesAnchor != null,
+      onOpen: (button) => setPortablesAnchor((a) => (a == null ? button : null))
     }
   }
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
-  const closeSmartWearables = useCallback(() => setSmartWearablesAnchor(null), [])
-  // The button leaves the rail once nothing runs or waits; its popover goes with it.
-  const smartWearablesShown = showSmartWearables(session.smartWearables.entries)
+  const closePortables = useCallback(() => setPortablesAnchor(null), [])
+  // The button leaves the rail once the engine lists no portable; its popover goes with it.
+  const portablesShown = showPortables(session.portables.list)
   useEffect(() => {
-    if (!smartWearablesShown) setSmartWearablesAnchor(null)
-  }, [smartWearablesShown])
+    if (!portablesShown) setPortablesAnchor(null)
+  }, [portablesShown])
   // The "..." panel closes on an outside click or Cancel, like the other popovers.
   useEffect(() => {
     if (!configOpen) return
@@ -476,13 +476,13 @@ export function Sidebar({
           onClose={closePermissions}
         />
       )}
-      {smartWearablesAnchor != null && (
-        <SmartWearablesPopover
-          anchor={smartWearablesAnchor}
-          info={session.smartWearables}
-          onStop={session.smartWearables.kill}
-          onRestart={session.smartWearables.restart}
-          onClose={closeSmartWearables}
+      {portablesAnchor != null && (
+        <PortablesPopover
+          anchor={portablesAnchor}
+          list={session.portables.list}
+          onStop={session.portables.stop}
+          onRestart={session.portables.restart}
+          onClose={closePortables}
         />
       )}
       {configOpen && (

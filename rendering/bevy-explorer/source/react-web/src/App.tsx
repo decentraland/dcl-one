@@ -33,7 +33,6 @@ import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
-import { openSmartWearableAuthorization } from './features/permissions/SmartWearableAuthorizationDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
@@ -242,15 +241,6 @@ function Hud(): React.JSX.Element {
     return openPermissionDialog(front, session.permissions.resolve)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the front request changes
   }, [permFrontId])
-
-  // A smart wearable asking to run: the engine asks one at a time and holds it until answered, so a
-  // request made while logging in waits for the world. Escape / scrim-click deny.
-  const smartWearableAuth = session.phase === 'world' ? session.smartWearables.pendingAuth : null
-  useEffect(() => {
-    if (smartWearableAuth == null) return
-    return openSmartWearableAuthorization(smartWearableAuth, session.smartWearables.answerAuth)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the request changes
-  }, [smartWearableAuth])
 
   // A password-protected world being travelled to: the engine holds the travel until the prompt is
   // answered. Escape / scrim-click gives up (the travel is refused). Re-opens when the engine re-asks

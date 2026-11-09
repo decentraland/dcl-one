@@ -27,7 +27,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
-import type { Color3, SmartWearableEntryInfo, SmartWearableState } from './generated'
+import type { Color3, PortableInfo, PortableState } from './generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 
@@ -439,19 +439,23 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
-  // ?smartwearables=1: the smart wearables the mock engine runs. The jetpack waits for the player's
-  // consent; the pet runs until the player stops it.
-  const smartWearables: SmartWearableEntryInfo[] = [
-    { urn: 'urn:decentraland:matic:collections-v2:0xmock:0', name: 'Jetpack', state: 'awaitingAuthorization', reason: null, sceneHash: null, source: 'equipped' },
-    { urn: 'urn:decentraland:matic:collections-v2:0xmock:1', name: 'Pocket Pet', state: 'running', reason: null, sceneHash: 'bafkmockpet', source: 'equipped' }
+  // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
+  // (then it can be restarted); the pet is paused by the scene; the scene's portable failed to load.
+  const portables: PortableInfo[] = [
+    { hash: 'bafkmockjetpack-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:0', name: 'Jetpack', kind: 'smartWearable', state: 'running', reason: null, source: 'equipped' },
+    { hash: 'bafkmockpet-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:1', name: 'Pocket Pet', kind: 'smartWearable', state: 'blocked', reason: null, source: 'equipped' },
+    { hash: 'bafkmockminigame', pid: 'minigame.dcl.eth', name: 'Minigame', kind: 'scene', state: 'failed', reason: 'scene.json could not be loaded', source: null }
   ]
-  const sendSmartWearables = (): void =>
-    reply({ kind: 'smartWearableState', entries: smartWearables.map((e) => ({ ...e })), currentSceneAllows: true, currentSceneHidesUi: false })
-  const setSmartWearable = (urn: string, state: SmartWearableState): void => {
-    const entry = smartWearables.find((e) => e.urn === urn)
-    if (entry == null) return
-    entry.state = state
-    sendSmartWearables()
+  const sendPortables = (): void => reply({ kind: 'portables', portables: portables.map((p) => ({ ...p })) })
+  // A stopped smart wearable is not loaded, so it has no scene hash until it runs again.
+  const loadedHash = new Map(portables.map((p) => [p.pid, p.hash]))
+  const setPortableState = (find: (p: PortableInfo) => boolean, state: PortableState): boolean => {
+    const p = portables.find(find)
+    if (p == null) return false
+    p.state = state
+    p.hash = state === 'stopped' ? null : (loadedHash.get(p.pid) ?? null)
+    sendPortables()
+    return true
   }
 
   // An in-flight loginNew approval (so loginCancel/logout can abort it).
@@ -631,14 +635,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
     }
-    // ?smartwearables=1 → the smart wearables' state, then the jetpack's authorization prompt.
-    if (new URLSearchParams(location.search).get('smartwearables') === '1') {
-      sendSmartWearables()
-      setTimeout(() => {
-        const [jetpack] = smartWearables
-        reply({ kind: 'smartWearableAuthRequest', id: 1, urn: jetpack.urn, name: jetpack.name, permissions: ['USE_FETCH', 'USE_WEB3_API'], reason: 'equip' })
-      }, 3000)
-    }
+    // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
+    if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
     // a few used permissions so the rail's permissions list has something to review.
     if (new URLSearchParams(location.search).get('perm') === '1') {
@@ -1211,15 +1209,28 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'chat', chat: { sender: '', message: 'Reloading the current scene…', channel: 'Nearby', messageId: '' } })
       return
     }
-    if (msg.kind === 'smartWearableAuthAnswer') {
-      setSmartWearable(smartWearables[0].urn, msg.allow ? 'running' : 'denied')
-      return
-    }
     if (msg.kind === 'consoleCommand') {
       const args = msg.args ?? []
-      if (msg.command === 'smart_wearable' && (args[0] === 'kill' || args[0] === 'restart') && args[1] != null) {
-        setSmartWearable(args[1], args[0] === 'kill' ? 'killed' : 'running')
-        reply({ kind: 'consoleReply', command: msg.command, args, ok: true, output: `${args[0] === 'kill' ? 'killed' : 'restarted'} ${args[1]}` })
+      // A stopped smart wearable stays listed (still equipped); any other portable leaves the list.
+      if (msg.command === 'stop_portable' && args[0] != null) {
+        const hash = args[0]
+        const p = portables.find((e) => e.hash === hash)
+        if (p == null) {
+          reply({ kind: 'consoleReply', command: msg.command, args, ok: false, output: `not a listed portable: ${hash}` })
+          return
+        }
+        if (p.kind === 'smartWearable') setPortableState((e) => e === p, 'stopped')
+        else {
+          portables.splice(portables.indexOf(p), 1)
+          sendPortables()
+        }
+        reply({ kind: 'consoleReply', command: msg.command, args, ok: true, output: `stopped ${hash}` })
+        return
+      }
+      if (msg.command === 'smart_wearable' && args[0] === 'restart' && args[1] != null) {
+        const urn = args[1]
+        const ok = setPortableState((e) => e.kind === 'smartWearable' && e.pid === urn && e.state === 'stopped', 'running')
+        reply({ kind: 'consoleReply', command: msg.command, args, ok, output: ok ? `restarted ${urn}` : `unknown smart wearable: ${urn}` })
         return
       }
       const output =

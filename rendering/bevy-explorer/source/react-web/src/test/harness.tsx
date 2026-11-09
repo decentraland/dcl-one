@@ -234,7 +234,7 @@ export function fakeSession(): EngineSession {
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
     permissions: { pending: [], visit: [], triggered: [], unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
     worldPassword: { pending: null, resolve: vi.fn() },
-    smartWearables: { entries: [], currentSceneAllows: true, currentSceneHidesUi: false, pendingAuth: null, answerAuth: vi.fn(), kill: vi.fn(), restart: vi.fn() },
+    portables: { list: [], stop: vi.fn(), restart: vi.fn() },
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },
     mic: { enabled: false, available: true, toggle: vi.fn() },

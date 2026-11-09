@@ -1,4 +1,4 @@
-/* The scene permissions popover's panel (PermissionsPopover.module.css), one row per smart wearable. */
+/* The scene permissions popover's panel (PermissionsPopover.module.css), one row per portable. */
 .panel {
   composes: panel from '../permissions/PermissionsPopover.module.css';
 }
@@ -8,10 +8,6 @@
 }
 .divider {
   composes: divider from '../permissions/PermissionsPopover.module.css';
-}
-.note {
-  composes: empty from '../permissions/PermissionsPopover.module.css';
-  padding-bottom: 6px;
 }
 .row {
   display: flex;
@@ -33,6 +29,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.kind,
 .state {
   font-size: var(--type-12);
   color: var(--text-dim);
@@ -41,7 +38,6 @@
   color: var(--green);
 }
 .state[data-state='blocked'],
-.state[data-state='denied'],
 .state[data-state='failed'] {
   color: var(--red);
 }
