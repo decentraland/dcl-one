@@ -4,7 +4,10 @@
 //! admin read, grant, revoke and [`backfill`] (grant and revoke with an
 //! audit row), and badge art mirrored into `BADGES_ASSETS_DIR` at
 //! `/assets/{path}`. Revoke answers 200 with a body in every environment;
-//! upstream registers it in dev and test only, with a bare 204. Tables:
+//! upstream registers it in dev and test only, with a bare 204. A missing,
+//! wrong or unconfigured bearer is 403 on every admin route (the shared
+//! `RequireAdmin`); upstream answers backfill 401 and does not register it
+//! without a token. Tables:
 //! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
 //! the schema), `user_badge_progress`, `user_achieved_tiers`,
 //! `badge_admin_audit`, `presence_badges`. Every progress write goes through
