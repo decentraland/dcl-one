@@ -4,8 +4,8 @@
 // (`window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`).
 
 import { catalystBase } from "../../../data/catalyst/client";
-import type { CatalogItem } from "../../discovery/lib/catalogItem";
-import { CHAIN } from "../../model/chain";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { CHAIN } from "@shop/model/chain";
 
 export type UrnNetwork = "matic" | "amoy";
 

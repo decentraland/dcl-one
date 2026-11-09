@@ -6,10 +6,10 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 
 import Modal from "../../../components/Modal";
-import { t } from "../../discovery/intl";
-import type { CatalogItem } from "../../discovery/lib/catalogItem";
+import { t } from "@shop/discovery/intl";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { conflictingIds, defaultWorn, isWearable, toggleWorn, wornUrns } from "../../discovery/lib/outfit";
-import { BASE_MALE, dominantShape, isCompatible, itemShapes, requiredShape, shapeLabel } from "../lib/bodyShape";
+import { BASE_MALE, dominantShape, isCompatible, itemShapes, requiredShape, shapeLabel } from "@shop/detail/lib/bodyShape";
 import "./fittingroom.css";
 
 const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));

@@ -21,6 +21,7 @@ import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
+import { ShopQueries } from './features/shop/ShopQueries'
 import { PlacesPicker } from './features/places/PlacesPicker'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
@@ -455,7 +456,9 @@ function Hud(): React.JSX.Element {
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Shop" open={session.shop.open} onCrash={session.closeAllPanels}>
-            <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+            <ShopQueries account={session.profile.data?.address}>
+              <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+            </ShopQueries>
           </SurfaceBoundary>
           <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
             <GalleryPage
