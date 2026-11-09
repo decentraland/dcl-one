@@ -50,11 +50,9 @@ export type PaymentChoiceProps = {
   onRetry?(): void;
   label: string;
   hidePrice?: boolean;
-  /** The note pointing at the item page's Credits + MANA option; off where that page is not where it is offered. */
-  mixedNote?: boolean;
 };
 
-export default function PaymentChoice({ view, selected, onSelect, quantity, manaChainId, disabled = false, onRetry, label, hidePrice = false, mixedNote = true }: PaymentChoiceProps) {
+export default function PaymentChoice({ view, selected, onSelect, quantity, manaChainId, disabled = false, onRetry, label, hidePrice = false }: PaymentChoiceProps) {
   const name = useId();
   const current = selected ?? view.primary;
   const hasOutage = view.options.some((o) => o.state.kind === "unavailable");
@@ -89,7 +87,7 @@ export default function PaymentChoice({ view, selected, onSelect, quantity, mana
             <span className="shop-paychoice__method">{option.method === "credits" ? "Credits" : `MANA on ${chainLabel(manaChainId)}`}</span>
             {hidePrice ? <span /> : <Price option={option} quantity={quantity} chainId={manaChainId} />}
             {note ? <span className="shop-paychoice__note">{note}</span> : null}
-            {mixedNote && option.method === "mana" && option.mixed ? (
+            {option.method === "mana" && option.mixed ? (
               <span className="shop-paychoice__mixed">
                 Or {option.mixed.credits} Credits and the rest in MANA, from the item page.
               </span>

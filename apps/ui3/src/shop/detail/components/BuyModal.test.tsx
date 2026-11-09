@@ -8,6 +8,9 @@ import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
 import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
 import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
+import { requireContracts } from "../../checkout/chain/contracts";
+import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
+import { CHAIN } from "../../model/chain";
 import { BOOK, storeMint } from "../../payment/fixtures";
 import BuyModal, { resetBuyNowCarts } from "./BuyModal";
 
@@ -26,7 +29,6 @@ type Opts = {
   resume?: { credits: number; lineId?: string; account?: string };
   strict?: boolean;
   tweak?: (demo: ReturnType<typeof createDemo>) => void;
-  onBuyMixed?: (mixed: unknown) => void;
   onResumeUsed?: () => void;
 };
 
@@ -43,12 +45,22 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
     <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
-      <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onBuyMixed={opts.onBuyMixed} onClose={() => (closed += 1)} />
+      <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onClose={() => (closed += 1)} />
     </DemoShell>
   );
   const view = render(opts.strict ? <StrictMode>{dialog}</StrictMode> : dialog);
   return { demo, opened, closed: () => closed, lineId: first.id, unmount: view.unmount, line };
 }
+
+const holdMana = (wei: bigint) => (d: ReturnType<typeof createDemo>) => void d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, wei);
+
+/** The one credit the split's credits leg takes, signed for the Shop's own manager. */
+const singleCredit: NonNullable<FakeHandlers["authorizeCredit"]> = ({ body }) => {
+  const cents = (body as { usdPriceCents: number }).usdPriceCents;
+  const one = batchAuthorization([{ usdPriceCents: cents }]);
+  const credit = { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000" };
+  return { ...one, credit, maxCreditedValue: "1000000000000000000", usdCents: cents };
+};
 
 async function settledDialog(): Promise<HTMLElement> {
   const dialog = await screen.findByTestId("buy-modal");
@@ -140,19 +152,39 @@ describe("Buy now's dialog", () => {
     expect((authorizations(demo)[0]!.body as { items: unknown[] }).items).toHaveLength(1);
   });
 
-  it("a buyer holding MANA who picks it pays in MANA: no Credit is authorized", async () => {
-    const { demo } = renderBuy({ session: "web3" }, { tweak: (d) => d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n) });
+  it("a buyer holding MANA chooses how to pay on upstream's step: the Credits ticked first, both balances, each row's amount", async () => {
+    renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
-    const methods = await within(dialog).findByTestId("buy-modal-methods");
-    expect(within(methods).getByRole("radio", { name: /Credits/ })).toBeChecked();
-    fireEvent.click(within(methods).getByRole("radio", { name: /MANA/ }));
-    // The pick is the line's method: the screen stays while the checkout re-prices on it.
-    await waitFor(() => expect(within(screen.getByTestId("buy-modal-methods")).getByRole("radio", { name: /MANA/ })).toBeChecked());
+    const step = await within(dialog).findByTestId("payment-method-step");
+    expect(within(step).getByRole("heading", { name: "Choose your payment method" })).toBeTruthy();
+    // The step replaces the dialog's own header: no "Buy Item" above it.
+    expect(within(dialog).queryByRole("heading", { name: "Buy Item" })).toBeNull();
+    expect(within(step).getByTestId("buy-modal-asset")).toHaveTextContent("Rainbow Hat");
+    const credits = within(step).getByTestId("pay-with-credits");
+    const mana = within(step).getByTestId("pay-with-mana");
+    expect(credits).toHaveAttribute("aria-pressed", "true");
+    expect(mana).toHaveAttribute("aria-pressed", "false");
+    expect(credits).toHaveTextContent("CreditsCredits Balance:10K12");
+    expect(mana).toHaveTextContent("Polygon MANAMana Balance:1,0002.3");
+    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+  });
+
+  it("MANA ticked alone pays in MANA: the line's method follows the ticks and no Credit is authorized", async () => {
+    const { demo } = renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    fireEvent.click(within(step).getByTestId("pay-with-credits"));
+    // Nothing ticked: nothing to pay with.
+    expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
+    fireEvent.click(within(step).getByTestId("pay-with-mana"));
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
     expect(demo.cart.getSnapshot().lines).toEqual([]);
     // The pick is the line's own method in the dialog's cart, which the checkout prices and pays.
     const held = Object.keys(sessionStorage).find((k) => k.startsWith("dcl-shop-buynow:v1:") && k.includes("dcl-shop-cart:v1:"))!;
-    expect((JSON.parse(sessionStorage.getItem(held)!) as { lines: { method: string | null }[] }).lines[0]!.method).toBe("mana");
-    await pressBuy(dialog);
+    await waitFor(() => expect((JSON.parse(sessionStorage.getItem(held)!) as { lines: { method: string | null }[] }).lines[0]!.method).toBe("mana"));
+    const confirm = within(step).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
     // A self-custody wallet approves the MANA spend first, then the purchase settles in MANA.
     const approve = await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
     await act(async () => fireEvent.click(approve));
@@ -164,18 +196,71 @@ describe("Buy now's dialog", () => {
     expect(authorizations(demo)).toHaveLength(0);
   });
 
-  it("a buyer short on Credits with MANA can split: the Credits first and MANA for the rest, through the page's flow", async () => {
-    const split: unknown[] = [];
+  it("MANA too short to pay stays on the step, disabled, saying so; the Credits still pay", async () => {
+    renderBuy({ session: "web3" }, { tweak: holdMana(1n) });
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    const mana = within(step).getByTestId("pay-with-mana");
+    expect(mana).toBeDisabled();
+    expect(within(mana).getByTestId("mana-shortfall-note")).toHaveTextContent("Not enough MANA");
+    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(within(step).getByTestId("confirm-payment")).toBeEnabled());
+  });
+
+  it("short on Credits, with MANA that covers only the rest: both are ticked, and the split settles in the dialog", async () => {
+    // 2 MANA: not the 2.3 the item costs, but more than the 1.7 left once the 3 Credits are spent.
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const dialog = await settledDialog();
+    const step = await within(dialog).findByTestId("payment-method-step");
+    // The Credits do not pay alone, so both are ticked: the split, each row stating its own leg.
+    expect(within(step).getByTestId("pay-with-credits")).toHaveAttribute("aria-pressed", "true");
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
+    expect(within(step).getByTestId("pay-with-credits-amount")).toHaveTextContent("3");
+    expect(within(step).getByTestId("pay-with-mana-amount")).toHaveTextContent("1.7");
+    const confirm = within(step).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    // The manager's MANA allowance first, on the dialog's own approval step, then one credit and one transaction.
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Purchase complete!" })).toBeTruthy();
+    const single = demo.shop.log.filter((r) => r.name === "authorizeCredit");
+    expect(single).toHaveLength(1);
+    expect(single[0]!.body).toMatchObject({ usdPriceCents: 30 });
+    expect(authorizations(demo)).toHaveLength(0);
+    expect(demo.relay.posts.length).toBeGreaterThan(0);
+  });
+
+  it("the split with the wallet on another account: Buy waits, and the step says why with the cart's way back", async () => {
+    let switched = 0;
     renderBuy(
-      { session: "web3", balanceCents: 30 },
-      { tweak: (d) => d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n), onBuyMixed: (m) => void split.push(m) },
+      { session: "web3", balanceCents: 30, walletAccount: "0x00000000000000000000000000000000000000b2", handlers: { authorizeCredit: singleCredit } },
+      { tweak: (d) => { holdMana(2n * 10n ** 18n)(d); d.host.onSwitchAccount = () => void (switched += 1); } },
     );
     const dialog = await settledDialog();
-    fireEvent.click(within(await within(dialog).findByTestId("buy-modal-methods")).getByRole("radio", { name: /MANA/ }));
-    const option = await within(dialog).findByTestId("buy-modal-mixed");
-    fireEvent.click(within(option).getByRole("checkbox"));
-    fireEvent.click(within(dialog).getByTestId("buy-modal-buy"));
-    expect(split).toEqual([expect.objectContaining({ credits: 3 })]);
+    const step = await within(dialog).findByTestId("payment-method-step");
+    expect(within(step).getByTestId("pay-with-mana")).toHaveAttribute("aria-pressed", "true");
+    const held = await within(step).findByTestId("buy-modal-held");
+    expect(held).toHaveTextContent("Your wallet is on another account than the one you're signed in with.");
+    expect(within(step).getByTestId("confirm-payment")).toBeDisabled();
+    fireEvent.click(within(held).getByRole("button", { name: "Sign in with this wallet" }));
+    expect(switched).toBe(1);
+  });
+
+  it("a split the wallet declines ends on the failure panel, and Try again goes back to the step", async () => {
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    demo.wallet.next = "reject";
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByTestId("confirm-payment");
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    expect(await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("You cancelled the request in your wallet. Nothing was charged.");
+    // The credit it held is released.
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+    expect(await within(dialog).findByTestId("payment-method-step")).toBeTruthy();
   });
 
   it("back from a top-up it finishes on its own, at the price the buyer confirmed, and hands the resume back", async () => {

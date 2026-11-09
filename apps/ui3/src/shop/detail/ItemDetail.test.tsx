@@ -188,7 +188,7 @@ describe("the item route (a collection item, sold by its creator)", () => {
     itemPage({ session: "web2", offers: { kind: "storeMint" } });
     expect(await screen.findByTestId("cta-buy-now")).toHaveTextContent("Buy now");
     const dialog = await openBuyNow();
-    expect(within(dialog).queryByTestId("buy-modal-methods")).toBeNull();
+    expect(within(dialog).queryByTestId("payment-method-step")).toBeNull();
     expect(within(dialog).queryByTestId("pay-mana")).toBeNull();
   });
 
