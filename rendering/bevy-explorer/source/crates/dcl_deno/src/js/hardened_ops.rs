@@ -1,14 +1,15 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use deno_core::{
-    anyhow, error::AnyError, futures::FutureExt, op2, url::form_urlencoded, v8, OpDecl, OpState,
-    ToJsBuffer,
+    anyhow, error::AnyError, futures::FutureExt, op2, url::form_urlencoded, v8, JsBuffer, OpDecl,
+    OpState, ToJsBuffer,
 };
 use deno_web::{BlobStore, InMemoryBlobPart};
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::plain::Plain;
+use v8::{ValueDeserializerHelper, ValueSerializerHelper};
 
 // Replacements for registered ops that scene code can reach through the ops table. Each one
 // keeps its original's name, async-ness and JS argument count (`with_implementation_from`
@@ -22,6 +23,8 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_leak_tracing_get(),
         op_serialize(),
         op_deserialize(),
+        op_eval_context(),
+        op_message_port_post_message(),
         op_url_parse(),
         op_url_parse_with_base(),
         op_url_reparse(),
@@ -135,28 +138,156 @@ fn op_leak_tracing_get(#[smi] _kind: u8, #[smi] _id: i32) -> Result<(), AnyError
     Err(unavailable("leak tracing"))
 }
 
-// The originals unwrap reads of the host object and transfer arrays. Scenes have no
-// MessagePort or structuredClone global, and body streams carry only buffers, which
-// structuredClone copies without these ops.
-#[op2(fast)]
-fn op_serialize(
-    _value: v8::Local<v8::Value>,
-    _host_objects: v8::Local<v8::Value>,
-    _transferred_array_buffers: v8::Local<v8::Value>,
-    _for_storage: v8::Local<v8::Value>,
-    _error_callback: v8::Local<v8::Value>,
+// structuredClone (performance.mark/measure) reaches these. The originals unwrap reads of
+// the host-object and transfer arrays, which only MessagePort uses; scenes have neither.
+fn refuse_clone_extras(
+    host_objects: v8::Local<v8::Value>,
+    transferred_array_buffers: v8::Local<v8::Value>,
 ) -> Result<(), AnyError> {
-    Err(unavailable("structured clone"))
+    if !host_objects.is_null_or_undefined() || !transferred_array_buffers.is_null_or_undefined() {
+        anyhow::bail!("structured clone of host objects or transfers is not available to scenes");
+    }
+    Ok(())
 }
 
-#[op2(fast)]
-fn op_deserialize(
-    _zero_copy: v8::Local<v8::Value>,
-    _host_objects: v8::Local<v8::Value>,
-    _transferred_array_buffers: v8::Local<v8::Value>,
+struct SceneClone;
+
+impl v8::ValueSerializerImpl for SceneClone {
+    fn throw_data_clone_error<'s>(
+        &self,
+        scope: &mut v8::HandleScope<'s>,
+        message: v8::Local<'s, v8::String>,
+    ) {
+        let error = v8::Exception::type_error(scope, message);
+        scope.throw_exception(error);
+    }
+
+    // V8 aborts if this declines without throwing
+    fn get_shared_array_buffer_id<'s>(
+        &self,
+        scope: &mut v8::HandleScope<'s>,
+        _shared_array_buffer: v8::Local<'s, v8::SharedArrayBuffer>,
+    ) -> Option<u32> {
+        let message = v8::String::new(scope, "SharedArrayBuffer cannot be cloned")?;
+        self.throw_data_clone_error(scope, message);
+        None
+    }
+}
+
+impl v8::ValueDeserializerImpl for SceneClone {}
+
+#[op2(reentrant)]
+#[buffer]
+fn op_serialize(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    host_objects: v8::Local<v8::Value>,
+    transferred_array_buffers: v8::Local<v8::Value>,
     _for_storage: v8::Local<v8::Value>,
+    _error_callback: v8::Local<v8::Value>,
+) -> Result<Vec<u8>, AnyError> {
+    refuse_clone_extras(host_objects, transferred_array_buffers)?;
+    let serializer = v8::ValueSerializer::new(scope, Box::new(SceneClone));
+    serializer.write_header();
+    let scope = &mut v8::TryCatch::new(scope);
+    let written = serializer.write_value(scope.get_current_context(), value);
+    if scope.has_caught() || scope.has_terminated() {
+        // the getter's or clone error's exception reaches the caller
+        scope.rethrow();
+        return Ok(Vec::new());
+    }
+    match written {
+        Some(true) => Ok(serializer.release()),
+        _ => anyhow::bail!("Failed to serialize response"),
+    }
+}
+
+#[op2]
+fn op_deserialize<'a>(
+    scope: &mut v8::HandleScope<'a>,
+    #[buffer] zero_copy: JsBuffer,
+    host_objects: v8::Local<'a, v8::Value>,
+    transferred_array_buffers: v8::Local<'a, v8::Value>,
+    _for_storage: v8::Local<'a, v8::Value>,
+) -> Result<v8::Local<'a, v8::Value>, AnyError> {
+    refuse_clone_extras(host_objects, transferred_array_buffers)?;
+    let deserializer = v8::ValueDeserializer::new(scope, Box::new(SceneClone), &zero_copy);
+    let context = scope.get_current_context();
+    if !deserializer.read_header(context).unwrap_or_default() {
+        anyhow::bail!("could not deserialize value");
+    }
+    deserializer
+        .read_value(context)
+        .ok_or_else(|| anyhow::anyhow!("could not deserialize value"))
+}
+
+/// Compiles and runs `source` as a classic script, returning `[result, error]` where `error`
+/// is `[thrown, isNativeError, isCompileError]`. The original unwraps reads of the
+/// host-defined options array, which only node compatibility passes.
+#[op2(reentrant)]
+fn op_eval_context<'a>(
+    scope: &mut v8::HandleScope<'a>,
+    source: v8::Local<'a, v8::Value>,
+    #[string] specifier: String,
+    host_defined_options: v8::Local<'a, v8::Value>,
+) -> Result<v8::Local<'a, v8::Value>, AnyError> {
+    if !host_defined_options.is_null_or_undefined() {
+        anyhow::bail!("host-defined options are not available to scenes");
+    }
+    let source = v8::Local::<v8::String>::try_from(source)
+        .map_err(|_| deno_core::error::type_error("Invalid source"))?;
+    let specifier = deno_core::resolve_url(&specifier)?;
+    let name = v8::String::new(scope, specifier.as_str())
+        .ok_or_else(|| anyhow::anyhow!("specifier is too long"))?;
+    let origin = v8::ScriptOrigin::new(
+        scope,
+        name.into(),
+        0,
+        0,
+        false,
+        0,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    let out = v8::Array::new(scope, 2);
+    let null: v8::Local<v8::Value> = v8::null(scope).into();
+    let scope = &mut v8::TryCatch::new(scope);
+    let (result, is_compile_error) = match v8::Script::compile(scope, source, Some(&origin)) {
+        Some(script) => (script.run(scope), false),
+        None => (None, true),
+    };
+    if let Some(result) = result {
+        out.set_index(scope, 0, result);
+        out.set_index(scope, 1, null);
+        return Ok(out.into());
+    }
+    if scope.has_terminated() {
+        scope.rethrow();
+        return Ok(null);
+    }
+    let thrown = scope.exception().unwrap_or(null);
+    let error = v8::Array::new(scope, 3);
+    error.set_index(scope, 0, thrown);
+    let is_native_error = v8::Boolean::new(scope, thrown.is_native_error());
+    error.set_index(scope, 1, is_native_error.into());
+    let is_compile_error = v8::Boolean::new(scope, is_compile_error);
+    error.set_index(scope, 2, is_compile_error.into());
+    out.set_index(scope, 0, null);
+    out.set_index(scope, 1, error.into());
+    Ok(out.into())
+}
+
+// MessageChannel is not installed for scenes, and the original deserializes its message
+// with serde_v8 before checking the port.
+#[op2(fast)]
+fn op_message_port_post_message(
+    #[smi] _rid: u32,
+    _data: v8::Local<v8::Value>,
 ) -> Result<(), AnyError> {
-    Err(unavailable("structured clone"))
+    Err(unavailable("MessagePort"))
 }
 
 // URLPattern and URL.createObjectURL are not installed for scenes, and the originals

@@ -64,8 +64,12 @@ the executable's assets directory and the ipfs cache lives elsewhere.
 directly with any arguments, and a panic inside an op aborts the native sidecar with every scene
 in it. Validate resource ids, buffer lengths and handles, and return an error. Take structured
 arguments as `#[from_v8] Plain<T>` rather than `#[serde]`: serde_v8 panics when a getter or proxy
-throws while it reads a value. Replace an upstream op that panics through the middleware in
-`crates/dcl_deno/src/js/mod.rs`, keeping its async-ness and argument count. The
+throws while it reads a value. Such ops take plain data only: own enumerable properties and
+arrays, within a depth and total-size budget. Class instances whose fields are prototype
+getters, boxed primitives, proxies and functions are rejected. Replace an upstream op that
+panics through the middleware in `crates/dcl_deno/src/js/mod.rs`, keeping its async-ness and
+argument count; `every_override_replaces_an_op_of_the_same_shape` checks that each override
+replaces an op of the same async-ness. The
 `every_*_op_survives_junk_arguments` tests call every registered op with malformed arguments.
 
 **Always ask whether new functionality should exist in headless mode.** The headless build is

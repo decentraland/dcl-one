@@ -5,9 +5,9 @@ use serde::de::DeserializeOwned;
 ///
 /// serde_v8 unwraps every property read, so a getter, proxy or `toString` that throws
 /// while it walks a value panics inside the op, which aborts the process. The copy is made
-/// with every read checked: own enumerable data only, null-prototype objects, dense arrays,
-/// and no symbols, boxed primitives, proxies or functions. serde_v8 then walks a value
-/// that cannot run JS.
+/// with every read checked: own enumerable data only, null-prototype objects and arrays,
+/// and no symbols, boxed primitives, proxies or functions. Buffers pass through uncopied
+/// and keep their prototype, so the decode itself still runs under `catch_unwind`.
 pub struct Plain<T>(pub T);
 
 #[derive(Debug)]
@@ -28,25 +28,36 @@ impl<'a, T: DeserializeOwned> FromV8<'a> for Plain<T> {
         scope: &mut v8::HandleScope<'a>,
         value: v8::Local<'a, v8::Value>,
     ) -> Result<Self, Self::Error> {
-        let copy = plain_copy(scope, value, 0)?;
-        serde_v8::from_v8(scope, copy)
-            .map(Plain)
-            .map_err(|e| PlainError(e.to_string()))
+        let mut budget = MAX_NODES;
+        let copy = plain_copy(scope, value, 0, &mut budget)?;
+        let scope = &mut v8::TryCatch::new(scope);
+        // a panic here unwinds through serde_v8's Rust frames only; V8 has returned by then
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            serde_v8::from_v8(scope, copy)
+        }))
+        .map_err(|_| PlainError("reading the argument threw".to_owned()))?
+        .map(Plain)
+        .map_err(|e| PlainError(e.to_string()))
     }
 }
 
 const MAX_DEPTH: usize = 64;
-const MAX_ARRAY_LENGTH: u32 = 1 << 20;
+// bounds shared subtrees too: `v = [v, v]` repeated stays shallow but doubles per level
+const MAX_NODES: usize = 1 << 20;
 
 fn plain_copy<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
     depth: usize,
+    budget: &mut usize,
 ) -> Result<v8::Local<'s, v8::Value>, PlainError> {
     let threw = || PlainError("reading the argument threw".to_owned());
     if depth > MAX_DEPTH {
         return Err(PlainError("argument is nested too deeply".to_owned()));
     }
+    *budget = budget
+        .checked_sub(1)
+        .ok_or_else(|| PlainError("argument is too large".to_owned()))?;
     if value.is_null_or_undefined()
         || value.is_boolean()
         || value.is_number()
@@ -71,16 +82,19 @@ fn plain_copy<'s>(
     }
     let scope = &mut v8::TryCatch::new(scope);
     if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
-        let length = array.length();
-        if length > MAX_ARRAY_LENGTH {
-            return Err(PlainError("argument array is too long".to_owned()));
+        let length = array.length() as usize;
+        if length > *budget {
+            return Err(PlainError("argument is too large".to_owned()));
         }
-        let mut items = Vec::with_capacity(length as usize);
-        for index in 0..length {
+        let mut items = Vec::with_capacity(length);
+        for index in 0..length as u32 {
             let item = array.get_index(scope, index).ok_or_else(threw)?;
-            items.push(plain_copy(scope, item, depth + 1)?);
+            items.push(plain_copy(scope, item, depth + 1, budget)?);
         }
-        return Ok(v8::Array::new_with_elements(scope, &items).into());
+        let copy = v8::Array::new_with_elements(scope, &items);
+        let null = v8::null(scope).into();
+        copy.set_prototype(scope, null).ok_or_else(threw)?;
+        return Ok(copy.into());
     }
     let Ok(object) = v8::Local::<v8::Object>::try_from(value) else {
         return Err(unsupported(scope, value));
@@ -104,7 +118,7 @@ fn plain_copy<'s>(
             return Err(threw());
         };
         let item = object.get(scope, key.into()).ok_or_else(threw)?;
-        let item = plain_copy(scope, item, depth + 1)?;
+        let item = plain_copy(scope, item, depth + 1, budget)?;
         copy.create_data_property(scope, key, item)
             .ok_or_else(threw)?;
     }

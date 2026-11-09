@@ -1,4 +1,5 @@
 use super::{context, create_runtime, run_scene};
+use crate::js::{OpOverrideProblems, DISABLED_FEATURE_CALLS};
 use std::{sync::Arc, time::Duration};
 
 use common::structs::SceneJsFile;
@@ -157,6 +158,154 @@ fn web_platform_ops_validate_their_buffers_and_state() {
         "#,
     )
     .unwrap();
+}
+
+#[test]
+fn performance_marks_and_measures_work() {
+    run_scene(
+        false,
+        r#"
+        performance.mark("start");
+        const end = performance.mark("end", { detail: { items: [1, "two"] } });
+        if (end.detail.items[1] !== "two") { throw new Error("mark detail was not cloned"); }
+        const measure = performance.measure("span", "start", "end");
+        if (!(measure.duration >= 0)) { throw new Error(`measure: ${measure.duration}`); }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn structured_clone_refuses_what_it_cannot_copy() {
+    for (script, needle) in [
+        (
+            "Deno.core.ops.op_serialize(1, [], undefined, false, undefined)",
+            "host objects or transfers",
+        ),
+        (
+            "Deno.core.ops.op_serialize(1, undefined, [new ArrayBuffer(1)], false, undefined)",
+            "host objects or transfers",
+        ),
+        (
+            "Deno.core.ops.op_deserialize(new Uint8Array([0xff, 0x0f, 0x49, 0x02]), [], undefined, false)",
+            "host objects or transfers",
+        ),
+        (
+            "Deno.core.ops.op_serialize(new SharedArrayBuffer(1))",
+            "could not be cloned",
+        ),
+        (
+            "Deno.core.ops.op_serialize({ get x() { throw new Error('getter ran'); } })",
+            "getter ran",
+        ),
+        (
+            "Deno.core.ops.op_serialize(new Proxy({}, {}))",
+            "could not be cloned",
+        ),
+        // a host object, then a shared buffer, by their wire tags
+        ("Deno.core.ops.op_deserialize(new Uint8Array([0xff, 0x0f, 0x5c, 0x00]))", "deserializ"),
+        ("Deno.core.ops.op_deserialize(new Uint8Array([0xff, 0x0f, 0x75, 0x00]))", "deserializ"),
+        ("Deno.core.ops.op_deserialize(new Uint8Array([0x01, 0x02]))", "could not deserialize"),
+    ] {
+        assert_refused(script, needle);
+    }
+    run_scene(
+        false,
+        r#"
+        const value = { a: [1, "b", null], c: new Uint8Array([7]), d: new Map([[1, 2]]) };
+        const copy = Deno.core.deserialize(Deno.core.serialize(value));
+        if (copy.a[1] !== "b" || copy.c[0] !== 7 || copy.d.get(1) !== 2) {
+            throw new Error("the clone lost data");
+        }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn eval_context_reports_errors_and_refuses_host_options() {
+    run_scene(
+        false,
+        r#"
+        const [value] = Deno.core.evalContext("6 * 7", "file:///x");
+        if (value !== 42) { throw new Error(`result: ${value}`); }
+        const [, compile] = Deno.core.evalContext("(", "file:///x");
+        if (!compile || !compile.isCompileError) { throw new Error("no compile error"); }
+        const [, thrown] = Deno.core.evalContext("throw new TypeError('t')", "file:///x");
+        if (!thrown || thrown.isCompileError || !thrown.isNativeError || thrown.thrown.message !== "t") {
+            throw new Error("runtime error not reported");
+        }
+        "#,
+    )
+    .unwrap();
+    assert_refused(
+        "const a = [1]; Object.defineProperty(a, 0, { get() { throw new Error('x'); } }); Deno.core.ops.op_eval_context('1', 'file:///x', a)",
+        "host-defined options",
+    );
+    assert_refused(
+        "Deno.core.ops.op_message_port_post_message(0, { get data() { throw new Error('x'); } })",
+        "MessagePort",
+    );
+}
+
+#[test]
+fn struct_arguments_ignore_inherited_getters() {
+    for (field, op_call) in [
+        ("start", "Deno.core.ops.op_blob_slice_part('x', [])"),
+        ("start", "Deno.core.ops.op_blob_slice_part('x', new Uint8Array(4))"),
+        ("tests", "Deno.core.ops.op_log_test_plan(new ArrayBuffer(4))"),
+        ("tests", "Deno.core.ops.op_log_test_plan([[]])"),
+    ] {
+        let script = format!(
+            "Object.defineProperty(Object.prototype, '{field}', {{ get() {{ throw new Error('x'); }} }}); {op_call}"
+        );
+        run_scene(false, &script).expect_err(&script);
+    }
+}
+
+#[test]
+fn shared_subtrees_cannot_multiply_a_struct_argument() {
+    assert_refused(
+        "let v = []; for (let i = 0; i < 40; i++) v = [v, v]; Deno.core.ops.op_url_stringify_search_params(v)",
+        "too large",
+    );
+}
+
+#[test]
+fn a_huge_stream_length_is_not_preallocated() {
+    let (mut runtime, _) = create_runtime(false, false, "test-size-hint", false, Default::default());
+    runtime.op_state().borrow_mut().put(context(false));
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+            const ops = Deno.core.ops;
+            const rid = ops.op_readable_stream_resource_allocate_sized(2 ** 50);
+            const sink = ops.op_readable_stream_resource_get_sink(rid);
+            ops.op_readable_stream_resource_write_sync(sink, new Uint8Array([1, 2, 3]));
+            ops.op_readable_stream_resource_close(sink);
+            ops.op_read_all(rid).then((bytes) => { globalThis.__read = String(bytes.length); }, (e) => { globalThis.__read = String(e); });
+            "#,
+        )
+        .unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(runtime.run_event_loop(Default::default()))
+        .unwrap();
+    assert_eq!(eval_string(&mut runtime, "String(globalThis.__read)"), "3");
+}
+
+#[test]
+fn every_override_replaces_an_op_of_the_same_shape() {
+    for super_user in [false, true] {
+        let (mut runtime, _) = create_runtime(false, super_user, "test-overrides", false, Default::default());
+        let state = runtime.op_state();
+        let state = state.borrow();
+        let problems = &state.borrow::<OpOverrideProblems>().0;
+        assert!(problems.is_empty(), "{problems:#?}");
+    }
 }
 
 fn eval_string(runtime: &mut JsRuntime, script: &'static str) -> String {
@@ -330,7 +479,7 @@ fn sweep_client_ops(super_user: bool) {
             [4294967295, -2147483649, 1.5],
             ["", "", "", ""],
             ["\uD800", "\0", "a\uDFFFb", "%"],
-            ["x", "wss://example.invalid/", "ws://127.0.0.1:1/", "/nonexistent"],
+            ["x", "wss://127.0.0.1:1/", "ws://127.0.0.1:1/", "/nonexistent"],
             [new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)],
             [new Uint8Array(16), new ArrayBuffer(8), new Uint8Array(1)],
             [new Float64Array(2), new DataView(new ArrayBuffer(4))],
@@ -348,18 +497,31 @@ fn sweep_client_ops(super_user: bool) {
             [{{ a: Symbol("s") }}, [Symbol("s")], [[Symbol("s")]]],
             [throwingString(), throwingString(), throwingString()],
             [[throwingString()], {{ a: throwingString() }}],
-            ["http://a/", new Uint32Array(1)],
-            ["http://a/b/../c", "http://b/", new Uint32Array(1)],
-            ["http://a/", 1, "b", new Uint32Array(1)],
+            ["http://127.0.0.1:1/", new Uint32Array(1)],
+            ["http://127.0.0.1:1/b/../c", "http://127.0.0.1:2/", new Uint32Array(1)],
+            ["http://127.0.0.1:1/", 1, "b", new Uint32Array(1)],
             ["x", new Uint8Array(1), new Uint32Array(1)],
             ["x", new Uint8Array(1), new Uint32Array(0)],
             [new Uint32Array(0), new Uint32Array(0), new Uint32Array(0), new Uint32Array(0)],
             [throwingStringObject(), throwingStringObject(), throwingStringObject()],
             [[throwingStringObject()], [[throwingStringObject(), throwingStringObject()]]],
+            // a valid leading scalar, so the trap is read only after the first argument converts
+            [0, trap(), trap(), trap()],
+            [0, 0, trap(), trap()],
+            [0, {{ get data() {{ throw new Error("trap"); }} }}],
+            [0, throwingArray(), throwingArray()],
+            [0, [trap()], {{ a: trap() }}],
+            [0, "x", throwingString(), throwingString()],
+            ["1", "file:///x", throwingArray()],
+            ["x", trap(), trap()],
+            ["x", "x", trap(), trap()],
+            ["x", 0, throwingArray(), throwingArray()],
+            [new Uint8Array(8), trap(), trap()],
+            [0, new Uint8Array(8), trap(), trap()],
         ];
         const ops = Deno.core.ops;
         const names = Object.keys(ops).sort();
-        globalThis.__sweep = {{ ops: 0, calls: 0, returned: 0, threw: 0, resolved: 0, rejected: 0, done: false }};
+        globalThis.__sweep = {{ ops: 0, shapes: shapes().length, calls: 0, returned: 0, threw: 0, resolved: 0, rejected: 0, done: false }};
         const result = globalThis.__sweep;
         for (const name of names) {{
             if (skipped.has(name) || typeof ops[name] !== "function") continue;
@@ -383,6 +545,7 @@ fn sweep_client_ops(super_user: bool) {
         result.done = true;
         "#
     );
+    let disabled_feature_calls = DISABLED_FEATURE_CALLS.load(std::sync::atomic::Ordering::Relaxed);
     let state = runtime.op_state();
     dcl_js::init_state(
         &mut *state.borrow_mut(),
@@ -425,9 +588,16 @@ fn sweep_client_ops(super_user: bool) {
         summary["ops"].as_u64().unwrap() > 200,
         "too few ops swept: {summary}"
     );
+    let count = |key: &str| summary[key].as_u64().unwrap();
+    // every op took every shape: none ended the sweep's loop early
+    assert_eq!(count("calls"), count("ops") * count("shapes"), "{summary}");
+    assert!(count("threw") > 0 && count("returned") > 0, "{summary}");
+    assert!(count("resolved") + count("rejected") > 0, "no async op settled: {summary}");
+    // an op gated on a disabled deno feature proceeds after the check, so none may be reachable
     assert_eq!(
-        summary["calls"],
-        summary["returned"].as_u64().unwrap() + summary["threw"].as_u64().unwrap()
+        DISABLED_FEATURE_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+        disabled_feature_calls,
+        "an op reached a disabled deno feature check"
     );
     // the isolate is still usable after the sweep
     assert_eq!(eval_string(&mut runtime, "String(6 * 7)"), "42");

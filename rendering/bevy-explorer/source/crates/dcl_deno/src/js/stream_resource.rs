@@ -33,6 +33,8 @@ pub fn override_ops() -> Vec<OpDecl> {
 }
 
 const MAX_BUFFERED_CHUNKS: usize = 1024;
+// readers preallocate the hinted length; a larger stream is read without a hint
+const MAX_SIZE_HINT: u64 = 16 * 1024 * 1024;
 const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
@@ -242,9 +244,14 @@ fn op_readable_stream_resource_allocate_sized(
     state: &mut OpState,
     #[number] length: u64,
 ) -> ResourceId {
+    let size_hint = if length <= MAX_SIZE_HINT {
+        (length, Some(length))
+    } else {
+        (0, None)
+    };
     state
         .resource_table
-        .add(ReadableStreamResource::new((length, Some(length))))
+        .add(ReadableStreamResource::new(size_hint))
 }
 
 #[op2(fast)]
