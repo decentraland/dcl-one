@@ -8,6 +8,7 @@ in {
   inherit catalyst sites gateway;
   catalyst-deps = catalyst.cargoArtifacts;
   catalyst-vendor = catalyst.cargoVendorDir;
+  sites-app = sites.app;
   sites-deps = sites.pnpmDeps;
   sites-runtime-deps = sites.runtimeDeps;
   sites-toolchain = sites.toolchain;
