@@ -17,8 +17,9 @@ transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
 rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
 tables it leaves to the node. `blobs` copies the blobs of the sources it knows
-(`worlds-content-server`); the others need an external copy that fills the
-same records.
+(`worlds-content-server`), and `blobs badges` the badge art into the node's
+`BADGES_ASSETS_DIR`; the others need an external copy that fills the same
+records.
 
 Known limitations after a cutover: MANA-denominated credits stay spendable
 on-chain until they expire but are in no node balance, and credits from Apple
@@ -40,9 +41,11 @@ in-app purchases cannot be clawed back by a later Apple refund
   checking the store holds every blob its imported rows name, and fails when
   one is missing. `blobs worlds-content-server` also goes before `run places`
   (world images are rewritten to the copied thumbnails' CIDs).
-- **Badge art.** The node embeds the art of its seed badges only; mirror
-  upstream's badge art into `BADGES_ASSETS_DIR` so every imported badge's
-  images resolve (`sources/badges/MAPPING.md`).
+- **Badge art.** The node embeds the art of its seed badges only. After
+  `run badges`, `migrate.py blobs badges --to "$BADGES_ASSETS_DIR"` copies
+  every texture the imported catalog's `assets` name from upstream's CDN (or
+  `--from-dir`, a local copy laid out by path) into the node's badge art
+  directory; `--verify` lists the ones it lacks (`sources/badges/MAPPING.md`).
 - **Badge schema.** The badges steps need the badge catalog schema
   (publication columns, `criteria_steps`, the progress document,
   `social.presence_badges`) and stop without it.
@@ -73,6 +76,7 @@ python3 tooling/migration/migrate.py run places --since 2026-10-01T00:00:00Z
 python3 tooling/migration/migrate.py run places --since last
 python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir DIR --to "$STORAGE_ROOT_FOLDER"
 python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "$STORAGE_ROOT_FOLDER"
+python3 tooling/migration/migrate.py blobs badges --to "$BADGES_ASSETS_DIR"   # after `run badges`
 python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb 100
 python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run   # one-off, see the worlds MAPPING.md
 ```

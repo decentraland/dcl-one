@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('migrate', ROOT / 'tooling/migration/migrate.py')
@@ -541,6 +542,66 @@ class S3Copy(unittest.TestCase):
         self.assertEqual((outcome.status, self.client.calls), ('copied', 2))
         self.assertEqual(self.store.path(key).read_bytes(), data)
         self.assertEqual(list((self.tmp / 'node').rglob('*.tmp')), [])
+
+
+class FakeResponse(io.BytesIO):
+    pass
+
+
+class BadgeArt(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.art = blobs.ArtDir(self.tmp / 'art')
+        self.calls = []
+        self.answers = {}
+        self.source = blobs.HttpArtSource('https://cdn.example/', opener=self.open)
+
+    def open(self, request, timeout):
+        self.calls.append(request.full_url)
+        answer = self.answers[request.full_url].pop(0)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
+        return FakeResponse(answer)
+
+    def test_when_a_url_is_under_the_cdn_base_it_should_give_its_path(self):
+        self.assertEqual(blobs.art_path('https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png'),
+                         'traveler/starter/2d/normal.png')
+
+    def test_when_a_url_is_elsewhere_or_escapes_the_directory_it_should_give_no_path(self):
+        for url in ('https://badges.decentraland.org/assets/walkabout/2d/normal.png',
+                    'https://assets-cdn.decentraland.org/../etc/2d/x.png',
+                    'https://assets-cdn.decentraland.org/x/2d/normal.png?y', ''):
+            self.assertIsNone(blobs.art_path(url), url)
+
+    def test_when_the_cdn_answers_a_png_it_should_store_it_by_path(self):
+        self.answers['https://cdn.example/a/2d/normal.png'] = [blobs.PNG_MAGIC + b'x']
+        outcome = blobs.copy_art(self.source, self.art, 'a/2d/normal.png')
+        self.assertEqual(outcome.status, 'copied')
+        self.assertEqual((self.tmp / 'art/a/2d/normal.png').read_bytes(), blobs.PNG_MAGIC + b'x')
+        self.assertEqual(list((self.tmp / 'art/a/2d').iterdir()), [self.tmp / 'art/a/2d/normal.png'])
+
+    def test_when_the_texture_is_already_there_it_should_not_fetch_it(self):
+        (self.tmp / 'art/a/2d').mkdir(parents=True)
+        (self.tmp / 'art/a/2d/normal.png').write_bytes(b'held')
+        self.assertEqual(blobs.copy_art(self.source, self.art, 'a/2d/normal.png').status, 'present')
+        self.assertEqual(self.calls, [])
+
+    def test_when_the_cdn_answers_404_it_should_report_the_texture_missing(self):
+        self.answers['https://cdn.example/a/2d/normal.png'] = [404]
+        outcome = blobs.copy_art(self.source, self.art, 'a/2d/normal.png')
+        self.assertEqual((outcome.status, outcome.reason), ('missing', 'HTTP 404 upstream'))
+
+    def test_when_the_cdn_fails_once_it_should_retry_and_store_the_texture(self):
+        self.answers['https://cdn.example/a/2d/normal.png'] = [503, blobs.PNG_MAGIC]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(blobs.copy_art(self.source, self.art, 'a/2d/normal.png').status, 'copied')
+        self.assertEqual(len(self.calls), 2)
+
+    def test_when_the_cdn_answers_something_else_than_a_png_it_should_store_nothing(self):
+        self.answers['https://cdn.example/a/2d/normal.png'] = [b'<html>']
+        self.assertEqual(blobs.copy_art(self.source, self.art, 'a/2d/normal.png').status, 'corrupt')
+        self.assertFalse((self.tmp / 'art/a').exists())
 
 
 class MissingThreshold(unittest.TestCase):
@@ -1415,6 +1476,40 @@ class AgainstPostgres(unittest.TestCase):
         code, out = self.migrate('run', 'badges', '--step', 'user_progress', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
         self.assertEqual(self.count(tgt, 'social.user_badge_progress'), 0)
+
+    def test_when_mirroring_badge_art_it_should_copy_every_texture_the_catalog_names(self):
+        _, tgt = self.badges_dbs()
+        self.assertEqual(self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)[0], 0)
+        upstream, art = self.tmp / 'badge-cdn', self.tmp / 'badge-art'
+        self.addCleanup(shutil.rmtree, upstream, True)
+        self.addCleanup(shutil.rmtree, art, True)
+        dirs = ['dclcitizen', 'open_for_business', 'halloweeks_2026', 'stay_fest',
+                *[f'emotionista/{s}' for s in ('starter', 'bronze', 'silver')],
+                *[f'walkabout_wanderer/{s}' for s in ('starter', 'bronze')]]
+        textures = ['2d/normal.png', '3d/normal.png', '3d/hrm.png', '3d/basecolor.png']
+        expected = sorted(f'{d}/{t}' for d in dirs for t in textures)
+        for path in expected[1:]:
+            (upstream / path).parent.mkdir(parents=True, exist_ok=True)
+            (upstream / path).write_bytes(blobs.PNG_MAGIC + path.encode())
+        code, out = self.migrate('blobs', 'badges', '--to', str(art), '--verify', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f'{len(expected)} textures checked', out)
+        code, out = self.migrate('blobs', 'badges', '--to', str(art), '--from-dir', str(upstream),
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f'copied {len(expected) - 1}', out)
+        self.assertIn(f'{expected[0]} (', out)
+        stored = sorted(str(p.relative_to(art)) for p in art.rglob('*.png'))
+        self.assertEqual(stored, expected[1:])
+        self.assertEqual((art / expected[1]).read_bytes(), blobs.PNG_MAGIC + expected[1].encode())
+        (upstream / expected[0]).parent.mkdir(parents=True, exist_ok=True)
+        (upstream / expected[0]).write_bytes(blobs.PNG_MAGIC)
+        code, out = self.migrate('blobs', 'badges', '--to', str(art), '--from-dir', str(upstream),
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f'copied 1, already there {len(expected) - 1}', out)
+        code, out = self.migrate('blobs', 'badges', '--to', str(art), '--verify', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
 
 
 import unittest.mock  # noqa: E402

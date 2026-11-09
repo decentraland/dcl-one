@@ -958,8 +958,12 @@ def record_missing(record, missing, batch=RECORD_BATCH):
 
 
 def cmd_blobs(args, sources):
+    if args.source == 'badges':
+        return cmd_badge_art(args)
     if args.source not in BLOB_SETS:
         raise MigrationError(f'no blob set for {args.source!r}; known: {", ".join(sorted(BLOB_SETS))}')
+    if args.from_url or args.refresh:
+        raise MigrationError('--from-url and --refresh apply to `blobs badges` only')
     blobs = load_blobs_module()
     store = blobs.Store(storage_root(args))
     target_url = database_url(args.target_env)
@@ -1024,6 +1028,72 @@ def cmd_blobs(args, sources):
         for line in report:
             log(line)
     return 1 if counts['failed'] else 0
+
+
+# Every URL string in the imported badges' and tiers' `assets` documents (on the target).
+BADGE_ART_URLS = """
+SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(u, 'UTF8'), 'hex') FROM (
+    SELECT DISTINCT o, v #>> '{}' AS u FROM (
+        SELECT id AS o, assets FROM social.badge_definitions
+        UNION ALL
+        SELECT badge_id || '/' || tier_id, assets FROM social.badge_tiers
+    ) a CROSS JOIN LATERAL jsonb_path_query(a.assets, 'strict $.**') v
+    WHERE jsonb_typeof(v) = 'string'
+) x ORDER BY u, o"""
+
+
+def badge_art_paths(target_url, base):
+    """{path: [owner, ...]} for every asset URL under `base`; URLs elsewhere (the seed's) are not ours."""
+    paths = {}
+    blobs = load_blobs_module()
+    for owner, url in hex_rows(psql(target_url, BADGE_ART_URLS + ';\n'), 2):
+        path = blobs.art_path(url, base)
+        if path:
+            paths.setdefault(path, []).append(owner)
+    return paths
+
+
+def cmd_badge_art(args):
+    """Mirrors the art the imported badge catalog names from upstream's CDN into BADGES_ASSETS_DIR."""
+    blobs = load_blobs_module()
+    root = args.to or os.environ.get('BADGES_ASSETS_DIR')
+    if not root:
+        raise MigrationError("pass the node's badge art directory (--to) or set BADGES_ASSETS_DIR")
+    art_dir = blobs.ArtDir(root, refresh=args.refresh)
+    log = lambda line: print(line, flush=True)  # noqa: E731
+    paths = badge_art_paths(database_url(args.target_env), blobs.BADGE_ART_BASE)
+    if not paths:
+        raise MigrationError(f'no imported badge names art under {blobs.BADGE_ART_BASE}; run `run badges` first')
+    if args.verify:
+        lacking = [p for p in paths if not art_dir.has(p)]
+        for path in lacking:
+            log(f'{", ".join(paths[path][:3])}: missing {path}')
+        log(f'badges: {len(paths)} textures checked in {art_dir.root}, {len(lacking)} missing')
+        return 1 if lacking else 0
+    if args.from_s3:
+        raise MigrationError('badge art reads from the CDN (--from-url) or a local copy (--from-dir)')
+    try:
+        upstream = blobs.FolderArtSource(args.from_dir) if args.from_dir else blobs.HttpArtSource(
+            args.from_url or blobs.BADGE_ART_BASE)
+    except OSError as e:
+        raise MigrationError(str(e)) from e
+    log(f'badges: {len(paths)} textures named; copying from {upstream.describe()} into {art_dir.root}')
+    counts = dict.fromkeys(['copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'], 0)
+    report = []
+    try:
+        for outcome in blobs.copy_all(upstream, art_dir, sorted(paths), args.workers, copy=blobs.copy_art):
+            counts[outcome.status] += 1
+            if outcome.status not in ('copied', 'present'):
+                report.append(f'  {outcome.key} ({", ".join(paths[outcome.key][:3])}): {outcome.reason}')
+    except blobs.SourceError as e:
+        raise MigrationError(f'upstream art: {e}') from e
+    log(f'badges: copied {counts["copied"]}, already there {counts["present"]},'
+        f' absent upstream {counts["missing"]}, not a PNG {counts["corrupt"]}, read failed {counts["failed"]}')
+    for line in report:
+        log(line)
+    if counts['failed'] or (report and not args.allow_missing):
+        return 1
+    return 0
 
 
 def too_many_missing(newly, fresh, args):
@@ -1267,9 +1337,13 @@ def parser():
                      help="the node's STORAGE_ROOT_FOLDER (default: that variable); runs of steps whose rows"
                           ' name blobs end by checking the store holds them')
     blobs = sub.add_parser('blobs', help="copy a source's blobs into the node's store, or --verify them")
-    blobs.add_argument('source', help=f'one of: {", ".join(sorted(BLOB_SETS))}')
-    blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable)')
+    blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges"]))}')
+    blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable); for badges,'
+                                    ' its BADGES_ASSETS_DIR (default: that variable)')
     blobs.add_argument('--from-dir', help='upstream storage folder (or a local sync of its bucket)')
+    blobs.add_argument('--from-url', help='badges: upstream art base URL (default: its production CDN_HOST)')
+    blobs.add_argument('--refresh', action='store_true',
+                       help='badges: copy every texture again, also those already in the directory')
     blobs.add_argument('--from-s3', metavar='BUCKET', help='upstream S3 bucket (needs boto3)')
     blobs.add_argument('--s3-prefix', default='', help=argparse.SUPPRESS)
     blobs.add_argument('--workers', type=int, default=8)

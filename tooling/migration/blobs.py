@@ -1,4 +1,5 @@
-"""Copies the blobs a source's imported rows name into the node's blob store (`migrate.py blobs`).
+"""Copies the blobs a source's imported rows name into the node's blob store (`migrate.py blobs`),
+and the badge art the imported catalog names into the node's `BADGES_ASSETS_DIR`.
 
 The store layout is `services/catalyst/storage`'s: `<STORAGE_ROOT_FOLDER>/contents/<shard>/<cid>`,
 shard = the first four hex digits of sha1(cid), written through a `<name>.<pid>.<seq>.tmp` staging
@@ -16,6 +17,8 @@ import itertools
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -434,17 +437,134 @@ def probe(source, keys, n=PROBE_KEYS, reference=(), n_reference=PROBE_REFERENCE_
     return result
 
 
-def copy_all(source, store, keys, workers, window=None):
-    """`copy_one` over `keys` in order, with at most `window` keys submitted at a time."""
+def copy_all(source, store, keys, workers, window=None, copy=copy_one):
+    """`copy` (`copy_one`) over `keys` in order, with at most `window` keys submitted at a time."""
     window = window or workers * 4
     keys = iter(keys)
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        pending = collections.deque(pool.submit(copy_one, source, store, k) for k in itertools.islice(keys, window))
+        pending = collections.deque(pool.submit(copy, source, store, k) for k in itertools.islice(keys, window))
         while pending:
             outcome = pending.popleft().result()
             for k in itertools.islice(keys, 1):
-                pending.append(pool.submit(copy_one, source, store, k))
+                pending.append(pool.submit(copy, source, store, k))
             yield outcome
     finally:
         pool.shutdown(wait=True, cancel_futures=True)
+
+
+# ── badge art (upstream CDN_HOST → BADGES_ASSETS_DIR) ──────────────────────
+#
+# Badge art is addressed by path, not by hash: the catalog's `assets` documents name
+# `<CDN_HOST>/<badge>[/<tier slot>]/{2d,3d}/<texture>.png`, and the node serves
+# `BADGES_ASSETS_DIR/<same path>`. Each file is written through a staging file and a rename.
+
+# Upstream's production CDN_HOST: the base of every URL the catalog import writes.
+BADGE_ART_BASE = 'https://assets-cdn.decentraland.org/'
+ART_PATH = re.compile(r'[a-z0-9_-]+(/[a-z0-9_-]+)*/(2d|3d)/[a-z0-9_-]+\.png')
+PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
+HTTP_TIMEOUT = 30
+
+
+def art_path(url, base=BADGE_ART_BASE):
+    """The path under `base` that `url` names, when it is badge art; else None."""
+    if not isinstance(url, str) or not url.startswith(base):
+        return None
+    path = url[len(base):]
+    return path if ART_PATH.fullmatch(path) else None
+
+
+class HttpArtSource:
+    """Upstream's CDN: `GET <base><path>`."""
+
+    def __init__(self, base=BADGE_ART_BASE, opener=urllib.request.urlopen):
+        self.base = base if base.endswith('/') else base + '/'
+        self.opener = opener
+
+    def open(self, path):
+        try:
+            return self.opener(urllib.request.Request(self.base + path, headers={'User-Agent': 'dcl-migration'}),
+                               timeout=HTTP_TIMEOUT)
+        except urllib.error.HTTPError as e:
+            e.close()
+            if e.code in (403, 404, 410):
+                raise Missing(f'HTTP {e.code} upstream') from e
+            if e.code == 429 or e.code >= 500:
+                raise ReadError(f'HTTP {e.code}') from e
+            raise SourceError(f'{self.base}{path}: HTTP {e.code}') from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise ReadError(f'{type(e).__name__}: {e}') from e
+
+    def describe(self):
+        return self.base
+
+
+class FolderArtSource:
+    """A local copy of the CDN bucket's badge art, laid out by path."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+        if not self.root.is_dir():
+            raise FileNotFoundError(f'{root} is not a directory')
+
+    def open(self, path):
+        try:
+            return (self.root / path).open('rb')
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as e:
+            raise Missing('absent upstream') from e
+
+    def describe(self):
+        return str(self.root)
+
+
+class ArtDir:
+    """The node's `BADGES_ASSETS_DIR`."""
+
+    def __init__(self, root, refresh=False):
+        self.root = Path(root)
+        self.refresh = refresh
+
+    def path(self, path):
+        return self.root / path
+
+    def has(self, path):
+        try:
+            return self.path(path).stat().st_size > 0
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+
+
+def copy_art(source, art_dir, path):
+    """Copies one badge texture into `art_dir` unless it is already there (or `art_dir.refresh`)."""
+    if not ART_PATH.fullmatch(path):
+        return Outcome(path, 'invalid', reason='not a badge texture path')
+    final = art_dir.path(path)
+    if art_dir.has(path) and not art_dir.refresh:
+        return Outcome(path, 'present', path, final.stat().st_size)
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            stream = source.open(path)
+            with contextlib.closing(stream):
+                data = stream.read()
+            break
+        except Missing as e:
+            return Outcome(path, 'missing', reason=str(e))
+        except (ReadError, OSError) as e:
+            if attempt + 1 == READ_ATTEMPTS:
+                return Outcome(path, 'failed', reason=f'read failed {READ_ATTEMPTS} times: {e}')
+            time.sleep(RETRY_DELAY * 2 ** attempt)
+    if not data.startswith(PNG_MAGIC):
+        return Outcome(path, 'corrupt', reason='not a PNG')
+    final.parent.mkdir(parents=True, exist_ok=True)
+    staged = final.parent / f'.{final.name}.{os.getpid()}.{next(_seq)}.tmp'
+    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(staged, final)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return Outcome(path, 'copied', path, len(data))
