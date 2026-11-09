@@ -42,19 +42,19 @@ impl Plugin for SceneUtilPlugin {
 
 // Scenes get no persistent storage; remove the folder older builds kept it in.
 fn remove_scene_storage() {
-    let Some(dirs) = platform::project_directories() else {
+    // headless test apps run without task pools
+    let (Some(dirs), Some(pool)) = (platform::project_directories(), IoTaskPool::try_get()) else {
         return;
     };
     let folder = dirs.data_local_dir().join("LocalStorage");
-    IoTaskPool::get()
-        .spawn(async move {
-            match std::fs::remove_dir_all(&folder) {
-                Ok(()) => info!("removed scene storage at {folder:?}"),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => warn!("could not remove scene storage at {folder:?}: {e}"),
-            }
-        })
-        .detach();
+    pool.spawn(async move {
+        match std::fs::remove_dir_all(&folder) {
+            Ok(()) => info!("removed scene storage at {folder:?}"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!("could not remove scene storage at {folder:?}: {e}"),
+        }
+    })
+    .detach();
 }
 
 #[derive(Resource)]
