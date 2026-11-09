@@ -16,7 +16,7 @@ import { pixelDiff } from "./pixeldiff.mts";
 import { fillMisses, learnable, Recording, savingAfter } from "./recording.mts";
 import { classifyMiss, classifyUnknown, gateFailures, isIdentical } from "./verdict.mts";
 import { fromBrowser, imageSeed, startReplay } from "./servers.mts";
-import { canonicalQuery, fromNodePath, fromShopApi, relaysToNode } from "./services.mts";
+import { canonicalQuery, fromNodePath, fromShopApi, RECORDED_NODE_PREFIXES, relaysToNode } from "./services.mts";
 import { compareStructure, coverByRegions, line } from "./structure.mts";
 
 const solid = (w: number, h: number, rgb: [number, number, number]): Rgba => {
@@ -169,9 +169,12 @@ describe("pixelDiff", () => {
   });
 });
 
-/** The same-origin bases (VITE_*_URL=/path) an env file sets, with or without export, quotes or spaces around =. */
+/**
+ * The same-origin bases (VITE_*_URL=/path) an env file sets: indented or not, with or without export, quotes, spaces
+ * around = or a trailing comment.
+ */
 function envPaths(env: string): string[] {
-  return [...env.matchAll(/^(?:export\s+)?VITE_[A-Z0-9_]+_URL\s*=\s*["']?(\/[^\s"']*)/gm)].map((m) => m[1]!);
+  return [...env.matchAll(/^\s*(?:export\s+)?VITE_[A-Z0-9_]+_URL\s*=\s*["']?(\/[^\s"'#]*)/gm)].map((m) => m[1]!);
 }
 
 describe("services", () => {
@@ -190,8 +193,8 @@ describe("services", () => {
     assert.deepEqual(fromNodePath("GET", "/camera-reel/api/wearables/0xabc-0/images"), upstream);
   });
   it("reads a same-origin base from an env file in every form dotenv accepts", () => {
-    const env = 'VITE_A_URL=/a\nexport VITE_V2_URL = "/v2/x"\nVITE_B_URL=\'/b\'\nVITE_REMOTE_URL=https://remote.example\n# VITE_OFF_URL=/off\n';
-    assert.deepEqual(envPaths(env), ["/a", "/v2/x", "/b"]);
+    const env = 'VITE_A_URL=/a\nexport VITE_V2_URL = "/v2/x"\nVITE_B_URL=\'/b\'\n  VITE_C_URL=/c#note\nVITE_REMOTE_URL=https://remote.example\n# VITE_OFF_URL=/off\n';
+    assert.deepEqual(envPaths(env), ["/a", "/v2/x", "/b", "/c"]);
   });
   it("relays to the replay every same-origin service path the production sites build reads", () => {
     const paths = envPaths(readFileSync(join(SITES, ".env.production"), "utf8"));
@@ -203,6 +206,10 @@ describe("services", () => {
     const direct = photos.match(/`(\/camera-reel\/[^`$]*)/)?.[1];
     assert.ok(direct, "the profile gallery no longer reads the camera reel from a literal /camera-reel/ path");
     assert.ok(relaysToNode(direct), `${direct} renders the sites app's 404 instead of reaching the replay`);
+  });
+  it("relays to the replay every node prefix a recorded service answers", () => {
+    assert.ok(RECORDED_NODE_PREFIXES.includes("/camera-reel"));
+    for (const prefix of RECORDED_NODE_PREFIXES) assert.ok(relaysToNode(`${prefix}/x`), `${prefix} is answered from a recording the preview never relays to`);
   });
   it("orders and re-encodes a query so equal queries key alike", () => {
     assert.equal(canonicalQuery("?b=2&a=x%20y&a=1"), canonicalQuery("a=1&a=x+y&b=2"));
