@@ -12,8 +12,8 @@ use dcl_types::{
     RendererResponse, RpcCalls, SceneResourceCounters, SceneResponse, SceneResponseSender,
 };
 use deno_core::{
-    anyhow::anyhow, ascii_str, error::AnyError, include_js_files, op2, v8, Extension, JsRuntime,
-    OpDecl, OpState, PollEventLoopOptions, RuntimeOptions,
+    anyhow::anyhow, ascii_str, error::AnyError, op2, v8, Extension, JsRuntime, OpDecl, OpState,
+    PollEventLoopOptions, RuntimeOptions,
 };
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc::UnboundedReceiver, time::timeout};
@@ -35,6 +35,7 @@ mod hardened_ops;
 pub mod inspector;
 pub mod op_wrappers;
 mod plain;
+mod sources;
 mod stream_resource;
 pub mod websocket;
 
@@ -46,18 +47,7 @@ pub fn create_runtime(
     #[cfg(test)]
     crate::test_platform();
 
-    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
-    let webidl = deno_webidl::deno_webidl::init();
-    let mut web = deno_web::deno_web::init(
-        deno_web::BlobStore::default_arc(),
-        None,
-        false,
-        deno_web::InMemoryBroadcastChannel::default(),
-    );
-    // The cppgc class constructors (DOMMatrix, ImageData, CSSStyleSheet, ...) wrap whatever
-    // `this` they are called on, so calling one without `new` corrupts the V8 heap. Scenes
-    // get none of these classes.
-    web.objects = Default::default();
+    let [webidl, web] = web_extensions();
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
@@ -110,23 +100,10 @@ pub fn create_runtime(
     ));
     let override_problems = Rc::new(RefCell::new(Vec::new()));
 
-    let mut esm_files = include_js_files!(
-        BevyExplorer
-        dir "../dcl_js/src/modules",
-    )
-    .to_vec();
-
-    esm_files.extend(include_js_files!(
-        BevyExplorer
-        dir "src/js/modules",
-        "init.js",
-        "websocket.js",
-    ));
-
     let ext = Extension {
         name: "decentraland",
         ops: ops.into(),
-        esm_files: esm_files.into(),
+        esm_files: sources::own().into(),
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
         middleware_fn: Some(Box::new({
             let pending_overrides = pending_overrides.clone();
@@ -248,6 +225,25 @@ pub fn create_runtime(
     } else {
         (runtime, None)
     }
+}
+
+/// deno_webidl and deno_web, with every script compiled in.
+fn web_extensions() -> [Extension; 2] {
+    let mut webidl = deno_webidl::deno_webidl::init();
+    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
+    let mut web = deno_web::deno_web::init(
+        deno_web::BlobStore::default_arc(),
+        None,
+        false,
+        deno_web::InMemoryBroadcastChannel::default(),
+    );
+    // The cppgc class constructors (DOMMatrix, ImageData, CSSStyleSheet, ...) wrap whatever
+    // `this` they are called on, so calling one without `new` corrupts the V8 heap. Scenes
+    // get none of these classes.
+    web.objects = Default::default();
+    sources::embed_upstream(&mut webidl);
+    sources::embed_upstream(&mut web);
+    [webidl, web]
 }
 
 /// Overrides that did not replace an op exactly, logged at runtime creation.
