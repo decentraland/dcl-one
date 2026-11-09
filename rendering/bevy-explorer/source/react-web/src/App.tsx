@@ -49,8 +49,11 @@ import { useHudInsetReport } from './lib/hudInset'
 import { bootMode } from './lib/bootMode'
 import { isMobile, isChromiumBased, hasBypassCookie } from './lib/isMobile'
 import { inShell } from './lib/shell'
-import { hasUsableGpu } from './lib/gpu'
+import { probeGpu, type GpuAdapterInfo } from './lib/gpu'
+import { integratedGpuOnWindows } from './lib/integratedGpu'
+import { getPref, PREF, setPref } from './lib/prefs'
 import { MobileGate, GateChecking } from './features/gate/MobileGate'
+import { openIntegratedGpuGuide } from './features/gate/IntegratedGpuGuide'
 import { UntrustedLaunchGate } from './features/gate/UntrustedLaunchGate'
 import { untrustedLaunchParams } from './lib/launchGate'
 import { ErrorBoundary } from './features/error/ErrorBoundary'
@@ -100,6 +103,10 @@ function gateReason(): 'mobile' | 'browser' | 'gpu' | null {
   return null
 }
 const GATE_REASON = gateReason()
+// `?gpuGuide=1` shows the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) whatever the
+// machine, for a look at it (mock mode included); otherwise the probe's adapter decides.
+const GPU_GUIDE_FORCED = params.get('gpuGuide') === '1'
+const SAMPLE_INTEGRATED_GPU: GpuAdapterInfo = { vendor: 'intel', architecture: 'gen-12lp', device: '', description: 'Intel(R) Iris(R) Xe Graphics' }
 
 // Gated entry-url params (lib/launchGate.ts: `?systemScene=` is a session takeover delivered as
 // a link, `?baseDomain=` points every backend at another deployment) carrying a value this
@@ -123,6 +130,13 @@ export function App(): React.JSX.Element {
   // bevy/wgpu, not WebGPU in this webview, so probing there would gate a HUD that runs fine.
   // 'checking' shows a brief spinner.
   const gpu = useGpuProbe(GATE_REASON != null || MODE === 'mock' || MODE === 'native' || SHOWCASE)
+  // The one GPU finding the player can act on: a Windows browser on its integrated GPU (the
+  // engine's probe path only; native renders through the host's own wgpu). Told once the HUD is up.
+  const integratedGpu = GPU_GUIDE_FORCED
+    ? SAMPLE_INTEGRATED_GPU
+    : MODE === 'engine' && integratedGpuOnWindows(gpu.adapter)
+      ? gpu.adapter
+      : null
   // Ahead of every other gate: returning here is what keeps EngineHost unmounted, and EngineHost is
   // what injects boot.js and starts the scene.
   const [trustUntrusted, setTrustUntrusted] = useState(false)
@@ -130,8 +144,8 @@ export function App(): React.JSX.Element {
     return <UntrustedLaunchGate params={UNTRUSTED_PARAMS} onProceed={() => setTrustUntrusted(true)} />
   }
   if (GATE_REASON) return <MobileGate reason={GATE_REASON} />
-  if (gpu === 'checking') return <GateChecking />
-  if (gpu === 'blocked') return <MobileGate reason="gpu" />
+  if (gpu.state === 'checking') return <GateChecking />
+  if (gpu.state === 'blocked') return <MobileGate reason="gpu" />
   return (
     <ErrorBoundary>
       {SHOWCASE ? (
@@ -139,7 +153,7 @@ export function App(): React.JSX.Element {
           <Showcase />
         </Suspense>
       ) : (
-        <Hud />
+        <Hud integratedGpu={integratedGpu} />
       )}
       {showFps && <FpsMeter />}
     </ErrorBoundary>
@@ -159,30 +173,31 @@ function useFpsToggle(): boolean {
   return on
 }
 
-// Async pre-boot GPU probe. 'checking' → 'ok' (boot) or 'blocked' (→ the no-GPU gate). `skip` (a sync
-// gate already decided, mock, native, or showcase) resolves immediately to 'ok'. `?nogate=1` and the shared
-// bypass cookie skip the gate too; `?gate=gpu` is handled synchronously in gateReason(), so this only
-// runs the real detection path.
-function useGpuProbe(skip: boolean): 'checking' | 'ok' | 'blocked' {
-  const [state, setState] = useState<'checking' | 'ok' | 'blocked'>(skip ? 'ok' : 'checking')
+// Async pre-boot GPU probe. 'checking' → 'ok' (boot) or 'blocked' (→ the no-GPU gate), with what the
+// adapter reports about itself once known. `skip` (a sync gate already decided, mock, native, or
+// showcase) resolves immediately to 'ok'. `?nogate=1` and the shared bypass cookie skip the gate too;
+// `?gate=gpu` is handled synchronously in gateReason(), so this only runs the real detection path.
+type GpuProbeState = { state: 'checking' | 'ok' | 'blocked'; adapter: GpuAdapterInfo | null }
+function useGpuProbe(skip: boolean): GpuProbeState {
+  const [probe, setProbe] = useState<GpuProbeState>({ state: skip ? 'ok' : 'checking', adapter: null })
   useEffect(() => {
     if (skip) return
     if (params.get('nogate') === '1' || hasBypassCookie()) {
-      setState('ok')
+      setProbe({ state: 'ok', adapter: null })
       return
     }
     let cancelled = false
-    void hasUsableGpu().then((ok) => {
-      if (!cancelled) setState(ok ? 'ok' : 'blocked')
+    void probeGpu().then((result) => {
+      if (!cancelled) setProbe({ state: result.usable ? 'ok' : 'blocked', adapter: result.adapter })
     })
     return () => {
       cancelled = true
     }
   }, [skip])
-  return state
+  return probe
 }
 
-function Hud(): React.JSX.Element {
+function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React.JSX.Element {
   const { rpc, createDriver } = useMemo((): {
     rpc: EngineRpc | null
     createDriver: () => LoginDriver
@@ -211,6 +226,15 @@ function Hud(): React.JSX.Element {
     if (UNRECOGNISED_PARAMS.length === 0) return
     return openEntryParamsDialog(UNRECOGNISED_PARAMS)
   }, [])
+
+  // A Windows browser on its integrated GPU: how to move it to the dedicated one, as an ordinary
+  // dialog once per device ("Don't show again"; "Later" asks again next launch). Not where something
+  // else owns the UI (the embed), and always when forced for a look.
+  useEffect(() => {
+    if (integratedGpu == null || HIDE_HUD) return
+    if (!GPU_GUIDE_FORCED && getPref(PREF.gpuGuideSeen) === '1') return
+    return openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
+  }, [integratedGpu])
 
   // A world that doesn't exist, or a HUD bridge that never answered, isn't a crash — it's an ordinary
   // dialog on the popup layer, so it gets Escape/scrim-click for free and freezes nothing behind it

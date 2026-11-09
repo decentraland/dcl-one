@@ -78,6 +78,10 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
+HUD when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces it). Its
+contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.
+
 **Updating baselines** (only when the change is intentional):
 ```bash
 npm run test:visual:update      # regenerates the PNGs
