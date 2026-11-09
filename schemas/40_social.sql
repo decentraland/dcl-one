@@ -1368,6 +1368,7 @@ CREATE TABLE social.land_transfer_cursor (
 -- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
 -- the client-events-purge job deletes those older than
 -- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE SEQUENCE social.client_events_seq AS bigint;
 CREATE TABLE social.client_events (
     key text NOT NULL,
     source text NOT NULL,
@@ -1381,9 +1382,12 @@ CREATE TABLE social.client_events (
     received_at timestamp(3) without time zone NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    -- Insertion order for consumer cursors (the badge processor); not commit
-    -- order, so a consumer stops at the first row not yet settled.
-    seq bigint GENERATED ALWAYS AS IDENTITY,
+    -- Insertion order for consumer cursors (the badge processor), drawn
+    -- before the inserting transaction commits, so not commit order. NULL on
+    -- rows kept from before step 0037 (they precede every cursor). The
+    -- sequence is named as text so step 0037 can set the default before the
+    -- object pass creates it.
+    seq bigint DEFAULT nextval('social.client_events_seq'::text),
     CONSTRAINT client_events_pkey PRIMARY KEY (key),
     CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
     CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
@@ -1391,11 +1395,14 @@ CREATE TABLE social.client_events (
 );
 -- Consumers scan forward in insertion order; the purge deletes the oldest.
 CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
--- The badge processor's cursor scan (seq > cursor ORDER BY seq).
-CREATE UNIQUE INDEX client_events_seq_idx ON social.client_events (seq);
+ALTER SEQUENCE social.client_events_seq OWNED BY social.client_events.seq;
+-- The badge processor's cursor scan (seq > cursor ORDER BY seq). Both seq
+-- indexes are partial so their build on a table kept from before step 0037
+-- (every seq NULL) is one heap scan with nothing to sort.
+CREATE UNIQUE INDEX client_events_seq_idx ON social.client_events (seq) WHERE seq IS NOT NULL;
 -- Traveler's session read-back: a wallet's moves in one session, newest first.
 CREATE INDEX client_events_session_moves_idx ON social.client_events (address, session_id, seq)
-    WHERE sub_type = 'move-to-parcel';
+    WHERE sub_type = 'move-to-parcel' AND seq IS NOT NULL;
 
 -- Every stored client event is announced on the `social.client_events`
 -- channel, the row's identity columns as JSON (never the metadata: the

@@ -1190,12 +1190,28 @@ counted, which is the accepted cost of the retention).
 
 The bootstrap (`schemas/40_social.sql`) defines the table, the indexes and the
 trigger; an existing database gains them from the object pass. Step
-`0037_social_badge_processor` adds `seq` (`bigint GENERATED ALWAYS AS
-IDENTITY`) to a table that predates it, numbering the kept rows in physical
-order: one table rewrite, under ACCESS EXCLUSIVE, of at most the retention
-window's rows (unmeasured on production). `client_events_seq_idx` serves the
-cursor scan and `client_events_session_moves_idx` (`address, session_id, seq`
-over `move-to-parcel` rows) traveler's read-back of one session.
+`0037_social_badge_processor` adds `seq` to a table that predates it as a
+nullable column, then its default (`nextval` of `social.client_events_seq`,
+named as text so the step precedes the object pass that creates the
+sequence): both change the catalog only, no row is rewritten, and the kept
+rows keep a NULL `seq` (they precede every cursor, which starts at the head).
+The object pass then builds `client_events_seq_idx` (`seq`) and
+`client_events_session_moves_idx` (`address, session_id, seq` over
+`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in the migrate
+transaction: the build holds SHARE on the table (the webhook inserts and the
+purge wait, reads do not) for one heap scan with nothing to sort. On 2M
+synthetic rows (822 MB, about two months at the expected rate) the step took
+22 ms and the two builds 0.24 s and 0.35 s with a warm cache; the identity
+column it replaces rewrote the same table in 27.7 s under ACCESS EXCLUSIVE.
+To take even that off the migrate window, add the column by hand first
+(`ALTER TABLE social.client_events ADD COLUMN IF NOT EXISTS seq bigint`, the
+step's first statement, without the default: the sequence does not exist
+yet), then build both indexes with the definitions of `schemas/40_social.sql`
+and `CREATE INDEX CONCURRENTLY`; `migrate` then sets the default, creates the
+sequence and skips the indexes (a failed concurrent build leaves an invalid
+index: drop it before retrying).
+`client_events_seq_idx` serves the cursor scan and
+`client_events_session_moves_idx` traveler's read-back of one session.
 
 ## Credits wallet flags workload
 

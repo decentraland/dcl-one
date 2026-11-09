@@ -311,16 +311,30 @@ INSERT INTO social.client_events (key, source, sub_type, address, reported_at, r
   ('m2', 'client', 'used-emote', '0x' || repeat('c', 40), '2026-11-02', '2026-11-02');
 ";
 
-/// `0037_social_badge_processor`: the kept events are numbered, a new one
-/// takes the next number, and the object pass adds the cursor table and the
-/// sequence's index.
-async fn assert_client_events_sequenced(pool: &PgPool) {
-    let seqs: Vec<(String, i64)> =
-        sqlx::query_as("SELECT key, seq FROM social.client_events ORDER BY seq")
+/// `social.client_events`' storage file: a table rewrite gives it a new one.
+async fn client_events_filenode(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT pg_relation_filenode('social.client_events')::bigint")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `0037_social_badge_processor`: the table is not rewritten, the kept events
+/// keep a NULL `seq` (they precede every cursor), a new one takes the
+/// sequence's first number, and the object pass adds the sequence, the
+/// cursor table and both partial indexes.
+async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
+    assert_eq!(
+        client_events_filenode(pool).await,
+        filenode_before,
+        "adding seq rewrites no row"
+    );
+    let seqs: Vec<(String, Option<i64>)> =
+        sqlx::query_as("SELECT key, seq FROM social.client_events ORDER BY key")
             .fetch_all(pool)
             .await
             .unwrap();
-    assert_eq!(seqs, [("m1".to_string(), 1), ("m2".to_string(), 2)]);
+    assert_eq!(seqs, [("m1".to_string(), None), ("m2".to_string(), None)]);
     let next: i64 = sqlx::query_scalar(
         "INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at) \
          VALUES ('m3', 'client', 'used-emote', '0x' || repeat('c', 40), now(), now()) RETURNING seq",
@@ -328,16 +342,17 @@ async fn assert_client_events_sequenced(pool: &PgPool) {
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(next, 3);
-    let (cursors, seq_idx, moves_idx): (bool, bool, bool) = sqlx::query_as(
+    assert_eq!(next, 1);
+    let (cursors, seq_idx, moves_idx, owned): (bool, bool, bool, bool) = sqlx::query_as(
         "SELECT to_regclass('social.badge_cursors') IS NOT NULL, \
                 to_regclass('social.client_events_seq_idx') IS NOT NULL, \
-                to_regclass('social.client_events_session_moves_idx') IS NOT NULL",
+                to_regclass('social.client_events_session_moves_idx') IS NOT NULL, \
+                pg_get_serial_sequence('social.client_events', 'seq') = 'social.client_events_seq'",
     )
     .fetch_one(pool)
     .await
     .unwrap();
-    assert!(cursors && seq_idx && moves_idx);
+    assert!(cursors && seq_idx && moves_idx && owned);
 }
 
 #[tokio::test]
@@ -507,6 +522,7 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .execute(pool)
         .await
         .unwrap();
+    let client_events_before = client_events_filenode(pool).await;
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -551,7 +567,7 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     );
 
     assert_placeholder_badges_upgraded(pool).await;
-    assert_client_events_sequenced(pool).await;
+    assert_client_events_sequenced(pool, client_events_before).await;
 
     let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
         "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
