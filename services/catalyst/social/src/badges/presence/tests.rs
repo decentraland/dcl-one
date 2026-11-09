@@ -4,13 +4,13 @@
 //! pass, the sweeper reads a fake occupancy.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use super::sink::{self, PresenceEvent};
-use super::{Flow, Occupancy, Settings, SweepSummary, apply_pending, sweep};
+use super::{Flow, Occupancy, Settings, SweepSummary, apply_pending, drain, sweep};
 use crate::comms::gatekeeper::events::RoomEventSink;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 
@@ -131,14 +131,15 @@ impl T {
 
     async fn deliver(&self, events: &[PresenceEvent]) {
         sink::insert(&self.pool, events).await.unwrap();
-        let flow = Flow {
-            settings: &self.settings,
-            now: self.now,
-            asset_base: CDN,
-        };
-        apply_pending(&self.pool, &flow, &mut HashMap::new())
-            .await
-            .unwrap();
+        apply_pending(
+            &self.pool,
+            &self.settings,
+            CDN,
+            &|| self.now,
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
         let left: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
             .fetch_one(&self.pool)
             .await
@@ -392,6 +393,47 @@ async fn an_event_from_the_future_opens_and_ends_nothing() {
     t.join(ALICE, "s1", T0 + 10 * 60 * SEC, At::Scene(SCENE))
         .await;
     assert!(t.visits().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_long_drain_reads_the_clock_per_event() {
+    let Some(mut t) = T::new().await else { return };
+    t.badge("stay", At::Scene(PARCEL), 300).await;
+    t.settings.event_batch = 2;
+    let min = 60 * SEC;
+    let events: Vec<_> = [
+        (true, "s1", 0),
+        (false, "s1", 100 * SEC),
+        (true, "s2", 6 * min),
+        (false, "s2", 8 * min),
+        (true, "s3", 10 * min),
+        (false, "s3", 12 * min),
+    ]
+    .into_iter()
+    .map(|(join, session, at)| t.event(join, ALICE, session, T0 + at, At::Scene(SCENE)))
+    .collect();
+    sink::insert(&t.pool, &events).await.unwrap();
+    // a slow backlog: the clock moves two minutes per event, past the skew bound
+    let ticks = AtomicI64::new(0);
+    let clock = || T0 + ticks.fetch_add(1, Ordering::Relaxed) * 2 * min;
+    drain(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(ticks.load(Ordering::Relaxed), 6, "one reading per event");
+    assert_eq!(
+        t.progress("stay", ALICE).await,
+        Some((
+            300,
+            json!({"steps": 300, "intervals": proven(&[(0, 100), (360, 480), (600, 720)])}),
+            Some(T0 + 680 * SEC)
+        ))
+    );
+    let newest: i64 =
+        sqlx::query_scalar("SELECT max(applied_at) FROM social.presence_applied_events")
+            .fetch_one(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(newest, T0 + 10 * min, "bookkeeping follows the clock");
 }
 
 // ── windows ─────────────────────────────────────────────────────────────

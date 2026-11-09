@@ -102,22 +102,47 @@ impl From<EventRow> for PresenceEvent {
     }
 }
 
+/// The process clock, epoch ms; read per event, so a long drain keeps time.
+pub type Clock<'a> = &'a (dyn Fn() -> i64 + Sync);
+
+/// Applies stored events until a pass comes back short.
+pub async fn drain(
+    pool: &PgPool,
+    settings: &Settings,
+    asset_base: &str,
+    clock: Clock<'_>,
+    failures: &mut HashMap<i64, u32>,
+) -> anyhow::Result<()> {
+    while apply_pending(pool, settings, asset_base, clock, failures).await? as i64
+        >= settings.event_batch
+    {}
+    Ok(())
+}
+
 /// Applies up to `event_batch` stored events in `seq` order, each in its own
-/// transaction that deletes it. `failures` counts the passes an event failed
-/// (kept by the job); the first failure ends the pass with the error.
+/// transaction that deletes it and with the clock read for it. `failures`
+/// counts the passes an event failed (kept by the job);
+/// the first failure ends the pass with the error.
 pub async fn apply_pending(
     pool: &PgPool,
-    flow: &Flow<'_>,
+    settings: &Settings,
+    asset_base: &str,
+    clock: Clock<'_>,
     failures: &mut HashMap<i64, u32>,
 ) -> anyhow::Result<usize> {
     let seqs: Vec<i64> =
         sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq LIMIT $1")
-            .bind(flow.settings.event_batch)
+            .bind(settings.event_batch)
             .fetch_all(pool)
             .await?;
     let mut applied = 0;
     for seq in seqs {
-        match apply_one(pool, flow, seq).await {
+        let flow = Flow {
+            settings,
+            now: clock(),
+            asset_base,
+        };
+        match apply_one(pool, &flow, seq).await {
             Ok(outcome) => {
                 failures.remove(&seq);
                 applied += usize::from(outcome.is_some());
@@ -200,16 +225,8 @@ pub fn spawn_jobs(
             let (pool, settings, asset_base, failures) =
                 (p.clone(), s.clone(), a.clone(), failures.clone());
             async move {
-                let flow = Flow {
-                    settings: &settings,
-                    now: now_ms(),
-                    asset_base: &asset_base,
-                };
                 let mut failures = failures.lock().await;
-                while apply_pending(&pool, &flow, &mut failures).await? as i64
-                    >= settings.event_batch
-                {}
-                Ok(())
+                drain(&pool, &settings, &asset_base, &now_ms, &mut failures).await
             }
         },
     );
