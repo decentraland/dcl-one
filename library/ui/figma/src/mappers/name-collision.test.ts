@@ -185,8 +185,8 @@ describe('when a previously generated component starts colliding', () => {
     const generated = await readFile(path.join(root, GEN, 'page/First.tsx'), 'utf8')
 
     // Both First and Second now generate "First", so neither is generated: their published entries would
-    // disappear without a retirement record. The guard refuses before writing anything; pull-live reports
-    // these `removed` violations as removalsBlocked.
+    // disappear without a retirement record. The guard refuses before writing anything and reports
+    // these `removed` violations.
     await expect(runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })).rejects.toThrow(
       /removed: .*entry component:First was removed without a retirement record/s
     )

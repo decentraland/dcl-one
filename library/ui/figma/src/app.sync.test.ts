@@ -275,11 +275,6 @@ describe('runSync guard and retirements', () => {
       )
     })
 
-    it('should refuse a live source for retirement cleanup before reading it', async () => {
-      await expect(
-        runSync(app, { source: 'rest', developer: true, applyRetirements: true })
-      ).rejects.toThrow('saved snapshots only')
-    })
     it('should block an automated sync while a retirement is pending', async () => {
       const manifest = await read('components/manifest.ts')
       const entry = JSON.parse(manifest.slice(manifest.indexOf('= [') + 2))[0] as {

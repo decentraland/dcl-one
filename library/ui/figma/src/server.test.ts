@@ -48,7 +48,6 @@ describe('figma stdio server', () => {
         'figma_list_components',
         'figma_list_pages',
         'figma_resolve_component',
-        'figma_screenshot',
         'figma_sync'
       ])
     })

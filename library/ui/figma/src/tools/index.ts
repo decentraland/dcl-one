@@ -5,8 +5,6 @@ import path from 'node:path'
 import { isWindowsSafeName } from '../capture/page-file-name.js'
 import { z } from 'zod'
 import { runDiff, runSync, type App } from '../app.js'
-import { requireFileKey } from '../config.js'
-import { EnvTokenProvider, FigmaClient } from '../figma/client.js'
 import type { IconSpec } from '../ir/schemas.js'
 import { collisionReason } from '../mappers/component-spec.js'
 import { loadSpecsFromSource } from '../specs.js'
@@ -19,9 +17,11 @@ type ToolDefinition<Shape extends z.ZodRawShape = z.ZodRawShape> = {
 }
 
 const sourceSchema = z
-  .enum(['snapshot', 'rest'])
+  .enum(['snapshot'])
   .default('snapshot')
-  .describe('Where to read the design from. "rest" needs FIGMA_TOKEN and is unverified.')
+  .describe(
+    'The fetch-source cache of the pinned figma-design-system capture, the only source; figma-design-system reads Figma itself.'
+  )
 
 const MAX_INLINE_SVGS = 20
 
@@ -284,28 +284,6 @@ function createTools(app: App): ToolDefinition[] {
       inputSchema: { source: sourceSchema, outDir: z.string().optional() },
       handler: async ({ source, outDir }) =>
         runDiff(app, { source, outDir: outDir ? await insideWorkspace(app, outDir) : undefined })
-    }),
-    tool({
-      name: 'figma_screenshot',
-      description:
-        'Render a node as PNG through the Figma REST API and return its short-lived URL. Needs FIGMA_TOKEN; unverified.',
-      inputSchema: {
-        nodeId: z
-          .string()
-          .regex(/^\d+[:-]\d+$/)
-          .describe('Node id such as "1:5239".'),
-        scale: z.number().min(0.01).max(4).default(1)
-      },
-      handler: async ({ nodeId, scale }) => {
-        const client = new FigmaClient(new EnvTokenProvider())
-        const id = nodeId.replace('-', ':')
-        const response = await client.get<{ images: Record<string, string | null> }>(
-          `/v1/images/${requireFileKey()}?ids=${encodeURIComponent(id)}&format=png&scale=${scale}`
-        )
-        const url = response.images[id]
-        if (!url) throw new Error(`Figma returned no image for node ${id}`)
-        return { nodeId: id, url }
-      }
     })
   ]
 }

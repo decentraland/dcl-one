@@ -56,13 +56,22 @@ describe('when the CLI receives an explicit configuration outside its working di
     await rm(directory, { recursive: true, force: true })
   })
 
-  it('should ingest into the configured snapshot directory rather than the working directory', async () => {
-    await run(['capture-ingest', chunk])
-    expect(
-      JSON.parse(await readFile(path.join(directory, 'captures/components/Ready.json'), 'utf8'))
-    ).toMatchObject({
-      page: { id: 'ready-page', name: 'Ready' },
-      components: []
+  // Live Figma access and capture ingest belong to figma-design-system: this tree reads only the fetch-source cache.
+  it.each(['pull-live', 'probe', 'capture-ingest', 'capture-merge'])(
+    'should not offer the removed %s command',
+    async (command) => {
+      await expect(run([command, chunk])).rejects.toMatchObject({
+        stderr: expect.stringContaining('Usage:')
+      })
+      await expect(
+        readFile(path.join(directory, 'captures/components/Ready.json'))
+      ).rejects.toThrow()
+    }
+  )
+
+  it('should refuse a live --source', async () => {
+    await expect(run(['sync', '--source', 'rest'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('only the fetch-source cache')
     })
   })
 

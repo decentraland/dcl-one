@@ -88,32 +88,15 @@ const configSchema = z.object({
 
 type FigmaConfig = z.infer<typeof configSchema>
 
-// The Figma file key is private: it is never stored in tracked config, snapshots or generated
-// output, and never printed. Live Figma access reads it from the environment only.
+// The Figma file key is private: it is never stored in tracked config, snapshots or generated output, and this
+// tree never reads Figma. It is read from the environment only to redact it from text bound for logs, reports or
+// errors, as defense in depth; the key guard (key-guard.mjs) reads it to scan for leaks.
 const FILE_KEY_ENV = 'FIGMA_FILE_KEY'
-const FILE_KEY_PATTERN = /^[0-9A-Za-z]{22,128}$/
-
-function readFileKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const value = env[FILE_KEY_ENV]?.trim()
-  if (!value) return undefined
-  if (!FILE_KEY_PATTERN.test(value))
-    throw new Error(`${FILE_KEY_ENV} is not a valid Figma file key`)
-  return value
-}
 
 /** Replaces the configured file key in text bound for logs, reports or errors. */
 function redactFileKey(text: string, env: NodeJS.ProcessEnv = process.env): string {
   const value = env[FILE_KEY_ENV]?.trim()
   return value ? text.split(value).join('<DCL_FIGMA_FILE>') : text
-}
-
-function requireFileKey(env: NodeJS.ProcessEnv = process.env): string {
-  const value = readFileKey(env)
-  if (!value)
-    throw new Error(
-      `${FILE_KEY_ENV} is not set. Live Figma access needs it; sync, diff, check-mappings and promotion work from the saved snapshot without it.`
-    )
-  return value
 }
 
 async function loadConfigFile(file: string): Promise<FigmaConfig> {
@@ -130,9 +113,7 @@ export {
   exclusionNameErrors,
   loadConfig,
   loadConfigFile,
-  readFileKey,
   redactFileKey,
-  requireFileKey,
   SUPPORTED_PRIMITIVE_EXCLUSIONS
 }
 export type { FigmaConfig }

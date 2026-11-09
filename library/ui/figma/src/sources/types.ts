@@ -10,7 +10,7 @@ import type {
 } from '../ir/schemas.js'
 
 interface FigmaSource {
-  readonly name: 'snapshot' | 'rest'
+  readonly name: 'snapshot'
   listPages(): Promise<FigmaPage[]>
   getTokenCollections(): Promise<TokenCollection[]>
   getTextStyles(): Promise<TextStyle[]>

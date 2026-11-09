@@ -1,10 +1,8 @@
 import { configuredPages } from './page-identity.js'
 import { runRetirementSync } from './retirement-sync.js'
 import path from 'node:path'
-import { loadConfig, loadConfigFile, requireFileKey, type FigmaConfig } from './config.js'
-import { EnvTokenProvider, FigmaClient } from './figma/client.js'
+import { loadConfig, loadConfigFile, type FigmaConfig } from './config.js'
 import { generateAll, type GenerateResult } from './generators/index.js'
-import { RestSource } from './sources/rest-source.js'
 import { SnapshotSource } from './sources/snapshot-source.js'
 import { verifyFdsCache } from './sources/fds-source.js'
 import type { FigmaSource } from './sources/types.js'
@@ -23,7 +21,7 @@ type App = {
   config: FigmaConfig
   cwd: string
   configFile?: string
-  createSource(kind: SourceKind): FigmaSource
+  createSource(kind?: SourceKind): FigmaSource
   resolveOutDir(override?: string): string
 }
 
@@ -37,19 +35,17 @@ async function createApp(cwd = process.cwd(), configFile?: string): Promise<App>
     config,
     configFile: loadedConfigFile,
     cwd,
-    createSource(kind) {
-      if (kind === 'snapshot') {
-        const dir = path.resolve(cwd, config.snapshotDir)
-        const lock = config.snapshotLock && path.resolve(cwd, config.snapshotLock)
-        return new SnapshotSource(
-          dir,
-          configuredPages(config)
-            .filter((page) => page.id === null)
-            .map((page) => page.name),
-          lock ? () => verifyFdsCache(dir, lock) : undefined
-        )
-      }
-      return new RestSource(new FigmaClient(new EnvTokenProvider()), requireFileKey())
+    // The only source is the fetch-source cache: figma-design-system owns every read of Figma itself.
+    createSource() {
+      const dir = path.resolve(cwd, config.snapshotDir)
+      const lock = config.snapshotLock && path.resolve(cwd, config.snapshotLock)
+      return new SnapshotSource(
+        dir,
+        configuredPages(config)
+          .filter((page) => page.id === null)
+          .map((page) => page.name),
+        lock ? () => verifyFdsCache(dir, lock) : undefined
+      )
     },
     resolveOutDir: (override) => path.resolve(cwd, override ?? config.outDir)
   }
@@ -88,8 +84,6 @@ type SyncReport = {
 const repositoryRoot = (app: App) => path.resolve(app.cwd, '..')
 
 async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
-  if (options.applyRetirements && options.source !== 'snapshot')
-    throw new Error('Retirement cleanup reads saved snapshots only')
   if (options.applyRetirements && !options.developer)
     throw new Error('Applying retirements is a developer action: pass --developer')
   const root = repositoryRoot(app)
