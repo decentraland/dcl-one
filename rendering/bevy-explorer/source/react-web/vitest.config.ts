@@ -15,6 +15,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    sequence: { hooks: 'list' },
     include: ['src/**/*.test.{ts,tsx}']
   }
 })

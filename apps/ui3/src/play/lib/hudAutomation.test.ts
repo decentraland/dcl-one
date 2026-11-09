@@ -135,6 +135,60 @@ describe('describing a control', () => {
     expect(describeControl({ name: 'Unequip' })).toEqual({ found: false })
   })
 
+  it('is not actionable while it or a box around it is still moving; an endless animation does not count', () => {
+    const root = render('<div id="page"><button>Emotes</button></div>')
+    const button = place(root.querySelector('button')!, 0, 0)
+    const page = root.querySelector('#page')!
+    // jsdom runs no animations: give elements the ones a browser would report
+    const running = (endTime: number): Animation =>
+      ({ playState: 'running', effect: { getComputedTiming: () => ({ endTime }) } }) as unknown as Animation
+    const animate = (el: Element, animations: Animation[]): void => {
+      ;(el as Element & { getAnimations: () => Animation[] }).getAnimations = () => animations
+    }
+    animate(page, [running(333)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: false, reason: 'still moving' })
+    animate(page, [running(Infinity)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: true })
+    animate(button, [running(100)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: false, reason: 'still moving' })
+    animate(button, [{ ...running(100), playState: 'finished' } as Animation])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: true })
+  })
+
+  it('is not actionable while the pointer is locked to another element, which every click goes to', () => {
+    const root = render('<canvas></canvas><button>Close camera</button>')
+    place(root.querySelector('button')!, 0, 0)
+    const canvas = root.querySelector('canvas')!
+    const lockTo = (el: Element | null): void => {
+      Object.defineProperty(document, 'pointerLockElement', { value: el, configurable: true })
+    }
+    try {
+      lockTo(canvas)
+      expect(describeControl({ name: 'Close camera' })).toMatchObject({ actionable: false, reason: 'the pointer is locked to <canvas>' })
+      lockTo(null)
+      expect(describeControl({ name: 'Close camera' })).toMatchObject({ actionable: true })
+    } finally {
+      lockTo(null)
+    }
+  })
+
+  it('says a control is busy inside a region that is still loading', () => {
+    const root = render('<div role="region" aria-label="Catalog" aria-busy="true"><button>Hat</button></div><button>Close</button>')
+    place(root.querySelector('[role="region"]')!, 0, 0, 500, 500)
+    place(root.querySelectorAll('button')[0], 0, 0)
+    place(root.querySelectorAll('button')[1], 600, 0)
+    expect(describeControl({ name: 'Catalog', role: 'region' })).toMatchObject({ found: true, busy: true })
+    expect(describeControl({ name: 'Hat' })).toMatchObject({ busy: true })
+    expect(describeControl({ name: 'Close' })).toMatchObject({ busy: false })
+  })
+
+  it('gives a nav its implicit navigation role', () => {
+    const root = render('<nav aria-label="Conversations"><button>Nearby</button></nav>')
+    place(root.querySelector('nav')!, 0, 0, 40, 200)
+    place(root.querySelector('button')!, 0, 0)
+    expect(describeControl({ name: 'Conversations', role: 'navigation' })).toMatchObject({ found: true, role: 'navigation' })
+  })
+
   it('reads values and checked state', () => {
     const root = render('<input type="checkbox" aria-label="Mute" checked><button aria-pressed="true">Mic</button>')
     for (const el of Array.from(root.children)) place(el, 0, 0)
@@ -420,6 +474,15 @@ describe('waiting for a control', () => {
     expect(await wait).toMatchObject({ ok: true, value: { found: true, actionable: true } })
   })
 
+  it('waits for a control to be ready, out of a region still loading', async () => {
+    const root = render('<div role="region" aria-label="Catalog" aria-busy="true"></div>')
+    const region = place(root.firstElementChild!, 0, 0)
+    const wait = settled(waitForControl({ name: 'Catalog', role: 'region', state: 'ready' }))
+    await later(300, () => region.setAttribute('aria-busy', 'false'))
+    await later(100)
+    expect(await wait).toMatchObject({ ok: true, value: { found: true, busy: false } })
+  })
+
   it('keeps waiting while several controls match, until one is left', async () => {
     const root = render('<button>Equip</button><button>Equip</button>')
     for (const [i, el] of Array.from(root.children).entries()) place(el, 0, i * 40)
@@ -487,8 +550,8 @@ describe('waiting for a control', () => {
   })
 
   it('refuses a state or timeout it does not know', async () => {
-    await expect(waitForControl({ name: 'x', state: 'ready' })).rejects.toThrow(
-      'unknown state `ready`: use visible, hidden, enabled, actionable'
+    await expect(waitForControl({ name: 'x', state: 'stable' })).rejects.toThrow(
+      'unknown state `stable`: use visible, hidden, enabled, actionable, ready'
     )
     for (const timeout of [-1, Number.NaN, '5s' as unknown as number]) {
       await expect(waitForControl({ name: 'x', timeout })).rejects.toThrow('expected "timeout" to be a number of milliseconds')
@@ -523,7 +586,7 @@ describe('waiting for a control', () => {
       error: 'timed out after 0 ms waiting for {"name":"Backpack"} to be hidden: the control is still visible'
     })
     expect(await answerHudWait({ id: 3, op: 'wait', selector: { state: 'nope' } })).toEqual({
-      error: 'unknown state `nope`: use visible, hidden, enabled, actionable'
+      error: 'unknown state `nope`: use visible, hidden, enabled, actionable, ready'
     })
   })
 })

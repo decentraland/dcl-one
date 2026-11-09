@@ -1,0 +1,31 @@
+diff --git a/src/connected.rs b/src/connected.rs
+index cd7aa1dd3..d662b358f 100644
+--- a/src/connected.rs
++++ b/src/connected.rs
+@@ -840,7 +840,7 @@ impl<C: Connection> Host<C> {
+         Some(connection)
+     }
+ 
+-    fn handle_event(&mut self, event: crate::EventNoRef) -> Option<Event<C>> {
++    fn handle_event(&mut self, event: crate::EventNoRef) -> Option<Event<'_, C>> {
+         let now = self.host.now();
+         Some(match event {
+             crate::EventNoRef::ReceiveLimitExceeded {
+@@ -923,7 +923,7 @@ impl<C: Connection> Host<C> {
+     }
+ 
+     /// Checks for any queued events on the host and dispatches one if available.
+-    pub fn check_events(&mut self) -> Option<Event<C>> {
++    pub fn check_events(&mut self) -> Option<Event<'_, C>> {
+         #[allow(clippy::option_if_let_else)]
+         match self.host.check_events() {
+             Some(event) => {
+@@ -937,7 +937,7 @@ impl<C: Connection> Host<C> {
+     /// Checks for events on the host and shuttles packets between the host and its peers.
+     ///
+     /// Should be called fairly regularly for adequate performance.
+-    pub fn service(&mut self) -> Option<Event<C>> {
++    pub fn service(&mut self) -> Option<Event<'_, C>> {
+         let now = self.host.now();
+         let mut disconnect_event = None;
+         for peer in &mut self.peers {
