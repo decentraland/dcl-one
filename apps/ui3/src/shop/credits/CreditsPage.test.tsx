@@ -7,7 +7,8 @@ import type { FakeHandlers } from "../checkout/fakes";
 import { BOOK } from "../payment/fixtures";
 import type { ShopWalletHost } from "../wallet/session";
 import CreditsPage from "./CreditsPage";
-import { bindBuyNowTopUp, stashBuyNowTopUp, stashTopUpReturn, takeTopUpReturn } from "./returns";
+import { RESUME_CART_KEY } from "../checkout/purchase/cart";
+import { bindBuyNowTopUp, bindTopUpReturn, stashBuyNowTopUp, stashTopUpReturn, takeTopUpReturn } from "./returns";
 
 afterEach(() => sessionStorage.clear());
 
@@ -17,6 +18,17 @@ function ItemState() {
   return <p data-testid="item-state">{JSON.stringify(state)}</p>;
 }
 
+/** The cart, showing the state it was handed: `resumeCheckout` is what makes it pay on its own. */
+function CartState() {
+  const { state } = useLocation();
+  return (
+    <>
+      <p>CART PAGE</p>
+      <p data-testid="cart-state">{JSON.stringify(state)}</p>
+    </>
+  );
+}
+
 function renderCredits(s: Partial<DemoScenario> & { path?: string; handlers?: FakeHandlers } = {}) {
   const demo = createDemo({ session: "web3", ...s });
   const openExternal = vi.fn();
@@ -24,7 +36,7 @@ function renderCredits(s: Partial<DemoScenario> & { path?: string; handlers?: Fa
   demo.services.openExternal = openExternal;
   demo.host.onSignIn = onSignIn;
   const view = render(
-    <DemoShell demo={demo} path={s.path ?? "/shop/credits"} routes={{ "/shop/cart": <p>CART PAGE</p>, "/shop/items": <p>ITEMS PAGE</p>, "/shop/item/:contract/:item": <ItemState /> }}>
+    <DemoShell demo={demo} path={s.path ?? "/shop/credits"} routes={{ "/shop/cart": <CartState />, "/shop/items": <p>ITEMS PAGE</p>, "/shop/item/:contract/:item": <ItemState /> }}>
       <CreditsPage />
     </DemoShell>,
   );
@@ -81,6 +93,29 @@ describe("the credits page", () => {
     stashTopUpReturn("/shop/cart");
     renderCredits({ path: "/shop/credits?order=order-1", handlers: { packOrder: () => ({ status: "credited", creditsGranted: 100 }) } });
     await screen.findByText("CART PAGE");
+    expect(screen.getByTestId("cart-state")).toHaveTextContent('"resumeCheckout":true');
+  });
+
+  it("continuing the cart's own top-up order later: back to the cart, which waits for a press instead of paying what it holds now", async () => {
+    stashTopUpReturn("/shop/cart");
+    sessionStorage.setItem(RESUME_CART_KEY, "1");
+    bindTopUpReturn("o-1");
+    const first = renderCredits({
+      handlers: {
+        userCreditOrders: () => ({ orders: [{ id: "o-1", credits: 100, usdCents: 1199, status: "initiated", createdAt: Date.now() }], total: 1 }),
+        resumePackOrder: () => ({ url: "https://checkout.stripe.com/c/pay/again" }),
+      },
+    });
+    const order = await screen.findByTestId("credit-order");
+    await act(async () => fireEvent.click(within(order).getByTestId("resume-order")));
+    await waitFor(() => expect(first.openExternal).toHaveBeenCalled());
+    expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
+    first.unmount();
+    // Back from Stripe for that order: the cart, with no instruction to pay.
+    renderCredits({ path: "/shop/credits?order=o-1", handlers: { packOrder: () => ({ status: "credited", creditsGranted: 100 }) } });
+    await screen.findByText("CART PAGE");
+    expect(screen.getByTestId("cart-state")).not.toHaveTextContent("resumeCheckout");
+    expect(screen.getByTestId("cart-state")).toHaveTextContent('"topUpOrder":"o-1"');
   });
 
   it("Stripe return, credited, for Buy now's top-up: back to the item, with the order it credited", async () => {

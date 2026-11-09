@@ -19,8 +19,11 @@ const KEY = "dcl-shop-topup-return:v1";
 const BUY_NOW_KEY = "dcl-shop-buynow-return:v1";
 const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
-/** `orderId`: the pack order the top-up created, once known; a return bound to one resumes only after that order. */
-export type TopUpReturn = { path: string; at: number; attempt?: string; orderId?: string };
+/**
+ * `orderId`: the pack order the top-up created, once known; a return bound to one resumes only after that order.
+ * `confirmAgain`: the order was continued later, so the page it returns to waits for the buyer's press.
+ */
+export type TopUpReturn = { path: string; at: number; attempt?: string; orderId?: string; confirmAgain?: true };
 
 /** What Buy now's buyer confirmed before leaving for the pack checkout. */
 export type BuyNowReturn = {
@@ -92,17 +95,18 @@ export function takeTopUpReturn(now: number = Date.now(), orderId?: string): Top
 }
 
 /**
- * Continuing an unpaid pack order: keep the hand-off that order's own top-up left (Buy now's, bound to it), drop any
- * other, so crediting this order finishes only what it was bought for.
+ * Continuing an unpaid pack order: keep the hand-off that order's own top-up left, drop any other, so crediting this
+ * order finishes only what it was bought for. Buy now's record says what the buyer confirmed and is checked against
+ * it; the cart's says nothing of its basket, which may have changed since, so the buyer comes back to it and confirms
+ * again rather than paying whatever it holds by then.
  */
 export function keepHandoffsOf(orderId: string): void {
   const s = store();
   try {
     const back = read<TopUpReturn>(KEY);
-    if (!back || back.orderId !== orderId) {
-      s?.removeItem(KEY);
-      s?.removeItem(RESUME_CART_KEY);
-    }
+    if (!back || back.orderId !== orderId) s?.removeItem(KEY);
+    else if (!back.attempt) s?.setItem(KEY, JSON.stringify({ ...back, confirmAgain: true }));
+    s?.removeItem(RESUME_CART_KEY);
     if (read<BuyNowReturn>(BUY_NOW_KEY)?.orderId !== orderId) s?.removeItem(BUY_NOW_KEY);
   } catch {
     // Nothing was stored.

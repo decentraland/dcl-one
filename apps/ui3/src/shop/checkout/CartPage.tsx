@@ -356,7 +356,12 @@ function CartScreen() {
                   <TopUpPanel
                     shortCents={co.topUp.shortCents}
                     onBeforeLeave={co.stashForTopUp}
-                    onCheckout={(s) => (s.url ? services.openExternal(s.url) : navigate(`/shop/credits?order=${encodeURIComponent(s.orderId)}`))}
+                    onCheckout={(s) => {
+                      // The hand-off stashed above is this order's: another order's grant never pays this cart.
+                      co.bindTopUp(s.orderId);
+                      if (s.url) services.openExternal(s.url);
+                      else navigate(`/shop/credits?order=${encodeURIComponent(s.orderId)}`);
+                    }}
                     onCancel={() => {
                       setTopUpOpen(false);
                       co.dismissTopUp();

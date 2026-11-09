@@ -232,7 +232,8 @@ function RecentOrders({ address }: { address: string }) {
   async function resume(order: CreditOrder) {
     setResuming(order.id);
     setNotice(null);
-    // An older order finishes nothing a later purchase left behind, only what its own top-up left (Buy now's, bound to it).
+    // An older order finishes nothing a later purchase left behind, only what its own top-up left: Buy now's at the price
+    // the buyer confirmed, the cart's waiting for a press.
     keepHandoffsOf(order.id);
     const result = await resumeCreditOrder(order.id, client);
     setResuming(null);
@@ -324,7 +325,8 @@ function CreditsScreen() {
           // Only a hand-off this order's top-up left: the page it returns to learns which order it was.
           const back = takeTopUpReturn(Date.now(), orderId);
           if (back) {
-            navigate(back.path, { state: { resumeCheckout: true, topUpOrder: orderId, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
+            // A continued order comes back without paying: the buyer confirms again what is there now.
+            navigate(back.path, { state: { ...(back.confirmAgain ? {} : { resumeCheckout: true }), topUpOrder: orderId, ...(credits > 0 ? { creditsAdded: credits } : {}) } });
             return;
           }
           setPhase("success");

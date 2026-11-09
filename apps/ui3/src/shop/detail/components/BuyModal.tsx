@@ -23,7 +23,7 @@ import AuthorizeStep from "../../checkout/components/AuthorizeStep";
 import PaymentChoice from "../../checkout/components/PaymentChoice";
 import { friendlyError } from "../../checkout/lib/errors";
 import { EnsureQueryClient, ShopServicesProvider, useShopServices } from "../../checkout/services";
-import { useCheckout, type PurchasedLine } from "../../checkout/useCheckout";
+import { useCheckout, type Blocker, type BlockerKind, type PurchasedLine } from "../../checkout/useCheckout";
 import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { useCreditPacks } from "../../credits/hooks";
 import { isIapMode } from "../../credits/iap";
@@ -65,7 +65,8 @@ const TEXT = {
   stillConfirming: "Your purchase is still being confirmed. It can take a few minutes; nothing is charged twice.",
   checkAgain: "Check again",
   connectWallet: "Connect wallet",
-  switchAccount: "Switch account",
+  switchAccount: "Sign in with this wallet",
+  unbuyable: "This item can't be bought as it is right now.",
   successTitle: "Your purchase was successful!",
   successBody: "You can find your item in the My Items tab.",
   myItems: "My items",
@@ -74,10 +75,27 @@ const TEXT = {
   errorHeadline: "We couldn't complete your purchase this time.",
   errorBody: "Don't worry, your Credits are safe. Please try again in a moment.",
   outage: "Prices can't be checked right now. Try again in a moment.",
+  gone: "This item is no longer available.",
   tryAgain: "Try again",
   itemFallback: "Item",
   priceChanged: "The price for this item changed while you were here. Check the new amount and confirm to continue.",
 } as const;
+
+/**
+ * The checkout's reasons Buy waits that the dialog shows: the wallet's, with the way back the cart offers, and the
+ * item's, in the dialog's own words where the cart's point at controls it does not have ("the note on each item"). The
+ * rest have a screen or a notice of their own: the price being checked, a purchase running, the Credits falling short,
+ * a new price to accept, prices that cannot be checked.
+ */
+const HELD: Partial<Record<BlockerKind, { text?: string; action?: "signInWithWallet" | "connectWallet" }>> = {
+  accountMismatch: { action: "signInWithWallet" },
+  reconnect: { action: "connectWallet" },
+  quoteOutage: {},
+  offMarket: { text: TEXT.unbuyable },
+  itemsChanged: { text: TEXT.unbuyable },
+  refused: { text: TEXT.unbuyable },
+  methodNotAllowed: { text: TEXT.unbuyable },
+};
 
 /** One namespace per item in this tab's session storage, so each dialog's cart and checkout are its own. */
 function sessionStorageFor(namespace: string): () => CartStorage | null {
@@ -207,6 +225,8 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
   const confirmed = results.length > 0 && results.every((r) => r.status === "confirmed");
   // No price to charge: the whole check failed, or the Credits price is out and no MANA the buyer holds can pay instead.
   const outage = co.review.kind === "outage" || (credits?.state.kind === "unavailable" && !manaPays);
+  // Sold or withdrawn since the page showed it: nothing left to price, which the failure panel says.
+  const gone = !!cartLine && co.review.kind !== "checking" && co.reviewChanges.some((c) => c.lineId === cartLine.id && c.kind === "unavailable");
   // Loading is the first check only: a re-price after the buyer picks how to pay keeps the screen, with Buy held until
   // the new price is in (the checkout's own blocker).
   const [priced, setPriced] = useState(false);
@@ -224,7 +244,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
           ? "pending"
           : result?.status === "failed" && !result.topUp
             ? "error"
-            : outage
+            : outage || gone
               ? "error"
               : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
                 ? "loading"
@@ -316,9 +336,9 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
   }, [resume, phase, cartLine, co, priceChanged, onResumeUsed]);
 
   const selected = cartLine?.method ?? view?.primary ?? "credits";
-  // Why Buy waits, when it is not the price being checked or a purchase running: a wallet to reconnect, an account the
-  // wallet switched away from. The cart's own words, shown where the cart would show them.
-  const held = !co.canConfirm && !priceChanged && checked && !co.running ? (co.blockers.find((b) => !/^(Checking prices|A purchase from this cart|Purchase in progress|Your Credits balance)/.test(b)) ?? null) : null;
+  // Why Buy waits (HELD). Not while a new price is what Buy waits for: pressing it agrees to that price. A price that rose
+  // since a top-up is only a notice, so a wallet gone in the meantime is still said.
+  const held = !co.canConfirm && !reviewRepriced && checked && !co.running ? (co.blocks.find((b) => HELD[b.kind] !== undefined) ?? null) : null;
   const [useMixed, setUseMixed] = useState(false);
   const mixed = selected === "mana" && onBuyMixed ? (mana?.mixed ?? null) : null;
   const pay = () => {
@@ -380,10 +400,10 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
 
         {phase === "error" ? (
           <ErrorBody
-            message={outage ? TEXT.outage : result?.status === "failed" ? result.failure.message : null}
+            message={outage ? TEXT.outage : gone ? TEXT.gone : result?.status === "failed" ? result.failure.message : null}
             onClose={close}
             onRetry={() => {
-              if (outage) co.revalidate();
+              if (outage || gone) co.revalidate();
               else void co.discardCheckout();
             }}
           />
@@ -448,22 +468,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
               <div className={styles.warning} role="status" data-testid="buy-modal-held">
                 <WarningIcon />
                 <p className={styles.warningText}>
-                  {held}
-                  {co.wallet.accountMismatch && co.wallet.host?.onSwitchAccount ? (
-                    <>
-                      {" "}
-                      <button type="button" className={styles.warningLink} onClick={co.wallet.host.onSwitchAccount}>
-                        {TEXT.switchAccount}
-                      </button>
-                    </>
-                  ) : !co.wallet.host?.provider && co.wallet.host?.onConnectWallet ? (
-                    <>
-                      {" "}
-                      <button type="button" className={styles.warningLink} onClick={co.wallet.host.onConnectWallet}>
-                        {TEXT.connectWallet}
-                      </button>
-                    </>
-                  ) : null}
+                  <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
                 </p>
               </div>
             ) : null}
@@ -547,7 +552,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onBuy
 /** The item: its artwork on its rarity's tile with the category flap, its name, its creator and its price. */
 function AssetRow({ display, priceCredits }: { display: CartLineDisplay; priceCredits: number }) {
   const creator = useCreatorName(display.creator);
-  const tile: CSSProperties = { background: rarityCardPalette(display.rarity).background };
+  const tile = { "--buy-tile": rarityCardPalette(display.rarity).background } as CSSProperties;
   return (
     <div className={styles.asset} data-testid="buy-modal-asset">
       <div className={styles.thumb} style={tile}>
@@ -567,6 +572,31 @@ function AssetRow({ display, priceCredits }: { display: CartLineDisplay; priceCr
         </div>
       </div>
     </div>
+  );
+}
+
+/** Why Buy waits, and the way back when it is the wallet: sign in with the wallet's account, or connect it again. */
+function HeldText({ block, wallet, web3 }: { block: Blocker; wallet: ReturnType<typeof useCheckout>["wallet"]; web3: boolean }) {
+  const how = HELD[block.kind] ?? {};
+  const host = wallet.host;
+  const action =
+    how.action === "signInWithWallet" && host?.onSwitchAccount
+      ? { label: TEXT.switchAccount, run: host.onSwitchAccount }
+      : how.action === "connectWallet" && web3 && host?.onConnectWallet
+        ? { label: TEXT.connectWallet, run: host.onConnectWallet }
+        : null;
+  return (
+    <>
+      {how.text ?? block.text}
+      {action ? (
+        <>
+          {" "}
+          <button type="button" className={styles.warningLink} onClick={action.run}>
+            {action.label}
+          </button>
+        </>
+      ) : null}
+    </>
   );
 }
 

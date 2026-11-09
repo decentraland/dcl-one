@@ -16,7 +16,7 @@ import { assetKindOf } from "../discovery/cardPrice";
 import { useShopWallet, type ShopWalletState } from "../wallet/context";
 import { cancelUsdIntents, type UsdBalance } from "../credits/credits";
 import { useBalance, useManaBalance } from "../credits/hooks";
-import { stashTopUpReturn } from "../credits/returns";
+import { bindTopUpReturn, stashTopUpReturn } from "../credits/returns";
 import { settlementChainId } from "./chain/config";
 import { stashResumeIntent, takeResumeIntent } from "./lib/auth-return";
 import { invalidateAfterPurchase } from "./lib/after-purchase";
@@ -89,6 +89,8 @@ export type CheckoutView = {
   reviewChanges: LineChange[];
   quoteOutage: PaymentMethod[];
   blockers: string[];
+  /** The same reasons with their kind, for a screen that shows only those it can act on (Buy now's dialog). */
+  blocks: Blocker[];
   canConfirm: boolean;
   canResume: boolean;
   walletNeededKeys: string[];
@@ -106,9 +108,29 @@ export type CheckoutView = {
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
   stashForTopUp(): void;
+  /** The pack order that top-up created: only its grant brings the buyer back to this cart. */
+  bindTopUp(orderId: string): void;
 };
 
 const NO_OFFERS: OfferFetcher = async () => ({});
+
+/** Why the checkout cannot confirm yet: what kind of reason it is, and the cart's words for it. */
+export type BlockerKind =
+  | "signIn"
+  | "offMarket"
+  | "accountMismatch"
+  | "outage"
+  | "checking"
+  | "priceChanged"
+  | "itemsChanged"
+  | "quoteOutage"
+  | "methodNotAllowed"
+  | "refused"
+  | "creditsShort"
+  | "reconnect"
+  | "inFlight"
+  | "running";
+export type Blocker = { kind: BlockerKind; text: string };
 
 const IN_FLIGHT = "A purchase from this cart is still being confirmed.";
 export const OFF_MARKET = "Resales can't be bought in the Shop right now. Remove them to continue.";
@@ -242,35 +264,37 @@ export function useCheckout(
     [partition, session.kind],
   );
 
-  const blockers = useMemo(() => {
-    const out: string[] = [];
+  const blocks = useMemo(() => {
+    const out: Blocker[] = [];
+    const add = (kind: BlockerKind, text: string) => out.push({ kind, text });
     if (allLines.length === 0) return out;
-    if (session.kind === "signedOut") out.push("Sign in to check out.");
-    if (offMarket.length > 0) out.push(OFF_MARKET);
-    if (wallet.accountMismatch) out.push("Your wallet switched to another account. Sign in again with it, or switch your wallet back.");
-    if (review.kind === "outage") out.push("Prices can't be checked right now, so nothing can be bought. Try again in a moment.");
-    if (review.kind === "checking" || heldBack.length > offMarket.length) out.push(CHECKING);
-    if (reviewChanges.some((c) => c.kind === "priceChanged")) out.push("Prices changed since you added these items. Accept the new prices to continue.");
-    if (reviewChanges.some((c) => c.kind !== "priceChanged")) out.push("Some items changed since you added them. See the note on each item.");
-    for (const method of quoteOutage) out.push(outageText(method, null));
+    if (session.kind === "signedOut") add("signIn", "Sign in to check out.");
+    if (offMarket.length > 0) add("offMarket", OFF_MARKET);
+    if (wallet.accountMismatch) add("accountMismatch", "Your wallet switched to another account. Sign in again with it, or switch your wallet back.");
+    if (review.kind === "outage") add("outage", "Prices can't be checked right now, so nothing can be bought. Try again in a moment.");
+    if (review.kind === "checking" || heldBack.length > offMarket.length) add("checking", CHECKING);
+    if (reviewChanges.some((c) => c.kind === "priceChanged")) add("priceChanged", "Prices changed since you added these items. Accept the new prices to continue.");
+    if (reviewChanges.some((c) => c.kind !== "priceChanged")) add("itemsChanged", "Some items changed since you added them. See the note on each item.");
+    for (const method of quoteOutage) add("quoteOutage", outageText(method, null));
     const refused = partition?.refused.filter((r) => r.code !== "quoteUnavailable" && r.code !== "offerUnavailable") ?? [];
-    if (refused.some((r) => r.code === "methodNotAllowed" && r.allowed.length > 0)) out.push("Some items can't be paid the way they're set. Choose how to pay for them.");
-    if (refused.some((r) => r.code !== "methodNotAllowed" || r.allowed.length === 0)) out.push("Some items can't be bought as they are. See the note on each item.");
-    if (partition?.creditsShort) out.push(CREDITS_SHORT);
+    if (refused.some((r) => r.code === "methodNotAllowed" && r.allowed.length > 0)) add("methodNotAllowed", "Some items can't be paid the way they're set. Choose how to pay for them.");
+    if (refused.some((r) => r.code !== "methodNotAllowed" || r.allowed.length === 0)) add("refused", "Some items can't be bought as they are. See the note on each item.");
+    if (partition?.creditsShort) add("creditsShort", CREDITS_SHORT);
     if (session.kind !== "signedOut" && !provider) {
-      out.push(session.kind === "web3" ? "Connect your wallet again to sign the purchase." : "Your sign-in can't confirm purchases right now. Sign in again to continue.");
+      add("reconnect", session.kind === "web3" ? "Connect your wallet again to sign the purchase." : "Your sign-in can't confirm purchases right now. Sign in again to continue.");
     }
     if (inProgress(checkout) && checkout!.groups.some((g) => g.status === "submitted" || g.status === "pending")) {
-      out.push(IN_FLIGHT);
+      add("inFlight", IN_FLIGHT);
     }
-    if (running) out.push(RUNNING);
+    if (running) add("running", RUNNING);
     return out;
   }, [allLines.length, offMarket.length, heldBack.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
+  const blockers = useMemo(() => blocks.map((b) => b.text), [blocks]);
 
   const payableGroups = useMemo(() => (partition?.groups ?? []).filter((g) => !walletNeededKeys.includes(g.keyId)), [partition, walletNeededKeys]);
   const canConfirm = blockers.length === 0 && payableGroups.length > 0;
   const canResume =
-    review.kind === "current" && !wallet.accountMismatch && blockers.every((b) => b === IN_FLIGHT || b === RUNNING) && payableGroups.length > 0;
+    review.kind === "current" && !wallet.accountMismatch && blocks.every((b) => b.kind === "inFlight" || b.kind === "running") && payableGroups.length > 0;
 
   const railContext = useCallback((): RailContext | null => {
     if (!account || !provider) return null;
@@ -504,6 +528,7 @@ export function useCheckout(
     approval,
     running,
     blockers,
+    blocks,
     canConfirm,
     canResume,
     walletNeededKeys,
@@ -521,6 +546,7 @@ export function useCheckout(
     resume,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),
+    bindTopUp: bindTopUpReturn,
     stashForTopUp: () => {
       stashTopUpReturn("/shop/cart");
       try {

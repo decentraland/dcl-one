@@ -288,6 +288,35 @@ describe("Buy now's dialog", () => {
     expect(connects).toBe(1);
   });
 
+  it("back from a top-up at a higher price with the wallet gone: both the new price and why Buy waits are said", async () => {
+    renderBuy({ session: "web3", noSigner: true }, { resume: { credits: 10 } });
+    const dialog = await settledDialog();
+    expect(await within(dialog).findByTestId("price-changed")).toBeTruthy();
+    expect(within(dialog).getByTestId("buy-modal-held")).toHaveTextContent("Connect your wallet again to sign the purchase.");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+  });
+
+  it("an item sold since the page showed it: the failure panel says so, instead of loading for ever", async () => {
+    const { demo } = renderBuy({ session: "web2", offers: "sold" });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByTestId("buy-error")).toHaveTextContent("This item is no longer available.");
+    expect(within(dialog).queryByText(/note on each item/)).toBeNull();
+    // Checked again, it is still gone: still said, and nothing was charged.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(dialog).getByTestId("buy-error")).toHaveTextContent("This item is no longer available."));
+    expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("a wallet on another account: says so in the cart's words, with the cart's way back", async () => {
+    let switched = 0;
+    renderBuy({ session: "web3", walletAccount: "0x00000000000000000000000000000000000000b2" }, { tweak: (d) => (d.host.onSwitchAccount = () => void (switched += 1)) });
+    const dialog = await settledDialog();
+    const held = await within(dialog).findByTestId("buy-modal-held");
+    expect(held).toHaveTextContent("Your wallet switched to another account.");
+    fireEvent.click(within(held).getByRole("button", { name: "Sign in with this wallet" }));
+    expect(switched).toBe(1);
+  });
+
   it("back from a top-up for another line, it waits for a press", async () => {
     const { demo } = renderBuy({ session: "web2" }, { resume: { credits: 12, lineId: "another-line" } });
     await settledDialog();

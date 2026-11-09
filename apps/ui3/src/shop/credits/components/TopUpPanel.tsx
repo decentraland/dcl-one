@@ -14,7 +14,6 @@ import { useShopServices } from "../../checkout/services";
 import { useCreditPacks } from "../hooks";
 import { isIapMode } from "../iap";
 import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../payments";
-import { bindTopUpReturn } from "../returns";
 import CreditPackPicker from "./CreditPackPicker";
 import CreditRate from "./CreditRate";
 import "./topup.css";
@@ -54,8 +53,6 @@ export default function TopUpPanel({ shortCents, onCheckout, onBeforeLeave, onCa
     try {
       onBeforeLeave?.();
       const session = await createPackCheckout(selected, client);
-      // The hand-off the cart left is this order's: continuing it later still comes back to the cart, another order never does.
-      bindTopUpReturn(session.orderId);
       if (onCheckout) onCheckout(session);
       else if (session.url) openExternal(session.url);
     } catch (e) {

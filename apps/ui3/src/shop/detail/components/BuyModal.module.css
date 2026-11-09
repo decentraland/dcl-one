@@ -12,12 +12,13 @@
   --ckm-soft-white: var(--shop-soft-white, #fcfcfc);
   --ckm-gray4: var(--shop-gray-4, #cfcdd4);
   --ckm-glass: var(--shop-glass, rgba(255, 255, 255, 0.2));
-  --ckm-glass-strong: rgba(255, 255, 255, 0.3);
+  --ckm-glass-strong: var(--shop-glass-strong, rgba(255, 255, 255, 0.3));
   --ckm-overlay: var(--shop-overlay, rgba(0, 0, 0, 0.4));
   --ckm-modal-tile: var(--shop-modal-tile, #3f1365);
   --ckm-red: var(--shop-dcl-red, #ff2d55);
   --ckm-buy: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
-  --ckm-progress: linear-gradient(90deg, #ff2d55 0%, #ffbc5b 100%);
+  --ckm-white: var(--shop-white, #ffffff);
+  --ckm-progress: linear-gradient(90deg, var(--ckm-red) 0%, var(--shop-flare-amber, #ffbc5b) 100%);
   position: fixed;
   inset: 0;
   z-index: 10000;
@@ -104,7 +105,7 @@
   flex-shrink: 0;
   border: 0;
   background: transparent;
-  color: #ffffff;
+  color: var(--ckm-white);
   cursor: pointer;
   padding: 2px;
   line-height: 0;
@@ -153,11 +154,13 @@
   border-radius: 16px;
   overflow: hidden;
 }
+/* `--buy-tile`: the item's rarity colour, known only at runtime. */
 .thumb {
   position: relative;
   flex-shrink: 0;
   width: 176px;
   height: 179px;
+  background: var(--buy-tile, var(--ckm-modal-tile));
   border: 1.5px solid transparent;
   border-radius: 16px;
   display: grid;

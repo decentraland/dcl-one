@@ -223,8 +223,14 @@ describe("hand-offs and the stream", () => {
     it("the cart's top-up, bound to its order, comes back for that order (also when continued) and for no other", () => {
       stashTopUpReturn("/shop/cart", T0);
       bindTopUpReturn("order-c");
+      expect(takeTopUpReturn(T0, "order-c")).toEqual({ path: "/shop/cart", at: T0, orderId: "order-c" });
+      // Continued later, the basket may have changed: it comes back, waiting for the buyer's press, and nothing auto-pays it.
+      stashTopUpReturn("/shop/cart", T0);
+      sessionStorage.setItem(RESUME_CART_KEY, "1");
+      bindTopUpReturn("order-c");
       keepHandoffsOf("order-c");
-      expect(takeTopUpReturn(T0, "order-c")?.path).toBe("/shop/cart");
+      expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
+      expect(takeTopUpReturn(T0, "order-c")).toEqual({ path: "/shop/cart", at: T0, orderId: "order-c", confirmAgain: true });
       stashTopUpReturn("/shop/cart", T0);
       bindTopUpReturn("order-c");
       keepHandoffsOf("order-x");
