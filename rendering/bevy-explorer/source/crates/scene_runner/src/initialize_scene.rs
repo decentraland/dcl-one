@@ -1,4 +1,6 @@
-use std::{borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr};
+use std::{
+    borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr, time::Duration,
+};
 
 use analytics::segment_system::SegmentConfig;
 use bevy::{
@@ -12,11 +14,12 @@ use bevy::{
 };
 
 use common::{
+    partition::{scene_partition, Tier},
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
-        WorldHold,
+        IVec2Arg, PreviewMode, PrimaryCamera, SceneJsFile, SceneLoadDistance, SceneMeta,
+        SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -1573,11 +1576,22 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
+/// How many scenes beyond the player's own, portables and system scenes may be loading at once.
+/// The next one spawns when one of them is ready, so the scenes in range come in waves, nearest
+/// first, instead of all in the frame they enter range (unity-explorer's
+/// `ScenesRequestBatchSize`).
+pub const SCENES_PER_WAVE: usize = 6;
+
+/// A scene loading for longer than this stops holding a wave slot, so a stalled load cannot hold
+/// the scenes behind it back.
+pub const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
     focus: Query<&GlobalTransform, With<PrimaryUser>>,
+    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     scene_entities: Query<
         (
             Entity,
@@ -1585,6 +1599,7 @@ pub fn process_scene_lifecycle(
             Option<&RendererSceneContext>,
             Option<&SceneLoading>,
             Has<SuperUserScene>,
+            Option<&crate::load_timing::SpawnedAt>,
         ),
         Or<(With<SceneLoading>, With<RendererSceneContext>)>,
     >,
@@ -1697,7 +1712,10 @@ pub fn process_scene_lifecycle(
     // despawn any no-longer required entities
     let mut current_scene_loading = false;
     let mut startup_loading = false;
-    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super) in &scene_entities {
+    // the scenes holding a wave slot: loading, not the player's own, a portable or a system
+    // scene, and not stalled
+    let mut wave_loading = 0usize;
+    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super, spawned_at) in &scene_entities {
         match keep_entities.get(&entity) {
             Some((hash, _)) => {
                 existing_ids.insert(*hash);
@@ -1723,10 +1741,20 @@ pub fn process_scene_lifecycle(
             });
 
         // check if the current scene is still loading
-        if let Some((current_hash, _)) = current_scene.as_ref() {
-            if &scene_hash.0 == current_hash && still_loading {
-                current_scene_loading = true;
-            }
+        let is_current = current_scene
+            .as_ref()
+            .is_some_and(|(current_hash, _)| &scene_hash.0 == current_hash);
+        if is_current && still_loading {
+            current_scene_loading = true;
+        }
+
+        if still_loading
+            && !is_current
+            && !is_super
+            && !portables.contains_key(&scene_hash.0)
+            && spawned_at.is_none_or(|spawned| spawned.0.elapsed() < WAVE_SLOT_TIMEOUT)
+        {
+            wave_loading += 1;
         }
 
         // the startup set (system/super-user scenes and startup portables) is highest
@@ -1764,15 +1792,15 @@ pub fn process_scene_lifecycle(
     }
 
     let mut defer_to_current_scene = false;
-    if let Some(current_scene) = current_scene {
-        if required_scene_ids.contains_key(&current_scene)
+    if let Some(current_scene) = current_scene.as_ref() {
+        if required_scene_ids.contains_key(current_scene)
             && (!existing_ids.contains(&current_scene.0) || current_scene_loading)
         {
             defer_to_current_scene = true;
             // if the current scene is not even spawned, spawn only that scene
             // (plus super-user scenes and portables, which are exempt).
             required_scene_ids.retain(|scene, super_user| {
-                *super_user || scene == &current_scene || portable_ids.contains(scene)
+                *super_user || scene == current_scene || portable_ids.contains(scene)
             });
         }
     }
@@ -1784,11 +1812,34 @@ pub fn process_scene_lifecycle(
         return;
     }
 
-    // spawn any newly required scenes
-    for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids
+    // the newly required scenes: the player's own, portables and system scenes spawn at once;
+    // the rest fill the free wave slots nearest first, in front of the camera before behind
+    let (exempt, mut wave): (Vec<_>, Vec<_>) = required_scene_ids
         .iter()
         .filter(|((hash, _), _)| !existing_ids.contains(hash))
-    {
+        .partition(|(scene, super_user)| {
+            **super_user || current_scene.as_ref() == Some(*scene) || portable_ids.contains(*scene)
+        });
+    if !wave.is_empty() {
+        let mut parcels_by_hash: HashMap<&str, Vec<IVec2>> = HashMap::new();
+        for (parcel, _) in &pir {
+            if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
+                parcels_by_hash.entry(hash.as_str()).or_default().push(*parcel);
+            }
+        }
+        let camera = camera
+            .single()
+            .ok()
+            .map(|camera| (camera.translation(), camera.forward().as_vec3()));
+        wave.sort_by_cached_key(|((hash, _), _)| {
+            let parcels = parcels_by_hash.get(hash.as_str()).into_iter().flatten();
+            scene_partition(focus.translation(), camera, parcels.copied())
+                .load_priority(Tier::Scene)
+        });
+        wave.truncate(SCENES_PER_WAVE.saturating_sub(wave_loading));
+    }
+
+    for ((required_scene_hash, maybe_urn), super_user) in exempt.into_iter().chain(wave) {
         let entity = commands
             .spawn((
                 SceneHash(required_scene_hash.clone()),

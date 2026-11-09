@@ -123,6 +123,51 @@ fn live_scene_is_kept_through_the_unload_margin() {
 }
 
 #[test]
+fn scenes_in_range_spawn_in_waves_nearest_first() {
+    let mut world = lifecycle_world();
+    // nine scenes in a row east of the player, who stands on a parcel with no scene of its
+    // own, all inside the load distance
+    world.insert_resource(SceneLoadDistance {
+        load: 200.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    let mut pointers = ScenePointers::default();
+    for k in 1..=9 {
+        pointers.insert(
+            IVec2::new(k, 0),
+            PointerResult::Exists {
+                hash: format!("s{k}"),
+                urn: None,
+            },
+        );
+    }
+    world.insert_resource(pointers);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    let first_wave: Vec<_> = (1..=SCENES_PER_WAVE).map(|k| format!("s{k}")).collect();
+    assert_eq!(spawned_hashes(&world), first_wave);
+
+    // the wave is full while they load
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(spawned_hashes(&world).len(), SCENES_PER_WAVE);
+
+    // once they are done (a failed load is as done as it gets) the rest come in
+    let loading: Vec<Entity> = world
+        .resource::<LiveScenes>()
+        .scenes
+        .values()
+        .copied()
+        .collect();
+    for entity in loading {
+        world.entity_mut(entity).insert(SceneLoading::Failed);
+    }
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    let all: Vec<_> = (1..=9).map(|k| format!("s{k}")).collect();
+    assert_eq!(spawned_hashes(&world), all);
+}
+
+#[test]
 fn loading_current_scene_defers_other_scenes() {
     let mut world = lifecycle_world();
     spawn_current_scene(&mut world, SceneLoading::SceneEntity);
