@@ -95,6 +95,15 @@ impl StreamingProtocol {
         ensure!(!value.to_bytes().is_empty(), "protocol_whitelist is empty");
         Ok(Self(value.to_owned()))
     }
+
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.0
+            .to_str()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    }
 }
 
 /// Owning wrapper around an `AVDictionary`.

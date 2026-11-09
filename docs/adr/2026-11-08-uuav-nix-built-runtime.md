@@ -6,7 +6,7 @@
 
 ## Context
 
-The runtime set (`uuav-helper`, the FFmpeg 8.1 and libva libraries it links,
+The runtime set (`uuav-helper`, the FFmpeg and libva libraries it links,
 license texts) was committed in Git LFS under `library/uuav/dist/<target>/`
 and pinned by a hash lock: about 190 MB over three targets, of which the
 helper built from this tree is under 2 MB and the rest is FFmpeg. Keeping it
@@ -16,17 +16,25 @@ helper change was a rebuild-and-relock round trip across three runners.
 ## Decision
 
 - `infra/packages/uuav.nix` builds the set from pinned inputs: FFmpeg at the
-  `n8.1` commit with a statically linked mbedTLS 3.6.7 and libxml2 (both from
-  nixpkgs), libva (`libva-minimal`) on Linux, VideoToolbox on macOS; the
-  helper with crane on the compiler `library/uuav/rust-toolchain.toml` names;
-  `uuav-dist` assembles the helper, the major-version libraries and the
-  license texts. `uuav-dist-windows` cross-builds the helper with mingw on
-  Linux and takes the FFmpeg DLLs from the hash-pinned BtbN LGPL shared build
-  (`tooling/uuav/ffmpeg-windows.json`).
+  `n9.0.2` commit, configured from `--disable-everything` up with the
+  decoders, demuxers, parsers, protocols, bitstream filters and hardware
+  decoders scene media needs, with libdav1d (static, BSD-2-Clause) as the
+  AV1 software decoder, and without libavfilter, libavdevice, libxml2 or a
+  TLS backend ([the helper serves http(s)](2026-11-08-uuav-http-in-the-helper.md)),
+  libva (`libva-minimal`) on Linux, VideoToolbox on macOS; the helper with
+  crane on the compiler
+  `library/uuav/rust-toolchain.toml` names, linking libavcodec, libavformat,
+  libavutil, libswresample and libswscale only; `uuav-dist` assembles the
+  helper, the major-version libraries and the license texts.
+  `uuav-dist-windows` cross-builds the same FFmpeg configuration for mingw
+  (D3D11VA for hardware decode) and the helper on Linux. The three sets are
+  LGPL-2.1.
 - Nothing built is committed: `library/uuav/dist/` is ignored, the lock and
   `tooling/native-lock/` are gone. The pins are the inputs: `flake.lock`,
-  the FFmpeg source hash, nixpkgs' mbedTLS, libxml2 and libva, the
-  workspace `Cargo.lock`, the BtbN asset digest.
+  the FFmpeg source hash, patch and component lists, nixpkgs' libva,
+  the workspace `Cargo.lock`; the BtbN asset digest
+  (`tooling/uuav/ffmpeg-windows.json`) pins only the native Windows cargo
+  path.
 - Linux and macOS developers run `nix build .#uuav-dist`; `nix build
   .#uuav-ffmpeg -o library/uuav/.third_party/ffmpeg` gives cargo its FFmpeg
   prefix for iteration with `build.sh`. Windows keeps
@@ -49,5 +57,19 @@ helper change was a rebuild-and-relock round trip across three runners.
 - Helper and FFmpeg changes are ordinary pull requests; CI builds what the
   cache lacks and nothing is relocked by hand.
 - The LFS objects stay in history; new checkouts fetch none of them.
-- Every input bump (nixpkgs, FFmpeg commit, BtbN asset) is a visible diff in
-  `flake.lock`, `infra/packages/uuav.nix` or `tooling/uuav/ffmpeg-windows.json`.
+- Every input bump (nixpkgs, FFmpeg commit or component list, BtbN asset
+  for the native Windows path) is a visible diff in `flake.lock`,
+  `infra/packages/uuav.nix` or `tooling/uuav/ffmpeg-windows.json`.
+- The set carries what scene media uses and nothing else: a format outside
+  the lists fails to open instead of decoding, and adding one is a list
+  entry whose CI build is the proof.
+- `dash` (`.mpd`) streams are not served: that demuxer needs libxml2, which
+  is not built; scene media is HLS and progressive files. Adding it is the
+  library plus a list entry.
+- AV1 decodes in software through libdav1d where the GPU has no AV1
+  decoder: FFmpeg's `av1` decoder carries hwaccel hooks only. The hardware
+  lookup picks the decoder by hwaccel rather than registry order, so a
+  capable GPU still gets the native decoder's D3D11VA, VAAPI or
+  VideoToolbox path.
+- FFmpeg's `http` protocol stays linked as the `rtsp` demuxer's dependency;
+  no url reaches it ([the helper serves http(s)](2026-11-08-uuav-http-in-the-helper.md)).

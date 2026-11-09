@@ -6,8 +6,8 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "uuav" / "stage-dist.py"
-COMPLETE = ("uuav-helper", "libavcodec.so.62", "libavformat.so.62", "libavutil.so.60",
-            "libswresample.so.6", "libswscale.so.9", "LICENSE-ffmpeg.txt")
+COMPLETE = ("uuav-helper", "libavcodec.so.63", "libavformat.so.63", "libavutil.so.61",
+            "libswresample.so.7", "libswscale.so.10", "LICENSE-ffmpeg.txt")
 
 
 def load():
@@ -40,13 +40,13 @@ class StageDistTests(unittest.TestCase):
             self.assertTrue(os.access(os.path.join(out, "uuav-helper"), os.X_OK))
 
     def test_windows_set_names(self):
-        self.write_set(("uuav-helper.exe", "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll",
-                        "swresample-6.dll", "swscale-9.dll", "LICENSE-ffmpeg.txt"))
+        self.write_set(("uuav-helper.exe", "avcodec-63.dll", "avformat-63.dll", "avutil-61.dll",
+                        "swresample-7.dll", "swscale-10.dll", "LICENSE-ffmpeg.txt"))
         with tempfile.TemporaryDirectory() as out:
             self.assertEqual(self.module.stage(self.source.name, out), [])
 
     def test_refuses_an_incomplete_set(self):
-        self.write_set(("uuav-helper", "libavcodec.so.62"))
+        self.write_set(("uuav-helper", "libavcodec.so.63"))
         with tempfile.TemporaryDirectory() as out:
             problems = self.module.stage(self.source.name, out)
             self.assertEqual(len(problems), 5)

@@ -65,6 +65,7 @@ class UuavWorkflowTest(unittest.TestCase):
         self.assertIn('name: uuav-windows-x86_64\n', windows)
         self.assertIn('--example smoke --target x86_64-pc-windows-gnu', windows)
         self.assertIn('UUAV_FORCE_SW_DECODE=1 timeout 300 ./smoke.exe', windows)
+        self.assertIn('UUAV_SMOKE_NO_AUDIO=1 timeout 300 ./smoke.exe "$AV1_SAMPLE"', windows)
         self.assertNotIn('build.sh', windows)
         self.assertEqual(jobs()['nix'].count('name: uuav-windows-x86_64\n'), 1)
 
@@ -72,7 +73,7 @@ class UuavWorkflowTest(unittest.TestCase):
         pin = json.loads((ROOT / 'tooling/uuav/ffmpeg-windows.json').read_text())
         year, month, day = map(int, re.fullmatch(r'autobuild-(\d{4})-(\d{2})-(\d{2})-\d{2}-\d{2}', pin['release_tag']).groups())
         self.assertEqual(day, calendar.monthrange(year, month)[1])
-        self.assertRegex(pin['asset'], r'^ffmpeg-n8\.1(\.\d+)?(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-8\.1\.zip$')
+        self.assertRegex(pin['asset'], r'^ffmpeg-n9\.0(\.\d+)?(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-9\.0\.zip$')
         self.assertEqual(pin['url'], f"{pin['repo']}/releases/download/{pin['release_tag']}/{pin['asset']}")
         self.assertRegex(pin['sha256'], r'^[0-9a-f]{64}$')
 

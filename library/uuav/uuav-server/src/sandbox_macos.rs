@@ -3,7 +3,7 @@
 //! untrusted byte arrives, the helper drops to a deny-by-default profile
 //! (helper.sb, embedded at compile time) that leaves only: system library
 //! reads, Metal/IOSurface/VideoToolbox user clients, outbound sockets plus
-//! the DNS and trustd brokers, and mach-lookup of exactly the one
+//! the DNS broker, and mach-lookup of exactly the one
 //! per-session bootstrap service the client registered. No process-exec,
 //! no process-fork, no persistent file writes: a decoder exploit cannot
 //! launch a payload or persist files on disk.
@@ -53,15 +53,12 @@ pub fn apply(service: &str, allow_media_file_read: bool) -> Result<()> {
         .to_str()
         .context("plugin directory path is not valid UTF-8")?
         .to_owned();
-    let home = std::env::var("HOME").context("HOME is not set")?;
 
     let storage = [
         CString::new("SERVICE_NAME"),
         CString::new(service),
         CString::new("PLUGIN_DIR"),
         CString::new(plugin_dir),
-        CString::new("HOME"),
-        CString::new(home),
         CString::new("ALLOW_MEDIA_FILE_READ"),
         CString::new(if allow_media_file_read { "1" } else { "0" }),
     ];

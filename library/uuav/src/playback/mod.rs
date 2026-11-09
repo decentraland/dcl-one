@@ -11,6 +11,7 @@ mod audio_playback;
 mod audio_ring;
 mod clock;
 mod control;
+mod http;
 mod input;
 mod telemetry;
 mod transport;

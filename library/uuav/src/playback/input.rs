@@ -5,6 +5,7 @@ use std::os::raw::{c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::http::IoHooks;
 use super::util::ReadOnlyCancelToken;
 use crate::ffutil::{AvDict, Stream, StreamingProtocol, check};
 
@@ -20,6 +21,11 @@ unsafe extern "C" fn interrupt_cb(opaque: *mut c_void) -> c_int {
 /// Owning wrapper around the demuxer of one opened url.
 pub(super) struct Input {
     fmt: *mut ff::AVFormatContext,
+    /// The top-level stream when it is http(s), opened by this crate's own
+    /// client; FFmpeg treats it as caller-owned, so it is closed here.
+    pb: *mut ff::AVIOContext,
+    /// The context's `io_open`/`io_close2` state; outlives the context.
+    hooks: *mut IoHooks,
     /// Never read: keeps the flag the demuxer's interrupt callback points
     /// at alive for as long as the context holds the raw pointer.
     _cancel: ReadOnlyCancelToken,
@@ -29,6 +35,7 @@ impl Input {
     /// Opens the media and probes its streams. Demuxer I/O is aborted
     /// through `cancel` (see [`interrupt_cb`]); `protocol_whitelist` bounds the
     /// protocols the demuxer and any nested (HLS segment) contexts may use.
+    /// `http(s)` urls, top-level or nested, are served by [`IoHooks`].
     pub(super) fn open(
         cancel_token: ReadOnlyCancelToken,
         url: &str,
@@ -46,6 +53,8 @@ impl Input {
         // and the heuristic hardens an in-process parser - this one already
         // runs sandboxed on the assumption it will be compromised.
         opts.set(c"extension_picky", c"0");
+        // The HLS demuxer's keep-alive path assumes FFmpeg's own http contexts.
+        opts.set(c"http_persistent", c"0");
 
         let input = unsafe {
             let mut fmt = ff::avformat_alloc_context();
@@ -56,15 +65,38 @@ impl Input {
                 callback: Some(interrupt_cb),
                 opaque: cancel_token.as_flag_ptr().cast_mut().cast::<c_void>(),
             };
+            let hooks = match IoHooks::install(fmt, cancel_token.clone(), protocol_whitelist) {
+                Ok(hooks) => hooks,
+                Err(error) => {
+                    ff::avformat_free_context(fmt);
+                    return Err(error);
+                }
+            };
+            let pb = match (*hooks).open_top_level(url) {
+                Ok(pb) => pb.unwrap_or(ptr::null_mut()),
+                Err(error) => {
+                    ff::avformat_free_context(fmt);
+                    IoHooks::release(hooks);
+                    return Err(error);
+                }
+            };
+            (*fmt).pb = pb;
 
-            // avformat_open_input frees the context on failure
-            check(
+            // avformat_open_input frees the context on failure; a caller-owned
+            // pb it leaves alone
+            if let Err(error) = check(
                 "avformat_open_input",
                 ff::avformat_open_input(&mut fmt, url_c.as_ptr(), ptr::null(), opts.as_mut_ptr()),
-            )?;
+            ) {
+                (*hooks).close(pb);
+                IoHooks::release(hooks);
+                return Err(error);
+            }
 
             Self {
                 fmt,
+                pb,
+                hooks,
                 _cancel: cancel_token,
             }
         };
@@ -120,7 +152,14 @@ impl Input {
 
 impl Drop for Input {
     fn drop(&mut self) {
-        unsafe { ff::avformat_close_input(&mut self.fmt) };
+        unsafe {
+            // closes what the demuxer opened through the hooks, so they go last
+            ff::avformat_close_input(&mut self.fmt);
+            if !self.hooks.is_null() {
+                (*self.hooks).close(self.pb);
+                IoHooks::release(self.hooks);
+            }
+        }
     }
 }
 
@@ -182,6 +221,8 @@ mod tests {
         anyhow::ensure!(!fmt.is_null(), "avformat_alloc_context failed");
         let input = Input {
             fmt,
+            pb: ptr::null_mut(),
+            hooks: ptr::null_mut(),
             _cancel: cancel(),
         };
 
@@ -232,5 +273,65 @@ mod tests {
         // The hls demuxer is a build-configuration dependency with no other
         // assertion — losing it would only surface as silent playback failures.
         assert!(!unsafe { ff::av_find_input_format(c"hls".as_ptr()) }.is_null());
+    }
+
+    /// FFmpeg's registered input protocols.
+    fn protocols() -> Result<Vec<String>> {
+        let mut protocols = Vec::new();
+        let mut opaque = ptr::null_mut();
+        loop {
+            let name = unsafe { ff::avio_enum_protocols(&mut opaque, 0) };
+            if name.is_null() {
+                break;
+            }
+            protocols.push(
+                unsafe { std::ffi::CStr::from_ptr(name) }
+                    .to_str()?
+                    .to_owned(),
+            );
+        }
+        Ok(protocols)
+    }
+
+    #[test]
+    fn rtsp_demuxers_and_their_protocols_are_linked() -> Result<()> {
+        // Live streams arrive over RTSP (an rtsp or sdp url, media over
+        // rtp/udp/tcp): the trimmed FFmpeg must keep those components.
+        for demuxer in [c"rtsp", c"sdp"] {
+            assert!(
+                !unsafe { ff::av_find_input_format(demuxer.as_ptr()) }.is_null(),
+                "demuxer {demuxer:?} missing"
+            );
+        }
+        let protocols = protocols()?;
+        for protocol in ["tcp", "udp", "rtp"] {
+            assert!(
+                protocols.iter().any(|p| p == protocol),
+                "protocol {protocol} missing from {protocols:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_trimmed_build_has_no_tls_or_crypto_protocol() -> Result<()> {
+        // The helper's own client serves http(s); FFmpeg carries no TLS
+        // backend and nothing that would verify a certificate. `http`
+        // itself stays: the rtsp demuxer selects it for HTTP tunnelling.
+        let configuration =
+            unsafe { std::ffi::CStr::from_ptr(ff::avformat_configuration()) }.to_str()?;
+        if !configuration.contains("--disable-everything") {
+            eprintln!("not the trimmed FFmpeg (native Windows prefix); nothing to pin");
+            return Ok(());
+        }
+        let protocols = protocols()?;
+        for protocol in ["https", "tls", "crypto", "httpproxy"] {
+            assert!(
+                !protocols.iter().any(|p| p == protocol),
+                "protocol {protocol} linked: {protocols:?}"
+            );
+        }
+        assert!(protocols.iter().any(|p| p == "http"), "{protocols:?}");
+        Ok(())
     }
 }

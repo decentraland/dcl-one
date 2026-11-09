@@ -25,6 +25,8 @@ name: UUAV
       - .github/workflows/uuav.yml
 permissions:
   contents: read
+env:
+  AV1_SAMPLE: https://test-videos.co.uk/vids/bigbuckbunny/mp4/av1/360/Big_Buck_Bunny_360_10s_1MB.mp4
 concurrency:
   group: uuav-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -70,6 +72,7 @@ jobs:
         run: |
           cp .cache/nix-roots/smoke/bin/smoke "$RUNNER_TEMP/dist/"
           timeout 300 "$RUNNER_TEMP/dist/smoke"
+          UUAV_SMOKE_NO_AUDIO=1 timeout 300 "$RUNNER_TEMP/dist/smoke" "$AV1_SAMPLE"
           rm "$RUNNER_TEMP/dist/smoke"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -127,3 +130,4 @@ jobs:
           cargo build --release -p uuav-client --example smoke --target x86_64-pc-windows-gnu
           cp .target/x86_64-pc-windows-gnu/release/examples/smoke.exe "$RUNNER_TEMP/dist/"
           cd "$RUNNER_TEMP/dist" && UUAV_FORCE_SW_DECODE=1 timeout 300 ./smoke.exe
+          cd "$RUNNER_TEMP/dist" && UUAV_FORCE_SW_DECODE=1 UUAV_SMOKE_NO_AUDIO=1 timeout 300 ./smoke.exe "$AV1_SAMPLE"

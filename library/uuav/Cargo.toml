@@ -18,16 +18,24 @@ arc-swap = "1.7.1"
 crossbeam-channel = "0.5.16"
 dashmap = "6.1.0"
 
-# NOTE: ffmpeg-next 8.1.0 does not compile against the bundled FFmpeg 8.1
-# headers (deprecated AVCodec fields removed, new side-data enum variants),
-# so the player is built directly on the sys bindings.
-ffmpeg-sys-next = "8.1.0"
+ffmpeg-sys-next = { version = "9.0.1", default-features = false, features = ["avcodec", "avformat", "swresample", "swscale"] }
+
+# http(s) input: FFmpeg has no https/tls protocol, see src/playback/http.rs
+ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
+webpki-root-certs = "1.0.11"
+# AES-128 HLS segments
+aes = "0.8.4"
 
 libc = "0.2"
 parking_lot = "0.12"
 ringbuf = "0.5"
 
+[target.'cfg(not(windows))'.dependencies]
+rustls-native-certs = "0.8.5"
+
 [target.'cfg(windows)'.dependencies]
+# the root store, read-only (rustls-native-certs opens it for writing)
+schannel = "0.1.30"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",

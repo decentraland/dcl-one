@@ -2,6 +2,7 @@
 //! thread: shutdown and seek.
 
 use arc_swap::ArcSwapOption;
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -10,28 +11,56 @@ use std::time::Duration;
 /// space or the next command.
 pub(super) const PLAYBACK_POLL: Duration = Duration::from_millis(4);
 
+struct CancelState {
+    flag: AtomicBool,
+    /// Run once, on the cancelling thread, right after the flag is set:
+    /// how blocking I/O outside FFmpeg's interrupt callback gets unblocked.
+    hooks: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+}
+
 /// Shutdown command: makes the playback thread exit and aborts blocking
 /// demuxer I/O. Cloning shares the token.
 #[derive(Clone)]
-pub(crate) struct CancelToken(Arc<AtomicBool>);
+pub(crate) struct CancelToken(Arc<CancelState>);
 
 impl CancelToken {
     pub(crate) fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self(Arc::new(CancelState {
+            flag: AtomicBool::new(false),
+            hooks: Mutex::new(Vec::new()),
+        }))
     }
 
     pub(crate) fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        let hooks = {
+            let mut hooks = self.0.hooks.lock();
+            self.0.flag.store(true, Ordering::Release);
+            std::mem::take(&mut *hooks)
+        };
+        for hook in hooks {
+            hook();
+        }
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.flag.load(Ordering::Acquire)
     }
 
     /// Address of the flag for the demuxer's C interrupt callback; valid
     /// for as long as any clone of the token is alive.
     fn as_flag_ptr(&self) -> *const AtomicBool {
-        Arc::as_ptr(&self.0)
+        &raw const self.0.flag
+    }
+
+    /// Runs `hook` when the token is cancelled; immediately if it already is.
+    fn on_cancel(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut hooks = self.0.hooks.lock();
+        if self.is_cancelled() {
+            drop(hooks);
+            hook();
+        } else {
+            hooks.push(Box::new(hook));
+        }
     }
 }
 
@@ -47,6 +76,11 @@ impl ReadOnlyCancelToken {
     /// for as long as any clone of the token is alive.
     pub(crate) fn as_flag_ptr(&self) -> *const AtomicBool {
         self.0.as_flag_ptr()
+    }
+
+    /// Runs `hook` when the token is cancelled; immediately if it already is.
+    pub(crate) fn on_cancel(&self, hook: impl FnOnce() + Send + 'static) {
+        self.0.on_cancel(hook);
     }
 }
 
@@ -135,5 +169,38 @@ mod tests {
         slot.request(5.0);
         slot.clear();
         assert_eq!(slot.take(), None);
+    }
+
+    #[test]
+    fn cancel_runs_hooks_once_and_late_hooks_immediately() {
+        let token = CancelToken::new();
+        let reader: ReadOnlyCancelToken = token.clone().into();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = || {
+            let runs = Arc::clone(&runs);
+            move || {
+                runs.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+        reader.on_cancel(counted());
+        assert_eq!(runs.load(Ordering::SeqCst), 0, "nothing runs before cancel");
+
+        token.cancel();
+        assert!(reader.is_cancelled());
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+
+        token.cancel();
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            1,
+            "a second cancel reruns nothing"
+        );
+
+        reader.on_cancel(counted());
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            2,
+            "a hook registered after cancel runs at once"
+        );
     }
 }
