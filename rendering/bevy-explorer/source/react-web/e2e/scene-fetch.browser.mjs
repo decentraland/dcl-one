@@ -65,13 +65,14 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     if (path.endsWith('/transport.js')) return res.end(`(${observeTransport})();`)
     if (path.endsWith('/sandbox_worker.bundle.js')) return res.end(`
       import '/transport.js'
-      import { scrubSceneGlobal, isSceneGlobal } from '/engine/sandbox_worker.js'
+      import '/engine/sandbox_worker.js'
+      import { scrubSceneGlobal, isSceneGlobal } from '/engine/scene_global.js'
       self.scrubSceneGlobal = scrubSceneGlobal
       self.isSceneGlobal = isSceneGlobal
       self.onmessage = ({data}) => postMessage({type:'INIT_COMPLETE', killToken:data.payload.killToken})
     `)
     if (path.endsWith('/dcl_scene_wasm.js')) return res.end('export default () => {}')
-    const modules = ['/engine/sandbox_host.js', '/engine/sandbox_worker.js', '/engine/relay_copy.js', '/engine/scene_fetch.js']
+    const modules = ['/engine/sandbox_host.js', '/engine/sandbox_worker.js', '/engine/relay_copy.js', '/engine/scene_fetch.js', '/engine/scene_global.js']
     if (!modules.includes(path)) return res.writeHead(404).end()
     res.end(await readFile(new URL(path.slice('/engine/'.length), engine)))
   })
