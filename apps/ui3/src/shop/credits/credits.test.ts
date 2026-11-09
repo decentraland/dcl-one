@@ -135,6 +135,12 @@ describe("packs", () => {
     expect(order.body).toMatchObject({ packId: "a", source: "website" });
   });
 
+  it("the client reads the node's own 'order not found' string", () => {
+    // This file's fixtures are built from the constant, so only this test pins its value. The node's side is pinned by
+    // orders.rs's `order_not_found_wire_body`: changing either string without the other fails a test.
+    expect(ORDER_NOT_FOUND).toBe("order not found");
+  });
+
   it("the grant poll: a 404 right after the return is lag, money in past the deadline is 'pending', unpaid stays 'initiated'", async () => {
     let calls = 0;
     const lagging = createFakeShop({
