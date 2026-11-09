@@ -150,9 +150,10 @@ impl ApiError {
     }
 }
 
-/// A permission refusal keeps its own status: 403 was the old route's 401
-/// "not authorized to perform operations on this world" (the route maps
-/// that arm itself), 503 for "could not tell" and "not configured".
+/// A permission refusal keeps its own status: 401 "not authorized to perform
+/// operations on this world", 401 "Failed to verify world permissions" for
+/// "could not tell" (upstream's answer when the lookup throws) and 503 for
+/// "not configured".
 impl From<AuthorityNotEstablished> for ApiError {
     fn from(why: AuthorityNotEstablished) -> Self {
         match &why {
@@ -160,9 +161,9 @@ impl From<AuthorityNotEstablished> for ApiError {
                 store,
                 reason_for_operators,
             } => {
-                // Upstream answers 401 here; dcl-one fails closed with a retryable 503 on purpose.
+                // Upstream's 401 when the permission lookup throws.
                 tracing::error!(store, reason = %reason_for_operators, "world storage: authority undetermined");
-                ApiError::Unavailable(
+                ApiError::NotAuthorized(
                     "Unauthorized: Failed to verify world permissions".to_string(),
                 )
             }
@@ -332,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_keeps_the_old_401_and_a_fault_is_503() {
+    fn a_refusal_and_an_undetermined_lookup_are_401_and_a_missing_credential_503() {
         let refused: ApiError = AuthorityNotEstablished::RefusedLacksAuthority {
             detail: "no".into(),
         }
@@ -341,7 +342,11 @@ mod tests {
         let down: ApiError =
             AuthorityNotEstablished::store_unavailable("worlds.worlds", &sqlx::Error::PoolTimedOut)
                 .into();
-        assert_eq!(down.status(), 503);
+        assert_eq!(down.status(), 401);
+        assert_eq!(
+            down.to_string(),
+            "Unauthorized: Failed to verify world permissions"
+        );
         let unset: ApiError = AuthorityNotEstablished::CredentialNotConfigured {
             environment_variable: "ENCRYPTION_KEY",
         }

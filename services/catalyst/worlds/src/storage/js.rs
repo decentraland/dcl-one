@@ -1,0 +1,799 @@
+//! The JavaScript semantics the storage routes' wire contract inherits from
+//! world-storage-service (Node.js): `JSON.parse` key order, `JSON.stringify`,
+//! `Number(string)`, `String.prototype.trim`, truthiness, `Date.parse` and
+//! `Buffer.from(_, 'base64')`. Local time is read as UTC, as the upstream
+//! service runs.
+
+use std::fmt;
+
+use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+
+/// A `JSON.parse` result: numbers are doubles and an object keeps its own
+/// keys in JavaScript order (array-index keys ascending, then insertion
+/// order; a repeated key keeps its first position and its last value).
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<JsValue>),
+    Object(JsObject),
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct JsObject(Vec<(String, JsValue)>);
+
+impl JsObject {
+    pub fn get(&self, key: &str) -> Option<&JsValue> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(k, _)| k.as_str())
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &JsValue)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v))
+    }
+}
+
+/// A canonical array index (`"0"`, `"17"`, below 2^32 - 1) sorts first.
+fn array_index(key: &str) -> Option<u32> {
+    if key.is_empty() || (key.len() > 1 && key.starts_with('0')) {
+        return None;
+    }
+    if !key.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    key.parse::<u32>().ok().filter(|&i| i != u32::MAX)
+}
+
+impl<'de> Deserialize<'de> for JsValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct JsVisitor;
+
+        impl<'de> Visitor<'de> for JsVisitor {
+            type Value = JsValue;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("JSON")
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<JsValue, E> {
+                Ok(JsValue::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<JsValue, E> {
+                Ok(JsValue::Number(v as f64))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<JsValue, E> {
+                Ok(JsValue::Number(v as f64))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<JsValue, E> {
+                Ok(JsValue::Number(v))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<JsValue, E> {
+                Ok(JsValue::String(v.to_string()))
+            }
+            fn visit_string<E>(self, v: String) -> Result<JsValue, E> {
+                Ok(JsValue::String(v))
+            }
+            fn visit_unit<E>(self) -> Result<JsValue, E> {
+                Ok(JsValue::Null)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<JsValue, A::Error> {
+                let mut out = Vec::new();
+                while let Some(v) = seq.next_element()? {
+                    out.push(v);
+                }
+                Ok(JsValue::Array(out))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<JsValue, A::Error> {
+                let mut entries: Vec<(String, JsValue)> = Vec::new();
+                while let Some((k, v)) = map.next_entry::<String, JsValue>()? {
+                    match entries.iter_mut().find(|(existing, _)| *existing == k) {
+                        Some(slot) => slot.1 = v,
+                        None => entries.push((k, v)),
+                    }
+                }
+                entries.sort_by_key(|(k, _)| match array_index(k) {
+                    Some(i) => (0, i),
+                    None => (1, 0),
+                });
+                Ok(JsValue::Object(JsObject(entries)))
+            }
+        }
+
+        deserializer.deserialize_any(JsVisitor)
+    }
+}
+
+impl JsValue {
+    /// `JSON.parse`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        serde_json::from_str(raw).ok()
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_object(&self) -> Option<&JsObject> {
+        match self {
+            Self::Object(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    pub fn truthy(&self) -> bool {
+        match self {
+            Self::Null => false,
+            Self::Bool(b) => *b,
+            Self::Number(n) => *n != 0.0 && !n.is_nan(),
+            Self::String(s) => !s.is_empty(),
+            Self::Array(_) | Self::Object(_) => true,
+        }
+    }
+
+    /// `String(value)`.
+    pub fn to_js_string(&self) -> String {
+        match self {
+            Self::Null => "null".to_string(),
+            Self::Bool(b) => b.to_string(),
+            Self::Number(n) => number_to_string(*n),
+            Self::String(s) => s.clone(),
+            Self::Array(items) => items
+                .iter()
+                .map(|v| match v {
+                    Self::Null => String::new(),
+                    other => other.to_js_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+            Self::Object(_) => "[object Object]".to_string(),
+        }
+    }
+
+    /// `JSON.stringify(value)`.
+    pub fn stringify(&self) -> String {
+        let mut out = String::new();
+        self.write_json(&mut out);
+        out
+    }
+
+    fn write_json(&self, out: &mut String) {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Self::Number(n) if n.is_finite() => out.push_str(&number_to_string(*n)),
+            Self::Number(_) => out.push_str("null"),
+            Self::String(s) => out.push_str(&serde_json::to_string(s).unwrap_or_default()),
+            Self::Array(items) => {
+                out.push('[');
+                for (i, v) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    v.write_json(out);
+                }
+                out.push(']');
+            }
+            Self::Object(o) => {
+                out.push('{');
+                for (i, (k, v)) in o.entries().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&serde_json::to_string(k).unwrap_or_default());
+                    out.push(':');
+                    v.write_json(out);
+                }
+                out.push('}');
+            }
+        }
+    }
+}
+
+/// `Number.prototype.toString()`.
+pub fn number_to_string(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    let sign = if n < 0.0 { "-" } else { "" };
+    // Rust's `{:e}` is the shortest round-trip digits, as ECMAScript requires.
+    let sci = format!("{:e}", n.abs());
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} has an exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32;
+    let point = exp.parse::<i32>().expect("{:e} exponent") + 1;
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let e = point - 1;
+        let sign_e = if e < 0 { '-' } else { '+' };
+        if k == 1 {
+            format!("{digits}e{sign_e}{}", e.abs())
+        } else {
+            format!("{}.{}e{sign_e}{}", &digits[..1], &digits[1..], e.abs())
+        }
+    };
+    format!("{sign}{body}")
+}
+
+/// ECMAScript WhiteSpace and LineTerminator (what `trim` and `Number` strip).
+pub fn is_js_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}' | '\u{A}' | '\u{B}' | '\u{C}' | '\u{D}' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
+/// `String.prototype.trim`.
+pub fn js_trim(s: &str) -> &str {
+    s.trim_matches(is_js_whitespace)
+}
+
+/// `Number(string)`: NaN for anything that is not a numeric literal.
+pub fn number_from_str(raw: &str) -> f64 {
+    let s = js_trim(raw);
+    if s.is_empty() {
+        return 0.0;
+    }
+    for (prefixes, radix) in [(["0x", "0X"], 16), (["0o", "0O"], 8), (["0b", "0B"], 2)] {
+        if let Some(digits) = prefixes.iter().find_map(|p| s.strip_prefix(p)) {
+            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+                return f64::NAN;
+            }
+            return digits.chars().fold(0.0, |acc, c| {
+                acc * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64
+            });
+        }
+    }
+    match s {
+        "Infinity" | "+Infinity" => return f64::INFINITY,
+        "-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    if !is_decimal_literal(s) {
+        return f64::NAN;
+    }
+    s.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// `[+-]? (digits [. digits?] | . digits) ([eE] [+-]? digits)?`
+fn is_decimal_literal(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    if matches!(b.first(), Some(b'+' | b'-')) {
+        i += 1;
+    }
+    let int_start = i;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    let int_digits = i - int_start;
+    let mut frac_digits = 0;
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        frac_digits = i - start;
+    }
+    if int_digits + frac_digits == 0 {
+        return false;
+    }
+    if i < b.len() && matches!(b[i], b'e' | b'E') {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    i == b.len()
+}
+
+/// crypto-middleware's `safe()`: at most 64 UTF-16 code units, then `…`.
+pub fn safe(value: &str) -> String {
+    const MAX: usize = 64;
+    if value.encode_utf16().count() <= MAX {
+        return value.to_string();
+    }
+    let mut units = 0;
+    let mut out = String::new();
+    for c in value.chars() {
+        units += c.len_utf16();
+        if units > MAX {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
+/// `Buffer.from(input, 'base64')`: both alphabets, characters outside them
+/// skipped, the first `=` ends the input, a trailing lone sextet dropped, and
+/// the output capped at the size Node reserves from the input's length.
+pub fn node_base64_decode(input: &str) -> Vec<u8> {
+    let bytes = input.as_bytes();
+    let capacity = {
+        let mut size = bytes.len();
+        if size < 2 {
+            0
+        } else {
+            if bytes[size - 1] == b'=' {
+                size -= 1;
+                if bytes[size - 1] == b'=' {
+                    size -= 1;
+                }
+            }
+            let rem = size % 4;
+            let mut out = size / 4 * 3;
+            if rem != 0 && !(out == 0 && rem == 1) {
+                out += 1 + usize::from(rem == 3);
+            }
+            out
+        }
+    };
+    let mut sextets = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' => break,
+            _ => continue,
+        };
+        sextets.push(v);
+    }
+    let mut out = Vec::with_capacity(sextets.len() * 3 / 4);
+    for chunk in sextets.chunks(4) {
+        if chunk.len() >= 2 {
+            out.push((chunk[0] << 2) | (chunk[1] >> 4));
+        }
+        if chunk.len() >= 3 {
+            out.push((chunk[1] << 4) | (chunk[2] >> 2));
+        }
+        if chunk.len() == 4 {
+            out.push((chunk[2] << 6) | chunk[3]);
+        }
+    }
+    out.truncate(capacity);
+    out
+}
+
+const MS_PER_DAY: f64 = 86_400_000.0;
+const MAX_TIME_MS: f64 = 8.64e15;
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    // Howard Hinnant's algorithm; month 1..=12, day may overflow the month.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468 + (day - 1)
+}
+
+struct Fields {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    millis: i64,
+    /// Minutes east of UTC; `None` is local time, read as UTC.
+    offset_minutes: Option<i64>,
+}
+
+impl Fields {
+    fn time_value(&self) -> Option<f64> {
+        if !(1..=12).contains(&self.month) || !(1..=31).contains(&self.day) {
+            return None;
+        }
+        let midnight_24 =
+            self.hour == 24 && self.minute == 0 && self.second == 0 && self.millis == 0;
+        if !(self.hour < 24 || midnight_24) || self.minute > 59 || self.second > 59 {
+            return None;
+        }
+        let days = days_from_civil(self.year, self.month, self.day) as f64;
+        let ms = days * MS_PER_DAY
+            + (self.hour * 3_600_000 + self.minute * 60_000 + self.second * 1000 + self.millis)
+                as f64
+            - (self.offset_minutes.unwrap_or(0) * 60_000) as f64;
+        (ms.abs() <= MAX_TIME_MS).then_some(ms)
+    }
+}
+
+/// `Date.parse`: the ECMAScript date-time string format, then the legacy
+/// forms V8 accepts (`toUTCString`, `toString`, `Mon DD YYYY`, `M/D/YYYY`,
+/// `YYYY/MM/DD`, with times, AM/PM and `GMT`/`UTC`/`Z`/`+hhmm` zones).
+/// `None` is NaN.
+pub fn date_parse(raw: &str) -> Option<f64> {
+    parse_iso(raw)
+        .or_else(|| parse_legacy(raw))
+        .and_then(|f| f.time_value())
+}
+
+fn take_digits(s: &[u8], i: &mut usize, exactly: usize) -> Option<i64> {
+    let end = *i + exactly;
+    if end > s.len() || !s[*i..end].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let v = std::str::from_utf8(&s[*i..end]).ok()?.parse().ok()?;
+    *i = end;
+    Some(v)
+}
+
+fn parse_iso(raw: &str) -> Option<Fields> {
+    let s = raw.as_bytes();
+    let mut i = 0;
+    let year = match s.first()? {
+        b'+' | b'-' => {
+            let negative = s[0] == b'-';
+            i = 1;
+            let y = take_digits(s, &mut i, 6)?;
+            if negative && y == 0 {
+                return None;
+            }
+            if negative { -y } else { y }
+        }
+        _ => take_digits(s, &mut i, 4)?,
+    };
+    let mut f = Fields {
+        year,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        millis: 0,
+        offset_minutes: Some(0),
+    };
+    if s.get(i) == Some(&b'-') {
+        i += 1;
+        f.month = take_digits(s, &mut i, 2)?;
+        if s.get(i) == Some(&b'-') {
+            i += 1;
+            f.day = take_digits(s, &mut i, 2)?;
+        }
+    }
+    if i == s.len() {
+        return Some(f);
+    }
+    if !matches!(s[i], b'T' | b't') {
+        return None;
+    }
+    i += 1;
+    f.offset_minutes = None;
+    f.hour = take_digits(s, &mut i, 2)?;
+    if s.get(i) != Some(&b':') {
+        return None;
+    }
+    i += 1;
+    f.minute = take_digits(s, &mut i, 2)?;
+    if s.get(i) == Some(&b':') {
+        i += 1;
+        f.second = take_digits(s, &mut i, 2)?;
+        if s.get(i) == Some(&b'.') {
+            i += 1;
+            let start = i;
+            while i < s.len() && s[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i == start {
+                return None;
+            }
+            let frac = std::str::from_utf8(&s[start..i.min(start + 3)]).ok()?;
+            f.millis = format!("{frac:0<3}").parse().ok()?;
+        }
+    }
+    match s.get(i) {
+        None => {}
+        Some(b'Z' | b'z') if i + 1 == s.len() => f.offset_minutes = Some(0),
+        Some(sign @ (b'+' | b'-')) => {
+            let sign = if *sign == b'-' { -1 } else { 1 };
+            i += 1;
+            let h = take_digits(s, &mut i, 2)?;
+            if s.get(i) != Some(&b':') {
+                return None;
+            }
+            i += 1;
+            let m = take_digits(s, &mut i, 2)?;
+            if i != s.len() || h > 23 || m > 59 {
+                return None;
+            }
+            f.offset_minutes = Some(sign * (h * 60 + m));
+        }
+        _ => return None,
+    }
+    Some(f)
+}
+
+const MONTHS: [&str; 12] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+const WEEKDAYS: [&str; 7] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+fn parse_legacy(raw: &str) -> Option<Fields> {
+    let s: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    let mut numbers: Vec<(i64, usize)> = Vec::new();
+    let mut named_month: Option<i64> = None;
+    let mut time: Option<(i64, i64, i64, i64)> = None;
+    let mut meridian: Option<bool> = None;
+    let mut offset: Option<i64> = None;
+    let read_number = |i: &mut usize| -> Option<(i64, usize)> {
+        let start = *i;
+        while *i < s.len() && s[*i].is_ascii_digit() {
+            *i += 1;
+        }
+        let len = *i - start;
+        if len == 0 || len > 9 {
+            return None;
+        }
+        let v: String = s[start..*i].iter().collect();
+        Some((v.parse().ok()?, len))
+    };
+    while i < s.len() {
+        let c = s[i];
+        if c.is_whitespace() || c == ',' {
+            i += 1;
+        } else if c == '(' {
+            let mut depth = 0;
+            while i < s.len() {
+                match s[i] {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        } else if c.is_ascii_digit() {
+            let (n, len) = read_number(&mut i)?;
+            if s.get(i) == Some(&':') {
+                if time.is_some() {
+                    return None;
+                }
+                i += 1;
+                let (minute, _) = read_number(&mut i)?;
+                let (mut second, mut millis) = (0, 0);
+                if s.get(i) == Some(&':') {
+                    i += 1;
+                    second = read_number(&mut i)?.0;
+                    if s.get(i) == Some(&'.') {
+                        i += 1;
+                        let start = i;
+                        while i < s.len() && s[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                        let frac: String = s[start..i.min(start + 3)].iter().collect();
+                        millis = format!("{frac:0<3}").parse().ok()?;
+                    }
+                }
+                time = Some((n, minute, second, millis));
+            } else {
+                if numbers.len() == 3 {
+                    return None;
+                }
+                numbers.push((n, len));
+                if matches!(s.get(i), Some('/' | '-' | '.')) {
+                    i += 1;
+                }
+            }
+        } else if (c == '+' || c == '-') && (time.is_some() || offset == Some(0)) {
+            let sign = if c == '-' { -1 } else { 1 };
+            i += 1;
+            let (n, len) = read_number(&mut i)?;
+            let minutes = if s.get(i) == Some(&':') {
+                i += 1;
+                n * 60 + read_number(&mut i)?.0
+            } else if len <= 2 {
+                n * 60
+            } else {
+                (n / 100) * 60 + n % 100
+            };
+            offset = Some(sign * minutes);
+        } else if c.is_alphabetic() {
+            let start = i;
+            while i < s.len() && s[i].is_alphabetic() {
+                i += 1;
+            }
+            let word: String = s[start..i].iter().collect::<String>().to_lowercase();
+            let prefix: String = word.chars().take(3).collect();
+            match word.as_str() {
+                "am" | "pm" => meridian = Some(word == "pm"),
+                "ut" | "utc" | "gmt" | "z" => offset = Some(0),
+                "t" => {}
+                _ if word.len() >= 3 && MONTHS.contains(&prefix.as_str()) => {
+                    named_month = Some(MONTHS.iter().position(|m| *m == prefix)? as i64 + 1)
+                }
+                _ if word.len() >= 3 && WEEKDAYS.contains(&prefix.as_str()) => {}
+                _ if numbers.is_empty() && time.is_none() => {}
+                _ => return None,
+            }
+        } else {
+            return None;
+        }
+    }
+
+    let is_day = |n: i64| (1..=31).contains(&n);
+    let (year, month, day) = match named_month {
+        None => match numbers.as_slice() {
+            [(a, _), (b, _), (c, _)] if !is_day(*a) => (*a, *b, *c),
+            [(a, _), (b, _), (c, _)] => (*c, *a, *b),
+            _ => return None,
+        },
+        Some(month) => match numbers.as_slice() {
+            [(a, _), (b, _)] if !is_day(*a) => (*a, month, *b),
+            [(a, _), (b, _)] => (*b, month, *a),
+            _ => return None,
+        },
+    };
+    let year = match year {
+        0..=49 => year + 2000,
+        50..=99 => year + 1900,
+        y => y,
+    };
+    let (mut hour, minute, second, millis) = time.unwrap_or((0, 0, 0, 0));
+    if let Some(pm) = meridian {
+        if !(0..=12).contains(&hour) {
+            return None;
+        }
+        hour = hour % 12 + if pm { 12 } else { 0 };
+    }
+    Some(Fields {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+        offset_minutes: offset,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_parse_keeps_javascript_key_order() {
+        let v = JsValue::parse(r#"{"b":1,"a":2,"10":3,"2":4,"b":5,"01":6}"#).unwrap();
+        assert_eq!(v.stringify(), r#"{"2":4,"10":3,"b":5,"a":2,"01":6}"#);
+        let v = JsValue::parse(r#"[1.0,1e21,1.5e-7,-0,"é\n",null,true]"#).unwrap();
+        assert_eq!(v.stringify(), r#"[1,1e+21,1.5e-7,0,"é\n",null,true]"#);
+    }
+
+    #[test]
+    fn number_to_string_matches_ecmascript() {
+        for (n, s) in [
+            (1_700_000_000_000.0, "1700000000000"),
+            (1_700_000_060_000.5, "1700000060000.5"),
+            (0.1, "0.1"),
+            (1e-6, "0.000001"),
+            (1e-7, "1e-7"),
+            (123e20, "1.23e+22"),
+            (1e21, "1e+21"),
+            (-2.5, "-2.5"),
+        ] {
+            assert_eq!(number_to_string(n), s, "{n}");
+        }
+    }
+
+    #[test]
+    fn number_from_str_is_number_of_a_string() {
+        for (raw, n) in [
+            ("1700000000000", 1_700_000_000_000.0),
+            ("1.7e12", 1.7e12),
+            (" 1700000000000\n", 1_700_000_000_000.0),
+            ("+5", 5.0),
+            (".5", 0.5),
+            ("5.", 5.0),
+            ("0x10", 16.0),
+            ("0b11", 3.0),
+            ("   ", 0.0),
+        ] {
+            assert_eq!(number_from_str(raw), n, "{raw:?}");
+        }
+        for raw in ["abc", "1e", "-0x10", "1_000", ".", "inf", "NaN", "12px"] {
+            assert!(number_from_str(raw).is_nan(), "{raw:?}");
+        }
+        assert!(number_from_str("Infinity").is_infinite());
+    }
+
+    #[test]
+    fn safe_truncates_to_64_utf16_units() {
+        assert_eq!(safe("short"), "short");
+        let long = "x".repeat(65);
+        assert_eq!(safe(&long), format!("{}…", "x".repeat(64)));
+    }
+
+    #[test]
+    fn node_base64_is_lenient() {
+        let standard = "eyJhIjoiPz4/In0="; // {"a":"?>?"}
+        assert_eq!(node_base64_decode(standard), br#"{"a":"?>?"}"#);
+        assert_eq!(node_base64_decode("eyJhIjoiPz4_In0"), br#"{"a":"?>?"}"#);
+        assert_eq!(node_base64_decode("eyJh\nIjoi Pz4/In0="), br#"{"a":"?>?"}"#);
+        assert_eq!(node_base64_decode("YQ==YWJj"), b"a");
+        assert_eq!(node_base64_decode("Y"), b"");
+        assert_eq!(node_base64_decode("!!!"), b"");
+    }
+
+    #[test]
+    fn date_parse_accepts_what_v8_does() {
+        let at = |s: &str| date_parse(s);
+        let base = 1_893_456_000_000.0; // 2030-01-01T00:00:00Z
+        for s in [
+            "2030-01-01T00:00:00.000Z",
+            "2030-01-01T00:00:00Z",
+            "2030-01-01T00:00Z",
+            "2030-01-01T00:00:00",
+            "2030-01-01",
+            "2030-01-01T01:00:00+01:00",
+            "2030-01-01t00:00:00z",
+            "Tue, 01 Jan 2030 00:00:00 GMT",
+            "Tue Jan 01 2030 00:00:00 GMT+0000 (Coordinated Universal Time)",
+            "Tue Jan 01 2030 01:00:00 GMT+0100",
+            "January 1, 2030",
+            "Jan 1 2030 12:00:00 AM",
+            "1/1/2030",
+            "2030/01/01",
+            "2030-01-01 00:00:00",
+            "2029-12-31T24:00:00Z",
+        ] {
+            assert_eq!(at(s), Some(base), "{s}");
+        }
+        assert_eq!(at("2030-01-01T00:00:00.1239Z"), Some(base + 123.0));
+        assert_eq!(at("2019-02-31"), at("2019-03-03"), "V8 rolls the day over");
+        for s in [
+            "tomorrow",
+            "",
+            "2030-13-01",
+            "2030-01-01T25:00:00Z",
+            "1700000000000",
+            "-000000-01-01",
+        ] {
+            assert_eq!(at(s), None, "{s}");
+        }
+    }
+}

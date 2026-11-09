@@ -454,6 +454,18 @@ difference not listed here is a gap, not a decision.
 [`decentraland/world-storage-service`](https://github.com/decentraland/world-storage-service)
 (compared at `d55f24c`).
 
+### Authorization
+
+- **Deployers.** A world's `deployment` grantee reaches a scene's storage
+  only when the grant covers that scene's whole footprint (a world-wide
+  grant covers every scene). Upstream admits every wallet in the world's
+  deployment allow-list, parcel-scoped grantees included, to every scene.
+- **Genesis collaborators.** A wallet in a Genesis scene's
+  `logsPermissions` is admitted only while the LAND index has complete,
+  fresh ownership history for the whole footprint and no parcel changed
+  owner after the scene was deployed. Upstream admits it on the active
+  deployment alone.
+
 ### HTTP
 
 - **Deeply nested values.** A value nested deeper than about 4,500 levels
@@ -487,7 +499,7 @@ difference not listed here is a gap, not a decision.
 - **Collaborators.** No deployment consumer (upstream's SQS queue of
   world and catalyst deployments) maintains a collaborator table:
   `GET /collaborator` and the collaborator grant read the active
-  deployments' `metadata.logsPermissions` (`worlds.logs_permissions`) on
+  deployments' `metadata.logsPermissions` (`worlds.logs_permissions_decoded`) on
   every request.
 - **Exports.** Both row streams read one read-only repeatable-read
   snapshot through a pooled connection; upstream reads the world rows and

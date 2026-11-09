@@ -486,43 +486,13 @@ fn array_index(key: &[u16]) -> Option<u64> {
     (n <= 4_294_967_294).then_some(n)
 }
 
-/// ECMAScript `Number::toString(10)`; non-finite values are `null`, as
-/// `JSON.stringify` writes them.
+/// `JSON.stringify`'s number: `Number::toString`, `null` when non-finite.
 pub fn js_number(f: f64) -> String {
-    if !f.is_finite() {
-        return "null".to_string();
-    }
-    if f == 0.0 {
-        return "0".to_string();
-    }
-    let sign = if f < 0.0 { "-" } else { "" };
-    // Rust's shortest round-trip digits, as `d.ddde±x`.
-    let exp_form = format!("{:e}", f.abs());
-    let (mantissa, exp) = exp_form.split_once('e').expect("exponent form");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let n = exp.parse::<i32>().expect("exponent") + 1;
-    let body = if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    if f.is_finite() {
+        super::js::number_to_string(f)
     } else {
-        let e = n - 1;
-        let fraction = if k > 1 {
-            format!(".{}", &digits[1..])
-        } else {
-            String::new()
-        };
-        format!(
-            "{}{fraction}e{}{}",
-            &digits[..1],
-            if e >= 0 { "+" } else { "-" },
-            e.abs()
-        )
-    };
-    format!("{sign}{body}")
+        "null".to_string()
+    }
 }
 
 /// `JSON.stringify` of a string given as UTF-16 units: a lone surrogate is

@@ -2,7 +2,7 @@
 //! lists the signer, self-scoped by the signed fetch (upstream
 //! world-storage-service's collaborations listing). Derived at read time from
 //! the local world scenes and the live Genesis scenes through
-//! `worlds.logs_permissions` and its GIN indexes. Genesis membership also
+//! `worlds.logs_permissions_decoded` and its GIN indexes. Genesis membership also
 //! requires the shared ownership-history predicate, applied before counting
 //! and pagination; the grant is re-checked on every storage request.
 
@@ -81,7 +81,7 @@ pub async fn list(
                     (entity #> '{metadata,display,title}')::text AS title
              FROM worlds.world_scenes
              WHERE mirror_source IS NULL AND cardinality(parcels) > 0
-               AND worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text) @> ARRAY[$1::text]
+               AND worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text) @> ARRAY[$1::text]
 
              UNION ALL
              SELECT d.entity_id, 'main', 'genesis', d.local_timestamp,
@@ -90,9 +90,9 @@ pub async fn list(
                     (d.entity_metadata #> '{display,title}')::text
              FROM content.deployments d
              WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND cardinality(d.entity_pointers) > 0
-               AND worlds.logs_permissions((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
 
-               AND CASE WHEN worlds.logs_permissions((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND CASE WHEN worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
                    THEN land_authz.scene_collaborators_current($4, $5, $6, d.entity_pointers, d.entity_timestamp)
                    ELSE false END
                AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)
