@@ -18,7 +18,7 @@ import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { catalystUrl, processEnv, publicCatalystUrl, type BaseEnv } from "../catalyst/bases";
-import { dappsFlags, type DappsFlags } from "../feature-flags.server";
+import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
 
@@ -45,6 +45,8 @@ export type ShopLoadInput = {
   env?: BaseEnv;
   /** decentraland.org's rollout flags; read from the service when absent, none for an injected (test) client. */
   flags?: DappsFlags;
+  /** Their variants' payloads, with `flags`; none when absent. */
+  flagVariants?: DappsFlagVariants;
 };
 
 export type ShopPageLoad = { data: ShopPageData; status: number };
@@ -196,9 +198,15 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
   const env = input.env ?? processEnv();
   const client = input.client ?? serverShopClient(env);
   // The page's flags decide what it reads (the Best Deals rail): primed here before any read, and sent with the page
-  // so the browser primes the same answer before it hydrates.
-  const featureFlags = input.flags ?? (input.client ? {} : await dappsFlags());
-  primeRemoteFlags(featureFlags);
+  // so the browser primes the same answer before it hydrates. Their variants (My Store's address list) go with them.
+  const answer: DappsFlagsAnswer = input.flags
+    ? { flags: input.flags, variants: input.flagVariants ?? {} }
+    : input.client
+      ? { flags: {}, variants: {} }
+      : await dappsFlagsAnswer();
+  const featureFlags = answer.flags;
+  const featureFlagVariants = Object.keys(answer.variants).length > 0 ? answer.variants : undefined;
+  primeRemoteFlags(featureFlags, answer.variants);
   const now = input.now ?? Date.now;
   const { request, params } = input;
   const pathname = new URL(request.url).pathname;
@@ -225,5 +233,8 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     default:
       collected = { queries: [], seo: defaultShopSeo(page, canonicalFor(request, pathname, env)), status: 200 };
   }
-  return { data: { page, seo: collected.seo, queries: collected.queries, featureFlags }, status: collected.status };
+  return {
+    data: { page, seo: collected.seo, queries: collected.queries, featureFlags, ...(featureFlagVariants ? { featureFlagVariants } : {}) },
+    status: collected.status,
+  };
 }

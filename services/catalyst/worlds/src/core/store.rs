@@ -2313,6 +2313,15 @@ pub async fn active_content_keys(pool: &PgPool) -> Result<HashSet<String>, ApiEr
     Ok(keys)
 }
 
+async fn queue_access_recheck(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO social.world_access_rechecks(world_name,changed_at) VALUES($1,timezone('UTC',clock_timestamp())) ON CONFLICT(world_name) DO UPDATE SET revision=gen_random_uuid(),changed_at=timezone('UTC',clock_timestamp()),next_attempt_at=timezone('UTC',now())")
+        .bind(world.key()).execute(conn).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2463,13 +2472,4 @@ mod tests {
             AccessType::Unrestricted
         );
     }
-}
-
-async fn queue_access_recheck(
-    conn: &mut sqlx::PgConnection,
-    world: &WorldName,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO social.world_access_rechecks(world_name,changed_at) VALUES($1,timezone('UTC',clock_timestamp())) ON CONFLICT(world_name) DO UPDATE SET revision=gen_random_uuid(),changed_at=timezone('UTC',clock_timestamp()),next_attempt_at=timezone('UTC',now())")
-        .bind(world.key()).execute(conn).await?;
-    Ok(())
 }

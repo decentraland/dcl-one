@@ -14,6 +14,7 @@ if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service
 const { upstream, revision, req: requireUpstream } = sourceCapture(process.argv[2])
 const redisPackage = requireUpstream('redis')
 const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const { waitUntil } = require('../library/async/index.ts')
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 async function main() {
@@ -23,10 +24,10 @@ async function main() {
   const client = redisPackage.createClient({ socket: { path: socket } })
   let adapter
   try {
-    for (let i = 0; !fs.existsSync(socket); i++) {
-      if (i > 100 || server.exitCode !== null) throw Error('Redis did not start')
-      await delay(20)
-    }
+    await waitUntil(async () => {
+      if (server.exitCode !== null) throw Error('Redis exited during startup')
+      return fs.existsSync(socket) ? true : undefined
+    }, { timeoutMs: 2000, initialDelayMs: 20, maxDelayMs: 200, description: 'Redis startup' })
     const originalLoad = Module._load
     let createRedisComponent
     try {

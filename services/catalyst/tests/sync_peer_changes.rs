@@ -140,9 +140,15 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
     let (tx, rx) = watch::channel(set(&[&a.url]));
     let retry_peers = Arc::new(RwLock::new(vec![a.url.clone()]));
     let jobs = Jobs::new();
+    let callbacks = Arc::new(AtomicUsize::new(0));
     let job = jobs.spawn("sync", {
         let (orchestrator, retry_peers) = (orchestrator.clone(), retry_peers.clone());
-        move |ctx| run_sync_job(orchestrator, rx, retry_peers, ctx)
+        let observed = callbacks.clone();
+        move |ctx| {
+            run_sync_job(orchestrator, rx, retry_peers, ctx, move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+            })
+        }
     });
     wait_until("the steady state", || {
         orchestrator.state() == SyncState::Syncing
@@ -150,7 +156,10 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
     .await;
     // The bootstrap task has ended by now (every peer streams); the job must
     // still apply a change.
-    tokio::time::sleep(Duration::from_millis(POLL_MS * 3)).await;
+    wait_until("the bootstrap callback", || {
+        callbacks.load(Ordering::SeqCst) == 1
+    })
+    .await;
 
     tx.send(set(&[&b.url])).unwrap();
     let b_calls = b.calls.clone();
@@ -163,6 +172,7 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
     let a_late = a.calls.load(Ordering::SeqCst) - a_after_drop;
     let retry = retry_peers.read().await.clone();
     let state = orchestrator.state();
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
 
     job.cancel();
     a.http.abort();
@@ -198,9 +208,15 @@ async fn dropping_a_dead_peer_during_the_first_bootstrap_releases_the_node() {
     let (tx, rx) = watch::channel(set(&[&good.url, &dead.url]));
     let retry_peers = Arc::new(RwLock::new(Vec::new()));
     let jobs = Jobs::new();
+    let callbacks = Arc::new(AtomicUsize::new(0));
     let job = jobs.spawn("sync", {
         let orchestrator = orchestrator.clone();
-        move |ctx| run_sync_job(orchestrator, rx, retry_peers, ctx)
+        let observed = callbacks.clone();
+        move |ctx| {
+            run_sync_job(orchestrator, rx, retry_peers, ctx, move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+            })
+        }
     });
     let good_calls = good.calls.clone();
     wait_until("the good peer's stream", || {
@@ -208,11 +224,12 @@ async fn dropping_a_dead_peer_during_the_first_bootstrap_releases_the_node() {
     })
     .await;
     let held = orchestrator.state();
+    assert_eq!(callbacks.load(Ordering::SeqCst), 0);
 
     tx.send(set(&[&good.url])).unwrap();
     let orch = orchestrator.clone();
     wait_until("the steady state once the dead peer is dropped", || {
-        orch.state() == SyncState::Syncing
+        orch.state() == SyncState::Syncing && callbacks.load(Ordering::SeqCst) == 1
     })
     .await;
 

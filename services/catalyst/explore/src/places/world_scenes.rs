@@ -892,7 +892,7 @@ mod tests {
                 .is_none()
         );
         let standalone =
-            super::super::PlacesComponent::new(pool.clone(), "https://content.example".into());
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example");
         assert!(
             standalone
                 .find_by_id_for(&mirrored_id, None)

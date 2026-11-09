@@ -587,7 +587,10 @@ mod tests {
             }
         });
         while waiters().await < 2 {
-            assert!(std::time::Instant::now() < deadline, "the leader never queued");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the leader never queued"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 

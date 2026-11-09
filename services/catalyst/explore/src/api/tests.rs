@@ -374,7 +374,7 @@ async fn node_without_db(settings: Settings) -> Node {
         opensea: opensea::Runtime::default(),
         auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
-        onboarding: onboarding::OnboardingState::default(),
+        onboarding: Arc::default(),
         eip1654: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }

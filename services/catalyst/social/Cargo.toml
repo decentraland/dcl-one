@@ -71,7 +71,7 @@ catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-explore = { path = "../explore", features = ["test-support"] }
 catalyst-comms = { path = "../comms", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 catalyst-testing = { path = "../testing" }
 catalyst-fed = { path = "../fed", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }

@@ -16,7 +16,7 @@ Our SDK includes the following:
 
 - **The Creator Hub**: A standalone application that, amongst other things, lets you create scenes with an easy drag-and-drop interface. You can run previews, debug, edit code, and publish. [Read more](/docs/creator/scene-editor/get-started/about-editor/)
 - **The Decentraland ECS**: A TypeScript package containing the framework of helper methods that allows you to create interactive experiences. Use it to create and manipulate objects in the scene and also to facilitate in-world transactions between players or other applications. ( [latest ECS reference](https://github.com/decentraland/ecs-reference/blob/master/docs-latest/decentraland-ecs.md))
-- **Scene examples**: Take inspiration and coding best practices from the [scene examples](https://studios.decentraland.org/resources?sdk_version=SDK7).
+- **Scene examples**: Take inspiration and coding best practices from the [scene examples](/docs/creator/tutorials/examples/).
 
 Other legacy tools:
 
@@ -66,7 +66,7 @@ You can also run a scene locally on your machine by running a preview from the C
 
 Three dimensional scenes in Decentraland are based on an [Entity-Component-System](https://en.wikipedia.org/wiki/Entity%E2%80%93component%E2%80%93system) architecture, where everything in a scene is an _entity_. Entities have _components_, each component gives the entity it belongs to specific properties. A door entity is likely to have at least a Transform component (that sets position, rotation & scale) and another to provide it a shape. Components are just a place to store data, they don't carry out any actions by themselves.
 
-![](</docs/.gitbook/assets/ecs-components-new (1).webp>)
+![](</docs/creator/images/media/ecs-components-new.webp>)
 
 ```ts
 export function main() {
@@ -87,7 +87,7 @@ export function main() {
 
 Entities may be nested inside other entities to form a tree structure. If you're familiar with web development, you might find it useful to think of entities as elements in a DOM tree and of components as the attributes of each of these elements.
 
-![](</docs/.gitbook/assets/ecs-nested-entities-new (1).webp>)
+![](</docs/creator/images/media/ecs-nested-entities-new.webp>)
 
 Entities are an abstract concept. An entity is just an id, that is used as a reference to group different components.
 
@@ -204,7 +204,7 @@ You can write your code outside the `main()` function when:
 
 > [!WARNING]
 > **📔 Note**: By the time the code inside an async function or a system is first executed, everything in the scene is already properly initialized.
-> 
+>
 > [Custom Component](/docs/creator/sdk7/architecture/custom-components/) definitions are an exception, these must always be written outside the `main()` function, in a separate file. They need to be interpreted before `main()` is executed.
 
 
@@ -233,7 +233,7 @@ See [mutable data](/docs/creator/sdk7/programming-patterns/mutable-data/) for mo
 
 The _engine_ is what sits in between _entities_, and _components_ on one hand and _systems_ on the other.
 
-![](</docs/.gitbook/assets/ecs-big-picture (1).webp>)
+![](</docs/creator/images/media/ecs-big-picture.webp>)
 
 All of the values stored in the components in the scene represent the scene's state at that point in time. With every tick of the game loop, the engine runs the functions of each of the systems to update the values stored in the components.
 

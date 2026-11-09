@@ -962,12 +962,20 @@ mod tests {
             claimable.is_none(),
             "the regression starts with a held queue claim"
         );
-        let release = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            held.rollback().await.unwrap();
-        });
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT processed_at IS NULL FROM social.event_notification_intents WHERE id=$1"
+            )
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        );
+        held.rollback().await.unwrap();
         drain_until_complete(pool, now, &event_id, 1).await;
-        release.await.unwrap();
         assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 

@@ -137,7 +137,12 @@ fn webtransport_budget_survives_both_queues_and_close_releases_blocked_writes() 
     }
     // The client deliberately has not opened the bidi stream: draining the outer queue
     // must not free permits while the downstream writer is still blocked in accept_bi.
-    std::thread::sleep(Duration::from_millis(50));
+    host.send(peer as u32, Packet::reliable(0, vec![0; 4097]));
+    assert!(catalyst::shared::test_wait::until_blocking(|| host
+        .metrics()
+        .messages_dropped_oversize
+        .load(std::sync::atomic::Ordering::SeqCst)
+        == 1));
     assert_eq!(
         host.send_application(peer as u32, Packet::reliable(0, vec![7; 1024]))
             .unwrap_err()
@@ -199,7 +204,7 @@ fn webtransport_unacknowledged_stream_bytes_remain_bounded_after_write() {
         .enable_all()
         .build()
         .unwrap();
-    let (session, _send, _recv) = rt.block_on(async {
+    let (session, _send, _recv, peer) = rt.block_on(async {
         let client = web_transport_quinn::ClientBuilder::new()
             .with_server_certificate_hashes(vec![hash])
             .unwrap();
@@ -209,12 +214,29 @@ fn webtransport_unacknowledged_stream_bytes_remain_bounded_after_write() {
             .unwrap();
         let (mut send, recv) = session.open_bi().await.unwrap();
         send.write_all(&[0, 0, 0, 0]).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        (session, send, recv)
+        let Event::Connect { peer, .. } =
+            tokio::time::timeout(Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected connect")
+        };
+        let Event::Receive {
+            peer: source,
+            packet,
+            ..
+        } = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("expected stream marker")
+        };
+        assert_eq!(source, peer);
+        assert!(packet.data.is_empty());
+        (session, send, recv, peer)
     });
-    let Event::Connect { peer, .. } = event(&mut events) else {
-        panic!("expected connect")
-    };
     // The current-thread client runtime now stops polling QUIC, withholding ACKs
     // after opening the stream. Completed writes must not bypass the queue cap
     // through Quinn's independent send buffer.

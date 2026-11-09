@@ -248,7 +248,8 @@ async fn referral_http_response_and_committed_rejection_survive_a_stalled_slack_
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut bytes = [0; 8192];
-        socket.read(&mut bytes).await.unwrap();
+        let read = socket.read(&mut bytes).await.unwrap();
+        assert!(read > 0, "the request reached the fake Slack");
         socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
         entered.send(()).unwrap();
         released.await.unwrap();

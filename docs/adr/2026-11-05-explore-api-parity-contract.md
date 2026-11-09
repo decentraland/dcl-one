@@ -41,9 +41,11 @@ gaps; a failure there is a regression. The fixtures README documents the grammar
   empty list. Each run of letters and digits is a prefix term; the terms are joined with
   `&`.
 - `order_by` accepts `like_score`, `updated_at`, `created_at` and `most_active`; any other
-  value is `like_score`. `most_active` reads the places with players, at most 100, best
-  liked first, sorts them by headcount and pages that set; `total` is the size of the set.
-  Without a presence snapshot the mirrored headcount stands in for the live one.
+  value is `like_score`. `most_active` reads 100 places, those with players first and the
+  rest best liked first, sorts them by headcount and pages that set; `total` is its size, at
+  most 100. `order=asc` lists the least liked and the emptiest first. An `offset` past the
+  places with players answers an empty list, `total` 0. Without a presence snapshot the
+  mirrored headcount stands in for the live one.
 - `owner` matches the row's own owner, lowercased, the creator address where the row has
   no owner, or a parcel the owner holds or operates. The creator fallback is dcl-one's
   (recorded below). `sdk` matches the major or a `major.` prefix as given.
@@ -120,6 +122,10 @@ pinned callers build. Each is a known difference, not an approval.
 - dcl-one's own extras live under `/v1`: `POST /v1/destinations` takes an object body and
   answers `kind`, `live_event` and `next_event`. `/api/destinations` keeps the old places
   service's contract.
+- `GET /api/map` and `GET /api/map/places` with `order_by=most_active` answer the full
+  headcount-ordered set with its real `total`, where the old places service pages twice
+  and reports the page length as `total` (`getMapPlacesMostActive.ts:60-98`,
+  `getAllPlacesMostActiveList.ts:63-115`).
 
 ## Deployment posture kept
 
@@ -127,12 +133,12 @@ pinned callers build. Each is a known difference, not an approval.
   Before a mirror's first complete pass the routes answer from the database, a static copy
   that has not landed yet answers 503 with `Retry-After`, and owner edits of a mirrored
   event answer 409 while the node mirrors. The 409 follows the row's `origin`
-  (`events/writes.rs`), not the configuration: a row the mirror wrote keeps `upstream`
-  after `EVENTS_MIRROR_UPSTREAM` is turned off, and only rows an older binary created
-  locally are reclaimed (`events/mirror.rs`). Cut-over is decided as configuration: when
-  the mirror is off, the rows it wrote become local and their owners edit them, and the
-  read gate is open. That reclassification is next work, with a fixture that proves an
-  owner edit succeeds on a formerly mirrored event once the mirror is off.
+  (`events/writes.rs`), and cut-over is an explicit opt-in: a node that starts with
+  `EVENTS_MIRROR_UPSTREAM` off and `EVENTS_MIRROR_ADOPT` on adopts every row the mirror
+  wrote as `local`, once per database (`events/mirror.rs`, `adopt_upstream`, recorded in
+  `explore.mirror_state` and run under the mirror job's lease), so their owners edit and
+  delete them, their RSVPs and moderation stay, and the read gate is open
+  (`tests/explore_mirrors.rs`).
 - Browser origins are the old services' per-router allow-lists rather than the reflecting
   CORS the shared crate offers. `EXPLORE_CORS_ORIGINS` appends a deployment's own origins
   to every list.
@@ -181,8 +187,7 @@ exception:
 - `order_by=most_active` on `GET /api/worlds`;
 - `pointer` without `names` narrows destinations to places;
 - `GET /api/status` adds `catalogue`, `configured_mirrors` and `mirrors` to the three
-  upstream keys (today the two status entries in `known_gaps.json`; they become accepted
-  entries next);
+  upstream keys (the two status entries are accepted entries of the gate);
 - `PATCH /api/places/{id}/disable` with a free-text reason;
 - a custom `url` any signer sets on create and owner edits keep;
 - poster filenames by content hash, with the asset-URL guard and the profile requirement;

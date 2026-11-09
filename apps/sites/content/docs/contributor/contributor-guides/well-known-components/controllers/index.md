@@ -283,7 +283,7 @@ Multi-word parameters MUST be defined using **snake_case**.
 
 > [!CAUTION]
 > **Incorrect naming:**
-> 
+>
 > * `minPrice`
 > * `Car`
 > * `somethingURL`
@@ -293,7 +293,7 @@ Multi-word parameters MUST be defined using **snake_case**.
 
 > [!TIP]
 > **Correct naming:**
-> 
+>
 > * `min_price`
 > * `car`
 > * `something_url`

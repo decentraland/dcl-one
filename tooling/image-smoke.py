@@ -20,12 +20,17 @@ def docker(*args, check=True):
     return result
 
 
-def wait_for(check, description, timeout=90):
+def wait_until(check, description, timeout=90):
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    delay = .1
+    while True:
         if check():
             return
-        time.sleep(.5)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 2)
     raise RuntimeError(f'Timed out: {description}')
 
 
@@ -62,7 +67,7 @@ def main():
         def sql(query):
             return docker('exec', db, 'psql', '-U', 'foundation', '-d', 'catalyst',
                           '-AtX', '-v', 'ON_ERROR_STOP=1', '-c', query)
-        wait_for(lambda: docker('exec', db, 'pg_isready', '-U', 'foundation', '-d', 'catalyst',
+        wait_until(lambda: docker('exec', db, 'pg_isready', '-U', 'foundation', '-d', 'catalyst',
                                  '-h', '127.0.0.1', check=False).returncode == 0, 'PostgreSQL')
         isolated = ['--network', name, '--read-only', '--tmpfs', '/tmp:rw,size=64m',
                     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges']
@@ -98,8 +103,8 @@ def main():
             ''', url, 'json' if body else '', check=False)
             return json.loads(result.stdout) if result.returncode == 0 else None
         api_url, sites_url = 'http://api:5210', 'http://sites:5212'
-        wait_for(lambda: get(api_url + '/about'), 'API HTTP readiness')
-        wait_for(lambda: get(sites_url + '/'), 'Sites HTTP readiness')
+        wait_until(lambda: get(api_url + '/about'), 'API HTTP readiness')
+        wait_until(lambda: get(sites_url + '/'), 'Sites HTTP readiness')
         assert get(api_url + '/places/api/places?limit=1'), 'Places must read the database'
         assert get(sites_url + '/docs/index.md'), 'Docs Markdown must ship in the image'
         media = json.loads((ROOT / 'apps/sites/content/docs/_media.json').read_text())
@@ -126,11 +131,11 @@ def main():
         delivered = get(base + entity)
         assert delivered and delivered['sha256'] == play['files']['bridge-scene/static/' + entity], 'Bridge entity is not the compiled bundle'
         docker('restart', db)
-        wait_for(lambda: docker('exec', db, 'pg_isready', '-U', 'foundation', '-d', 'catalyst',
+        wait_until(lambda: docker('exec', db, 'pg_isready', '-U', 'foundation', '-d', 'catalyst',
                                  '-h', '127.0.0.1', check=False).returncode == 0, 'restarted PostgreSQL')
-        wait_for(lambda: get(api_url + '/places/api/places?limit=1'), 'API database reconnection')
+        wait_until(lambda: get(api_url + '/places/api/places?limit=1'), 'API database reconnection')
         docker('restart', api)
-        wait_for(lambda: get(api_url + '/about'), 'restarted API')
+        wait_until(lambda: get(api_url + '/about'), 'restarted API')
         assert sql('SELECT value FROM public.image_smoke').stdout.strip() == 'preserved'
         print('Image smoke passed: non-root, read-only root, schema guards, API/Sites/docs/media, database and API restart.')
     finally:

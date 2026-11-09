@@ -1,0 +1,386 @@
+/* from: shop@3a322cf9:app/src/components/PaymentMethodStep/PaymentMethodStep.styles.ts, app/src/styles/theme.ts (the
+         colours below), app/src/components/Icon/Icon.css (.ico).
+   "Choose your payment method" inside Buy now's card (the checkout dialogs' shell, checkout/components/CheckoutDialog.module.css), which is upstream's dark surface: only the
+   step's dark-surface (`onDark`) rules are ported, as the dialog's own. The step pads itself inside the card's own
+   padding, as upstream's does. Icons are `.shop-ico` masks, sized here past their 20px default. */
+
+.step {
+  --pms-soft-white: var(--shop-soft-white, #fcfcfc);
+  --pms-white: var(--shop-white, #ffffff);
+  --pms-gray4: var(--shop-gray-4, #cfcdd4);
+  --pms-glass: var(--shop-glass, rgba(255, 255, 255, 0.2));
+  --pms-overlay: var(--shop-overlay, rgba(0, 0, 0, 0.4));
+  --pms-accent: var(--shop-accent, #691fa9);
+  --pms-red: var(--shop-dcl-red, #ff2d55);
+  --pms-buy: var(
+    --shop-buy-btn,
+    linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%)
+  );
+  --pms-flare: var(--shop-flare, linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%));
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 12px 16px 16px;
+  min-height: 0;
+  overflow-y: auto;
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--pms-glass);
+}
+.title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1.6;
+  color: var(--pms-soft-white);
+}
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18.535px;
+  height: 18.535px;
+  /* The browser's own button padding, which upstream keeps: the 20px icon overflows the box, so it sets where the
+     cross sits. */
+  padding: 1px 6px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--pms-white);
+}
+.close:focus-visible {
+  outline: 2px solid var(--pms-white);
+  outline-offset: 2px;
+}
+.step .closeIco {
+  width: 20px;
+  height: 20px;
+}
+
+/* The item: its artwork on its rarity's tile, flush with the card's left edge. */
+.asset {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  background: var(--pms-overlay);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.thumb {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 180.465px;
+  height: 179.763px;
+  border-radius: 16px;
+  /* `--pms-tile`: the item's rarity colour, known only at runtime. */
+  background: var(--pms-tile, var(--shop-media, #ecebed));
+  border: 1.5px solid transparent;
+  overflow: hidden;
+}
+.thumb img {
+  width: 149.568px;
+  height: 148.866px;
+  object-fit: contain;
+  filter: drop-shadow(0.736px 2.945px 3.682px rgba(0, 0, 0, 0.1));
+}
+@media (max-width: 768px) {
+  .thumb {
+    width: 120px;
+    height: 120px;
+  }
+}
+.info {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 8px;
+}
+.name {
+  margin: 0;
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1.57;
+  color: var(--pms-soft-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.creator > div {
+  font-size: 14px;
+  line-height: 1.43;
+  color: var(--pms-soft-white);
+}
+.assetPrice {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.step .assetPriceIco {
+  width: 24px;
+  height: 24px;
+  color: var(--pms-soft-white);
+  -webkit-mask-size: 19.855px 19.855px;
+  mask-size: 19.855px 19.855px;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+}
+.assetPrice span:not(.assetPriceIco) {
+  font-weight: 600;
+  font-size: 24px;
+  color: var(--pms-soft-white);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 12px 12px 0;
+  border-radius: 12px;
+  border: 0;
+  background: var(--pms-overlay);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 0.5px solid transparent;
+  pointer-events: none;
+}
+.row[data-selected="true"] {
+  background: var(--pms-glass);
+}
+/* The picked rail's ring: the flare gradient on a 3px border, masked to the border box. */
+.row[data-selected="true"]::after {
+  border: 3px solid transparent;
+  background: var(--pms-flare) border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.row[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.row:focus-visible {
+  outline: 2px solid var(--pms-white);
+  outline-offset: 2px;
+}
+.left {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 9px 9px 9px 12px;
+}
+.box {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid var(--pms-soft-white);
+  background: transparent;
+}
+.box[data-checked="true"] {
+  border-color: var(--pms-soft-white);
+  background: var(--pms-soft-white);
+}
+.step .boxIco {
+  width: 14px;
+  height: 14px;
+  color: var(--pms-accent);
+}
+.content {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.infoGroup {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+.logo {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.creditsArt,
+.manaArt {
+  flex: none;
+  display: block;
+  object-fit: contain;
+}
+/* The MANA mark, white on the dark surface. */
+.manaArt,
+.manaMini,
+.manaPriceIco {
+  color: var(--pms-white);
+}
+.creditsArt {
+  width: 32.582px;
+  height: 34.401px;
+}
+.manaArt {
+  width: 35.328px;
+  height: 35.328px;
+}
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.label {
+  text-transform: capitalize;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 26px;
+  letter-spacing: -0.2px;
+  color: var(--pms-soft-white);
+}
+.balance {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--pms-gray4);
+}
+.step .balanceIco {
+  width: 13px;
+  height: 13px;
+  color: var(--pms-gray4);
+  -webkit-mask-size: 10.4px 10.4px;
+  mask-size: 10.4px 10.4px;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+}
+.balanceValue {
+  font-size: 10.4px;
+  color: var(--pms-gray4);
+}
+.manaMini {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+.priceCol {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.price {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.step .priceIco {
+  width: 24px;
+  height: 24px;
+  color: var(--pms-soft-white);
+  -webkit-mask-size: 19.855px 19.855px;
+  mask-size: 19.855px 19.855px;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+}
+.price span:not(.priceIco) {
+  font-weight: 600;
+  font-size: 20px;
+  color: var(--pms-soft-white);
+}
+.manaPriceIco {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+.detail {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--pms-gray4);
+}
+
+/* What to read before confirming, tinted like the dialog's own warning. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0;
+  background: var(--shop-warning-wash, rgba(255, 162, 90, 0.3));
+  border-radius: var(--shop-radius-btn, 8px);
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.334;
+  color: var(--pms-soft-white);
+}
+
+.buy {
+  width: 100%;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  background: var(--pms-buy);
+  color: var(--pms-soft-white);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+}
+.buy:hover:not(:disabled) {
+  background: var(--pms-red);
+}
+.buy:focus-visible {
+  outline: 2px solid var(--pms-white);
+  outline-offset: 2px;
+}
+.buy:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Read out, not drawn: a row's reason upstream does not show. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

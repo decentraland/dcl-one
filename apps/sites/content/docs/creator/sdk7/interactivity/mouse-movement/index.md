@@ -4,7 +4,7 @@
 
 Your scene can read the player's raw mouse movement on every frame, and use it to drive real-time interactions: drag and swipe gestures, spinning or sliding objects as the player drags them, or steering a custom camera like in a first-person shooter.
 
-To do this, read the `screenDelta` property of the `PrimaryPointerInfo` component on `engine.RootEntity`. This property is a `Vector2` that reports how many pixels the mouse moved since the last frame. Positive `x` values mean the mouse moved right, positive `y` values mean it moved up, matching the screen's origin at the bottom-left corner. On frames where the mouse doesn't move, both values are 0.
+To do this, read the `screenDelta` property of the `PrimaryPointerInfo` component on `engine.RootEntity`. This property is a `Vector2` that reports how many pixels the mouse moved since the last frame. Positive `x` values mean the mouse moved right, positive `y` values mean it moved down, matching the screen's origin at the top-left corner — the same coordinate space as `UiTransform` and `UiCanvasInformation`. On frames where the mouse doesn't move, both values are 0.
 
 ```ts
 import { engine, PrimaryPointerInfo } from '@dcl/sdk/ecs'
@@ -138,7 +138,7 @@ export function main() {
 
 		yaw += delta.x * SENSITIVITY
 		// clamp pitch so the camera can't flip over
-		pitch = Math.max(-85, Math.min(85, pitch - delta.y * SENSITIVITY))
+		pitch = Math.max(-85, Math.min(85, pitch + delta.y * SENSITIVITY))
 
 		Transform.getMutable(cameraEntity).rotation = Quaternion.fromEulerDegrees(pitch, yaw, 0)
 	})
@@ -172,7 +172,7 @@ function activateCamera(active: boolean) {
 
 A few things to note about this example:
 
-- The system subtracts `delta.y` from the pitch, so that moving the mouse up tilts the camera up. Flip that sign if you prefer inverted vertical controls.
+- The system adds `delta.y` to the pitch. Moving the mouse up reports a negative `delta.y`, which lowers the pitch and tilts the camera up. Flip that sign if you prefer inverted vertical controls.
 - The pitch is clamped to a range of -85 to 85 degrees, so the camera can never flip over backwards.
 - The `SENSITIVITY` constant expresses degrees of rotation per pixel of mouse movement, tweak it to taste.
 

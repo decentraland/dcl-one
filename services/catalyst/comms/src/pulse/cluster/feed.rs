@@ -193,8 +193,10 @@ impl CurrentAssignments {
             } else {
                 Some(view.next_version)
             };
-            if assignment.is_some() && version.is_some() {
-                view.next_version = version.unwrap();
+            if assignment.is_some()
+                && let Some(version) = version
+            {
+                view.next_version = version;
             }
             let record = view.records.get_mut(&wallet).unwrap();
             if let Some(previous) = record.current.take() {
@@ -1345,7 +1347,7 @@ mod current_tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn saturation_never_truncates_or_evicts_unfinished_plans() {
         let current = CurrentAssignments::default();
         let mut assignments = Vec::new();

@@ -628,7 +628,12 @@ pub async fn download_file_with_retries(
         }
 
         if attempt + 1 < MAX_DOWNLOAD_RETRIES {
-            tokio::time::sleep(std::time::Duration::from_millis(RETRY_WAIT_MS)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                RETRY_WAIT_MS
+                    .saturating_mul(1u64 << attempt.min(6))
+                    .min(30_000),
+            ))
+            .await;
         }
     }
 

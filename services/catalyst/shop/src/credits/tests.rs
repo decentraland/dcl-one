@@ -603,6 +603,7 @@ async fn cleanup(pool: &PgPool, addr: &str) {
         "DELETE FROM credits.authorizations WHERE address = $1",
         "DELETE FROM credits.captcha_challenges WHERE address = $1",
         "DELETE FROM credits.ledger WHERE address = $1",
+        "DELETE FROM credits.wallet_flags WHERE address = $1",
         "DELETE FROM credits.purchases WHERE address = $1",
         "DELETE FROM credits.idempotency WHERE address = $1",
         "DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1",
@@ -1988,7 +1989,13 @@ async fn progress_keeps_missing_rows_and_balances_in_one_query() {
     let program = scratch_wallet().address;
     let credit = scratch_wallet().address;
     let both = scratch_wallet().address;
+    let flagged = scratch_wallet().address;
     credits.mark_started(&program).await.unwrap();
+    sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+        .bind(&flagged)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO credits.wallets (address, available, earned_available, is_blocked_for_claiming, has_started_program) VALUES ($1, 12.5, 2.5, TRUE, FALSE), ($2, 10, 4, FALSE, FALSE)")
         .bind(&credit)
         .bind(&both)
@@ -2000,6 +2007,7 @@ async fn progress_keeps_missing_rows_and_balances_in_one_query() {
         (&program, true, Some((0, 0, false))),
         (&credit, false, Some((125, 25, true))),
         (&both, false, Some((100, 40, false))),
+        (&flagged, false, Some((0, 0, true))),
     ] {
         let (actual_started, actual_credits) = credits.user_progress(address).await.unwrap();
         assert_eq!(actual_started, started, "{address}");
@@ -2009,7 +2017,7 @@ async fn progress_keeps_missing_rows_and_balances_in_one_query() {
             "{address}: integer cents at the peg"
         );
     }
-    for a in [&missing, &program, &credit, &both] {
+    for a in [&missing, &program, &credit, &both, &flagged] {
         cleanup(&pool, a).await;
     }
 }
@@ -5880,4 +5888,353 @@ async fn pricing_memoizes_the_spot_but_never_the_marketplace_feed() {
         3,
         "the spot keeps its 20 s memo"
     );
+}
+
+async fn open_challenge(pool: &PgPool, addr: &str) {
+    sqlx::query(
+        "INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2)",
+    )
+    .bind(addr)
+    .bind(future())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn flag_count(pool: &PgPool, addr: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM credits.wallet_flags WHERE address = $1")
+        .bind(addr)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_multi_accounting_flag_blocks_the_claim_but_not_the_spend_or_the_reservation() {
+    let Some(pool) = pool().await else { return };
+    let wallet = scratch_wallet();
+    let addr = wallet.address.clone();
+    seed_wallet(&pool, &addr, "20", "15").await;
+    sqlx::query(
+        "INSERT INTO credits.wallet_flags (address, source, ip) \
+         VALUES ($1, 'explorer_anon_multi_accounting', '1.2.3.4')",
+    )
+    .bind(&addr)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let credits = Credits::new(pool.clone());
+
+    credits
+        .spend(&addr, "1", "test:flagged-spend", None)
+        .await
+        .expect("a flag never holds the credits a wallet has");
+    assert_eq!(
+        balances(&pool, &addr).await,
+        ("34".to_string(), "19".to_string())
+    );
+    credits
+        .reserve_authorization(&na("flagged", &addr, 100, future()), &unique("k"))
+        .await
+        .expect("a flagged wallet still reserves within its balance");
+    assert!(
+        credits
+            .user_credits(&addr)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_blocked_for_claiming,
+        "the balance report shows the flag as the claim block"
+    );
+
+    let app = app(test_state(pool.clone(), StateCfg::default()));
+    open_challenge(&pool, &addr).await;
+    let (_, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/captcha",
+        &[],
+        Some(json!({ "x": 10.0 })),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["isBlockedForClaiming"], true);
+}
+
+#[tokio::test]
+async fn the_admin_flag_blocks_the_claim_until_the_unblock_or_the_unflag() {
+    let Some(pool) = pool().await else { return };
+    let wallet = scratch_wallet();
+    let addr = wallet.address.clone();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let linked = [scratch_wallet().address, scratch_wallet().address];
+    let cluster = json!({
+        "addresses": [linked[0], linked[1], addr.to_uppercase().replace("0X", "0x")],
+        "source": "explorer_ip_multi_accounting",
+        "ip": "203.0.113.9",
+    });
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer.clone(),
+        Some(cluster.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["flagged"].as_array().unwrap().len(), 3);
+    assert!(
+        v["flagged"].as_array().unwrap().contains(&json!(addr)),
+        "lower-cased: {v}"
+    );
+    assert_eq!(
+        flag_count(&pool, &addr).await,
+        1,
+        "the wallet is flagged with its cluster"
+    );
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/flags?address={addr}"),
+        bearer.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v.as_array().unwrap().len(), 1);
+    assert_eq!(v[0]["source"], "explorer_ip_multi_accounting");
+    assert_eq!(v[0]["ip"], "203.0.113.9");
+    assert_eq!(v[0]["linkedAddresses"].as_array().unwrap().len(), 3);
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer.clone(),
+        Some(json!({ "addresses": [], "source": "x" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+
+    open_challenge(&pool, &addr).await;
+    let (_, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/captcha",
+        &[],
+        Some(json!({ "x": 10.0 })),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert_eq!(v["isBlockedForClaiming"], true);
+
+    state
+        .credits
+        .admin_set_blocked(
+            &addr,
+            false,
+            Some("support"),
+            Some("token:support"),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        flag_count(&pool, &addr).await,
+        0,
+        "the unblock deleted the wallet's flag"
+    );
+    open_challenge(&pool, &addr).await;
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/captcha",
+        &[],
+        Some(json!({ "x": 10.0 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["ok"], true, "the claim is allowed again: {v}");
+    assert_eq!(v["isBlockedForClaiming"], false);
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer.clone(),
+        Some(cluster),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(flag_count(&pool, &addr).await, 1);
+    for address in linked.iter().chain([&addr]) {
+        let (status, _, v) = send(
+            &app,
+            "DELETE",
+            &format!("/credits/admin/flags/{address}"),
+            bearer.clone(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{v}");
+        assert_eq!(v["deleted"], true);
+    }
+    assert_eq!(
+        flag_count(&pool, &addr).await,
+        0,
+        "the unflag deleted the flag"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!("/credits/admin/flags/{addr}"),
+        bearer,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v["deleted"], false,
+        "an unflag of an unflagged wallet is idempotent"
+    );
+}
+
+async fn wait_until<F, Fut>(what: &str, mut probe: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut delay = std::time::Duration::from_millis(10);
+    while !probe().await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: not within 10 s"
+        );
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(std::time::Duration::from_millis(500));
+    }
+}
+
+/// `wallet_flags.rs`: a flag notified on the channel is applied and audited
+/// under the channel's actor, a payload the admin would refuse is skipped without
+/// ending the listener, and an unflag releases the one wallet it names.
+#[tokio::test]
+async fn a_flag_notified_on_the_wallet_flags_channel_is_applied_and_its_unflag_releases_it() {
+    let Some(pool) = pool().await else { return };
+    let credits = Credits::new(pool.clone());
+    let addr = scratch_wallet().address;
+    let other = scratch_wallet().address;
+    let listener = super::wallet_flags::subscribe(&pool).await.unwrap();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let task = tokio::spawn({
+        let credits = credits.clone();
+        let cancel = cancel.clone();
+        async move { super::wallet_flags::run(&credits, listener, cancel).await }
+    });
+    let notify = |payload: Value| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("SELECT pg_notify($1, $2)")
+                .bind(super::wallet_flags::CHANNEL)
+                .bind(payload.to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    notify(json!({
+        "action": "flag",
+        "addresses": [addr, other.to_uppercase().replace("0X", "0x")],
+        "source": "explorer_anon_multi_accounting",
+        "ip": "203.0.113.9",
+    }))
+    .await;
+    wait_until("the notified flag is applied", || async {
+        flag_count(&pool, &addr).await == 1 && flag_count(&pool, &other).await == 1
+    })
+    .await;
+    let (source, ip, linked): (String, Option<String>, Vec<String>) = sqlx::query_as(
+        "SELECT source, ip, linked_addresses FROM credits.wallet_flags WHERE address = $1",
+    )
+    .bind(&other)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(source, "explorer_anon_multi_accounting");
+    assert_eq!(ip.as_deref(), Some("203.0.113.9"));
+    assert_eq!(linked.len(), 2);
+    assert!(linked.contains(&addr) && linked.contains(&other));
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.admin_audit WHERE action = 'user.flag' AND actor = $1 AND target = $2",
+    )
+    .bind(super::wallet_flags::ACTOR)
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    notify(json!({ "action": "flag", "addresses": [], "source": "x" })).await;
+    notify(json!({ "action": "unflag", "address": addr.to_uppercase().replace("0X", "0x") })).await;
+    wait_until("the notified unflag is applied", || async {
+        flag_count(&pool, &addr).await == 0
+    })
+    .await;
+    assert_eq!(
+        flag_count(&pool, &other).await,
+        1,
+        "the unflag names one wallet"
+    );
+    cancel.cancel();
+    task.await.unwrap().unwrap();
+    sqlx::query("DELETE FROM credits.wallet_flags WHERE address = ANY($1)")
+        .bind(vec![addr, other])
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_blocked_wallet_refuses_a_spend_but_its_settlement_debit_lands() {
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "20", "15").await;
+    let credits = Credits::new(pool.clone());
+    credits
+        .admin_set_blocked(&addr, true, Some("qc"), Some("token:qc"), &json!({}))
+        .await
+        .unwrap();
+    assert!(matches!(
+        credits.spend(&addr, "5", "test:blocked-spend", None).await,
+        Err(ApiError::Forbidden(_))
+    ));
+    let mut tx = pool.begin().await.unwrap();
+    credits
+        .settle_in_tx(
+            &mut tx,
+            &addr,
+            "5",
+            "credit-used:blocked",
+            Some("credit-used:blocked"),
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        balances(&pool, &addr).await,
+        ("30".to_string(), "15".to_string()),
+        "the credit used on chain is debited from the earned bucket, block or not"
+    );
+    cleanup(&pool, &addr).await;
 }

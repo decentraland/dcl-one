@@ -93,6 +93,7 @@ pub mod store;
 pub mod stripe;
 pub mod usage;
 pub mod wallet;
+pub mod wallet_flags;
 pub mod writes;
 
 #[cfg(test)]
@@ -645,8 +646,9 @@ impl State {
         self
     }
 
-    /// The fulfilment worker (always: it idles without a broker) and the
-    /// escrow release worker (only with one), both under the shared lifecycle.
+    /// The fulfilment worker (always: it idles without a broker), the
+    /// escrow release worker (only with one), the settlement job and the
+    /// wallet flags listener, all under the shared lifecycle.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         checkout::OutboxWorker {
             credits: self.credits.clone(),
@@ -669,6 +671,7 @@ impl State {
             self.settings.writes_enabled,
             self.settings.checkout_worker_interval,
         );
+        wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
         if self.settings.writes_enabled {
             tracing::warn!(
                 "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, checkouts and authorizations"

@@ -22,7 +22,7 @@ The red '**Live Events**' pins show the location of an event that is currently h
 
 The yellow '**Points of Interest**' pins mark locations the community deemed to be must-see—they could be anything from a game to an impressive work of art. Clicking on the icon will bring up a description and a 'Jump In' button to teleport you directly.
 
-![](/docs/player/images/media/POS.webp)
+![](/docs/player/images/media/POS.webp)
 
 ### **Location Categories**
 
@@ -30,7 +30,7 @@ Discoverer interesting locations in Decentraland based on categories. When you o
 
 Click on a category to bring up pins marking the locations tagged with that category. Clicking on one will open an information card with a description as well as a 'Jump In' button so you can teleport directly to the scene.
 
-![](/docs/player/images/media/Location.webp)
+![](/docs/player/images/media/Location.webp)
 
 ### **Teleport to Specific Parcels**
 
@@ -51,11 +51,11 @@ While Worlds tend to be more private, you can discover them by browsing Worlds l
 
 Over 1K World owners choose to publicly list their Worlds on the Places page, making them easier to discover. Browse through them and filter by categories to find the perfect World for your daily adventure.
 
-![](/docs/player/images/media/worlds.webp)
+![](/docs/player/images/media/worlds.webp)
 
 Events can also be hosted in Worlds—attending them you can make friends and explore! Below is an example of an event hosted in a World. By the ruby 'jump in' arrow, you can see the World's name in place of Genesis City coordinates.
 
-![](/docs/player/images/media/events.webp)
+![](/docs/player/images/media/events.webp)
 
 ### Teleport to a World
 

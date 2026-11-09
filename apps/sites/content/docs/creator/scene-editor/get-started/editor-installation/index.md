@@ -32,7 +32,7 @@ You may need to select your Code Editor in the settings of the Creator Hub. To d
 2. Open the **EDITOR** tab.
 3. Under **Code editor of choice**, select your Code Editor. You may find your editor listed in the dropdown, or you may need to select **Choose from your device...** to find it.
 
-![The App Preferences dialog on the EDITOR tab, showing the Code editor of choice dropdown set to Visual Studio Code, the Preview Options checkboxes, and the App Warnings checkbox.](/docs/creator/images/editor/settings-editor.webp)
+![The App Preferences dialog on the EDITOR tab, showing the Code editor of choice dropdown set to Visual Studio Code, the Play Options checkboxes, and the App Warnings checkbox.](/docs/creator/images/editor/settings-editor.webp)
 
 ### AI skills
 

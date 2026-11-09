@@ -14,11 +14,11 @@ describe('sidebar parity', () => {
   })
 
   // Where it leads (the in-world Shop page, or the web Shop with ?shop=old) is inWorldShopWiring's.
-  it('Shop sits between Backpack and Gallery and opens the in-world Shop', async () => {
+  it('Shop sits between Backpack and Camera and opens the in-world Shop', async () => {
     const session = fakeSession()
     render(<Sidebar session={session} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Gallery') + 1)).toEqual(['Backpack', 'Shop', 'Gallery'])
+    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Camera') + 1)).toEqual(['Backpack', 'Shop', 'Camera'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
     expect(session.shop.toggle).toHaveBeenCalled()
   })

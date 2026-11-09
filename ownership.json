@@ -206,6 +206,17 @@
       ]
     },
     {
+      "id": "async",
+      "description": "Shared asynchronous waiting and backoff utilities",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/async/"
+      ]
+    },
+    {
       "id": "shop-ui",
       "description": "Shop product UI",
       "owners": [

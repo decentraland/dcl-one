@@ -369,29 +369,44 @@ CREATE TABLE explore.place_interaction_counts (
 -- ── events ─────────────────────────────────────────────────────────────────
 
 -- The recurrence instants of an event: each `raw.recurrent_dates` entry that
--- is an ISO 8601 date-time (the utc_timestamp function), ascending. The lists
--- expand this array (events/mod.rs VALID_RECURRENCE_DATES_SQL).
-CREATE FUNCTION explore.recurrence_dates_17e91951d5fe(raw jsonb) RETURNS timestamp without time zone[]
+-- is an ISO 8601 date-time (the guard of the utc_timestamp function, carried
+-- inline: a function call per entry cost more than the parse), ascending; the
+-- materialized parse runs the guard once per entry. The lists expand this
+-- array (events/mod.rs VALID_RECURRENCE_DATES_SQL). Step 0033 replaces the
+-- body of the name step 0030 shipped with this one (schema_functions.rs).
+CREATE FUNCTION explore.recurrence_dates_508ecd6c83ae(raw jsonb) RETURNS timestamp without time zone[]
     LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT
-    RETURN ARRAY(SELECT parsed.d FROM (SELECT explore.utc_timestamp_c37f040ae6c2(value) AS d
-                 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(raw->'recurrent_dates') = 'array'
-                                                     THEN raw->'recurrent_dates' ELSE '[]'::jsonb END)) parsed
-                 WHERE parsed.d IS NOT NULL ORDER BY parsed.d);
+    RETURN ARRAY(WITH parsed AS MATERIALIZED (
+                   SELECT CASE WHEN value ~ '^((000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|(0[469]|11)-(0[1-9]|[12][0-9]|30)|02-(0[1-9]|1[0-9]|2[0-8]))|([0-9]{2}(0[48]|[2468][048]|[13579][26])|(0[48]|[2468][048]|[13579][26])00)-02-29)([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]{1,9})?)?(Z|z|[+-](0[0-9]|1[0-5])(:?[0-5][0-9])?)?)?$'
+                       THEN CASE WHEN value ~ ':[0-9]{2}(\.[0-9]{1,9})?(Z|z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+                                 THEN value::timestamptz AT TIME ZONE 'UTC'
+                                 ELSE value::timestamp END
+                       END AS d
+                   FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(raw->'recurrent_dates') = 'array'
+                                                      THEN raw->'recurrent_dates' ELSE '[]'::jsonb END))
+                 SELECT d FROM parsed WHERE d IS NOT NULL ORDER BY d);
 
 -- The last instant an event is live under the lists' effective occurrence
 -- (events/mod.rs EFF_NEXT_START_SQL plus the duration): that effective finish
 -- is later than a moment exactly when this is, so a live list reads an index
 -- range instead of expanding every row's recurrence. NULL when the row has no
--- instant.
-CREATE FUNCTION explore.event_live_until_8c77b09c74f5(next_start_at timestamp without time zone, start_at timestamp without time zone, duration_ms bigint, raw jsonb)
+-- instant. One pass over the entries: the last valid instant and whether
+-- there is one. Step 0033 replaces the body of the name step 0030 shipped.
+CREATE FUNCTION explore.event_live_until_e38602ad6107(next_start_at timestamp without time zone, start_at timestamp without time zone, duration_ms bigint, raw jsonb)
     RETURNS timestamp without time zone
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
-    RETURN GREATEST(
+    RETURN (SELECT GREATEST(
         next_start_at + COALESCE(duration_ms, 0) * interval '1 millisecond',
-        (SELECT max(d) FROM unnest(explore.recurrence_dates_17e91951d5fe(raw)) d)
-            + COALESCE(duration_ms, 0) * interval '1 millisecond',
-        CASE WHEN next_start_at IS NULL AND cardinality(explore.recurrence_dates_17e91951d5fe(raw)) = 0
-             THEN start_at + COALESCE(duration_ms, 0) * interval '1 millisecond' END);
+        last.d + COALESCE(duration_ms, 0) * interval '1 millisecond',
+        CASE WHEN next_start_at IS NULL AND last.d IS NULL
+             THEN start_at + COALESCE(duration_ms, 0) * interval '1 millisecond' END)
+      FROM (SELECT max(CASE WHEN value ~ '^((000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|(0[469]|11)-(0[1-9]|[12][0-9]|30)|02-(0[1-9]|1[0-9]|2[0-8]))|([0-9]{2}(0[48]|[2468][048]|[13579][26])|(0[48]|[2468][048]|[13579][26])00)-02-29)([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]{1,9})?)?(Z|z|[+-](0[0-9]|1[0-5])(:?[0-5][0-9])?)?)?$'
+                    THEN CASE WHEN value ~ ':[0-9]{2}(\.[0-9]{1,9})?(Z|z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+                              THEN value::timestamptz AT TIME ZONE 'UTC'
+                              ELSE value::timestamp END
+                    END) AS d
+            FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(raw->'recurrent_dates') = 'array'
+                                               THEN raw->'recurrent_dates' ELSE '[]'::jsonb END)) last);
 
 -- The mirrored leg of /api/events (src/explore/events/mirror.rs). The generated
 -- columns store the reads of raw the lists filter and order by (events/mod.rs
@@ -422,8 +437,8 @@ CREATE TABLE explore.event (
     place_id_lower  text GENERATED ALWAYS AS (lower(raw->>'place_id')) STORED,
     server_lower    text GENERATED ALWAYS AS (lower(raw->>'server')) STORED,
     created_at_ts   timestamp without time zone GENERATED ALWAYS AS (explore.utc_timestamp_c37f040ae6c2(raw->>'created_at')) STORED,
-    recurrence_dates timestamp without time zone[] NOT NULL GENERATED ALWAYS AS (explore.recurrence_dates_17e91951d5fe(raw)) STORED,
-    live_until      timestamp without time zone GENERATED ALWAYS AS (explore.event_live_until_8c77b09c74f5(next_start_at, start_at, duration_ms, raw)) STORED,
+    recurrence_dates timestamp without time zone[] NOT NULL GENERATED ALWAYS AS (explore.recurrence_dates_508ecd6c83ae(raw)) STORED,
+    live_until      timestamp without time zone GENERATED ALWAYS AS (explore.event_live_until_e38602ad6107(next_start_at, start_at, duration_ms, raw)) STORED,
     textsearch      tsvector NOT NULL GENERATED ALWAYS AS ((setweight(to_tsvector('english', coalesce(name,'')), 'A') || setweight(to_tsvector('english', coalesce(raw->>'user_name','')), 'B') || setweight(to_tsvector('english', coalesce(raw->>'estate_name','')), 'B') || setweight(to_tsvector('english', coalesce(description,'')), 'C'))) STORED,
     -- 'upstream': the mirror's row, whose own fields are never edited here;
     -- 'local': created on this node (events/moderation.rs create_as).
@@ -434,9 +449,8 @@ CREATE TABLE explore.event (
 -- (coordinates_x = $x AND coordinates_y = $y) destination clauses of the list.
 CREATE INDEX event_coords_idx ON explore.event (coordinates_x, coordinates_y);
 -- The admin `approved=false` filter and the `approved IS TRUE` prefix of every
--- public list; next_finish_at is not in any predicate (the lists compute the
--- effective finish from raw->'recurrent_dates', EFF_NEXT_FINISH_SQL) and rides
--- along from the old schema. No index on next_start_at: the one statement that
+-- public list; next_finish_at is not in any predicate (the lists read the
+-- stored live_until) and rides along from the old schema. No index on next_start_at: the one statement that
 -- orders by it (moderation_pending, DESC NULLS LAST) cannot use a btree in
 -- either direction, so the old event_next_start_idx served nothing.
 CREATE INDEX event_approved_live_idx ON explore.event (approved, next_finish_at);
@@ -646,7 +660,8 @@ CREATE INDEX idx_seen_nonces_expires ON explore.seen_nonces (expires_at);
 -- mid-pass resumes at that page with the same pass_started_at (the sweep and
 -- the unlisted check are computed from it). last_complete_pass_at moves only
 -- when every page was fetched and every row upserted; /api/status reports it
--- and its lag.
+-- and its lag. adopted_at records the one-time adoption of the mirrored rows
+-- as local (events, EVENTS_MIRROR_ADOPT), so it never runs twice.
 CREATE TABLE explore.mirror_state (
     mirror                   text PRIMARY KEY,
     source_url               text NOT NULL,
@@ -660,6 +675,7 @@ CREATE TABLE explore.mirror_state (
     last_complete_pass_at    timestamp without time zone,
     last_complete_pass_rows  bigint,
     last_error               text,
+    adopted_at               timestamp without time zone,
     updated_at               timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('places', 'worlds', 'events'))
 );

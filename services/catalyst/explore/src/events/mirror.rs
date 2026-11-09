@@ -20,7 +20,8 @@
 //!
 //! An event a binary from before `origin` created (it may still run against
 //! a migrated database) is reclassified 'local' ([`reclaim_local`]) before
-//! anything here could overwrite, hide or sweep it.
+//! anything here could overwrite, hide or sweep it. Once the catalogue is
+//! adopted ([`adopt_upstream`], on any replica) a pass writes nothing.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -145,6 +146,37 @@ pub async fn reclaim_local(pool: &PgPool) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// The cut-over (`EVENTS_MIRROR_ADOPT`): the rows the mirror wrote become
+/// this node's. `origin` is all a local row keys on (the write routes' 409,
+/// the recurrence job, `copies::origin`), so the one statement is the whole
+/// adoption; its RSVPs and its `event_moderation` row stay (the last upsert
+/// projected that onto the row, and nothing reads it for a local row), and
+/// `events_local`, the audit of a local write, is written by the first one.
+const ADOPT_UPSTREAM: &str = "UPDATE explore.event SET origin = 'local' WHERE origin = 'upstream'";
+
+/// Runs [`ADOPT_UPSTREAM`] once per database: `mirror_state` records the
+/// adoption ([`mirror_state::claim_adoption`], the same transaction), so a
+/// later start changes nothing, upstream or not; the count is the rows
+/// adopted, `None` once recorded. Spawned under the events mirror's lease
+/// ([`crate::ExploreState::spawn_jobs`]), so a replica still mirroring
+/// finishes its passes first and the rows it wrote are the ones adopted.
+pub async fn adopt_upstream(pool: &PgPool) -> sqlx::Result<Option<u64>> {
+    let mut tx = pool.begin().await?;
+    if !mirror_state::claim_adoption(&mut tx, EVENTS_MIRROR).await? {
+        return Ok(None);
+    }
+    let n = sqlx::query(ADOPT_UPSTREAM)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    tracing::info!(
+        rows = n,
+        "event catalogue: mirrored events adopted as local"
+    );
+    Ok(Some(n))
+}
+
 /// The local RSVPs and moderation go with the event in the same statement,
 /// and so do the ones an earlier sweep left behind on an event already gone;
 /// the count is the events deleted.
@@ -219,6 +251,9 @@ pub struct PassOutcome {
     /// delete sweep is gated on it so a flaky cycle can never wipe rows it
     /// merely failed to see.
     pub complete: bool,
+    /// The catalogue was adopted as this node's ([`adopt_upstream`], on any
+    /// replica): the pass fetched and wrote nothing.
+    pub adopted: bool,
 }
 
 /// One full mirror pass. Fail-open per page and per row: an error logs,
@@ -231,6 +266,18 @@ pub async fn run_pass(
     cancel: &CancellationToken,
 ) -> Result<PassOutcome> {
     let base = source.base();
+    if mirror_state::adopted(pool, EVENTS_MIRROR).await? {
+        // A replica still configured with the upstream after the cut-over
+        // would write `origin = 'upstream'` rows nothing adopts again.
+        tracing::warn!(
+            "event catalogue: adopted as this node's; the mirror writes nothing (unset EVENTS_MIRROR_UPSTREAM)"
+        );
+        return Ok(PassOutcome {
+            adopted: true,
+            complete: true,
+            ..Default::default()
+        });
+    }
     let start = mirror_state::begin_pass(pool, EVENTS_MIRROR, base).await?;
     let mut out = PassOutcome {
         complete: true,

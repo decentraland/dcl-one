@@ -237,7 +237,7 @@ impl RateSlot {
             Err(reason) => {
                 let failed = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
                 // The first failure, then one in eight while it lasts.
-                if failed == 1 || failed % 8 == 0 {
+                if failed == 1 || failed.is_multiple_of(8) {
                     tracing::warn!(%reason, failed, "the marketplace's MANA/USD feed could not be read");
                 }
             }

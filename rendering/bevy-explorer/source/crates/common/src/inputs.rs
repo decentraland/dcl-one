@@ -53,6 +53,14 @@ pub enum SystemAction {
     Settings,
     Friends,
     ChatPanel,
+    /// Enter or leave photo mode (the camera reel's in-world camera).
+    PhotoMode,
+    /// Capture a photo while in photo mode.
+    TakePhoto,
+    PhotoCameraUp,
+    PhotoCameraDown,
+    PhotoTiltLeft,
+    PhotoTiltRight,
 }
 
 impl From<SystemAction> for Action {
@@ -649,6 +657,49 @@ impl Default for InputMap {
                 (
                     Action::System(SystemAction::ChatPanel),
                     vec![InputIdentifier::Key(KeyCode::KeyT)],
+                ),
+                // no pad button: nothing is reserved outside photo mode, so a scene reading the
+                // same button (East is IaSecondary) would open it from its own action
+                (
+                    Action::System(SystemAction::PhotoMode),
+                    vec![InputIdentifier::Key(KeyCode::KeyC)],
+                ),
+                // shares Space with IaJump: scene actions are muted while photo mode reads it
+                (
+                    Action::System(SystemAction::TakePhoto),
+                    vec![
+                        InputIdentifier::Key(KeyCode::Space),
+                        InputIdentifier::Gamepad(GamepadButton::South),
+                    ],
+                ),
+                // the bumpers zoom
+                (
+                    Action::System(SystemAction::PhotoCameraUp),
+                    vec![
+                        InputIdentifier::Key(KeyCode::KeyR),
+                        InputIdentifier::Gamepad(GamepadButton::DPadUp),
+                    ],
+                ),
+                (
+                    Action::System(SystemAction::PhotoCameraDown),
+                    vec![
+                        InputIdentifier::Key(KeyCode::KeyF),
+                        InputIdentifier::Gamepad(GamepadButton::DPadDown),
+                    ],
+                ),
+                (
+                    Action::System(SystemAction::PhotoTiltLeft),
+                    vec![
+                        InputIdentifier::Key(KeyCode::KeyQ),
+                        InputIdentifier::Gamepad(GamepadButton::DPadLeft),
+                    ],
+                ),
+                (
+                    Action::System(SystemAction::PhotoTiltRight),
+                    vec![
+                        InputIdentifier::Key(KeyCode::KeyE),
+                        InputIdentifier::Gamepad(GamepadButton::DPadRight),
+                    ],
                 ),
             ]),
         }

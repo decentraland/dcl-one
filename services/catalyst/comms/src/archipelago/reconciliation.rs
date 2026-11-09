@@ -16,6 +16,8 @@ pub(super) struct Reconciliation {
     unassigned_only: bool,
     next_full: Instant,
     restored_followups: u8,
+    #[cfg(any(test, feature = "test-support"))]
+    restored: bool,
 }
 
 impl Reconciliation {
@@ -25,6 +27,8 @@ impl Reconciliation {
             unassigned_only: false,
             next_full: now,
             restored_followups: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            restored: false,
         }
     }
 
@@ -32,6 +36,10 @@ impl Reconciliation {
         self.pending.clear();
         self.next_full = now;
         self.restored_followups = RESTORED_FOLLOWUPS;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.restored = false;
+        }
     }
 
     pub(super) fn refill(&mut self, registry: &PeersRegistry, now: Instant) {
@@ -46,12 +54,21 @@ impl Reconciliation {
                 self.restored_followups -= 1;
                 super::feed::RECONCILE_INTERVAL
             } else {
+                #[cfg(any(test, feature = "test-support"))]
+                {
+                    self.restored = true;
+                }
                 FULL_INTERVAL
             };
             self.next_full = now + interval;
         }
         self.pending
             .extend(registry.reconciliation_snapshot(self.unassigned_only));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn restoration_complete(&self) -> bool {
+        self.restored && self.pending.is_empty()
     }
 
     pub(super) fn is_empty(&self) -> bool {

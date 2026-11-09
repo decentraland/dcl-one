@@ -141,6 +141,9 @@ pub struct Settings {
     pub worlds_interval: Duration,
     pub events_upstream: Option<MirrorSource>,
     pub events_interval: Duration,
+    /// `EVENTS_MIRROR_ADOPT`: adopt the rows the events mirror wrote as this
+    /// node's own, once per database (`events::mirror::adopt_upstream`).
+    pub events_adopt: bool,
     /// Which scenes the `places-derive` job turns into place rows
     /// (`places::derive`); `None` attaches no job (tests).
     pub places_derive: Option<places::derive::DeriveScope>,
@@ -235,6 +238,7 @@ impl Settings {
             worlds_interval: Duration::from_secs(3600),
             events_upstream: None,
             events_interval: Duration::from_secs(3600),
+            events_adopt: false,
             places_derive: None,
             places_derive_interval: places::derive::DEFAULT_INTERVAL,
             user_writes_enabled: false,
@@ -602,6 +606,12 @@ impl ExploreState {
                     let out =
                         events::mirror::run_pass(&client, &pool, &source, interval, &ctx.cancel)
                             .await?;
+                    if out.adopted {
+                        ctx.progress(
+                            "adopted: the mirror writes nothing; unset EVENTS_MIRROR_UPSTREAM",
+                        );
+                        return Ok(());
+                    }
                     ctx.progress(format!(
                         "upserted {} failed_pages {} swept {} unlisted gone {} complete {}",
                         out.upserted, out.failed_pages, out.swept, out.unlisted_gone, out.complete
@@ -625,6 +635,21 @@ impl ExploreState {
                             out.failed_pages,
                             out.failed_rows
                         );
+                    }
+                    Ok(())
+                }
+            });
+        } else if self.settings.events_adopt {
+            // The cut-over (`events::mirror::adopt_upstream`) under the
+            // mirror's lease: it waits for a replica still mirroring, runs
+            // once per database and finishes.
+            let pool = self.pool.clone();
+            jobs.spawn_leased("events-mirror", move |ctx| {
+                let pool = pool.clone();
+                async move {
+                    match events::mirror::adopt_upstream(&pool).await? {
+                        Some(rows) => ctx.progress(format!("adopted {rows} mirrored events")),
+                        None => ctx.progress("mirrored events already adopted"),
                     }
                     Ok(())
                 }

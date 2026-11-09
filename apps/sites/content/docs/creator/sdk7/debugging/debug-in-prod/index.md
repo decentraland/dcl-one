@@ -22,6 +22,10 @@ Keep in mind that after each publish, an internal process optimizes all 3D model
 
 You can check the current state of this process for your scene using [this tool](https://decentraland.github.io/opscli/). If the conversion is complete, all three variations of the assets should have green lights.
 
+## Multiplayer Server logs and metrics
+
+For a deployed [Multiplayer Server](/docs/creator/sdk7/networking/authoritative-servers/) scene, use [Scene Insights](/docs/creator/sdk7/debugging/scene-insights/) to search the last 7 days of server logs, follow new lines live, and inspect CPU and memory metrics. It includes wallet sign-in and commands you or your AI assistant can run from the scene project.
+
 ## Scene logs
 
 When using Decentraland normally, it's not possible to open the console to check for debug messages. To make the console available, you must open decentraland with the `scene-console` parameter. You can then toggle the console by pressing the backtick key on your keyboard: **\`**. This key is left of the 1 key on most english language keyboards.
@@ -40,7 +44,7 @@ To open Decentraland with the `scene-console` parameter, either:
 
 When running Decentraland with the `scene-console`, you can open the console in three ways:
 
-- Click the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner
+- Click the ![](/docs/creator/images/console-icon.webp) icon on the top-right corner
 - Press the **\`** key for a short console
 - Press Shift + **\`** to open a larger view of the console
 

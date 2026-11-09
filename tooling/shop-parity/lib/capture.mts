@@ -26,6 +26,8 @@ export type SideCapture = {
   error?: string;
 };
 
+const IMAGE_READINESS_TIMEOUT_MS = 5000;
+
 const BUSY = "[aria-busy=true], [data-testid*=skeleton], .skeleton, [class*=Skeleton], [class*=skeleton]";
 
 async function settle(page: Page, ready?: string): Promise<void> {
@@ -34,14 +36,10 @@ async function settle(page: Page, ready?: string): Promise<void> {
   await page
     .waitForFunction((busy: string) => ![...document.querySelectorAll(busy)].some((e) => e.getBoundingClientRect().height > 0), BUSY, { timeout: 15_000 })
     .catch(() => {});
-  await page.evaluate(async () => {
-    await document.fonts.ready;
-    await Promise.all(
-      [...document.images].filter((i) => !i.complete).map((i) => new Promise((r) => { i.addEventListener("load", r, { once: true }); i.addEventListener("error", r, { once: true }); setTimeout(r, 5000); })),
-    );
-  });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await visibleImages(page);
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-  await page.waitForTimeout(300);
+  await frames(page);
 }
 
 const docHeight = (page: Page, cap?: number) => page.evaluate((c: number) => Math.min(document.documentElement.scrollHeight, c), cap ?? Number.MAX_SAFE_INTEGER);
@@ -50,12 +48,31 @@ const docHeight = (page: Page, cap?: number) => page.evaluate((c: number) => Mat
 async function warm(page: Page, vh: number, cap?: number): Promise<void> {
   const height = await docHeight(page, cap);
   for (let y = 0; y < height; y += Math.round(vh * 0.8)) {
-    await page.evaluate((top: number) => window.scrollTo(0, top), y);
-    await page.waitForTimeout(120);
+    await scroll(page, y);
+    await visibleImages(page);
   }
-  await page.evaluate((top: number) => window.scrollTo(0, top), Math.max(0, height - vh));
-  await page.waitForTimeout(300);
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await scroll(page, Math.max(0, height - vh));
+  await visibleImages(page);
+  await scroll(page, 0);
+}
+
+export async function visibleImages(page: Page) {
+  await page.waitForFunction(() => [...document.images].every((image) => {
+    const box = image.getBoundingClientRect();
+    return box.bottom <= 0 || box.top >= innerHeight || box.right <= 0 || box.left >= innerWidth || box.width === 0 || box.height === 0 || image.complete;
+  }), undefined, { timeout: IMAGE_READINESS_TIMEOUT_MS }).catch((error: unknown) => {
+    if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+  });
+}
+
+export async function scroll(page: Page, top: number) {
+  const target = await page.evaluate((y: number) => {
+    const target = Math.max(0, Math.min(y, document.documentElement.scrollHeight - innerHeight));
+    window.scrollTo({ top: target, behavior: "instant" });
+    return target;
+  }, top);
+  await page.waitForFunction((y: number) => Math.abs(scrollY - Math.max(0, Math.min(y, document.documentElement.scrollHeight - innerHeight))) <= 1, target, { timeout: 5000 });
+  await frames(page);
 }
 
 async function frames(page: Page) {
@@ -112,9 +129,8 @@ async function tiles(page: Page, vp: Viewport, cap?: number): Promise<Rgba> {
   const out: Rgba = { width: vp.width, height, data: new Uint8Array(vp.width * height * 4) };
   let filled = 0;
   for (let y = 0; filled < height; y += vp.height) {
-    await page.evaluate((top: number) => window.scrollTo(0, top), y);
-    await frames(page);
-    await page.waitForTimeout(150);
+    await scroll(page, y);
+    await visibleImages(page);
     const real = await page.evaluate(() => Math.round(window.scrollY));
     const shot = decodePng(await page.screenshot({ animations: "disabled", caret: "hide", scale: "css" }));
     const next = pasteTile(out, filled, real, shot);

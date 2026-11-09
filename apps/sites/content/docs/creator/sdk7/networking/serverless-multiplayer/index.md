@@ -18,7 +18,7 @@ The first two options are covered in this document. They are simpler, as they re
 
 In the [Creator Hub](/docs/creator/scene-editor/get-started/about-editor/), mark an entity as synced by adding a **Multiplayer component** to it. It includes a checkbox for each of the other components on the entity, allowing you to select which ones to update.
 
-![](/docs/creator/images/editor/multiplayer-component.webp)
+![](/docs/creator/images/editor/multiplayer-component.webp)
 
 To mark an entity as synced via code, use the `syncEntity` function:
 
@@ -64,16 +64,16 @@ Explicitly setting this ID is important to avoid inconsistencies if a race condi
 
 > [!NOTE]
 > **💡 Tip**: Create an enum in your scene, to keep clear references to each syncable id in your scene.
-> 
+>
 > ```ts
 > import { syncEntity } from "@dcl/sdk/network";
-> 
+>
 > enum EntityEnumId {
 >   DOOR = 1,
 >   DRAW_BRIDGE = 2,
 >   ELEVATOR = 3,
 > }
-> 
+>
 > export function main() {
 >   syncEntity(
 >     doorEntity,
@@ -82,7 +82,7 @@ Explicitly setting this ID is important to avoid inconsistencies if a race condi
 >   );
 > }
 > ```
-> 
+>
 > Here the EntityEnumId enum is used to tag entities with a unique identifier, ensuring that every client recognizes the modified entity, regardless of creation order.
 
 
@@ -110,7 +110,7 @@ function onThrow() {
 }
 ```
 
-**Parented entities**
+### Parented entities {#parented-entities}
 
 The parent of an entity is normally defined via `parent` property in the `Transform` component. This property however points to the local entity id of the parent, which could vary, see [About enum id](/docs/creator/sdk7/networking/serverless-multiplayer/#about-the-enum-id). To parent entities that need to be synced, or that have children that need to be synced, use the `parentEntity()` function instead of the `Transform`.
 
@@ -354,9 +354,9 @@ If you launch a scene preview and open it in two (or more) different explorer wi
 
 Interact with the scene on one window, then switch to the other to see that the effects of that interaction are also visible there.
 
-Using the Creator Hub, click the Preview button a second time, and that opens a second Decentraland explorer window. You must connect on both windows with different addresses. The same sessions will remain open as the scene reloads.
+Using the Creator Hub, turn on **Multi-Instance Preview** in the **Desktop Client** submenu of **Play Options**, then click the **Play** button a second time to open a second Decentraland explorer window. You must connect on both windows with different addresses. The same sessions will remain open as the scene reloads.
 
-![](/docs/creator/images/editor/preview-button.webp)
+![](/docs/creator/images/editor/preview-button.webp)
 
 As an alternative, you can open a second Decentraland explorer window by writing the following into a browser URL:
 

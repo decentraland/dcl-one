@@ -4,7 +4,7 @@
 
 Decentraland scenes are built around [_entities_, _components_ and _systems_](https://en.wikipedia.org/wiki/Entity%E2%80%93component%E2%80%93system). This is a common pattern used in the architecture of several game engines, that allows for easy composability and scalability.
 
-![](/docs/creator/images/media/ecs-big-picture.webp)
+![](/docs/creator/images/media/ecs-big-picture.webp)
 
 ## Overview
 
@@ -16,14 +16,14 @@ If you're familiar with web development, think of entities as the equivalent of 
 
 In the [Scene Editor in Creator Hub](/docs/creator/scene-editor/get-started/about-editor/), you can view the components that belong to an entity by selecting it.
 
-![](/docs/creator/images/editor/components-example.webp)
+![](/docs/creator/images/editor/components-example.webp)
 
 
 > [!WARNING]
 > **📔 Note**: In previous versions of the SDK, Entities were _objects_ that were instanced, and could be extended to add functions. As of version 7.0 of the SDK, entities are only an ID. This structure better fits the principles of [data oriented programming](/docs/creator/sdk7/architecture/data-oriented-programming/) and can help in the scene's performance.
 
 
-![](/docs/creator/images/media/ecs-components-new.webp)
+![](/docs/creator/images/media/ecs-components-new.webp)
 
 Components like `Transform`, `Material` or any of the _shape_ components are closely tied in with the rendering of the scene. If the values in these components change, that alone is enough for the engine to change how the scene is rendered in the next frame.
 
@@ -155,7 +155,7 @@ An entity is just an id that is referenced by its components. So when removing a
 
 An entity can have other entities as children. Thanks to this, we can arrange entities into trees, just like the HTML of a webpage.
 
-![](/docs/creator/images/media/ecs-nested-entities-new.webp)
+![](/docs/creator/images/media/ecs-nested-entities-new.webp)
 
 To set an entity as the parent of another, the child entity must have a `Transform` component. You can then set the `parent` field with a reference to the parent entity.
 
@@ -204,7 +204,7 @@ mutableChildTransform.parent = engine.RootEntity
 
 In the Scene Editor, you can see the entire hierarchy of nested entities in your scene on the left-side panel.
 
-![](/docs/creator/images/editor/entity-tree-example.webp)
+![](/docs/creator/images/editor/entity-tree-example.webp)
 
 ## Get an entity by ID
 

@@ -567,9 +567,7 @@ pub mod test_support {
     pub(crate) fn copy(error: &AuthorityNotEstablished) -> AuthorityNotEstablished {
         use AuthorityNotEstablished::*;
         match error {
-            AuthenticationMissingOrInvalid { detail } => {
-                AuthenticationMissingOrInvalid { detail: *detail }
-            }
+            AuthenticationMissingOrInvalid { detail } => AuthenticationMissingOrInvalid { detail },
             PresentedSharedSecretDidNotMatch => PresentedSharedSecretDidNotMatch,
             RefusedLacksAuthority { detail } => RefusedLacksAuthority {
                 detail: detail.clone(),
@@ -578,13 +576,13 @@ pub mod test_support {
                 store,
                 reason_for_operators,
             } => UndeterminedStoreUnavailable {
-                store: *store,
+                store,
                 reason_for_operators: reason_for_operators.clone(),
             },
             CredentialNotConfigured {
                 environment_variable,
             } => CredentialNotConfigured {
-                environment_variable: *environment_variable,
+                environment_variable,
             },
         }
     }

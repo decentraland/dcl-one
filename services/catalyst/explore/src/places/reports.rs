@@ -264,12 +264,12 @@ pub async fn put_report_upload(
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
     let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
-    if let Some(token) = upload.token {
-        if upload_by_capability(&state.pool, &filename, &token, &payload).await? != 0 {
-            return Ok(Json(json!({ "ok": true })));
-        }
-        // A stale capability must not override valid reporter authentication.
+    if let Some(token) = upload.token
+        && upload_by_capability(&state.pool, &filename, &token, &payload).await? != 0
+    {
+        return Ok(Json(json!({ "ok": true })));
     }
+    // A stale capability must not override valid reporter authentication.
     let reporter = state
         .wkc_signer(&headers, method.as_str(), uri.path())
         .await?;

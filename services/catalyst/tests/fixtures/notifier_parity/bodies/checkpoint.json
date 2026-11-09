@@ -1,0 +1,11 @@
+{
+  "event": "Onboarding Checkpoint",
+  "properties": {
+    "checkpointId": 2,
+    "action": "reached",
+    "userIdentifier": "user@example.com",
+    "identifierType": "email",
+    "email": "user@example.com",
+    "source": "auth"
+  }
+}
