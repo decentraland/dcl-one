@@ -447,3 +447,21 @@ difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+
+## World storage
+
+The `/world-storage` routes (`/values`, `/players`, `/env`, `/usage`,
+`/exports`, `/collaborator`) follow
+[`decentraland/world-storage-service`](https://github.com/decentraland/world-storage-service).
+
+### Authorization
+
+- **Deployers.** A world's `deployment` grantee reaches a scene's storage
+  only when the grant covers that scene's whole footprint (a world-wide
+  grant covers every scene). Upstream admits every wallet in the world's
+  deployment allow-list, parcel-scoped grantees included, to every scene.
+- **Genesis collaborators.** A wallet in a Genesis scene's
+  `logsPermissions` is admitted only while the LAND index has complete,
+  fresh ownership history for the whole footprint and no parcel changed
+  owner after the scene was deployed. Upstream admits it on the active
+  deployment alone.

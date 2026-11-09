@@ -1124,7 +1124,9 @@ async fn signed_request(
     scope: Option<&str>,
     body: Option<&str>,
 ) -> Request<Body> {
-    let headers = signed_as(key, Shape::Legacy, method, path, metadata, metadata).await;
+    // Signed over the pathname, as upstream verifies it.
+    let pathname = path.split('?').next().unwrap_or(path);
+    let headers = signed_as(key, Shape::Legacy, method, pathname, metadata, metadata).await;
     with_headers(method, path, headers, scope, body)
 }
 
@@ -1367,6 +1369,81 @@ async fn parcel_mismatched_claim_is_rejected() {
         body,
         json!({ "ok": false, "error": "Not Authorized", "message": NOT_AUTHORIZED_MSG })
     );
+}
+
+/// Upstream binds the claim's `SceneId:` to the signed metadata's `sceneId`,
+/// not to the scene the parcel resolves to; a missing or non-string one
+/// reads as `""` and matches no claim.
+#[tokio::test]
+async fn the_claim_scene_id_is_the_signed_metadata_scene_id() {
+    let Some(pool) = scratch().await else { return };
+    let (world, _owner) = seed_owned_world(&pool).await;
+    let authoritative = Address::parse(&address_of(AUTHORITATIVE_KEY)).unwrap();
+    let app = router(state(&pool, Some(authoritative)));
+    let worker_key = random_key();
+    let claim_for = |scene_id: &str| {
+        claim_payload(
+            &address_of(&worker_key),
+            world.key(),
+            scene_id,
+            PARCEL,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+    };
+    let named = "bafkrei-named-by-the-host";
+    let scope_hdr = scope_header(&wallet(AUTHORITATIVE_KEY), &claim_for(named)).await;
+    let cases = [
+        (
+            scene_metadata(world.display(), PARCEL, named),
+            StatusCode::OK,
+        ),
+        (
+            scene_metadata(world.display(), PARCEL, SCENE_ID),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            json!({ "realm": { "serverName": world.display() }, "parcel": PARCEL, "sceneId": 7 })
+                .to_string(),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ];
+    for (meta, expected) in cases {
+        let (status, body) = send(
+            &app,
+            signed_request(
+                "get",
+                "/values/k",
+                &worker_key,
+                &meta,
+                Some(&scope_hdr),
+                None,
+            )
+            .await,
+        )
+        .await;
+        let status = if status == StatusCode::NOT_FOUND {
+            StatusCode::OK
+        } else {
+            status
+        };
+        assert_eq!(status, expected, "{meta}: {body}");
+    }
+    let empty_claim = scope_header(&wallet(AUTHORITATIVE_KEY), &claim_for("")).await;
+    let meta = json!({ "realm": { "serverName": world.display() }, "parcel": PARCEL }).to_string();
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "get",
+            "/values/k",
+            &worker_key,
+            &meta,
+            Some(&empty_claim),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 }
 
 /// The permission core decides: the owner and a deployer whose grant covers
@@ -1672,11 +1749,12 @@ async fn a_missing_scene_is_a_400_and_a_mirrored_world_refuses_everyone() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("Scene not found"),
+        assert_eq!(
+            body["message"],
+            format!(
+                "Scene not found in Places API for world \"{}\" at parcel \"7,7\"",
+                world.key()
+            ),
             "{body}"
         );
     }
@@ -2355,7 +2433,7 @@ async fn genesis_scenes_scope_by_the_active_pointer_and_admit_the_land_authority
 }
 
 #[tokio::test]
-async fn genesis_land_source_failure_returns_503_without_granting_storage() {
+async fn genesis_land_source_failure_is_upstreams_401_without_granting_storage() {
     let Some(pool) = scratch().await else { return };
     let (id, p1, _, dep_id) = seed_genesis_scene(&pool).await;
     let service = Router::new().fallback(|| async { StatusCode::SERVICE_UNAVAILABLE });
@@ -2365,7 +2443,7 @@ async fn genesis_land_source_failure_returns_503_without_granting_storage() {
     let app = router(state_with_land_operators(&pool, &format!("http://{addr}")));
     let key = random_key();
     let meta = scene_metadata("main", &p1, &id);
-    let (status, _) = send(
+    let (status, body) = send(
         &app,
         signed_request(
             "put",
@@ -2378,7 +2456,8 @@ async fn genesis_land_source_failure_returns_503_without_granting_storage() {
         .await,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
     server.abort();
     remove_genesis_scene(&pool, &id, dep_id).await;
 }
@@ -2768,14 +2847,6 @@ async fn a_pathname_signature_verifies_a_listing_with_a_query_and_opens_nothing_
     let key = owner_key.as_str();
     for (case, app, shape, signed, target, original_path) in [
         (
-            "path and query, nested",
-            &nested,
-            Shape::V6,
-            "/world-storage/values?limit=10",
-            "/world-storage/values?limit=10",
-            None,
-        ),
-        (
             "pathname, nested",
             &nested,
             Shape::V6,
@@ -2839,6 +2910,14 @@ async fn a_pathname_signature_verifies_a_listing_with_a_query_and_opens_nothing_
     }
 
     for (case, method, signed, target, original_path) in [
+        // Upstream binds the pathname only.
+        (
+            "path and query",
+            "get",
+            "/values?limit=1",
+            "/values?limit=1",
+            None,
+        ),
         ("another route", "get", "/values", "/env?limit=1", None),
         (
             "another key",
@@ -2951,14 +3030,17 @@ async fn refuses_a_legacy_request_that_respells_an_authorized_key() {
             .await
             .expect_err("a re-spelled authorized key must not be served");
         let refused_by_the_expected_guard = if from_the_gate {
-            matches!(err, AuthChainError::SceneSignerRejected)
+            matches!(err, AuthChainError::SceneSignerRejected(_))
         } else {
-            matches!(err, AuthChainError::MalformedChain { .. })
+            err == AuthChainError::InvalidMetadata(format!(
+                "Invalid chain metadata: expected \"{declared}\", got \"{respelled}\""
+            ))
         };
         assert!(
             refused_by_the_expected_guard,
             "{respelled:?} produced {err:?}"
         );
+        assert_eq!(err.status_code(), 400);
     }
 }
 
@@ -2977,8 +3059,15 @@ async fn refuses_a_scene_signer_in_every_spelling() {
                 .await
                 .expect_err("a scene-signed request must never reach this surface");
             assert!(
-                matches!(err, AuthChainError::SceneSignerRejected),
+                matches!(err, AuthChainError::SceneSignerRejected(_)),
                 "{signer:?} {shape:?} produced {err:?}"
+            );
+            assert_eq!(
+                err.raw_message(),
+                format!(
+                    "Invalid metadata content: {}",
+                    super::js::safe(&super::js::JsValue::parse(&metadata).unwrap().stringify())
+                )
             );
         }
     }
@@ -2994,8 +3083,12 @@ async fn the_scene_gate_answers_before_signature_verification() {
         .await
         .expect_err("a scene-signed request must be refused");
     assert!(
-        matches!(err, AuthChainError::SceneSignerRejected),
+        matches!(err, AuthChainError::SceneSignerRejected(_)),
         "the gate must win over the signature check, got {err:?}"
+    );
+    assert_eq!(
+        err.raw_message(),
+        r#"Invalid metadata content: {"parcel":"0,0","realm":{"serverName":"some.dcl.eth"},"realmName…"#
     );
 }
 
@@ -3009,7 +3102,7 @@ async fn a_stale_scene_signed_request_is_expired_before_the_gate_runs() {
         .await
         .expect_err("a ten-minute-old request must be refused");
     assert!(
-        matches!(err, AuthChainError::Expired { .. }),
+        matches!(err, AuthChainError::Expired(_)),
         "freshness must answer before the gate, got {err:?}"
     );
     // The window is 60 s: 90 s old is refused.
@@ -3017,20 +3110,46 @@ async fn a_stale_scene_signed_request_is_expired_before_the_gate_runs() {
     let metadata = posture_metadata("dcl:authoritative-server");
     assert!(matches!(
         verify(&signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, &ts).await).await,
-        Err(AuthChainError::Expired { .. })
+        Err(AuthChainError::Expired(_))
     ));
 }
 
+/// `Number(raw)`: any finite spelling of now is fresh and signs as sent.
 #[tokio::test]
-async fn refuses_a_timestamp_that_is_not_plain_integer_milliseconds() {
-    for ts in ["1.7e12", "1700000000000.0", "Infinity"] {
-        let metadata = posture_metadata("dcl:authoritative-server");
+async fn a_timestamp_is_any_finite_javascript_number() {
+    let metadata = posture_metadata("dcl:authoritative-server");
+    let now = chrono::Utc::now().timestamp_millis();
+    for ts in [
+        format!("{now}.0"),
+        format!("{now}.5"),
+        format!("{}e-3", now as i128 * 1000),
+        format!("+{now}"),
+    ] {
+        let headers = signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, &ts).await;
+        assert!(verify(&headers).await.is_ok(), "{ts}");
+    }
+    for ts in ["Infinity", "not-a-number", "1e400"] {
         let err = verify(&signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, ts).await)
             .await
             .expect_err("a timestamp with no computable window must not be served");
         assert!(
             matches!(&err, AuthChainError::InvalidTimestamp(value) if value == ts),
             "timestamp {ts:?} produced {err:?}"
+        );
+        assert_eq!(err.raw_message(), format!("Invalid chain timestamp: {ts}"));
+    }
+}
+
+/// Upstream joins the absent metadata header as the empty string, not `{}`.
+#[tokio::test]
+async fn an_absent_metadata_header_signs_as_the_empty_string() {
+    for (signed, verifies) in [("", true), ("{}", false)] {
+        let mut headers = signed_as(KEY, Shape::V6, METHOD, PATH, signed, "{}").await;
+        headers.remove("x-identity-metadata");
+        assert_eq!(
+            verify(&headers).await.is_ok(),
+            verifies,
+            "signed over {signed:?}"
         );
     }
 }
@@ -3046,12 +3165,13 @@ async fn an_absent_or_empty_timestamp_header_expires() {
         .await
         .expect_err("a request with no timestamp must not be served");
     assert!(
-        matches!(err, AuthChainError::Expired { signed_at: 0, .. }),
+        matches!(err, AuthChainError::Expired(_)),
         "an absent timestamp produced {err:?}"
     );
     assert_eq!(err.status_code(), 401);
     assert!(
-        err.raw_message().starts_with("Expired signature: "),
+        err.raw_message()
+            .starts_with("Expired signature: signature timestamp: 0, timestamp expiration: 60000, local timestamp: "),
         "{}",
         err.raw_message()
     );
@@ -3062,7 +3182,8 @@ async fn an_absent_or_empty_timestamp_header_expires() {
         .await
         .expect_err("an empty timestamp must not be served");
     assert!(
-        matches!(err, AuthChainError::Expired { signed_at: 0, .. }),
+        err.raw_message()
+            .starts_with("Expired signature: signature timestamp: 0, "),
         "an empty timestamp produced {err:?}"
     );
 }
@@ -3080,7 +3201,7 @@ async fn a_non_object_metadata_header_is_refused_before_the_gate() {
         );
         assert_eq!(
             err.raw_message(),
-            format!("Invalid chain format: invalid chain metadata: \"{metadata}\"")
+            format!("Invalid chain metadata: \"{metadata}\"")
         );
     }
     let err = verify(&HeaderMap::new()).await.unwrap_err();
@@ -3523,9 +3644,9 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         );
     }
 
-    // Published history still proves the collaborator grant while ordinary
-    // LAND readiness falls back during cursor advancement. A broken fallback
-    // must not suppress that independent grant, but an outsider gets its 503.
+    // While ordinary LAND readiness falls back during cursor advancement, a
+    // broken fallback is upstream's 401 for everyone: the owner lookup runs
+    // first and its failure answers before logsPermissions is read.
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101")
         .execute(&pool)
         .await
@@ -3549,18 +3670,15 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         Settings::for_tests(None),
         None,
     )));
-    let (status, body) = send(
-        &broken_app,
-        signed_request("get", "/values/g", &collab_key, &meta, None, None).await,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = send(
-        &broken_app,
-        signed_request("get", "/values/g", OUTSIDER_KEY, &meta, None, None).await,
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    for key in [collab_key.as_str(), OUTSIDER_KEY] {
+        let (status, body) = send(
+            &broken_app,
+            signed_request("get", "/values/g", key, &meta, None, None).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
+    }
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 100")
         .execute(&pool)
         .await
@@ -3743,7 +3861,7 @@ async fn collaborator_lists_exactly_the_signers_active_scenes() {
         })
     );
 
-    // Signed over the path with its query; the pathname-only form needs #80.
+    // Signed over the pathname, as upstream verifies it.
     let (status, body) = send(
         &app,
         signed_request(
@@ -3835,13 +3953,15 @@ async fn genesis_nonmembers_never_evaluate_the_ownership_history_function() {
     )
     .await;
     // Only this private database is changed. A listed collaborator proves the
-    // sentinel is live; an outsider must not execute it in either query.
+    // sentinel is live (the listing's 500; the storage route denies on a failed
+    // logs lookup, as upstream does); an outsider must not execute it in either
+    // query.
     sqlx::query("CREATE OR REPLACE FUNCTION land_authz.scene_collaborators_current(configured_network text, configured_land text, configured_estate text, pointers text[], entity_timestamp timestamp without time zone) RETURNS boolean LANGUAGE plpgsql STABLE AS $$ BEGIN RAISE EXCEPTION 'history probe executed'; END $$")
         .execute(&fixture.pool).await.unwrap();
     let app = router(fixture.state());
     let meta = scene_metadata("main", &pointer, &id);
     for (signer, expected) in [
-        (&key[..], StatusCode::INTERNAL_SERVER_ERROR),
+        (&key[..], StatusCode::UNAUTHORIZED),
         (OUTSIDER_KEY, StatusCode::UNAUTHORIZED),
     ] {
         let (status, body) = send(
@@ -4206,12 +4326,37 @@ async fn malformed_logs_permissions_grant_nothing() {
         json!({"address":"0xabc"}),
         json!([42, null, {"address":"0xabc"}]),
     ] {
-        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions($1)")
+        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions_decoded($1)")
             .bind(value.to_string())
             .fetch_one(&pool)
             .await
             .unwrap();
         assert!(grants.is_empty(), "{value}: {grants:?}");
+    }
+}
+
+/// Entries read as `JSON.parse` reads them: escapes decode, an entry with
+/// an escape no address can carry is left out without failing.
+#[tokio::test]
+async fn logs_permissions_decode_json_escapes() {
+    let Some(pool) = scratch().await else { return };
+    for (raw, expected) in [
+        (
+            r#"["\u0030xABC", "0x\u0061bc", "0xdef"]"#,
+            vec!["0xabc", "0xabc", "0xdef"],
+        ),
+        (
+            r#"["a\u0000b", "\ud83d\ude00", "\ud800", "0x\\u0000", "0x1"]"#,
+            vec!["0x1"],
+        ),
+        (r#"["\"q\"", "x\/y"]"#, vec!["\"q\"", "x/y"]),
+    ] {
+        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions_decoded($1)")
+            .bind(raw)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(grants, expected, "{raw}");
     }
 }
 

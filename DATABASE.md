@@ -121,15 +121,18 @@ operations probe the resolved deployment by primary/unique key on every
 request; redeployment without the wallet revokes that grant. Collaborator
 access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
-It derives membership at read time through `worlds.logs_permissions`, with no
-stored projection. The partial GIN `world_scenes_logs_permissions_idx` covers
-local world scenes; `deployments_scene_logs_permissions_idx` covers live
+It derives membership at read time through `worlds.logs_permissions_decoded`, with no
+stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
+local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
 Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
-The function reads raw JSON text so even a stored JSON `\u0000` cannot fail an
-insert through an index. Expected traffic is low; measured dataset sizes,
-query timings and index write costs must be recorded in the task report.
+The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
+carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
+can fail an insert through an index. A database stamped before it keeps the
+superseded `worlds.logs_permissions` and its two indexes until dropped by hand.
+Expected traffic is low; measured dataset sizes, query timings and index write
+costs must be recorded in the task report.
 
 Genesis collaborator grants also require the configured LAND index to be
 complete and fresh. One shared SQL predicate checks the entire scene footprint
