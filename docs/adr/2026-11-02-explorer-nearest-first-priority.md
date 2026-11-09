@@ -141,7 +141,7 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   `load_scene_entity` starts all their definition loads in that frame, so the sort only decided
   which small definition download queued first, `defer_to_current_scene` already puts the
   player's scene first, and the partition it needed came from in-range pointer parcels, which
-  can disagree with the scene's parcels once it has a context. It returns with W1's loading
+  can disagree with the scene's parcels once it has a context. It can be revisited with loading
   waves, which take the first N of a sorted list.
 - **Measuring distance from the camera.** In third person the camera often sits inside a
   neighbouring scene, whose distance then reads 0 and ties with the active scene's key of 0; the
@@ -237,7 +237,7 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   "still resolving" state through the unchanged-definition check, the `PreviousAvatar` swap and
   the processing systems. Until then the component stays on the avatar root, and
   `update_render_avatar` drops it when the selection goes.
-- Loading waves (W1) sort the newly required scenes by their partition and take the first N;
+- Loading waves sort the newly required scenes by their partition and take the first N;
   until then spawn order is hash-map order.
 - `scene_timing` (`scene_runner::load_timing`) logs, per scene, the time from spawn to its fifth
   tick and, per arrival, the time until the player's scene and its first ring are ready. It is
