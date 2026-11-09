@@ -274,7 +274,8 @@ impl Presence {
     }
     /// The lowercased player identities of the last complete observation in
     /// a world's rooms (`scene` `None`: any of its rooms) or in one Genesis
-    /// scene's rooms, with the latest instant one of those rooms was read.
+    /// scene's rooms, with the earliest instant one of those rooms was read:
+    /// a wallet that joined a room after that instant may be missing.
     /// `None` when that observation is stale or a room this node refused
     /// could hold them: no answer, never an empty one.
     pub fn room_occupants(
@@ -304,7 +305,7 @@ impl Presence {
         let read_at = rooms
             .iter()
             .map(|r| r.observed.utc)
-            .max()
+            .min()
             .or(view.observed.as_ref().map(|o| o.utc))?;
         let wallets = rooms
             .iter()
@@ -530,5 +531,28 @@ mod occupants_tests {
             .room_occupants("party.dcl.eth", Some("bafyscene"))
             .unwrap();
         assert!(none.is_empty(), "no Genesis scene room of that realm");
+    }
+
+    #[test]
+    fn room_occupants_are_observed_at_the_earliest_room_read() {
+        let presence = Presence::new();
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", "world-party.dcl.eth", false);
+        presence.peer_joined(
+            "0xCD",
+            "party.dcl.eth",
+            "world-scene-room-party.dcl.eth-x",
+            true,
+        );
+        let early = chrono::DateTime::from_timestamp_millis(1_800_000_000_000).unwrap();
+        let late = early + chrono::Duration::seconds(30);
+        {
+            let mut state = presence.state.lock();
+            let view = std::sync::Arc::make_mut(&mut state.complete);
+            view.rooms[0].observed.utc = late;
+            view.rooms[1].observed.utc = early;
+        }
+        let (at, _) = presence.room_occupants("party.dcl.eth", None).unwrap();
+        assert_eq!(at, early);
     }
 }
