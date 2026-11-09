@@ -115,6 +115,10 @@ impl Plugin for ReactHudCefPlugin {
         // handles the Ctrl equivalents itself on other platforms.
         #[cfg(target_os = "macos")]
         app.add_systems(Update, translate_edit_shortcuts);
+        app.add_systems(
+            Update,
+            hide_hud_for_photo_capture.in_set(common::sets::SceneSets::RestrictedActions),
+        );
         app.add_observer(on_page_envelope);
     }
 }
@@ -127,6 +131,21 @@ struct PageEnvelope(serde_json::Value);
 /// Marker for the fullscreen UI node displaying the HUD texture.
 #[derive(Component)]
 struct HudUiNode;
+
+/// The HUD texture is part of the window, so it is hidden for the frame a photo is read from.
+fn hide_hud_for_photo_capture(
+    capturing: Query<(), With<camera_reel::CapturingPhoto>>,
+    mut hud: Query<&mut Visibility, With<HudUiNode>>,
+) {
+    let visibility = if capturing.is_empty() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut hud in &mut hud {
+        hud.set_if_neq(visibility);
+    }
+}
 
 #[derive(Resource)]
 struct ReactHudCef {

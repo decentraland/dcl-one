@@ -207,6 +207,22 @@ State, in every build:
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
+  `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
+  once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's
+  `captures`, `uploaded`, `failed`, `lastPhotoId` and `lastError`, and `requested` (the `on`/`off`
+  asked for, else `null`). While on it adds `yaw`, `pitch`, `roll`, `fov`, `cursorLocked`,
+  `hudHidden` and `source` (what opened it); while off, `unavailable` names why (off, or a scene
+  controls the camera). With `on` or `off` it opens or closes the mode, which lands a frame
+  later; the second word is the source the analytics record, `console` by default (the HUD's
+  buttons pass `button`). The debug panel's "Photo mode" section binds it.
+- `/take_photo [button|shortcut|console]`: a photo in photo mode, captured from the window, cut to
+  the photo frame, encoded and uploaded to the camera-reel service; the reply is the same state,
+  and a refusal names why (mode off, a photo in flight, the storage unknown or full, the capture
+  effect playing).
+- `/delete_photo <id>`: deletes one of the player's camera-reel photos; the reply is
+  `{"deleting": id}`, a finished deletion frees a slot in `storage`, and a refused one (another
+  owner's, or absent) lands in `lastError`. The E2E capture scenario restores with it.
 - `/open_deep_link <url>` (standalone): applies a `decentraland://` place link (realm, position)
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
