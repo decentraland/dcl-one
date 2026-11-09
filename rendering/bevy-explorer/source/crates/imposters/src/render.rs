@@ -29,7 +29,7 @@ use scene_runner::{
         ScenePointers, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_lod::{LodState, SceneLod},
+    scene_lod::{ImposterTiling, LodState, SceneLod, Tiling},
 };
 
 use crate::{
@@ -213,7 +213,14 @@ pub fn spawn_imposters(
     current_imposter_scene: Res<CurrentImposterScene>,
     current_scene_loading: Res<CurrentSceneLoading>,
     mut manager: ImposterSpecManager,
+    // absent without the scene stand-ins
+    mut tiling: Option<ResMut<ImposterTiling>>,
 ) {
+    if config.scene_imposter_distances.is_empty() {
+        if let Some(tiling) = tiling.as_mut() {
+            tiling.0 = None;
+        }
+    }
     if current_realm.is_changed() || config.scene_imposter_distances.is_empty() {
         for (entity, _) in &current_imposters {
             if let Ok(mut commands) = commands.get_entity(entity) {
@@ -253,6 +260,16 @@ pub fn spawn_imposters(
     // origin further down is intentionally left on the raw focus position.)
     let origin_parcel = (origin / PARCEL_SIZE).floor().as_ivec2();
     let origin = (origin_parcel.as_vec2() + 0.5) * PARCEL_SIZE;
+
+    // the layout the far LODs keep to, so no tile larger than they allow is split around them
+    if let Some(tiling) = tiling.as_mut() {
+        tiling.0 = Some(Tiling {
+            origin_parcel,
+            min_distance: focus.min_distance,
+            distance_scale: focus.distance_scale,
+            distances: config.scene_imposter_distances.clone(),
+        });
+    }
 
     // record live parcels
     let current_imposter_scene = match &current_imposter_scene.0 {
