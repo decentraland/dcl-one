@@ -19,6 +19,7 @@ pub(super) struct IdleCache<A: Asset> {
     sequence: u64,
     cursor: u64,
     scan_end: Option<u64>,
+    scan_released: u64,
 }
 
 impl<A: Asset> Default for IdleCache<A> {
@@ -29,6 +30,7 @@ impl<A: Asset> Default for IdleCache<A> {
             sequence: 0,
             cursor: 0,
             scan_end: None,
+            scan_released: 0,
         }
     }
 }
@@ -82,6 +84,7 @@ impl<A: Asset> IdleCache<A> {
             else {
                 self.cursor = 0;
                 self.scan_end = None;
+                turn.complete_scan(std::mem::take(&mut self.scan_released));
                 break;
             };
             self.cursor = sequence;
@@ -93,6 +96,7 @@ impl<A: Asset> IdleCache<A> {
             let key = self.order.remove(&sequence).unwrap();
             self.entries.remove(&key);
             turn.released();
+            self.scan_released += 1;
         }
     }
 }

@@ -1187,7 +1187,10 @@ fn resolve_playback<'a>(
         }
     }
 
-    pending.0 = None;
+    // The locomotion fallback shares the full slot while its scene clip is loading.
+    if pending.0.as_ref().is_some_and(|(held, _)| held == urn) {
+        pending.0 = None;
+    }
     let (emote, handle) = match emote_loader.get_representation_with_handle(urn, bodyshape) {
         Ok(emote) => emote,
         Err(CollectibleError::Loading) => {

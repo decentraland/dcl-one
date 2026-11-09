@@ -123,3 +123,97 @@ fn hot_touches_cannot_strand_a_completed_idle_load_behind_the_scan_cursor() {
     assert_eq!(cache.len(), 128);
     assert_eq!(cache.order.len(), 128);
 }
+
+#[derive(Resource, Default)]
+struct ScanFixture {
+    cache: IdleCache<Item>,
+    pending: bool,
+}
+
+fn scan_fixture(
+    mut fixture: ResMut<ScanFixture>,
+    mut budget: ResMut<common::memory_reclaim::ReclaimBudget>,
+) {
+    if let Some(mut turn) = budget.begin("fixture", fixture.cache.len()) {
+        let pending = fixture.pending;
+        fixture.cache.reclaim(10, &mut turn, |_| pending);
+        budget.finish_turn(turn, fixture.cache.len());
+    }
+}
+
+#[test]
+fn completed_scan_outcomes_include_releases_from_previous_bounded_turns() {
+    use common::memory_reclaim::{
+        AddMemoryReclaimer, MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimBudget,
+        ReclaimDomains, ReclaimScanStatus, ReclaimSimulation, ReclaimSpec,
+    };
+    let mut assets = Assets::<Item>::default();
+    let mut fixture = ScanFixture {
+        pending: true,
+        ..Default::default()
+    };
+    for n in 0..5 {
+        fixture
+            .cache
+            .get_or_insert_with(&n.to_string(), 0, || assets.add(Item));
+    }
+    let mut app = App::new();
+    app.insert_resource(fixture)
+        .add_plugins(MemoryReclaimPlugin)
+        .add_memory_reclaimer(
+            ReclaimSpec {
+                name: "fixture",
+                priority: 0,
+                domains: ReclaimDomains::Ram,
+                max_releases: 1,
+                max_inspections: 2,
+            },
+            scan_fixture,
+        );
+    app.world_mut()
+        .resource_mut::<MemoryReclaimSettings>()
+        .simulation = ReclaimSimulation::Ram;
+    app.world_mut()
+        .resource_mut::<MemoryReclaimSettings>()
+        .frame_budget = std::time::Duration::from_secs(10);
+    app.finish();
+    app.cleanup();
+    for _ in 0..2 {
+        app.update();
+        let stats = &app.world().resource::<ReclaimBudget>().caches()[0];
+        assert_eq!(stats.scan_status, ReclaimScanStatus::InProgress);
+        assert_eq!(stats.completed_scans, 0);
+        assert_eq!(stats.last_scan_released, None);
+    }
+    app.update();
+    let stats = &app.world().resource::<ReclaimBudget>().caches()[0];
+    assert_eq!(stats.scan_status, ReclaimScanStatus::NoEligible);
+    assert_eq!(stats.completed_scans, 1);
+    assert_eq!(stats.last_scan_released, Some(0));
+    app.world_mut().resource_mut::<ScanFixture>().pending = false;
+    for _ in 0..5 {
+        app.update();
+        assert_eq!(
+            app.world().resource::<ReclaimBudget>().caches()[0].scan_status,
+            ReclaimScanStatus::InProgress
+        );
+    }
+    // The final turn releases nothing itself, but completes a pass that released five pins.
+    app.update();
+    let stats = &app.world().resource::<ReclaimBudget>().caches()[0];
+    assert_eq!(stats.last_released, 0);
+    assert_eq!(stats.scan_status, ReclaimScanStatus::Released);
+    assert_eq!(stats.last_scan_released, Some(5));
+    assert_eq!(stats.completed_scans, 2);
+    app.update();
+    let stats = &app.world().resource::<ReclaimBudget>().caches()[0];
+    assert_eq!(stats.scan_status, ReclaimScanStatus::NoEligible);
+    assert_eq!(stats.completed_scans, 3);
+    app.world_mut()
+        .resource_mut::<MemoryReclaimSettings>()
+        .simulation = ReclaimSimulation::Off;
+    app.update();
+    let stats = &app.world().resource::<ReclaimBudget>().caches()[0];
+    assert_eq!(stats.scan_status, ReclaimScanStatus::NotRun);
+    assert_eq!(stats.completed_scans, 3);
+}

@@ -108,6 +108,8 @@ fn memory_reclaim(
             "name": cache.spec.name, "domains": format!("{:?}", cache.spec.domains),
             "entries": cache.entries, "released": cache.released, "inspected": cache.inspected,
             "lastReleased": cache.last_released, "lastInspected": cache.last_inspected,
+            "scanStatus": cache.scan_status.as_str(), "completedScans": cache.completed_scans,
+            "lastScanReleased": cache.last_scan_released,
             "releaseLimit": cache.spec.max_releases, "inspectionLimit": cache.spec.max_inspections,
         })).collect::<Vec<_>>(),
         "unavailable": { "ram": "No usable engine RAM reading.", "gpu": "No usable GPU budget; this platform or renderer may not expose one." },

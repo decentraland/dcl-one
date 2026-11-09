@@ -234,3 +234,34 @@ fn exhausted_budget_resumes_at_later_cache_instead_of_starving_it() {
     app.update();
     assert_eq!(app.world().resource::<Visits>().0, ["a", "b", "b"]);
 }
+
+#[test]
+fn reclaimers_use_the_same_frame_count_as_update() {
+    use bevy::diagnostic::{FrameCount, FrameCountPlugin};
+    #[derive(Resource, Default)]
+    struct ObservedFrames(Vec<u32>);
+    fn record(frame: Res<FrameCount>, mut seen: ResMut<ObservedFrames>) {
+        seen.0.push(frame.0);
+    }
+    for counter_first in [false, true] {
+        let mut app = App::new();
+        if counter_first {
+            app.add_plugins(FrameCountPlugin);
+        }
+        app.add_plugins(MemoryReclaimPlugin)
+            .init_resource::<ObservedFrames>()
+            .add_systems(Update, record)
+            .add_memory_reclaimer(spec("frame", 10, ReclaimDomains::Ram), record);
+        if !counter_first {
+            app.add_plugins(FrameCountPlugin);
+        }
+        ready(&mut app);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<ObservedFrames>().0,
+            [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]
+        );
+    }
+}

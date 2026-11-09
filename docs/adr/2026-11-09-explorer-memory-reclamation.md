@@ -35,7 +35,8 @@ flowchart LR
 
 ## Reference and consequences
 
-Unity's `Explorer/Assets/DCL/ResourcesUnloading/CacheCleaner.cs` and
+Unity reference revision: `333aa8826979186f1380058cc75f74b9630e4879` in
+`decentraland/unity-explorer`. Its `Explorer/Assets/DCL/ResourcesUnloading/CacheCleaner.cs` and
 `UnloadStrategies/UnloadStrategyHandler.cs`, `StandardUnloadStrategy.cs`, and
 `UnloadUnusedAssetUnloadStrategy.cs` provide the shared-cleaner model, 65/70/75%
 tiers and ten-entry wearable/profile chunks. Rust uses structural ownership in

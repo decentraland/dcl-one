@@ -341,7 +341,11 @@ of the contract.
 
 `/memory_reclaim` reports the RAM/GPU pressure snapshot, active cleanup domains,
 per-cache pin counts and cumulative pressure-pass releases, and the last cleanup
-duration. The **Asset release** debug panel section shows the same state. In preview
+duration. Each cache reports its current turn's scan status (`not_run`,
+`in_progress`, `no_eligible`, or `released`), completed scan count, and the number
+of pins released across its last complete scan, including earlier bounded turns.
+`no_eligible` describes that completed scan, not a promise about newly idle assets.
+The **Asset release** debug panel section shows the same state. In preview
 mode, `/memory_reclaim ram|gpu|both|off` simulates pressure for this reclaimer;
 `/memory_reclaim --budget-ms 1` sets its session allowance (0.1–16 ms). Simulation
 does not change platform readings and applies on the next frame.
@@ -356,9 +360,12 @@ Released pins are not a measurement of freed bytes.
 
 Cache plugins register ordinary Bevy systems in `build` using
 `common::memory_reclaim::AddMemoryReclaimer`. The coordinator sorts their
-`ReclaimSpec` priorities/names once in `finish` and chains them in `Last`.
+`ReclaimSpec` priorities/names once in `finish` and chains them in `Last`, before
+Bevy increments the frame counter so lookups and cleanup use the same frame.
 Call `ReclaimBudget::begin`, check `ReclaimTurn::inspect` before each candidate,
-record each released pin, then call `finish_turn`. Keep a bounded scan cursor in
+record each released pin, then call `finish_turn`. At the end of a complete
+candidate scan, call `ReclaimTurn::complete_scan` with the scan's total releases
+across all its bounded turns. Keep a bounded scan cursor in
 the owning cache; never collect every entity owner or sort the whole cache during
 a turn. Consumers retain strong asset handles on their entities. Cleanup drops
 cache handles and does not force-remove assets from `Assets`.

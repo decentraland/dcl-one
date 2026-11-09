@@ -19,3 +19,6 @@ urn = { workspace = true }
 itertools = { workspace = true }
 once_cell = { workspace = true }
 fastrand = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

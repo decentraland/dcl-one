@@ -338,12 +338,28 @@ pub struct ProfileCache {
     // Ordered keys let a bounded pressure pass resume without copying/scanning every address.
     entries: BTreeMap<Address, ProfileEntry>,
     reclaim_cursor: Option<Address>,
+    scan_released: u64,
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
     /// the catalyst answered a compact POST as an unknown route: compact readers are served
     /// from full profiles for the rest of the session
     compact_unsupported: bool,
+}
+
+pub(crate) fn protect_joining_peer(
+    mut world: bevy::ecs::world::DeferredWorld,
+    context: bevy::ecs::component::HookContext,
+) {
+    let Some(peer) = world.get::<ForeignPlayer>(context.entity) else {
+        return;
+    };
+    let address = peer.address;
+    if let Some(mut cache) = world.get_resource_mut::<ProfileCache>() {
+        if let Some(entry) = cache.entries.get_mut(&address) {
+            entry.last_access = Some(web_time::Instant::now());
+        }
+    }
 }
 
 #[derive(Default)]
@@ -390,13 +406,15 @@ impl ProfileCache {
             .map(|(address, entry)| (*address, entry.evictable_after(now, PROFILE_PRESSURE_GRACE)));
             let Some((address, eligible)) = next else {
                 self.reclaim_cursor = None;
+                turn.complete_scan(std::mem::take(&mut self.scan_released));
                 break;
             };
             self.reclaim_cursor = Some(address);
-            // Live peers are touched by request_missing_profiles every Update, before this Last pass.
+            // Admission protects new peers immediately; subsequent profile reads refresh them.
             if Some(address) != local && eligible {
                 self.entries.remove(&address);
                 turn.released();
+                self.scan_released += 1;
             }
         }
     }
@@ -1982,6 +2000,91 @@ fn process_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_admitted_after_profile_refresh_survives_pressure_cleanup() {
+        use crate::global_crdt::{
+            ChatEvent, DiscardPlayerUpdates, PlayerMessage, PlayerPositionEvent,
+            PlayerSceneAnimEvent, PlayerUpdate,
+        };
+        use common::{
+            memory_reclaim::{MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimSimulation},
+            structs::EmoteLifecycleEvent,
+        };
+        let peer = Address::repeat_byte(0xab);
+        let mut cache = ProfileCache::default();
+        cache.touch(peer, ProfileTier::Full).last_access =
+            Some(web_time::Instant::now() - std::time::Duration::from_secs(6));
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<Wallet>()
+            .init_resource::<DiscardPlayerUpdates>()
+            .insert_resource(cache)
+            .add_event::<RpcCallEvent>()
+            .add_event::<ProfileEvent>()
+            .add_event::<PlayerPositionEvent>()
+            .add_event::<PlayerSceneAnimEvent>()
+            .add_event::<EmoteLifecycleEvent>()
+            .add_event::<ChatEvent>()
+            .add_event::<crate::chat_reaction::ChatReactionEvent>()
+            .add_plugins(MemoryReclaimPlugin)
+            .add_systems(Update, process_transport_updates)
+            .add_memory_reclaimer(
+                ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                reclaim_profiles,
+            );
+        app.world_mut()
+            .resource_mut::<MemoryReclaimSettings>()
+            .simulation = ReclaimSimulation::Ram;
+        app.world_mut()
+            .resource_mut::<MemoryReclaimSettings>()
+            .frame_budget = std::time::Duration::from_secs(10);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: TransportType::WebsocketRoom,
+                sender,
+                control: None,
+                context,
+            })
+            .id();
+        // The refresh cannot see a peer that has not been admitted yet. Real transport
+        // processing admits it later in Update; Last must preserve its old cached data.
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::Joined,
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.finish();
+        app.cleanup();
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ForeignPlayer>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        assert!(app
+            .world()
+            .resource::<ProfileCache>()
+            .entries
+            .contains_key(&peer));
+        assert_eq!(
+            app.world().resource::<ReclaimBudget>().caches()[0].released,
+            0
+        );
+    }
 
     #[test]
     fn pressure_reclaims_only_inactive_profiles_with_bounded_progress() {

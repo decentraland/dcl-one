@@ -242,10 +242,12 @@ Kept from explorer-automation's guides:
 ## Keeping the suite true
 
 `specs/debug-panel.test.ts` checks every registered diagnostic field and the
-`/memory_reclaim` simulation modes and cumulative cache counters. Simulation is
-preview-only; the scenario restores the session settings after exercising it.
-It queries the engine's `controlsAvailable` capability and explicitly skips a
-non-preview session. Run mutations against a native preview client using
+`/memory_reclaim` simulation modes, reset, budget validation and cumulative cache
+counters. A separate scenario loads wave, observes an actual idle emote pin
+release under pressure, and verifies replay. Simulation is preview-only; the
+scenarios restore the session settings after exercising it. The control scenario
+checks mutation denial when `controlsAvailable` is false; the release scenario
+explicitly skips that non-preview session. Run mutations against a native preview client using
 `DCL_E2E_NATIVE_ARGS="--preview"` (plus the usual native transport/binary options).
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A

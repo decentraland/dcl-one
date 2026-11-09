@@ -5,26 +5,81 @@ const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
 const button = (name: string) => ({ role: 'button', name } as const)
 
-scenario('memory reclamation exposes session simulation and cumulative cache counters', async ({ explorer, t }) => {
-  type State = { controlsAvailable: boolean; simulation: string; ramActive: boolean; gpuActive: boolean; budgetMs: number; caches: { name: string; released: number }[] }
-  const before = await explorer.json<State>('/memory_reclaim')
+type MemoryState = {
+  controlsAvailable: boolean; simulation: string; ram: string | null; gpu: string | null
+  ramActive: boolean; gpuActive: boolean; budgetMs: number
+  caches: { name: string; entries: number; released: number; completedScans: number; scanStatus: string; lastScanReleased: number | null }[]
+}
+
+scenario('memory reclamation validates session controls and restores measured pressure', async ({ explorer }) => {
+  const before = await explorer.json<MemoryState>('/memory_reclaim')
   assert.ok(before.caches.length > 0)
   if (!before.controlsAvailable) {
-    t.skip('Pressure simulation requires a preview session; rerun native with DCL_E2E_NATIVE_ARGS="--preview"')
+    for (const mutation of ['both', '--budget-ms 1.5']) {
+      await assert.rejects(() => explorer.run('/memory_reclaim ' + mutation), /require preview mode/)
+    }
+    const after = await explorer.json<MemoryState>('/memory_reclaim')
+    assert.equal(after.simulation, before.simulation)
+    assert.equal(after.budgetMs, before.budgetMs)
     return
   }
   try {
+    for (const invalid of ['0', '-1', '16.1', 'NaN', 'inf']) {
+      await assert.rejects(() => explorer.run(`/memory_reclaim both --budget-ms=${invalid}`), /between 0.1 and 16/)
+      const unchanged = await explorer.json<MemoryState>('/memory_reclaim')
+      assert.equal(unchanged.simulation, before.simulation)
+      assert.equal(unchanged.budgetMs, before.budgetMs)
+    }
+    for (const budgetMs of [0.1, 1.5, 16]) {
+      await explorer.run('/memory_reclaim --budget-ms ' + budgetMs)
+      assert.equal((await explorer.json<MemoryState>('/memory_reclaim')).budgetMs, budgetMs)
+    }
     for (const simulation of ['ram', 'gpu', 'both']) {
       await explorer.run('/memory_reclaim ' + simulation)
-      await until(() => explorer.json<State>('/memory_reclaim'), state =>
+      await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
         state.simulation === simulation && (simulation === 'gpu' || state.ramActive) &&
         (simulation === 'ram' || state.gpuActive),
       { timeoutMs: 5_000, what: 'memory reclamation simulation ' + simulation })
     }
-    const after = await explorer.json<State>('/memory_reclaim')
+    await explorer.run('/memory_reclaim off')
+    const after = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      state.simulation === 'off' &&
+      !((state.ram == null || state.ram === 'Abundance') && state.ramActive) &&
+      !((state.gpu == null || state.gpu === 'Abundance') && state.gpuActive),
+    { timeoutMs: 5_000, what: 'simulation off to restore real pressure' })
     for (const cache of before.caches) {
       assert.ok(after.caches.find(row => row.name === cache.name)!.released >= cache.released)
     }
+  } finally {
+    await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      state.simulation === before.simulation && state.budgetMs === before.budgetMs,
+    { timeoutMs: 5_000, what: 'the original reclamation settings to be restored' })
+  }
+}, { session: { signIn: 'guest' } })
+
+scenario('memory pressure releases an idle emote pin and preserves replay', async ({ explorer, t }) => {
+  const wave = 'urn:decentraland:off-chain:base-emotes:wave'
+  const before = await explorer.json<MemoryState>('/memory_reclaim')
+  if (!before.controlsAvailable) {
+    t.skip('Actual release requires a preview session; run with DCL_E2E_NATIVE_ARGS="--preview"')
+    return
+  }
+  const emote = (state: MemoryState) => state.caches.find(cache => cache.name === 'emote')!
+  try {
+    await explorer.run('/memory_reclaim off')
+    await explorer.run('/emote ' + wave)
+    const loaded = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state => emote(state).entries > 0,
+      { timeoutMs: 30_000, what: 'wave to populate the emote representation cache' })
+    await explorer.run('/memory_reclaim both')
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      emote(state).released > emote(loaded).released && emote(state).completedScans > 0,
+    { timeoutMs: 30_000, what: 'an idle emote pin to be released under pressure' })
+    await explorer.run('/emote ' + wave)
+    await until(() => explorer.myAvatar(), avatar =>
+      !!avatar.rendered?.processed && !avatar.rendered.failed &&
+      avatar.emote?.source === 'triggeredEmote' && !avatar.emote.finished && /(?:^|:)wave$/i.test(avatar.emote.urn),
+    { timeoutMs: 20_000, what: 'wave to replay with the avatar intact after cache eviction' })
   } finally {
     await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
   }

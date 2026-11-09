@@ -73,6 +73,26 @@ impl ReclaimSpec {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReclaimScanStatus {
+    #[default]
+    NotRun,
+    InProgress,
+    NoEligible,
+    Released,
+}
+
+impl ReclaimScanStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRun => "not_run",
+            Self::InProgress => "in_progress",
+            Self::NoEligible => "no_eligible",
+            Self::Released => "released",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ReclaimStats {
     pub spec: ReclaimSpec,
@@ -82,6 +102,10 @@ pub struct ReclaimStats {
     pub inspected: u64,
     pub last_released: usize,
     pub last_inspected: usize,
+    pub scan_status: ReclaimScanStatus,
+    pub completed_scans: u64,
+    /// Releases in the last complete candidate scan, including earlier bounded turns.
+    pub last_scan_released: Option<u64>,
 }
 
 #[derive(Resource, Default)]
@@ -106,6 +130,7 @@ pub struct ReclaimTurn {
     max_inspections: usize,
     released: usize,
     inspected: usize,
+    completed_scan: Option<u64>,
 }
 
 impl ReclaimTurn {
@@ -118,6 +143,7 @@ impl ReclaimTurn {
             max_inspections,
             released: 0,
             inspected: 0,
+            completed_scan: None,
         }
     }
 
@@ -136,6 +162,12 @@ impl ReclaimTurn {
 
     pub fn released(&mut self) {
         self.released += 1;
+    }
+
+    /// The cache reached the end of its scan. The count spans all resumed turns,
+    /// including ordinary idle expiry when it shares the same cache cursor.
+    pub fn complete_scan(&mut self, released: u64) {
+        self.completed_scan = Some(released);
     }
 }
 
@@ -179,6 +211,18 @@ impl ReclaimBudget {
         cache.inspected += turn.inspected as u64;
         cache.last_released = turn.released;
         cache.last_inspected = turn.inspected;
+        cache.scan_status = match turn.completed_scan {
+            Some(released) => {
+                cache.completed_scans += 1;
+                cache.last_scan_released = Some(released);
+                if released == 0 {
+                    ReclaimScanStatus::NoEligible
+                } else {
+                    ReclaimScanStatus::Released
+                }
+            }
+            None => ReclaimScanStatus::InProgress,
+        };
         self.next_cache = (index + 1) % self.caches.len();
     }
 }
@@ -243,6 +287,9 @@ impl Plugin for MemoryReclaimPlugin {
                 inspected: 0,
                 last_released: 0,
                 last_inspected: 0,
+                scan_status: ReclaimScanStatus::NotRun,
+                completed_scans: 0,
+                last_scan_released: None,
             });
             configs.push(system);
         }
@@ -254,7 +301,8 @@ impl Plugin for MemoryReclaimPlugin {
                 collective_conditions: vec![],
                 metadata: Default::default(),
             }
-            .chain(),
+            .chain()
+            .before(bevy::diagnostic::update_frame_count),
         );
     }
 }
@@ -339,6 +387,7 @@ fn begin_frame(
     for cache in &mut budget.caches {
         cache.last_released = 0;
         cache.last_inspected = 0;
+        cache.scan_status = ReclaimScanStatus::NotRun;
     }
 }
 

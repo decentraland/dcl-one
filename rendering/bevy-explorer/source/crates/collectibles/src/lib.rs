@@ -1,5 +1,7 @@
 pub mod base_wearables;
 mod cache;
+#[cfg(test)]
+mod dynamic_lifecycle_tests;
 pub mod emotes;
 pub mod ext;
 pub mod urn;
@@ -590,21 +592,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn late_remote_results_cannot_replace_builtin_or_synthetic_emotes() {
+    fn late_remote_results_cannot_replace_builtin_emotes() {
         let mut collectibles = Collectibles::<Emote>::default();
         let builtin = EmoteUrn::new("wave").unwrap();
-        let synthetic =
-            EmoteUrn::new("urn:decentraland:off-chain:scene-emote:scene-asset").unwrap();
         collectibles
             .pointers
             .insert(builtin.clone(), PointerResult::Builtin(Handle::default()));
         collectibles.record_remote(builtin.clone(), PointerResult::Missing);
-        collectibles.record_remote(synthetic.clone(), PointerResult::Missing);
         assert!(matches!(
             collectibles.pointers.get(&builtin),
             Some(PointerResult::Builtin(_))
         ));
-        assert!(!collectibles.pointers.contains_key(&synthetic));
     }
 
     fn sources<T: CollectibleType>(urn: &str) -> Vec<String> {
