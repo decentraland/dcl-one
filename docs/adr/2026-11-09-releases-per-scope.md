@@ -33,7 +33,7 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 
 ## Consequences
 
-- Each `@dcl/sdk*` package needs trusted publishers naming this repository and both `sdk.yml`
+- Each SDK package needs trusted publishers naming this repository and both `sdk.yml`
   (`next` on `main` pushes) and `sdk-release.yml`; until then those runs fail at the first publish.
   npm checks the calling workflow's filename, so a dispatcher that calls `sdk-release.yml` needs
   its own entry.

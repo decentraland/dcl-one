@@ -53,6 +53,13 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   sticky comment names the exact version to install; fork pull requests publish nothing.
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
+- The packages publish as `@dcl-regenesislabs/*` until the `@dcl` names can be published from here;
+  switching back is the six `name` fields. The code and the dependency keys keep the `@dcl` names,
+  the build installs siblings under those keys (`@dcl/ecs@file:../ecs`), and `make prepare` pins a
+  sibling as an npm alias (`npm:@dcl-regenesislabs/ecs@<version>`) when its name differs from the
+  key. A scene installs `@dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>` and keeps importing
+  `@dcl/sdk`. oddish reads the dist-tags of the manifest's name, so `next` snapshots under this
+  scope start from the placeholder (`7.0.0-<run>.commit-<sha>`) rather than from `@dcl/sdk@latest`.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
   snapshot test fails on a stale one (with `UPDATE_SNAPSHOTS` it also rewrites it) and the
@@ -70,7 +77,8 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 ## Follow-ups
 
 1. Releases and `next` are published from here; still to do: the npm trusted publishers pointed at
-   `sdk.yml` and `sdk-release.yml`, stop publishing from `decentraland/js-sdk-toolchain`, the
+   `sdk.yml` and `sdk-release.yml` (a new package needs one manual publish before it accepts a
+   trusted publisher), the `@dcl` names, stop publishing from `decentraland/js-sdk-toolchain`, the
    rest of the PR tooling (the e2e realm, the playground). The first release notes carry the
    narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.

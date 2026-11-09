@@ -121,6 +121,7 @@ function installCrossDependencies(...paths: string[]) {
         if (pathExistsSync(dependencyRootPath)) {
           itInstallsADependencyFromFolderAndCopiesTheVersion(
             path,
+            key,
             dependencyRootPath,
             (devDependencies && key in devDependencies) || false
           )

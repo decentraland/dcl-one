@@ -149,17 +149,24 @@ jobs:
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
+          manifest() { tar -xOf "$1" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version'; }
+          # the packages' scope (@dcl, or @dcl-regenesislabs while the @dcl names cannot be published from here)
+          first=$(manifest ./dist/*-js-runtime-[0-9]*.tgz)
+          scope=${first%%/*}; version=${first##*@}
           for name in ecs js-runtime react-ecs sdk-commands sdk playground-assets; do
             # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-            tgz=$(ls ./dist/dcl-"$name"-[0-9]*.tgz)
-            spec=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version')
+            tgz=./dist/${scope#@}-$name-$version.tgz
+            spec=$scope/$name@$version
             if npm view "$spec" version > /dev/null 2>&1; then
               echo "$spec is already on npm; skipping"
             else
               npm publish "$tgz" --access public --tag "$DIST_TAG"
             fi
           done
-          echo "version=${spec##*@}" >> "$GITHUB_OUTPUT"
+          {
+            echo "scope=$scope"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
         run: echo '::warning::The PR preview did not publish; see the Publish step log.'
@@ -170,12 +177,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           VERSION: ${{ steps.publish.outputs.version }}
+          SCOPE: ${{ steps.publish.outputs.scope }}
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           marker='<!-- sdk-preview -->'
           fence="\`\`\`"
-          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@%s @dcl/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$SHA" "$fence" "$VERSION" "$VERSION" "$fence")
+          # another scope installs through npm aliases, so scenes keep importing @dcl/sdk
+          if [ "$SCOPE" = "@dcl" ]; then spec=$VERSION; else spec="npm:$SCOPE/sdk@$VERSION"; fi
+          cli_spec=${spec/\/sdk@/\/sdk-commands@}
+          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@%s @dcl/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$SHA" "$fence" "$spec" "$cli_spec" "$fence")
           id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -f body="$body" > /dev/null

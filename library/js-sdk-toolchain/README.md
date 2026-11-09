@@ -66,14 +66,21 @@ make build
 
 ## Release Process
 
+The packages publish as `@dcl-regenesislabs/*` for now (the `name` fields; the code keeps the
+`@dcl` names). Install them through npm aliases so a scene keeps importing `@dcl/sdk`:
+
+```bash
+npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version>
+```
+
 Every push to `main` that touches the SDK or the protocol publishes the six packages under the
-`next` dist-tag (`.github/workflows/sdk.yml`), so `npm install @dcl/sdk@next` follows `main`. The
-version is `<latest patch+1>-<run>.commit-<sha>`, derived from the registry's `latest` as upstream
-does; the `7.0.0` in the manifests is a placeholder and is never bumped.
+`next` dist-tag (`.github/workflows/sdk.yml`). The version is `<base>-<run>.commit-<sha>`, where
+oddish takes the base from the registry's `latest` of the manifest's name (the placeholder `7.0.0`
+until a release exists under the scope); the manifests' version is never bumped.
 
 A pull request from this repository publishes the same packages under the shared `pr` dist-tag and
-comments the exact version on the PR; install that version rather than the tag, which moves to the
-last PR published.
+comments the exact install command on the PR; install that version rather than the tag, which moves
+to the last PR published.
 
 Versioned releases ship from the `SDK / Release` workflow
 (`.github/workflows/sdk-release.yml`), run by hand from `main`. The manifests in the tree keep
@@ -82,7 +89,7 @@ their placeholder version; the run stamps the one you give it.
 1. Run `SDK / Release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
    `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag or a
-   version any of the six packages already has on npm.
+   version any of the six packages already has on npm under their current scope.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
    others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
    prerelease) and creates the `sdk-v<version>` release with the tarballs, the `library/protocol`

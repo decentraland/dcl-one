@@ -29,6 +29,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
+      scope: ${{ steps.version.outputs.scope }}
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dist-tag: ${{ steps.version.outputs.dist-tag }}
@@ -54,8 +55,11 @@ jobs:
             *-*) prerelease=true; dist_tag=rc ;;
             *) prerelease=false; dist_tag=latest ;;
           esac
+          # the packages' scope (@dcl, or @dcl-regenesislabs while the @dcl names cannot be published from here)
+          scope=$(node -p 'require("./library/js-sdk-toolchain/packages/@dcl/sdk/package.json").name.split("/")[0]')
           {
             echo "version=$VERSION"
+            echo "scope=$scope"
             echo "tag=sdk-v$VERSION"
             echo "prerelease=$prerelease"
             echo "dist-tag=$dist_tag"
@@ -63,6 +67,7 @@ jobs:
       - name: The tag and the npm versions are new
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SCOPE: ${{ steps.version.outputs.scope }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -u
@@ -71,8 +76,8 @@ jobs:
             exit 1
           fi
           for name in $SDK_PACKAGES; do
-            if npm view "@dcl/$name@$VERSION" version > /dev/null 2>&1; then
-              echo "@dcl/$name@$VERSION is already on npm; pick a new version" >&2
+            if npm view "$SCOPE/$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$SCOPE/$name@$VERSION is already on npm; pick a new version" >&2
               exit 1
             fi
           done
@@ -137,6 +142,7 @@ jobs:
       id-token: write # npm OIDC trusted publishing — no token secret
     env:
       VERSION: ${{ needs.check.outputs.version }}
+      SCOPE: ${{ needs.check.outputs.scope }}
       TAG: ${{ needs.check.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -157,7 +163,7 @@ jobs:
           set -euo pipefail
           for name in $SDK_PACKAGES; do
             # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-            npm publish "./dist/dcl-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
+            npm publish "./dist/${SCOPE#@}-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
           done
       - name: Create the tag and the release
         env:
@@ -169,8 +175,16 @@ jobs:
           previous=$(git tag --list 'sdk-v*' --sort=-v:refname | head -1)
           {
             if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
-            echo "Packages: $(for name in $SDK_PACKAGES; do printf '%s@dcl/%s@%s%s ' '`' "$name" "$VERSION" '`'; done)"
+            echo "Packages: $(for name in $SDK_PACKAGES; do printf '%s%s/%s@%s%s ' '`' "$SCOPE" "$name" "$VERSION" '`'; done)"
             echo "Protocol: \`library/protocol\` as of $(git log -1 --format=%h -- library/protocol)."
+            if [ "$SCOPE" != "@dcl" ]; then
+              echo
+              echo "Install through npm aliases so scenes keep importing \`@dcl/sdk\`:"
+              echo
+              echo '```'
+              echo "npm install @dcl/sdk@npm:$SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$SCOPE/sdk-commands@$VERSION"
+              echo '```'
+            fi
             echo
             echo "## Changes${previous:+ since $previous}"
             git log --format='- %s (%h)' ${previous:+"$previous.."}HEAD -- library/js-sdk-toolchain library/protocol
