@@ -62,7 +62,7 @@ describe('ConsoleError', () => {
       '/hud_login eyJhIjoxfQ== --guest',
       '/hud_login --guest eyJhIjoxfQ== --look 1',
       '/hud_login --name tester --look 1 eyJhIjoxfQ== --guest',
-      '/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ==',
+      '/login_identity --look 3 eyJhIjoxfQ==',
       'login_identity eyJhIjoxfQ==',
       '/hud_login "eyJhIjoxfQ==" --guest',
       '/teleport 1 2',
