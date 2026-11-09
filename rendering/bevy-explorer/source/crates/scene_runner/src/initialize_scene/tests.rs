@@ -15,6 +15,7 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<Time>();
     world.insert_resource(SceneLoadDistance {
         load: 20.0,
         unload: 10.0,
@@ -205,6 +206,110 @@ fn live_scene_is_kept_to_ring_two_at_a_zero_load_distance() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("neighbour"));
+}
+
+/// Nine scenes in a row east of the player, who stands on a parcel with no scene of its own, all
+/// inside the load distance; the first wave is spawned.
+fn first_wave_world() -> World {
+    let mut world = lifecycle_world();
+    world.insert_resource(SceneLoadDistance {
+        load: 200.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    let mut pointers = ScenePointers::default();
+    for k in 1..=9 {
+        pointers.insert(
+            IVec2::new(k, 0),
+            PointerResult::Exists {
+                hash: format!("s{k}"),
+                urn: None,
+            },
+        );
+    }
+    world.insert_resource(pointers);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    let first_wave: Vec<_> = (1..=SCENES_PER_WAVE).map(|k| format!("s{k}")).collect();
+    assert_eq!(spawned_hashes(&world), first_wave);
+    world
+}
+
+/// The scenes spawned after the first wave, in no particular order: they spawn in one frame.
+fn later_hashes(world: &World) -> HashSet<String> {
+    spawned_hashes(world)
+        .into_iter()
+        .skip(SCENES_PER_WAVE)
+        .collect()
+}
+
+fn hashes(range: std::ops::RangeInclusive<i32>) -> HashSet<String> {
+    range.map(|k| format!("s{k}")).collect()
+}
+
+#[test]
+fn scenes_in_range_spawn_in_waves_nearest_first() {
+    let mut world = first_wave_world();
+
+    // the wave is full while they load
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(spawned_hashes(&world).len(), SCENES_PER_WAVE);
+
+    // once they are done (a failed load is as done as it gets) the rest come in
+    let loading: Vec<Entity> = world
+        .resource::<LiveScenes>()
+        .scenes
+        .values()
+        .copied()
+        .collect();
+    for entity in loading {
+        world.entity_mut(entity).insert(SceneLoading::Failed);
+    }
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(later_hashes(&world), hashes(7..=9));
+}
+
+#[test]
+fn a_ready_scene_frees_one_slot_for_the_nearest_waiting() {
+    let mut world = first_wave_world();
+
+    // the first scene passes its first frames
+    let entity = world.resource::<LiveScenes>().scenes["s1"];
+    let mut context = RendererSceneContext::new(
+        SceneId(entity),
+        "s1".to_owned(),
+        String::new(),
+        false,
+        0,
+        "s1".to_owned(),
+        IVec2::new(1, 0),
+        [IVec2::new(1, 0)].into_iter().collect(),
+        Vec::new(),
+        SceneBounds::default(),
+        Vec::new(),
+        entity,
+        0.0,
+        false,
+        "",
+        false,
+        false,
+    );
+    context.tick_number = 7;
+    world.entity_mut(entity).insert(context);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(later_hashes(&world), hashes(7..=7));
+}
+
+#[test]
+fn a_stalled_wave_stops_holding_its_slots() {
+    let mut world = first_wave_world();
+
+    world
+        .resource_mut::<Time>()
+        .advance_by(WAVE_SLOT_TIMEOUT + Duration::from_secs(1));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(later_hashes(&world), hashes(7..=9));
 }
 
 #[test]
