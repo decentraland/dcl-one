@@ -271,13 +271,15 @@ fn metric_value(rendered: &str, name: &str) -> Option<f64> {
         .find_map(|line| line.strip_prefix(name)?.strip_prefix(' ')?.parse().ok())
 }
 
+type Lookups = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
 struct Harness {
     bus: Arc<InProcessBus>,
     gateway: Arc<FakeGateway>,
     subscriber: Arc<ClusterSubscriber>,
     source: Arc<Mutex<HashMap<String, PeerClusterSnapshot>>>,
     sockets: Arc<RecordingSockets>,
-    lookups: Arc<Mutex<Vec<(String, Vec<u8>)>>>,
+    lookups: Lookups,
     _completion: NatsSubscription,
 }
 
@@ -3215,10 +3217,10 @@ fn liveness_broker() -> LivenessBroker {
             let Ok(line) = line else {
                 break;
             };
-            if let Some((_, address)) = line.split_once("Listening for client connections on ") {
-                if let Ok(address) = address.trim().parse::<std::net::SocketAddr>() {
-                    let _ = send.try_send(address.port());
-                }
+            if let Some((_, address)) = line.split_once("Listening for client connections on ")
+                && let Ok(address) = address.trim().parse::<std::net::SocketAddr>()
+            {
+                let _ = send.try_send(address.port());
             }
         }
     });
@@ -3282,11 +3284,10 @@ async fn durable_nats_subscriber(
             tokio::select! {
                     Some(request)=requests.next()=>{let snapshot=responses.lock().unwrap().clone();if let (Some(reply),Some(snapshot))=(request.reply,snapshot){sender.publish(reply,snapshot.encode_to_vec().into()).await.unwrap();}},
                     Some(message)=completed.next()=>{
-                if let Ok(completion)=crate::protocol::pulse::decentraland::pulse::TakeoverCompleted::decode(message.payload.as_ref()) {
-                    if let Some(snapshot)=responses.lock().unwrap().as_mut() {
-                        snapshot.pending_takeovers.retain(|op|op.takeover_id!=completion.takeover_id);
-                        snapshot.token_not_before=Some(snapshot.token_not_before.unwrap_or(0).max(completion.revoke_before));
-                    }
+                if let Ok(completion)=crate::protocol::pulse::decentraland::pulse::TakeoverCompleted::decode(message.payload.as_ref())
+                    && let Some(snapshot)=responses.lock().unwrap().as_mut() {
+                    snapshot.pending_takeovers.retain(|op|op.takeover_id!=completion.takeover_id);
+                    snapshot.token_not_before=Some(snapshot.token_not_before.unwrap_or(0).max(completion.revoke_before));
                 }
                 observed.fetch_add(1,Ordering::SeqCst);
             },

@@ -25,13 +25,15 @@ use crate::interfaces::test_support::{StubDirectory, StubPolicy};
 use crate::rooms::{RoomClassification, RoomRefusal};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+type SourceRooms = Vec<(String, String, Vec<(String, String)>)>;
+
 #[derive(Default)]
 struct Source {
     fail: AtomicBool,
     empty: AtomicBool,
     sid_changed: AtomicBool,
     enumerate: AtomicUsize,
-    rooms: Mutex<Vec<(String, String, Vec<(String, String)>)>>,
+    rooms: Mutex<SourceRooms>,
     dirty_on_read: Mutex<Option<Arc<Presence>>>,
     not_found_remaining: AtomicUsize,
     recreate_on_not_found: AtomicBool,
@@ -182,15 +184,20 @@ async fn real_worker_source_down_keeps_http_healthy_expires_then_recovers_and_cl
         axum::http::StatusCode::NOT_FOUND
     );
 
+    // The error retry doubles to its 5 s cap (plus up to 1 s of jitter).
+    for pass in 4..8 {
+        elapse(Duration::from_secs(6)).await;
+        wait_pass(&jobs, pass).await;
+    }
     source.fail.store(false, Ordering::SeqCst);
-    elapse(Duration::from_secs(7)).await;
-    wait_pass(&jobs, 4).await;
+    elapse(Duration::from_secs(6)).await;
+    wait_pass(&jobs, 8).await;
     let restored = get(&app, "/live-data").await.1;
     assert_eq!(restored["data"]["totalUsers"], 1);
     assert_ne!(restored["lastUpdated"], initial["lastUpdated"]);
     source.empty.store(true, Ordering::SeqCst);
     elapse(Duration::from_secs(31)).await;
-    wait_pass(&jobs, 5).await;
+    wait_pass(&jobs, 9).await;
     let empty = get(&app, "/live-data").await.1;
     assert_eq!(empty["data"], json!({"totalUsers":0,"perWorld":[]}));
     assert_ne!(empty["lastUpdated"], restored["lastUpdated"]);
@@ -352,13 +359,13 @@ impl crate::interfaces::SceneIdentity for Catalogue {
                 "injected catalogue outage".into(),
             )));
         }
-        if let Some((refused, reason)) = &self.refusal {
-            if refused == room {
-                return Ok(RoomClassification::RelevantRefused {
-                    room: room.into(),
-                    reason: *reason,
-                });
-            }
+        if let Some((refused, reason)) = &self.refusal
+            && refused == room
+        {
+            return Ok(RoomClassification::RelevantRefused {
+                room: room.into(),
+                reason: *reason,
+            });
         }
         if let Some(resolved) = self.extra.get(room) {
             return Ok(RoomClassification::Canonical(resolved.clone()));
@@ -778,7 +785,7 @@ async fn unrelated_inventory_is_ignored_and_unrelated_only_or_empty_scan_replace
     assert_eq!(state.presence.comms_stats().users, 1);
     let occupied = state.presence.complete();
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    elapse(Duration::from_millis(2)).await;
     source
         .rooms
         .lock()
@@ -796,7 +803,7 @@ async fn unrelated_inventory_is_ignored_and_unrelated_only_or_empty_scan_replace
         0
     );
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    elapse(Duration::from_millis(2)).await;
     source.empty.store(true, Ordering::SeqCst);
     state.presence.recover_complete(&state).await.unwrap();
     let empty = state.presence.complete();
@@ -914,9 +921,10 @@ async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_
     server.abort();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn aggregate_exact_100000_records_across_bounded_responses_publish_but_one_more_retains_old_view()
  {
+    let _clock = crate::shared::test_wait::hold_paused_clock();
     let (state, source, server) = fixture().await;
     let names = [
         "world-foo.dcl.eth",
@@ -956,8 +964,9 @@ async fn aggregate_exact_100000_records_across_bounded_responses_publish_but_one
     server.abort();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn aggregate_exact_16_mebibytes_publish_but_one_more_decoded_byte_retains_old_view() {
+    let _clock = crate::shared::test_wait::hold_paused_clock();
     let (mut state, source, server) = fixture().await;
     let mut catalogue = Catalogue::default();
     let mut rooms = Vec::new();

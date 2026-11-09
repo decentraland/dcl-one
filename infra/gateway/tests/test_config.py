@@ -4,6 +4,8 @@ import re
 import tempfile
 import unittest
 
+import nginx_map
+
 SPEC = importlib.util.spec_from_file_location("gateway", Path(__file__).parents[1] / "gateway.py")
 gateway = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gateway)
@@ -32,6 +34,20 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg["admins"], [])
         self.assertEqual(cfg["trusted"], [])
         self.assertEqual(cfg["storage"], "")
+
+    def test_operator_paths_keep_the_telemetry_dash_gate(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        maps = nginx_map.parse(text)
+        gated = ["/admin/api/jobs", "/server.data", "/metabase/", "/telemetry/dash/sql",
+                 "/telemetry/dash/SQL.data", "/telemetry/dash/flag", "/telemetry/dash/group/target.data",
+                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+        public = ["/telemetry/dash", "/telemetry/dash/overview", "/telemetry/dash/sqlx",
+                  "/telemetry/dash/administrator", "/telemetry"]
+        for uri, expected in [(uri, "1") for uri in gated] + [(uri, "0") for uri in public]:
+            with self.subTest(uri=uri):
+                self.assertEqual(nginx_map.Request(maps, uri=uri)["operator_path"], expected)
 
     def test_canonicalizes_networks_and_supports_multiple_upstreams(self):
         cfg = gateway.settings({
@@ -209,6 +225,21 @@ class ConfigurationTest(unittest.TestCase):
         # The content server answers 200 per 60 s per client itself (JSON 429).
         self.assertGreaterEqual(burst, 200)
         self.assertGreater(rate * 60, 200)
+
+    def test_a_webhook_route_takes_its_own_rate_zone(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": [], "aliases": [], "deploy": [],
+                 "node": [{"path": "/events-notifier", "probe": "/events-notifier/forward", "webhook": True},
+                          {"path": "/places", "probe": "/places"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        # Segment's deliveries, one POST per event, above the sink's 280 inserts/s sizing.
+        rate = int(re.search(r"zone=webhook:10m rate=(\d+)r/s;", text)[1])
+        self.assertGreaterEqual(rate, 280)
+        for key in ["= /events-notifier", "^~ /events-notifier/"]:
+            body = re.search(r"location " + re.escape(key) + r" \{\n(.*?)\n\}", text, re.S)[1]
+            self.assertIn("limit_req zone=webhook burst=", body)
+        body = re.search(r"location \^~ /places/ \{\n(.*?)\n\}", text, re.S)[1]
+        self.assertNotIn("zone=webhook", body)
 
     def test_social_cards_keep_exact_backend_routes_without_shadowing_discovery_pages(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

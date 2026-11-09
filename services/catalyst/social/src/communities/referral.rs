@@ -638,13 +638,13 @@ impl Referral {
     }
     #[cfg(test)]
     async fn accepted(&self, referrer: &str) -> Result<i64, CommError> {
-        Ok(sqlx::query_scalar(
+        sqlx::query_scalar(
             "SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND tier_granted",
         )
         .bind(referrer)
         .fetch_one(&self.pool)
         .await
-        .map_err(database_error)?)
+        .map_err(database_error)
     }
     fn notification(
         &self,

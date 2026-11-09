@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFakeShop } from "../checkout/fakes";
 import { creditsNoun, creditsSrLabel, formatAmount, usdCentsToCredits, usdCentsToCreditsFloor } from "../checkout/lib/currency";
@@ -14,10 +14,17 @@ import {
   reportIntentSubmission,
 } from "./credits";
 import { nextBalancePoll } from "./hooks";
-import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, usdForCredits } from "./payments";
-import { pollCreditGrantReal } from "./payments-stripe";
+import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, pollCreditGrant, usdForCredits } from "./payments";
+import { ORDER_NOT_FOUND, pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
-import { clearTopUpHandoffs, stashTopUpReturn, takeTopUpReturn } from "./returns";
+import { RESUME_CART_KEY } from "../checkout/purchase/cart";
+import { stashNameResume } from "../names/resume";
+import { bindBuyNowTopUp, bindTopUpReturn, clearTopUpHandoffs, dropBuyNowTopUp, keepHandoffsOf, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
+
+afterEach(() => vi.unstubAllGlobals());
+
+/** The node's answer for an order it has no record of for this signer (credits/errors.rs envelope). */
+const NODE_NOT_FOUND = { status: 404, body: { ok: false, error: ORDER_NOT_FOUND, message: ORDER_NOT_FOUND } };
 
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
@@ -133,7 +140,7 @@ describe("packs", () => {
     const lagging = createFakeShop({
       packOrder: () => {
         calls += 1;
-        return calls < 3 ? { status: 404, body: { error: "not found" } } : { status: "credited", creditsGranted: 100, newBalance: 100 };
+        return calls < 3 ? NODE_NOT_FOUND : { status: "credited", creditsGranted: 100, newBalance: 100 };
       },
     });
     expect(await pollCreditGrantReal("o", { intervalMs: 1 }, lagging.client)).toMatchObject({ status: "credited", creditsGranted: 100 });
@@ -144,6 +151,56 @@ describe("packs", () => {
     t = 0;
     const unpaid = createFakeShop({ packOrder: () => ({ status: "initiated" }) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 2500, now }, unpaid.client)).toEqual({ status: "initiated" });
+  });
+
+  it("a mock order id is granted only with mock payments on; otherwise the server is asked, so a link shows no Credits never bought", async () => {
+    const shop = createFakeShop({ packOrder: () => NODE_NOT_FOUND });
+    let t = 0;
+    const now = () => (t += 1000);
+    // The server does not know it: past the grace it is no order at all.
+    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1, now }, shop.client)).toEqual({ status: "missing" });
+    expect(shop.log.some((r) => r.name === "packOrder")).toBe(true);
+    vi.stubGlobal("__SHOP_PAYMENTS__", "mock");
+    const asked = shop.log.length;
+    expect(await pollCreditGrant("mock_cs_pack_10_1", { intervalMs: 1 }, shop.client)).toMatchObject({ status: "credited" });
+    // Granted without asking the server.
+    expect(shop.log.length).toBe(asked);
+  });
+
+  it("an order the server never finds is missing past the grace a lagging replica needs; one it saw stays pending at the deadline", async () => {
+    let t = 0;
+    const now = () => (t += 1000);
+    const unknown = createFakeShop({ packOrder: () => NODE_NOT_FOUND });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
+    expect(unknown.log.filter((r) => r.name === "packOrder").length).toBeLessThan(8);
+    // A deadline shorter than the grace still never says "on the way" for an order never found.
+    t = 0;
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 2000, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
+    // A 404 that is not the node's own (a gateway's route during a deploy) says nothing about the order: it waits on.
+    t = 0;
+    const gateway = createFakeShop({ packOrder: () => ({ status: 404, body: "Not Found" }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, gateway.client)).toEqual({ status: "pending" });
+    // A gateway's 404 in between is not the node's word: it neither shows the order exists nor turns "missing" off.
+    t = 0;
+    let hops = 0;
+    const mixed = createFakeShop({ packOrder: () => (++hops === 1 ? { status: 404, body: "Not Found" } : NODE_NOT_FOUND) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, mixed.client)).toEqual({ status: "missing" });
+    // Nor is an empty answer after the node's "not found": still missing.
+    t = 0;
+    let empties = 0;
+    const blank = createFakeShop({ packOrder: () => (++empties === 2 ? null : NODE_NOT_FOUND) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, blank.client)).toEqual({ status: "missing" });
+    // A status from the node, then 404s: once the node has given a status, the order exists and a payment may still land,
+    // so nothing after it makes the order missing.
+    t = 0;
+    let after = 0;
+    const known = createFakeShop({ packOrder: () => (++after === 1 ? { status: "processing" } : { status: 404, body: "Not Found" }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, known.client)).toEqual({ status: "pending" });
+    // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
+    t = 0;
+    let calls = 0;
+    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : NODE_NOT_FOUND) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, flaky.client)).toEqual({ status: "pending" });
   });
 });
 
@@ -157,6 +214,92 @@ describe("hand-offs and the stream", () => {
     stashTopUpReturn("/shop/cart");
     clearTopUpHandoffs();
     expect(takeTopUpReturn()).toBeNull();
+  });
+
+  describe("Buy now's record of what the buyer confirmed", () => {
+    const PATH = "/shop/item/0xC0/7";
+    const BUYER = "0xAbC0000000000000000000000000000000000001";
+    const T0 = 1_700_000_000_000;
+    /** Buy now leaving for the pack checkout, which created `order` (none when it never answered). */
+    const leave = (at = T0, order: string | null = "order-1") => {
+      const attempt = stashBuyNowTopUp({ path: PATH, account: BUYER, lineId: "line-7", credits: 12 }, at);
+      if (order) bindBuyNowTopUp(attempt, order);
+      return attempt;
+    };
+
+    it("comes back to the item page for that order's grant, for the same page and account, once", () => {
+      leave();
+      expect(takeTopUpReturn(T0, "order-1")?.path).toBe(`${PATH}?buy=resume`);
+      expect(takeBuyNowReturn(PATH.toUpperCase().replace("/SHOP/ITEM", "/shop/item"), BUYER.toLowerCase(), "order-1", T0 + 1000)).toMatchObject({ account: BUYER.toLowerCase(), lineId: "line-7", credits: 12 });
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0 + 1000)).toBeNull();
+    });
+
+    it("another order's grant (the buyer walked away from this top-up) takes nothing back, and drops both records", () => {
+      leave();
+      expect(takeTopUpReturn(T0, "order-2")).toBeNull();
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+    });
+
+    it("is nothing for another page, another account, no account, another or no order, unbound, or two hours old or dated ahead", () => {
+      for (const [path, account, order, at, bound] of [
+        ["/shop/item/0xC0/8", BUYER, "order-1", T0, "order-1"],
+        [PATH, "0x0000000000000000000000000000000000000002", "order-1", T0, "order-1"],
+        [PATH, null, "order-1", T0, "order-1"],
+        [PATH, BUYER, "order-2", T0, "order-1"],
+        [PATH, BUYER, null, T0, "order-1"],
+        [PATH, BUYER, null, T0, null],
+        [PATH, BUYER, "order-1", T0 + 2 * 60 * 60 * 1000 + 1, "order-1"],
+        [PATH, BUYER, "order-1", T0 - 1, "order-1"],
+      ] as const) {
+        leave(T0, bound);
+        expect(takeBuyNowReturn(path, account, order, at)).toBeNull();
+      }
+    });
+
+    it("an attempt drops or binds only what it wrote; any other top-up, or an ended one, drops it", () => {
+      const first = leave(T0, null);
+      const second = leave(T0 + 10, null);
+      dropBuyNowTopUp(first);
+      bindBuyNowTopUp(first, "order-old");
+      bindBuyNowTopUp(second, "order-2");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-2", T0 + 20)).toMatchObject({ attempt: second });
+      leave();
+      stashTopUpReturn("/shop/cart");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+      leave();
+      clearTopUpHandoffs();
+      expect(takeTopUpReturn(T0, "order-1")).toBeNull();
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+      leave();
+      stashNameResume("nacho");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+    });
+
+    it("the cart's top-up, bound to its order, comes back for that order (also when continued) and for no other", () => {
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      expect(takeTopUpReturn(T0, "order-c")).toEqual({ path: "/shop/cart", at: T0, orderId: "order-c" });
+      // Continued later, the basket may have changed: it comes back, waiting for the buyer's press, and nothing auto-pays it.
+      stashTopUpReturn("/shop/cart", T0);
+      sessionStorage.setItem(RESUME_CART_KEY, "1");
+      bindTopUpReturn("order-c");
+      keepHandoffsOf("order-c");
+      expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
+      expect(takeTopUpReturn(T0, "order-c")).toEqual({ path: "/shop/cart", at: T0, orderId: "order-c", confirmAgain: true });
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      keepHandoffsOf("order-x");
+      expect(takeTopUpReturn(T0, "order-c")).toBeNull();
+      stashTopUpReturn("/shop/cart", T0);
+      bindTopUpReturn("order-c");
+      expect(takeTopUpReturn(T0, "order-x")).toBeNull();
+    });
+
+    it("drops a cart top-up the buyer walked away from: the basket is never paid after Buy now's", () => {
+      sessionStorage.setItem(RESUME_CART_KEY, "1");
+      leave();
+      expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
+    });
   });
 
   it("parses server-sent events across chunk boundaries", () => {

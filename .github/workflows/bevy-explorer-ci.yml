@@ -9,6 +9,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
@@ -16,6 +17,7 @@
       - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -41,6 +43,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
@@ -48,6 +51,7 @@
       - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -148,7 +152,7 @@ jobs:
       matrix:
         os: ${{ (needs.changes.outputs.native-matrix == 'true' && github.actor != 'dependabot[bot]') && fromJSON('["windows-2025",
           "ubuntu-24.04", "macos-15"]') || fromJSON('["ubuntu-24.04"]') }}
-    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os == 'macos-15' && 'macos-15-xlarge' || matrix.os }}
     concurrency:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
@@ -160,6 +164,7 @@ jobs:
       # the lock target of this runner
       UUAV_TARGET: ${{ matrix.os == 'windows-2025' && 'windows-x86_64' || matrix.os == 'macos-15' && 'macos-universal'
         || 'linux-x86_64' }}
+      CEF_EXPORT_VERSION: 139.8.0+139.0.40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -197,8 +202,19 @@ jobs:
           key: bevy-explorer-native-ci-test
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc from the flake
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/bevy-explorer-tools
+      - name: Keep the verified protoc archive in the Actions cache
+        if: runner.os != 'Linux' && matrix.os != 'self-hosted-windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/protoc-archive
+          key: bevy-protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/bevy-explorer/install-protoc.py') }}
       - name: Install protoc
-        if: matrix.os != 'self-hosted-windows'
+        if: runner.os != 'Linux' && matrix.os != 'self-hosted-windows'
+        env:
+          PROTOC_ARCHIVE_CACHE: ${{ runner.temp }}/protoc-archive
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -213,11 +229,19 @@ jobs:
       - name: Install ninja (macos)
         if: runner.os == 'macos'
         run: brew install ninja
+      - name: Keep the exported CEF distribution in the Actions cache
+        id: cef
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/cef
+          key: bevy-cef-${{ runner.os }}-${{ runner.arch }}-${{ env.CEF_EXPORT_VERSION }}
       - name: Export CEF distribution
         shell: bash
         run: |
-          cargo install export-cef-dir --version "139.8.0+139.0.40"
-          export-cef-dir --force "$HOME/.local/share/cef"
+          if [ "${{ steps.cef.outputs.cache-hit }}" != true ]; then
+            cargo install export-cef-dir --version "$CEF_EXPORT_VERSION"
+            export-cef-dir --force "$HOME/.local/share/cef"
+          fi
           # GITHUB_ENV/GITHUB_PATH reach native processes verbatim: on windows the git-bash
           # $HOME (/c/Users/...) would resolve as C:\c\Users\... — write windows paths there.
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -235,7 +259,7 @@ jobs:
         with:
           version: v0.19.0
       - name: Test the texture decoder boundaries
-        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib
+        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       - name: Stage the UUAV runtime set
         # the video helper and its libraries, beside the test binaries (library/uuav/dist, Git LFS)
         run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" host target/ci-test/deps
@@ -243,6 +267,8 @@ jobs:
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
         run: |
+          # macOS builds the workspace crates without optimization; the dependencies keep opt-level 3 from the cache.
+          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.
@@ -348,8 +374,8 @@ jobs:
           workspaces: rendering/bevy-explorer/source -> target
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py clang cmake pkg-config \
@@ -485,8 +511,8 @@ jobs:
           key: bevy-explorer-native
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
@@ -513,9 +539,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install taplo
-        run: curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz | gzip -d - | install
-          -m 755 /dev/stdin /usr/local/bin/taplo
+      - name: Install taplo from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Run Taplo
         id: taplo
         run: taplo fmt --check --diff
@@ -607,14 +632,9 @@ jobs:
       - name: Restore the vendored Bevy's cached file times
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
+      - name: Install protoc and wasm-pack from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: python ../../../apps/bevy-explorer/install-protoc.py
-      - name: Install wasm-pack
-        if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: |
-          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
-            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang

@@ -1065,7 +1065,10 @@ async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
     let deployer = state.deployer().unwrap().clone();
 
     // The neighbour's older scene on (x + 1, y), then the owner's over both.
-    let (old_bytes, old_id, old_chain) = signed_entity(&neighbour, scene(&[&b], &[])).await;
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let mut previous = scene(&[&b], &[]);
+    previous["timestamp"] = json!(timestamp - 1);
+    let (old_bytes, old_id, old_chain) = signed_entity(&neighbour, previous).await;
     let (status, _, body) = call(
         &router,
         deploy_request("/entities", &old_id, &old_chain, &[(&old_id, &old_bytes)]),
@@ -1073,8 +1076,9 @@ async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
     .await;
     assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
     deployer.clear_rate_limits();
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    let (bytes, entity_id, chain) = signed_entity(&owner, scene(&[&a, &b], &[])).await;
+    let mut replacement = scene(&[&a, &b], &[]);
+    replacement["timestamp"] = json!(timestamp);
+    let (bytes, entity_id, chain) = signed_entity(&owner, replacement).await;
     let (status, _, body) = call(
         &router,
         deploy_request("/entities", &entity_id, &chain, &[(&entity_id, &bytes)]),

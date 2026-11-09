@@ -94,7 +94,7 @@ pub async fn claim(
          ) \
          AND consumed_at IS NULL \
          RETURNING answer_x::float8 AS answer_x, \
-                   (SELECT is_blocked_for_claiming FROM credits.wallets WHERE address = $1) AS blocked",
+                   (COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address = $1), false) OR EXISTS (SELECT 1 FROM credits.wallet_flags f WHERE f.address = $1)) AS blocked",
     )
     .bind(signer.as_str())
     .bind(now)

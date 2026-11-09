@@ -20,8 +20,8 @@ use serde_json::{Value, json};
 use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::http_util::fetcher_error;
 use crate::shared::query_params::{
-    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
-    js_slice_range, parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
+    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, QueryParams, js_slice_range,
+    parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
 };
 
 use super::definitions::{
@@ -29,7 +29,7 @@ use super::definitions::{
 };
 use super::graph::{self, OwnedCopy};
 use super::readers;
-use super::{MarketplaceState, SharedState, bad_request, service_unavailable};
+use super::{MarketplaceState, SharedState, bad_request};
 
 fn pagination_object(
     params: &QueryParams,

@@ -148,8 +148,10 @@
   font-size: 13px;
   color: var(--ui-muted);
 }
+/* Upstream's crumbs are buttons, which keep the browser's control font size (13.333px) over the row's 13px. */
 .shop-crumbs a {
   color: var(--ui-muted);
+  font-size: 13.3333px;
   text-decoration: none;
 }
 .shop-crumbs a:hover {

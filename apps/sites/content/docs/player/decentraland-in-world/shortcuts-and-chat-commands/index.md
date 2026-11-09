@@ -2,7 +2,7 @@
 
 # Shortcuts & Chat Commands
 
-![](/docs/player/images/media/Shortcuts.webp)
+![](/docs/player/images/media/Shortcuts.webp)
 
 ## Keyboard Shortcuts
 
@@ -29,4 +29,4 @@ Chat commands are specific strings of text used to trigger actions, such as tele
 * **Open Debug Mode (shows FPS and other metrics)** `/debug`
 * **Discover More Chat Commands** `/help`
 
-![](/docs/player/images/media/Chat10.webp)
+![](/docs/player/images/media/Chat10.webp)

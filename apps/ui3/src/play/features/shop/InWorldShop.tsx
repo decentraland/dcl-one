@@ -7,7 +7,10 @@
 // web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
 // header's cart button buys them all at once through the same dialog. Names is where a NAME is picked: the
 // typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
-// on the web Shop; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace.
+// on the web Shop; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace. Where the shell
+// rehearses NAME purchases (its capabilities' `namesMode: 'simulation'`, a testnet build that turned it on),
+// CLAIM NAME opens that rehearsal instead, and its PREVIEW ON AVATAR shows the NAME over the avatar here,
+// saving nothing to the profile.
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -206,12 +209,15 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // A page past the end (its last NAMEs sold since the pager was drawn) goes back to the last one there is,
   // once an answer says how many are left: before it paints, so an emptied page never shows. The other
   // pages' cached answers still count the sold NAMEs, so they're read again. Kept, the page it goes back to
-  // would offer the emptied page again, and send the player back from it, until that cache went stale.
+  // would offer the emptied page again, and send the player back from it, until that cache went stale. The
+  // emptied page's own answer is dropped: kept, it would be shown at once if NAMEs listed later bring the
+  // page back, and its old total would send the player back again before it was read anew.
   const resaleTotal = resales.data?.total
   useLayoutEffect(() => {
     if (resaleTotal == null) return
     const last = resalePageCount(resaleTotal) - 1
     if (resalePage <= last) return
+    queryClient.removeQueries({ queryKey: [...NAME_RESALES_KEY, resalePage], exact: true })
     void queryClient.invalidateQueries({ queryKey: NAME_RESALES_KEY, refetchType: 'none' })
     setResalePage(last)
   }, [resaleTotal, resalePage, queryClient])
@@ -226,7 +232,20 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
-  const purchase = useShopPurchase(() => onNavigate('backpack'))
+  // A simulated NAME's PREVIEW ON AVATAR: the NAME in the nametag over the avatar, on UNIQUE NAME, as it
+  // would read once claimed. Nothing is saved: the profile's name stays as it is. Only the player who
+  // rehearsed it sees it: another account signed in meanwhile gets nothing.
+  const playerRef = useRef<string | null>(null)
+  playerRef.current = profile.data?.address?.toLowerCase() ?? null
+  const previewName = useCallback((name: string, buyer: string | null) => {
+    if (buyer == null || buyer !== playerRef.current) return
+    setSection('names')
+    setNameTab('unique')
+    setNameDraft(name)
+    setNameFocused(false)
+    showToast('Preview only: your profile’s name hasn’t changed.')
+  }, [])
+  const purchase = useShopPurchase(() => onNavigate('backpack'), { onPreviewName: previewName })
   // A guest login's cart is the signed-out one, which the account takes over once one signs in.
   const cart = useInWorldCart(capabilities?.reason === 'guest' ? null : (capabilities?.buyer ?? null))
   // Escape or the cart's X closes it, the focus back on the cart button; a press anywhere else closes it
@@ -468,8 +487,17 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const cleanName = (raw: string): string => sanitizeNameInput(raw, Number.POSITIVE_INFINITY)
   const typeName = (value: string): void => setNameDraft(sanitizeNameInput(value, NAME_TYPED_MAX))
   // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
-  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
-  const claimName = (): void => void openWebShop(webNameUrl(nameDraft))
+  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there. Only the
+  // shell's simulation runs here: this page has no way yet to wear a NAME registered for real once it is
+  // indexed, so a shell that says `live` still sends the buyer to the web Shop, as one that can't, or that
+  // refuses, does. A shell busy with another purchase (a second press, its dialog already up) sends nowhere.
+  const claimName = (input: PressedWith): void => {
+    const name = nameDraft
+    const rehearse = capabilities?.namesMode === 'simulation' ? purchase.buyName(name, 'simulation', input) : Promise.resolve('unavailable' as const)
+    void rehearse.then((opening) => {
+      if (opening === 'unavailable') void openWebShop(webNameUrl(name))
+    })
+  }
   const makeNameOffer = (): void => void openWebShop(webNameOfferUrl(nameDraft), 'Marketplace')
   // A NAME on resale is bought on its page on the web Marketplace.
   const openNameResale = (resale: NameResale): void => void openWebShop(webNameTokenUrl(resale.contract, resale.tokenId), 'Marketplace')
@@ -604,13 +632,17 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
               <AvatarNametag className={styles.nametag} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
             ) : (
-              <AvatarNametag
-                className={styles.nametag}
-                name={own.base}
-                claimed={ownClaimed}
-                suffix={own.tag || addressSuffix(ownAddress)}
-                color={resolveNameColor(own.base, ownAddress, ownClaimed, p?.nameColor)}
-              />
+              // The player's own name, as it reads today. None until the profile has one: the empty nametag's
+              // placeholder and badge would show a claimed NAME the player may not have.
+              own.base !== '' && (
+                <AvatarNametag
+                  className={styles.nametag}
+                  name={own.base}
+                  claimed={ownClaimed}
+                  suffix={own.tag || addressSuffix(ownAddress)}
+                  color={resolveNameColor(own.base, ownAddress, ownClaimed, p?.nameColor)}
+                />
+              )
             ))}
           {playing != null && (
             // The design's EMOTE controls, over the avatar while an emote plays.

@@ -22,6 +22,8 @@ export type ShopPageData = {
   queries: PrimedQuery[];
   /** decentraland.org's `dapps` rollout flags the server rendered with, primed in the browser before it hydrates. */
   featureFlags?: Readonly<Record<string, boolean>>;
+  /** Their variants' payloads (My Store's address list), when any; primed with them. */
+  featureFlagVariants?: Readonly<Record<string, string>>;
   /** The session id the page's own telemetry is tagged with (set by the route loader). */
   sid?: string;
 };

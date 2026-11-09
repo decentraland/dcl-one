@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -55,4 +56,26 @@ describe("DocsMedia", () => {
     stale.replace(big, "creator/big.webp", "creator/big.png");
     await expect(stale.flush()).rejects.toThrow(/ImageMagick/);
   });
+});
+
+const staticWebp = Buffer.from("UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoCAAIAAgA0JaACdLoB+AADsAD+8MQL/yC5YXXI1/8gP+QH/ID/+PIAAAA=", "base64");
+const wideWebp = Buffer.from("UklGRiQAAABXRUJQVlA4TBcAAAAvzwcAAAfQ//73v/8BICH8P69G9D/FAQA=", "base64");
+const animatedWebp = Buffer.from("UklGRsAAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAD/////AwBBTk1GSAAAAAAAAAAAAAEAAAEAAGQAAAJWUDggMAAAANABAJ0BKgIAAgACADQloAJ0ugH4AAOwAP7wxAv/ILlhdcjX/yA/5Af8gP/48gAAAEFOTUZEAAAAAAAAAAAAAQAAAQAA+gAAAFZQOCAsAAAAlAEAnQEqAgACAAAANCWgAnS6AAOYAP75k2//kB//kB//kB//ID/iF3sgMAA=", "base64");
+const hasMagick = spawnSync(process.env.MAGICK || "magick", ["-version"]).status === 0;
+
+it.skipIf(!hasMagick)("optimizes static WebP and preserves animated WebP bytes and timing", async () => {
+  const dir = path.join(root, "native-webp");
+  const media = new DocsMedia({ output: dir });
+  expect(rasterKind(staticWebp)).toBe("webp");
+  expect(webpName("creator/test.webp")).toBe("creator/test.webp");
+  media.replace(staticWebp, "static.webp", "static.webp");
+  media.replace(animatedWebp, "animated.webp", "animated.webp");
+  media.replace(wideWebp, "wide.webp", "wide.webp");
+  await media.flush(1);
+  const manifest = JSON.parse(media.manifest());
+  expect(manifest["/docs/static.webp"]).toMatchObject({ width: 2, height: 2 });
+  expect(fs.statSync(path.join(dir, "static.webp")).size).toBeLessThanOrEqual(staticWebp.length);
+  expect(manifest["/docs/wide.webp"].width).toBe(1600);
+  expect(manifest["/docs/animated.webp"]).toMatchObject({ width: 2, height: 2, animated: true });
+  expect(fs.readFileSync(path.join(dir, "animated.webp"))).toEqual(animatedWebp);
 });

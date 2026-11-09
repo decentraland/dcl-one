@@ -201,7 +201,7 @@ You can use [9-slice scaling](https://en.wikipedia.org/wiki/9-slice_scaling) wit
 
 With this popular technique, you slice an image into 9 segments, that will be stretched in different ways to preserve the proportions of the margins and corners. For example, use this to define rounded-corner backgrounds that easily adapt to any size. Consider the following image (borrowed from [Wikipedia](https://en.wikipedia.org/wiki/9-slice_scaling#/media/File:Traditional_scaling_vs_9-slice_scaling.svg)):
 
-![](/docs/creator/images/media/9-slice.webp)
+![](/docs/creator/images/media/9-slice.webp)
 
 In this image we see the orginal texture (top-left), and the result of scaling it in a traditional way (top-right); notice how the corners get deformed. Below that, we see the texture segmented into 9 slices (bottom-left), and then the result of stretching the image according to the 9-slice method (bottom-right).
 

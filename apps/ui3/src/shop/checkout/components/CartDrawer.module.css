@@ -9,6 +9,14 @@
   to { transform: none; }
 }
 
+/* Portalled to <body>, outside every page's border-box scope (.shop-pdp * and the like), which upstream's
+   global reset gives every element: without it the thumbnail's and the avatar's borders add to their width. */
+.root *,
+.root *::before,
+.root *::after {
+  box-sizing: border-box;
+}
+
 /* Above the site nav and the mobile filter sheet (9999): a full-viewport modal. */
 .root {
   position: fixed;
@@ -218,11 +226,12 @@
   color: #fcfcfc;
 }
 
-.by [data-avatar] {
-  width: 20px;
-  height: 20px;
-  border: 1.43px solid rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.1);
+/* Under .panel .info to outrank DetailCreator's own small size (.root[data-size="sm"] .name, line-height 1.2). */
+.panel .info .by [data-testid="creator-name"],
+.panel .info .by [data-testid="creator-display"] {
+  font-size: 12px;
+  line-height: 1;
+  color: #fcfcfc;
 }
 
 .bottom {
@@ -269,8 +278,10 @@
   color: #fcfcfc;
 }
 
-.price,
-.totalVal {
+/* Under .panel: CreditsAmount also carries the card's .shop-price__credits (gap 6px, weight 700), whose
+   single class would otherwise win wherever the bundle loads it later. */
+.panel .price,
+.panel .totalVal {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -281,7 +292,7 @@
   white-space: nowrap;
 }
 
-.totalVal {
+.panel .totalVal {
   gap: 8px;
 }
 

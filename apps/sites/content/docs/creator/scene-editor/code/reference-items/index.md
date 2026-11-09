@@ -29,11 +29,11 @@ function main() {
 }
 ```
 
-![](/docs/creator/images/editor/door-names.webp)
+![](/docs/creator/images/editor/door-names.webp)
 
 The `EntityNames` enum contains the full list of entities added by the Creator Hub and is updated immediately as soon as you make any changes. If you import `EntityNames.` into your code, your IDE will present you with a dropdown including all the names of the entities available.
 
-![](/docs/creator/images/editor/EntityNames.webp)
+![](/docs/creator/images/editor/EntityNames.webp)
 
 You can also use the `engine.getEntityByName<EntityNames>()` function, passing `<EntityNames>` as a [TypeScript generic](https://www.typescriptlang.org/docs/handbook/2/generics.html), to validate that an entity by that name really exists in your scene. If the referenced entity is renamed on the Creator Hub, this method will warn you with an error. As the output of this function can't be `null`, you can avoid checking that the entity exists.
 
@@ -95,13 +95,13 @@ You can also fetch entities by their tags. Tags are a way to group entities toge
 
 Add Tags to an entity via the **Tags** section at the top of the item's properties panel. You can pick from the generic tags like **Tag Group 1** through to **Tag Group 4**, or create your own with a more specific name.
 
-![](/docs/creator/images/editor/tags.webp)
+![](/docs/creator/images/editor/tags.webp)
 
 
 > [!NOTE]
 > **💡 Tip**: A single entity can have multiple tags assigned to it.
-> 
-> <img src="/docs/creator/images/editor/tags-multiple.webp" alt="" data-size="original">
+>
+> <img src="/docs/creator/images/editor/tags-multiple.webp" alt="" data-size="original">
 
 
 You can then fetch all entities that have a specific tag by using the `engine.getEntitiesByTag()` function. This is ideal for when you want to iterate over a group of entities that have the same purpose or behavior.
@@ -155,7 +155,7 @@ Use `getTriggerEvents` to fetch an object that can handle trigger events on from
 
 For example, if a scene has a button with the following generic **On Click** event, you can write the code below to run custom code whenever the button is activated.
 
-![](/docs/creator/images/editor/restart-button.webp)
+![](/docs/creator/images/editor/restart-button.webp)
 
 ```ts
 import { engine } from '@dcl/sdk/ecs'
@@ -184,7 +184,7 @@ Use `getActionEvents` to fetch an object for handling the actions of a specific 
 
 For example, if a scene has a door with the following default **Open** action, you can write the code below to run custom code whenever the door is opened.
 
-![](/docs/creator/images/editor/door-actions.webp)
+![](/docs/creator/images/editor/door-actions.webp)
 
 ```ts
 import { engine } from '@dcl/sdk/ecs'

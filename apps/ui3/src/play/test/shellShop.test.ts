@@ -12,8 +12,9 @@ import type { UsdCents } from '../../shop/model/money'
 import type { GroupProgress } from '../../shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
-import { SHOP_EVENT, SHOP_PROTOCOL, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
+import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
+import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
 import { createLedger, type OperationRecord } from '../shell/shop/ledger'
 import type { PurchaseIntent } from '../shell/shop/walletGuard'
 
@@ -126,6 +127,11 @@ function setup(
     /** The server's offers; the store's mint of item 7 for every line by default. */
     offers?: ShellShopServices['offers']
     resolvers?: ShellShopServices['resolvers']
+    /**
+     * BUY NAME: how this build buys NAMEs (none by default; `build`: as the build's environment and the
+     * page's chains say), the NAME's price in US cents (935, 94 Credits, by default), and its standing.
+     */
+    names?: { mode?: ShopNamesMode | null | 'build' | (() => ShopNamesMode | null); price?: ShellShopServices['namePrice']; standing?: ShellShopServices['nameStanding'] }
   } = {}
 ) {
   const shown: Shown[] = []
@@ -188,7 +194,10 @@ function setup(
     creditsUrl: () => 'https://decentraland.example/shop/credits',
     creatorName: opts.creatorName ?? (async () => 'Aurora'),
     claim: opts.claim ?? (async () => () => {}),
-    creditRecord
+    creditRecord,
+    ...(opts.names?.mode === 'build' ? {} : { namesMode: typeof opts.names?.mode === 'function' ? opts.names.mode : () => (opts.names?.mode ?? null) as ShopNamesMode | null }),
+    namePrice: opts.names?.price ?? (async () => 935 as UsdCents),
+    nameStanding: opts.names?.standing ?? (async () => 'available' as const)
   }
   const deps = {
     login: opts.login ?? (() => login()),
@@ -214,8 +223,9 @@ function setup(
       method: 'credits',
       cart: true
     }) as Promise<ShopOperation>
+  const buyName = (name = 'Mojito', mode: string = 'simulation') => shop.request('shop.buyName', { v: SHOP_PROTOCOL, name, method: 'credits', mode }) as Promise<ShopOperation>
   const states = (): string[] => events.map((e) => e.state)
-  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, checkout, states, signers, creditRecord, cancels, sleeps }
+  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, buyName, checkout, states, signers, creditRecord, cancels, sleeps, storage }
 }
 
 /**
@@ -687,6 +697,9 @@ describe('the shell purchase', () => {
     const { view } = await t.until('failed')
     expect(view).toMatchObject({ retry: false })
     expect(view.step === 'failed' && view.message).toMatch(/failed on-chain/)
+    // Retired, not handed back: the Credits come back with the expiry sweep, and the copy says no more than that.
+    expect(view.step === 'failed' && view.message).toMatch(/come back on their own/)
+    expect(view.step === 'failed' && view.message).not.toMatch(/were returned/)
   })
 
   it('leaves another purchase’s dialog alone when a closed one settles', async () => {
@@ -1294,6 +1307,7 @@ describe('a purchase of several items (the cart)', () => {
     watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
     const { view } = await t.until('failed')
     expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
+    expect(view.step === 'failed' && view.message).not.toMatch(/were returned/)
   })
 
   it('says nothing was bought when no group of it was', async () => {
@@ -1405,5 +1419,341 @@ describe('a purchase of several items (the cart)', () => {
     const again = await t.checkout('7', '8')
     expect(again.operation).toBe(first.operation)
     expect(t.last().view.step).toBe('pending')
+  })
+})
+
+describe('BUY NAME, simulated', () => {
+  const SIM = { names: { mode: 'simulation' as const } }
+  /** A read held until the test lets it answer. */
+  const held = <T,>() => {
+    let release!: (value: T) => void
+    const promise = new Promise<T>((resolve) => (release = resolve))
+    return { promise, release }
+  }
+  /** The same account signed in again: another login, as a renewal makes. */
+  const renewed = (): StoredLogin => ({ ...login(), identity: { ...login().identity, expiration: new Date(Date.now() + 7_200_000).toISOString() } })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    delete (window as { __SHOP_CHAIN__?: unknown }).__SHOP_CHAIN__
+  })
+
+  it('is offered only where the build simulates NAMEs, to a login that can buy here', async () => {
+    expect(await setup(SIM).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: true, namesMode: 'simulation' })
+    expect(await setup().shop.request('shop.capabilities', undefined)).not.toHaveProperty('namesMode')
+    for (const t of [setup({ ...SIM, login: () => null }), setup({ ...SIM, login: () => login(BUYER, { guest: true }) }), setup({ ...SIM, wallet: null })]) {
+      expect(await t.shop.request('shop.capabilities', undefined)).not.toHaveProperty('namesMode')
+    }
+  })
+
+  it.each([
+    // [VITE_SHOP_CHAIN_ID, VITE_SHOP_NAME_SIMULATION, window.__SHOP_CHAIN__, offered]
+    ['137', 'true', undefined, false],
+    ['', 'true', undefined, false],
+    ['80002', 'true', undefined, true],
+    ['137', '', undefined, false],
+    ['', '', undefined, false],
+    ['80002', '', undefined, false],
+    ['80002', 'false', undefined, false],
+    ['80002', '1', undefined, false],
+    // A runtime override can turn it off, never on.
+    ['137', 'true', { settlementChainId: 80002, ethereumChainId: 11155111 }, false],
+    ['', 'true', { settlementChainId: 80002 }, false],
+    ['80002', '', { settlementChainId: 80002 }, false],
+    ['80002', 'true', { settlementChainId: 137 }, false],
+    ['80002', 'true', { ethereumChainId: 1 }, false],
+    ['80002', 'true', { settlementChainId: 80002, ethereumChainId: 11155111 }, true]
+  ])('built for chain %j with the simulation %j and the runtime chains %j: offered %s', async (chain, simulation, runtime, offered) => {
+    vi.stubEnv('VITE_SHOP_CHAIN_ID', chain)
+    vi.stubEnv('VITE_SHOP_NAME_SIMULATION', simulation)
+    vi.stubEnv('VITE_SHOP_ETHEREUM_CHAIN_ID', '')
+    if (runtime) (window as { __SHOP_CHAIN__?: unknown }).__SHOP_CHAIN__ = runtime
+    const t = setup({ names: { mode: 'build' } })
+    const caps = await t.shop.request('shop.capabilities', undefined)
+    if (offered) {
+      expect(caps).toMatchObject({ namesMode: 'simulation' })
+      await expect(t.buyName()).resolves.toMatchObject({ mode: 'simulation' })
+    } else {
+      expect(caps).not.toHaveProperty('namesMode')
+      await expect(t.buyName()).rejects.toThrow()
+      await expect(t.buyName('Mojito', 'live')).rejects.toThrow()
+      expect(t.deps.ui.show).not.toHaveBeenCalled()
+    }
+  })
+
+  it('refuses shop.buyName where capabilities offers no NAMEs, in another mode, or with anything that would decide it', async () => {
+    for (const t of [setup(), setup({ ...SIM, login: () => null }), setup({ ...SIM, login: () => login(BUYER, { guest: true }) }), setup({ ...SIM, wallet: null })]) {
+      await expect(t.buyName()).rejects.toThrow()
+      expect(t.deps.ui.show).not.toHaveBeenCalled()
+      expect(t.events).toEqual([])
+    }
+    const t = setup(SIM)
+    await expect(t.buyName('Mojito', 'live')).rejects.toThrow(/simulation/)
+    for (const extra of [{ price: 1 }, { buyer: OTHER }, { contract: CONTRACT }, { items: [] }]) {
+      await expect(t.shop.request('shop.buyName', { v: SHOP_PROTOCOL, name: 'Mojito', method: 'credits', mode: 'simulation', ...extra })).rejects.toThrow()
+    }
+    await expect(t.buyName(' Mojito')).rejects.toThrow()
+    expect(t.deps.ui.show).not.toHaveBeenCalled()
+  })
+
+  it('reads the real price and balance, says it is a simulation, and on SIMULATE PURCHASE buys nothing', async () => {
+    const claim = vi.fn<ShellShopServices['claim']>(async () => () => {})
+    const t = setup({ ...SIM, claim })
+    const op = await t.buyName()
+    expect(op).toEqual({ v: 1, operation: expect.any(String), buyer: BUYER, state: 'reviewing', items: [], name: 'Mojito', mode: 'simulation' })
+    expect(t.shown[0].view).toEqual({ step: 'loading', subject: 'name', simulation: true })
+    const confirm = await t.until('confirm')
+    // The quote's 935 US cents are 94 whole Credits, against the balance's 700.
+    expect(confirm.view).toEqual({ step: 'confirm', items: [{ kind: 'name', name: 'Mojito', creator: '', rarity: '', credits: 94 }], balance: 700, simulation: true })
+    confirm.handlers.onConfirm!()
+    expect(t.last().view).toEqual({ step: 'processing', balance: 700, subject: 'name', simulation: true })
+    const success = await t.until('success')
+    expect(success.view).toMatchObject({ step: 'success', simulation: true, items: [{ kind: 'name', name: 'Mojito' }] })
+    // Its success previews the NAME; it never assigns it, nor sends anyone to the Backpack.
+    expect(Object.keys(success.handlers).sort()).toEqual(['onClose', 'onPreview'])
+    expect(t.sleeps).toEqual([NAME_SIMULATION_MS])
+    expect(t.states()).toEqual(['reviewing', 'processing', 'succeeded'])
+    for (const e of t.events) {
+      expect(e).toMatchObject({ type: SHOP_EVENT, items: [], name: 'Mojito', mode: 'simulation' })
+      expect(e).not.toHaveProperty('txHash')
+    }
+    // Nothing of a payment ran: no checkout, wallet guard, lock, watch or credit record, nothing asked of the
+    // wallet, nothing written to the ledger, no credit given back.
+    expect(t.run).not.toHaveBeenCalled()
+    expect(t.guard).not.toHaveBeenCalled()
+    expect(t.watch).not.toHaveBeenCalled()
+    expect(t.creditRecord).not.toHaveBeenCalled()
+    expect(claim).not.toHaveBeenCalled()
+    expect(t.provider.requests).toEqual([])
+    expect(t.storage!.length).toBe(0)
+    expect(t.cancels).toEqual([])
+  })
+
+  it('previews the NAME once from its success, and lists it in shop.status for its buyer only', async () => {
+    let current: StoredLogin | null = login()
+    const t = setup({ ...SIM, login: () => current })
+    const op = await t.buyName()
+    ;(await t.until('confirm')).handlers.onConfirm!()
+    const success = await t.until('success')
+    success.handlers.onPreview!()
+    success.handlers.onPreview!()
+    expect(t.deps.ui.hide).toHaveBeenCalled()
+    expect(t.events.filter((e) => e.next === 'previewName')).toHaveLength(1)
+    expect(t.events.at(-1)).toMatchObject({ operation: op.operation, state: 'succeeded', next: 'previewName' })
+    expect(await t.shop.request('shop.status', { operation: op.operation })).toMatchObject({ name: 'Mojito', mode: 'simulation', next: 'previewName' })
+    expect(await t.shop.request('shop.status', {})).toEqual([expect.objectContaining({ operation: op.operation, items: [] })])
+    // The same shell, another account signed in: none of it.
+    current = login(OTHER)
+    expect(await t.shop.request('shop.status', { operation: op.operation })).toBeNull()
+    expect(await t.shop.request('shop.status', {})).toEqual([])
+  })
+
+  it('previews nothing for another session than the one that rehearsed it', async () => {
+    let current: StoredLogin | null = login()
+    const t = setup({ ...SIM, login: () => current })
+    await t.buyName()
+    ;(await t.until('confirm')).handlers.onConfirm!()
+    const success = await t.until('success')
+    current = login(OTHER)
+    success.handlers.onPreview!()
+    expect(t.deps.ui.hide).toHaveBeenCalled()
+    expect(t.events.some((e) => e.next === 'previewName')).toBe(false)
+  })
+
+  it('says a failure is a simulation’s too', async () => {
+    let current: StoredLogin | null = login()
+    const t = setup({ names: { mode: 'simulation', standing: async () => 'taken' as const }, login: () => current })
+    await t.buyName()
+    expect((await t.until('failed')).view).toMatchObject({ simulation: true })
+    const u = setup({ ...SIM, login: () => current })
+    await u.buyName()
+    ;(await u.until('confirm')).handlers.onConfirm!()
+    current = renewed()
+    expect((await u.until('failed')).view).toMatchObject({ simulation: true, retry: false })
+  })
+
+  it('never lets an item’s late wallet refusal over a NAME opened after that item was cancelled', async () => {
+    let refuse!: (e: Error) => void
+    const wallet: Eip1193Provider = {
+      request: async ({ method }: { method: string }) => {
+        if (method === 'eth_accounts') return new Promise((_, reject) => (refuse = reject))
+        throw new Error(`unexpected ${method}`)
+      }
+    }
+    const t = setup({ ...SIM, wallet: { kind: () => 'web3', provider: () => wallet } })
+    const item = await t.buy()
+    const confirm = await t.until('confirm')
+    confirm.handlers.onConfirm!()
+    await vi.waitFor(() => expect(refuse).toBeDefined())
+    // The buyer cancels while the wallet's prompt is still open, then claims a NAME.
+    confirm.handlers.onClose()
+    await t.buyName()
+    const name = await t.until('confirm')
+    refuse(new Error('User rejected the request.'))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(t.last()).toBe(name)
+    expect(t.events.filter((e) => e.operation === item.operation).map((e) => e.state)).toEqual(['reviewing', 'cancelled'])
+  })
+
+  it('shows Insufficient Funds from the real balance, and BUY CREDITS opens the credit packs', async () => {
+    const t = setup({ ...SIM, balanceCents: 500 })
+    await t.buyName()
+    const { view, handlers } = await t.until('insufficient')
+    expect(view).toEqual({ step: 'insufficient', items: [{ kind: 'name', name: 'Mojito', creator: '', rarity: '', credits: 94 }], balance: 50, need: 44, simulation: true })
+    handlers.onBuyCredits!()
+    expect(t.deps.openExternal).toHaveBeenCalledWith('https://decentraland.example/shop/credits')
+    expect(t.states()).toEqual(['reviewing', 'cancelled'])
+  })
+
+  it.each([
+    ['a taken NAME', { standing: async () => 'taken' as const }, /got this NAME first/, false],
+    ['a banned NAME', { standing: async () => 'banned' as const }, /not available/, false],
+    ['a registrar that doesn’t answer', { standing: async (): Promise<'available'> => Promise.reject(new Error('down')) }, /couldn’t check this NAME/, true],
+    ['no price', { price: async () => null }, /price/, true],
+    ['a price that isn’t a number', { price: async () => NaN as UsdCents }, /price/, true],
+    ['a free NAME', { price: async () => 0 as UsdCents }, /price/, true],
+    ['a negative price', { price: async () => -10 as UsdCents }, /price/, true],
+    ['an endless price', { price: async () => Infinity as UsdCents }, /price/, true]
+  ])('refuses %s', async (_, names, message, retry) => {
+    const t = setup({ names: { mode: 'simulation', ...names } })
+    await t.buyName()
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ retry })
+    expect(view.step === 'failed' && view.message).toMatch(message)
+  })
+
+  it('refuses a balance that isn’t one', async () => {
+    const t = setup({ ...SIM, balanceCents: NaN })
+    await t.buyName()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/balance/)
+  })
+
+  it('reads the terms again on TRY AGAIN', async () => {
+    let down = true
+    const t = setup({ names: { mode: 'simulation', standing: async () => (down ? Promise.reject(new Error('down')) : 'available') } })
+    await t.buyName()
+    const failed = await t.until('failed')
+    down = false
+    failed.handlers.onRetry!()
+    expect((await t.until('confirm')).view).toMatchObject({ simulation: true })
+  })
+
+  it('takes SIMULATE PURCHASE once, however often it is pressed', async () => {
+    const t = setup(SIM)
+    await t.buyName()
+    const confirm = await t.until('confirm')
+    confirm.handlers.onConfirm!()
+    confirm.handlers.onConfirm!()
+    await t.until('success')
+    expect(t.sleeps).toEqual([NAME_SIMULATION_MS])
+    expect(t.states()).toEqual(['reviewing', 'processing', 'succeeded'])
+  })
+
+  it('opens one purchase at a time: a second BUY NAME, or an item, waits for the open one', async () => {
+    const t = setup(SIM)
+    await t.buyName()
+    await expect(t.buyName('Carolo')).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buy()).rejects.toThrow(SHOP_BUSY)
+    ;(await t.until('confirm')).handlers.onClose()
+    // And an item purchase open keeps BUY NAME out.
+    await t.buy()
+    await t.until('confirm')
+    await expect(t.buyName()).rejects.toThrow(SHOP_BUSY)
+  })
+
+  it('reopens nothing when its reads answer after it was cancelled', async () => {
+    const standing = held<'available'>()
+    const t = setup({ names: { mode: 'simulation', standing: () => standing.promise } })
+    await t.buyName()
+    t.last().handlers.onClose()
+    expect(t.states()).toEqual(['reviewing', 'cancelled'])
+    const shown = t.shown.length
+    standing.release('available')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(t.shown.length).toBe(shown)
+  })
+
+  it('never puts its late answer over an item purchase that took the dialog meanwhile', async () => {
+    const standing = held<'available'>()
+    const t = setup({ names: { mode: 'simulation', standing: () => standing.promise } })
+    const name = await t.buyName()
+    t.last().handlers.onClose()
+    await t.buy()
+    const item = await t.until('confirm')
+    standing.release('available')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(t.last()).toBe(item)
+    expect(t.events.filter((e) => e.operation === name.operation).map((e) => e.state)).toEqual(['reviewing', 'cancelled'])
+  })
+
+  it('leaves its dialog alone when an item purchase handed off earlier settles', async () => {
+    let settledNow = false
+    const t = setup({
+      ...SIM,
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      watch: async () => (settledNow ? { status: 'confirmed', txHash: TX } : { status: 'pending', txHash: TX })
+    })
+    const item = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm!()
+    await t.until('pending')
+    // A purchase only being followed doesn't keep BUY NAME out.
+    await t.buyName()
+    const confirm = await t.until('confirm')
+    const hides = t.deps.ui.hide.mock.calls.length
+    settledNow = true
+    await vi.waitFor(() => expect(t.events.some((e) => e.operation === item.operation && e.state === 'succeeded')).toBe(true))
+    expect(t.last()).toBe(confirm)
+    expect(t.deps.ui.hide.mock.calls.length).toBe(hides)
+  })
+
+  it('applies nothing to another session: signed out while it read', async () => {
+    let current: StoredLogin | null = login()
+    const standing = held<'available'>()
+    const t = setup({ names: { mode: 'simulation', standing: () => standing.promise }, login: () => current })
+    await t.buyName()
+    current = null
+    standing.release('available')
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/sign-in changed/)
+    expect(t.states()).toEqual(['reviewing'])
+  })
+
+  it('applies nothing to another session: another account at SIMULATE PURCHASE', async () => {
+    let current: StoredLogin | null = login()
+    const t = setup({ ...SIM, login: () => current })
+    await t.buyName()
+    const confirm = await t.until('confirm')
+    current = login(OTHER)
+    confirm.handlers.onConfirm!()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/sign-in changed/)
+    expect(t.states()).toEqual(['reviewing'])
+    expect(t.sleeps).toEqual([])
+  })
+
+  it('applies nothing to another session: the sign-in renewed while it ran', async () => {
+    let current: StoredLogin | null = login()
+    const t = setup({ ...SIM, login: () => current })
+    await t.buyName()
+    ;(await t.until('confirm')).handlers.onConfirm!()
+    current = renewed()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/sign-in changed/)
+    expect(t.states()).toEqual(['reviewing', 'processing', 'failed'])
+    expect(t.shown.some((s) => s.view.step === 'success')).toBe(false)
+  })
+
+  it('applies nothing to another session: the mode turned off while it ran', async () => {
+    let mode: ShopNamesMode | null = 'simulation'
+    const t = setup({ names: { mode: () => mode } })
+    await t.buyName()
+    ;(await t.until('confirm')).handlers.onConfirm!()
+    mode = null
+    await t.until('failed')
+    expect(t.states()).toEqual(['reviewing', 'processing', 'failed'])
   })
 })

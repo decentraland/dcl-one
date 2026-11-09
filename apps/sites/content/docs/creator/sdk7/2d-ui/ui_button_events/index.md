@@ -270,7 +270,7 @@ A blocking element captures clicks across its **whole rectangle**, whether or no
 
 > [!CAUTION]
 > **Warning:** Never put a pointer handler or `pointerFilter: 'block'` on a full-screen wrapper sized `100%` by `100%`.
-> 
+>
 > Its rectangle is the entire screen, so a single stray `onMouseDown` on your layout root makes every other UI element and everything in the 3D world unclickable. The UI still looks perfectly correct, because the panel you can see only covers a small part of the screen, which makes this very hard to spot.
 
 

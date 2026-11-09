@@ -498,7 +498,7 @@ mod tests {
     /// changes nothing.
     #[tokio::test]
     async fn run_once_expands_the_truncated_local_series_again() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let written = parse_rfc3339("2099-01-01T00:00:00Z").unwrap();
@@ -591,7 +591,7 @@ mod tests {
     /// (an approval, a deletion) is never written over.
     #[tokio::test]
     async fn a_moderation_write_between_the_batch_read_and_the_reroll_wins() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let written = parse_rfc3339("2099-01-01T00:00:00Z").unwrap();

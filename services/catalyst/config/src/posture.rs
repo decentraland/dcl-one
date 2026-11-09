@@ -363,6 +363,7 @@ const ROWS: &[Row] = &[
     ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -917,7 +918,6 @@ const FED_PEERS_FILE: &str = "WORLDS_FED_PEERS_FILE";
 /// loopback and this node's own address.
 pub const ANY_HOST: &[(&str, &str)] = &[
     ("DATABASE_URL", DATABASE),
-    ("TELEMETRY_SQL_DATABASE_URL", DATABASE),
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),

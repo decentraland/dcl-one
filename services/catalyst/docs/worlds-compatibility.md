@@ -1,7 +1,8 @@
 # Worlds: intended differences from worlds-content-server
 
-The `worlds` crate serves the worlds content server's HTTP surface (at the
-root and under `/worlds-content-server`) and its comms admission. The wire
+The `worlds` crate serves the worlds content server's HTTP surface (under
+`/worlds-content-server`, and at the root where no catalyst route has the
+path; see "Mounts") and its comms admission. The wire
 contract follows
 [`decentraland/worlds-content-server`](https://github.com/decentraland/worlds-content-server).
 This page lists where the catalyst answers differently on purpose. A
@@ -16,7 +17,8 @@ difference not listed here is a gap, not a decision.
 - **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
   size cap and `GET /world/{name}/limits` count only scenes published here:
   mirrored worlds and scenes are left out. Personal worlds are outside the
-  allowance and are not listed. A wallet's DCL NAME worlds are the NAMEs it
+  allowance and are not listed, nor are bare-name worlds (upstream lists
+  them under `ensNames`). A wallet's DCL NAME worlds are the NAMEs it
   holds now (the stored owner only without a names reader). A DCL NAME
   world's publish is capped at 500 MiB per scene (the upstream
   `MAX_SCENE_SIZE` default; not configurable here) and by what the owner's
@@ -43,9 +45,19 @@ difference not listed here is a gap, not a decision.
   the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
-  digest, which covers files of one chunk (256 KiB) or less. An invalid key
-  answers 404 (upstream: 400). Content types come from the catalyst's
-  sniffer, so JSON is `application/json`.
+  digest, which covers files of one chunk (256 KiB) or less. It also serves
+  CIDv0 (`Qm…`) keys. An invalid key answers 404 without a body, as a miss
+  does (upstream: 400). A key on the content denylist answers 404, and with
+  `READ_THROUGH_ENABLED` a missing key is fetched from the sync sources
+  before the 404.
+- **Content types.** The worlds `/contents` and `/ipfs` routes sniff the
+  file's first 64 bytes with `file-type@16`'s signatures for images (PNG,
+  JPEG, GIF, WebP, BMP, AVIF, HEIC), glTF binary, fonts, the ISO-BMFF brands,
+  MP3, WAV, FLAC, Ogg, WebM, ZIP and WebAssembly; a format that needs more of
+  the file is `application/octet-stream`. A file that opens with `{` or `[`
+  is `application/json` (upstream: `application/octet-stream`).
+- **Conditional reads.** A request whose `If-None-Match` names the ETag gets
+  304 on `/contents`, `/ipfs` and `/index`; upstream always answers 200.
 - **Error envelope on 403 and 500.** Worlds routes answer
   `{error, message}` with the @dcl/http-commons labels (`Bad request`,
   `Not Authorized`, `Not Found`). A 403 carries the message in `error` as
@@ -124,7 +136,8 @@ difference not listed here is a gap, not a decision.
   `GET /world/{name}/permissions` reports the live holder and, like
   `/limits`, answers 503 while the authority cannot answer; the comms owner
   read for stream-key notices is unavailable then too. Neither falls back
-  to the stored owner. Publishes of one world are serialized, so a publish
+  to the stored owner. The owner-gated permission edits answer the same
+  503 (upstream: 500). Publishes of one world are serialized, so a publish
   by a new holder always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
@@ -217,7 +230,14 @@ difference not listed here is a gap, not a decision.
   pass retires are deleted at once.
 - **`/gc`** reports `removedBytes`. A dry run reclaims no expired partial
   upload and reports `expiredUploads: null`. Every `/admin/*` route answers
-  401 for a missing or wrong token.
+  401 for a missing or wrong token. The bearer is
+  `CATALYRST_WORLDS_ADMIN_TOKEN` (no `AUTH_SECRET`; unset refuses every
+  request), matched against everything after `Bearer `. Like every worlds
+  write it answers 503 while `WORLDS_WRITES_ENABLED` is off. It reads
+  `dry_run`, `min_age_secs` and `allow_empty_active_set` (an unparsable
+  value answers 400), refuses an empty reference set without
+  `allow_empty_active_set=true`, and answers 503 `A garbage collection run
+  is already in progress.` to a second concurrent run.
 - **Partial uploads** follow the upstream contract and limits, with these
   differences:
   - Files are keyed by the hash of their bytes. A batch carrying the same
@@ -256,6 +276,35 @@ difference not listed here is a gap, not a decision.
 - **`GET /worlds` search** adds trigram similarity only when the `pg_trgm`
   extension is installed. `%` and `_` in the query match literally.
 
+## Reads, mounts and admin
+
+- **Mounts.** Worlds clients use the `worlds-content-server.<domain>` host,
+  which the gateway maps onto the `/worlds-content-server` prefix, or the
+  prefix itself. At the node root, `GET /contents/{hash}`,
+  `GET /available-content`, `POST /entities`, `POST /entities/active` and
+  `GET /status` are the catalyst content server's; `DELETE
+  /entities/{name}`, `/ipfs/{hash}` and `/gc` answer only under the prefix,
+  and the worlds status is also at `/worlds/status`. `/about` and `/index`
+  link files under `<PUBLIC_URL>/worlds-content-server/contents/`.
+- **CORS.** The worlds routes answer a preflight with 204 and reflect
+  the request's `Origin` with `Access-Control-Allow-Credentials: true` and
+  `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler
+  names no header, and sets `X-Content-Type-Options: nosniff`. Upstream
+  answers `Access-Control-Allow-Origin: *`.
+- **`/available-content`** answers a cid on the content denylist as
+  `available: false`.
+- **`POST /entities/active`** answers a body that is not JSON with 400
+  `Invalid request. Request body is not valid` (upstream: 500) and caps the
+  body at 256 KiB (413).
+- **`/index`** leaves out worlds an operator disabled. It pages over worlds
+  with a deployed scene, so a page holds `limit` worlds while more remain. A
+  page is reused for 30 seconds (or until a mirror pass changes the scenes);
+  `lastUpdated` is its build time.
+- **`/status`** counts rooms and users from this node's presence, live
+  (upstream: LiveKit's room listing, cached 60 seconds), answers
+  `adapterType: "offline"` without `statusUrl` when no LiveKit host is set,
+  and adds `personalWorlds` and `mirror`.
+
 ## Notifications
 
 - **Delivery.** World notices are written to the catalyst's own inbox and
@@ -268,13 +317,85 @@ difference not listed here is a gap, not a decision.
   `world` field).
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
+- **Settings events.** `PUT /world/{name}/settings` publishes no
+  `WorldSettingsChangedEvent` or `WorldSpawnCoordinateSetEvent`; the
+  explore crate reads the worlds tables directly.
+- **No settings events.** An access change is not published as a
+  `world-settings-changed` event; in-tree readers read the stored access
+  type.
 
 ## Permissions
 
 - **Community ids** in an allow-list must be UUIDs.
+- **Allow-list caps.** `ACCESS_MAX_WALLETS` (1..=10,000, default 1000) and
+  `ACCESS_MAX_COMMUNITIES` (1..=1,000, default 50) are refused at startup
+  outside their range; upstream takes any number, and `0` there refuses
+  every addition.
+- **Allow-list documents** are stored normalized: `GET .../permissions`
+  returns the access wallets lowercased and deduplicated, in the order they
+  were added, and the community ids as lowercase UUIDs, whatever spelling
+  and order were posted.
+- **Permission payloads** are checked more strictly: `deployment`,
+  `streaming` and access wallets must be addresses (400 `Invalid address:
+  <w>.`), `nft` must be a string, a `secret` that is not a non-empty string
+  is a 400 (upstream: 500 for a non-string), and a parcel coordinate outside
+  32 bits is 400 `Invalid parcels: …` (upstream stores it).
+- **Parcel holder lookups** (`POST .../permissions/{permission}/parcels`)
+  match the requested parcels in canonical form, so `00,01` finds a grant on
+  `0,1`.
 - **Removing a grant's last parcel** deletes the grant. Upstream keeps the
   row, which then becomes world-wide.
 - **Streaming permission** is enforced when a participant asks to stream,
   not only recorded.
 - **Shared-secret hashes** use bcrypt cost 12 (upstream: 10); existing
   hashes verify unchanged.
+
+## World metadata and settings
+
+- **Writes switch.** Every worlds write (publishes, undeploys, settings and
+  permission edits, the operator and storage routes) answers 503
+  `{"ok": false, "error": "Service Unavailable", "message": …}` with
+  `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
+  default, and while the restore stamps do not vouch for this node
+  (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
+  `POST /entities/active`, the parcel-holder lookup and the comms mints stay
+  open. A node replacing the upstream service sets it once a restore of its
+  database, blobs and credentials has been shown to work.
+- **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
+  whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
+  than `sepolia` reports `networkId: 1` (upstream answers 500 for a network
+  it does not know). A visible minimap without its own images links this
+  node's `/api/v1/minimap.png` and `/api/v1/estatemap.png` unless
+  `MAP_PARCEL_VIEW_URL` / `MAP_ESTATE_VIEW_URL` name others; upstream links
+  `https://api.decentraland.org/v1/minimap.png` and `/v1/estatemap.png`.
+- **Settings superset.** `GET`/`PUT /world/{name}/settings` also carry
+  `realm_name_override` and `preview_wearable_urns` (always present, `null`
+  or a list), and the PUT form accepts both; `preview_wearable_urns` may
+  repeat, like `categories`.
+- **Settings uploads.** `spawn_coordinates` must be two integers (spaces
+  around them allowed); upstream's `parseInt` also takes `5abc,3` or
+  `5.9,3` and stores them as sent. The form must be `multipart/form-data`
+  (upstream's parser also reads `application/x-www-form-urlencoded`). The
+  upload takes a slot of `MAX_CONCURRENT_UPLOADS` (503 `Server is handling
+  too many concurrent uploads, please retry shortly.` when none is free)
+  and its processing runs under `DEPLOYMENT_PROCESSING_TIMEOUT_MS` (408
+  `Deployment processing exceeded the <n>ms deadline.`); upstream has
+  neither on this route. The per-source admission runs after the signed
+  fetch (upstream: before it).
+- **Scene queries.** `POST /world/{name}/scenes` checks the Content-Type
+  before it reads the body and reads at most 2 MiB; a larger body answers
+  413 `Payload Too Large` (plain text, `Connection: close`, as
+  `@dcl/http-server` answers a body over its `maxBodySize`). Upstream sets
+  no body limit on this route.
+- **Deny list in world listings (shared with upstream).** `GET /worlds`
+  filters the deny list as upstream's `getBannedNames` does: each entry
+  loses its first `.eth` and `.dcl` and is compared case-sensitively with
+  the stored name, so only a bare name equal to a stripped entry is hidden.
+  A deny-listed `<name>.dcl.eth` stays listed, with its title, description
+  and thumbnail, while `/about` and the manifest answer 404 for it. This is
+  a moderation gap both services have, kept for parity.
+- **World listings.** In `GET /worlds`, `blocked_since` is set only for a
+  storage-quota block of a DCL NAME or ENS world published here (upstream:
+  any block of the stored owner), and `owner` is `null` for a world with no
+  owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
+  same `owner`.

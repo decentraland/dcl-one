@@ -381,43 +381,43 @@ pub async fn gate(State(state): State<SharedState>, request: Request, next: Next
                         .is_some_and(|a| !a.is_empty())
                 })
             });
-        if let Ok((catalogue, scenes)) = state.places.partition_scene_ids(&ids).await {
-            if !scenes.is_empty() {
-                // A retired/unbound canonical ID carries only a local
-                // tombstone; it cannot expose any mirrored scene metadata.
-                let bound = state
-                    .places
-                    .has_bound_scene_ids(&scenes)
-                    .await
-                    .unwrap_or(true);
-                mirrors = match (catalogue.is_empty() && !other_selectors, bound) {
-                    (true, false) => &[],
-                    (true, true) => WORLDS,
-                    (false, true) => DESTINATIONS,
-                    (false, false) => {
-                        if destinations {
-                            DESTINATIONS
-                        } else {
-                            PLACES
-                        }
+        if let Ok((catalogue, scenes)) = state.places.partition_scene_ids(&ids).await
+            && !scenes.is_empty()
+        {
+            // A retired/unbound canonical ID carries only a local
+            // tombstone; it cannot expose any mirrored scene metadata.
+            let bound = state
+                .places
+                .has_bound_scene_ids(&scenes)
+                .await
+                .unwrap_or(true);
+            mirrors = match (catalogue.is_empty() && !other_selectors, bound) {
+                (true, false) => &[],
+                (true, true) => WORLDS,
+                (false, true) => DESTINATIONS,
+                (false, false) => {
+                    if destinations {
+                        DESTINATIONS
+                    } else {
+                        PLACES
                     }
-                };
-            }
+                }
+            };
         }
     } else if let Some(Object::Place(id) | Object::Destination(id)) = object(&path) {
-        if let Ok((_, scenes)) = state.places.partition_scene_ids(&[id.to_string()]).await {
-            if !scenes.is_empty() {
-                mirrors = if state
-                    .places
-                    .has_bound_scene_ids(&scenes)
-                    .await
-                    .unwrap_or(true)
-                {
-                    WORLDS
-                } else {
-                    &[]
-                };
-            }
+        if let Ok((_, scenes)) = state.places.partition_scene_ids(&[id.to_string()]).await
+            && !scenes.is_empty()
+        {
+            mirrors = if state
+                .places
+                .has_bound_scene_ids(&scenes)
+                .await
+                .unwrap_or(true)
+            {
+                WORLDS
+            } else {
+                &[]
+            };
         }
     } else if request.method() == Method::GET
         && matches!(

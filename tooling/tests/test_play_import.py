@@ -385,6 +385,17 @@ class PlayImportTests(unittest.TestCase):
         self.assertIn(f'Sites serves verified Bevy producer {SHA}', output.getvalue())
         self.assertIn('Image smoke passed:', output.getvalue())
 
+    def test_tooling_only_async_edits_do_not_invalidate_shipped_web_inputs(self):
+        artifact = contract.inputs(self.root)
+        engine = contract.engine_inputs(self.root)
+        hud = contract.hud_inputs(self.root)
+        for source in ('export const retry = 1;', 'export const retry = 2;'):
+            self.write('library/async/index.ts', source)
+            self.assertEqual(contract.inputs(self.root), artifact)
+            self.assertEqual(contract.engine_inputs(self.root), engine)
+            self.assertEqual(contract.hud_inputs(self.root), hud)
+            play.install(self.build, production=True)
+
     def test_removed_source_input_invalidates_the_artifact(self):
         (self.root / contract.SOURCE / 'src/lib.rs').unlink()
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
@@ -1034,7 +1045,7 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(contract, 'inputs', return_value='match') as inputs, \
                 patch.object(play, 'download_run', return_value=self.build) as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
             self.assertEqual(play.fetch(wait=180, production=True), self.build)
         requests = [call.args[0] for call in api.call_args_list]
         self.assertEqual(len(requests), 17)  # 11 initial pages + 3 * (recent page + pending ID).
@@ -1045,7 +1056,8 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(inputs.call_count, 2)  # Current input key and one producer revision.
         git.assert_called_once()
         download.assert_called_once_with(run(), None, True, None, 180, producer=None)
-        self.assertEqual(clock[0], 90)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+        self.assertEqual(clock[0], 14)
 
     def test_pending_run_on_recent_page_is_not_fetched_twice(self):
         with patch.object(play, 'api', side_effect=[
@@ -1093,14 +1105,15 @@ class PlayImportTests(unittest.TestCase):
                         patch.object(play, 'download_run',
                                      side_effect=lambda r, *_, **__: self.build if r['run_attempt'] == 2 else None) as download, \
                         patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                        patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+                        patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
                     self.assertEqual(play.fetch(wait=180, production=True), self.build)
                 attempts = [call.args[0]['run_attempt'] for call in download.call_args_list]
                 self.assertEqual(attempts, [1, 2] if conclusion == 'success' else [2])
                 download.assert_called_with(retry, None, True, None, 180, producer=None)
                 self.assertEqual(api.call_count, 4)
                 self.assertEqual(inputs.call_count, 2)
-                self.assertEqual(clock[0], 90)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+                self.assertEqual(clock[0], 14)
 
     def test_a_new_attempt_still_requires_a_trusted_run(self):
         with patch.object(play, 'api', side_effect=[
@@ -1137,10 +1150,11 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(contract, 'inputs', return_value='match'), \
                 patch.object(play, 'download_run') as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
-                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)), \
+                patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
                 self.assertRaisesRegex(RuntimeError, 'Refresh main with:'):
             play.fetch(wait=60, production=True)
-        self.assertEqual(api.call_count, 3)
+        self.assertEqual(api.call_count, 6)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
         self.assertEqual(clock[0], 60)
         download.assert_not_called()
 

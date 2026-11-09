@@ -2,6 +2,11 @@
 
 # What is the DAO
 
+
+> [!NOTE]
+> **Mission of the DAO:** Ensure the sustainability of the Decentraland Ecosystem through representative governance, efficient management of collective resources, and technical innovation. Read the [mission, vision and roles](/docs/player/dao/mission-vision-and-roles/) of the DAO, the DAO Council, DCL Regenesis Labs and the Decentraland Foundation.
+
+
 The Decentraland DAO is the decision-making tool for MANA, NAMES and LAND holders in Decentraland's virtual world. Through votes in the DAO, the community can issue grants and make changes to the lists of banned names, POIs, and catalyst nodes. The DAO also controls the LAND and Estate smart contracts.
 
 Issuing grants and making changes to the records and contracts owned by the DAO can only be done by using predefined proposals accessible in [governance.decentraland.org](https://governance.decentraland.org).
@@ -39,7 +44,7 @@ Decentraland's DAO also owns a sum of MANA and other tokens along with the LAND 
 
 > [!WARNING]
 > **📔 Note** The DAO does not own, and so cannot modify, the [MANA smart contract](https://etherscan.io/address/0x0f5d2fb29fb7d3cfee444a200298f468908cc942#readContract).
-> 
+>
 > The MANA contract's owner is the [TokenSale contract](https://etherscan.io/address/0xa66d83716c7cfe425b44d0f7ef92de263468fb3d#readContract). The owner of the TokenSale contract is a separate contract that self-destructed on deployment ([as you can see on Etherscan here](https://etherscan.io/address/0xdf861993edbe95bafbfa7760838f8ebbd5afda9f)). This means that there is no other contract or wallet with the permissions to modify or pause the MANA supply.
 
 

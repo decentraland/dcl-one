@@ -7,9 +7,10 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
 libraries, Rust, protoc, Node 24, npm. Web also needs `nightly-2026-04-15` with `rust-src` and
-`wasm32-unknown-unknown`, and wasm-pack 0.15.0; desktop needs the pinned CEF and the UUAV
-video runtime set (`library/uuav/dist/<target>`, Git LFS: `git lfs pull --include 'library/uuav/dist/**'`),
-which `tooling/uuav/stage-dist.py` copies next to the binary that spawns it.
+`wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
+desktop needs the pinned CEF and the UUAV video runtime set (`library/uuav/dist/<target>`, Git LFS:
+`git lfs pull --include 'library/uuav/dist/**'`), which `tooling/uuav/stage-dist.py` copies next to the
+binary that spawns it.
 
 ```sh
 make web          # engine WASM, scene WASM, sandbox guard, HUD tests, bridge scene -> dist/web
@@ -26,8 +27,10 @@ Importing into Sites (production requires the main CI artifact):
 [Explorer integration](../../rendering/bevy-explorer/README.md#native-builds-and-hud-updates).
 
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or
-checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 26.1; see
-the current measurement evidence in the task report before claiming time savings.
+checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 36.2: Linux takes it from the
+flake's `bevy-tools` package (`install-tools.sh` checks the major), Windows and macOS install the
+release archive `install-protoc.py` pins. See the current measurement evidence in the task report
+before claiming time savings.
 
 Analytics: every environment reports to one Segment source, keyed by `BEVY_SEGMENT_WRITE_KEY` (a
 repository variable; unset, the engine keeps the key it shared with the mobile client). Every event

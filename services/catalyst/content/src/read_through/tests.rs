@@ -610,11 +610,12 @@ async fn a_sync_hold_taken_during_the_deployment_lookup_keeps_the_refused_file()
     }
     let upstream = node.read_through.upstream.clone();
     let id = fx.id.clone();
-    let evict = tokio::spawn(async move { upstream.evict_refused(&id).await });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let evict = upstream.evict_refused(&id);
+    tokio::pin!(evict);
+    assert!(futures::poll!(&mut evict).is_pending());
     let held = crate::sync_deployer::hold_buffered(&fx.id);
     drop(taken);
-    evict.await.unwrap();
+    evict.await;
     assert!(node.holds(&fx.id).await, "sync took it during the lookup");
     drop(held);
 }

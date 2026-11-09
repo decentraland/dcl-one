@@ -14,6 +14,7 @@ on:
       - tooling/dev-regressions*
       - tooling/uuav/**
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
@@ -64,7 +65,7 @@ jobs:
           BASE_SHA: ${{ github.event.before }}
         run: python3 tooling/bevy-ci.py scenes-plan
   hardcore-test:
-    name: Test Scenes (${{ inputs.suite || 'full' }})
+    name: Test Scenes
     needs:
       - changes
     if: ${{ needs.changes.outputs.scenes == 'true' && github.actor != 'dependabot[bot]' }}
@@ -151,7 +152,7 @@ jobs:
       - name: Prepare screenshot output directory
         # References are embedded; the upstream comparator writes captures relative to cwd.
         run: mkdir -p assets/images/screenshots
-      - name: Test Scenes
+      - name: Test Scenes (${{ inputs.suite || 'full' }})
         id: scenes
         # Leave time to preserve diagnostics if scene execution stalls.
         timeout-minutes: 20

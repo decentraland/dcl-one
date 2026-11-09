@@ -51,6 +51,10 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_MIRROR_INTERVAL_SECS", default_value_t = 3600)]
     pub events_mirror_interval_secs: u64,
 
+    /// Adopt the rows the events mirror wrote as this node's own (`origin = 'local'`), once the old service stops and the mirror is off; `explore.mirror_state` records it, so it runs once per database.
+    #[arg(long, env = "EVENTS_MIRROR_ADOPT", default_value_t = false, action = clap::ArgAction::Set)]
+    pub events_mirror_adopt: bool,
+
     /// The events site `/events/sitemap*.xml` points at.
     #[arg(
         long,

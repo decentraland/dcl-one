@@ -1870,17 +1870,18 @@
     "expected": {
       "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
       "shape": {
-        "envelope": ["ok", "data"], "data_type": "object", "item_keys": ["image", "version", "timestamp"],
+        "envelope": ["ok", "data"], "data_type": "object",
+        "item_keys": ["image", "version", "timestamp", "catalogue", "configured_mirrors", "mirrors"],
         "invariants": []
       }
     },
     "source": {
-      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "kind": "accepted", "repo": "decentraland/events@b60d5bbd",
       "refs": [
         "src/server.ts:48-58", "decentraland-gatsby@9.0.1 dist/entities/Route/routes/status.js:9-26",
         "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
       ]
     },
-    "notes": "status() is mounted without an extra handler, so data is exactly {image, version, timestamp}; image/version come from the IMAGE env (`events:<ts>` default). Open: `/api/status` strict three fields `{image, version, timestamp}` as here, or dcl-one's superset with `catalogue`, `mirrors`, `configured_mirrors` kept on this path (else moved to `/v1/status`). The entry asserts upstream's envelope until that is settled."
+    "notes": "status() is mounted without an extra handler, so data is exactly {image, version, timestamp}; image/version come from the IMAGE env (`events:<ts>` default). dcl-one's accepted answer: the router's `status` handler (`explore/src/lib.rs`) adds `catalogue`, `configured_mirrors` and `mirrors`, the node's mirror state (ADR 2026-11-05, 'Supersets kept')."
   }
 ]

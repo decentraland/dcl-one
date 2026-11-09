@@ -1,4 +1,4 @@
-.shop-pay {
+.shop-paychoice {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -7,14 +7,14 @@
   border: 0;
 }
 
-.shop-pay__legend {
+.shop-paychoice__legend {
   padding: 0;
   margin-bottom: 4px;
   color: var(--ink-6);
   font-size: var(--fs-12);
 }
 
-.shop-pay__option {
+.shop-paychoice__option {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -25,28 +25,28 @@
   cursor: pointer;
 }
 
-.shop-pay__option[data-selected] {
+.shop-paychoice__option[data-selected] {
   border-color: var(--brand);
   background: var(--fill-2);
 }
 
-.shop-pay__option input {
+.shop-paychoice__option input {
   accent-color: var(--brand);
 }
 
-.shop-pay__note,
-.shop-pay__mixed {
+.shop-paychoice__note,
+.shop-paychoice__mixed {
   grid-column: 2 / -1;
   color: var(--ink-7);
   font-size: var(--fs-12);
 }
 
-.shop-pay__option[data-state="topUpRequired"] .shop-pay__note,
-.shop-pay__option[data-state="unavailable"] .shop-pay__note {
+.shop-paychoice__option[data-state="topUpRequired"] .shop-paychoice__note,
+.shop-paychoice__option[data-state="unavailable"] .shop-paychoice__note {
   color: var(--warning);
 }
 
-.shop-pay__row {
+.shop-paychoice__row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -54,7 +54,7 @@
   gap: 6px 12px;
 }
 
-.shop-pay__tag {
+.shop-paychoice__tag {
   padding: 2px 8px;
   border-radius: var(--r-pill);
   background: var(--fill-3);
@@ -62,22 +62,22 @@
   font-weight: 600;
 }
 
-.shop-pay__why {
+.shop-paychoice__why {
   margin: 0;
   color: var(--ink-7);
   font-size: var(--fs-12);
 }
 
-.shop-pay--mana-only .shop-pay__note {
+.shop-paychoice--mana-only .shop-paychoice__note {
   margin: 0;
 }
 
-.shop-pay__na {
+.shop-paychoice__na {
   color: var(--ink-6);
   font-size: var(--fs-13);
 }
 
-.shop-pay__retry {
+.shop-paychoice__retry {
   justify-self: start;
   padding: 0;
   border: 0;

@@ -605,7 +605,8 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut buffer = [0; 4096];
-                socket.read(&mut buffer).await.unwrap();
+                let read = socket.read(&mut buffer).await.unwrap();
+                assert!(read > 0, "the request reached the fake Slack");
                 if stalled_body {
                     socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
                 }
