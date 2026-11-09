@@ -266,8 +266,123 @@ impl Drop for Trace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::io::{self, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    fn read_fixture_headers(stream: &mut TcpStream, timeout: Duration) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        let mut headers = [0; 8192];
+        let mut used = 0;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            stream.set_read_timeout(Some(remaining))?;
+            let read = match stream.read(&mut headers[used..]) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                result => result?,
+            };
+            if read == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            used += read;
+            if headers[..used].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                return Ok(());
+            }
+            if used == headers.len() {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+        }
+    }
+
+    fn fixture_connection() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (client, server)
+    }
+
+    #[test]
+    fn fixture_headers_wait_for_the_complete_terminator() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+            assert_eq!(stream.peek(&mut [0; 1]).unwrap(), 1);
+            started.send(()).unwrap();
+            read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
+            stream.write_all(b"ready").unwrap();
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r")
+            .unwrap();
+        ready.recv_timeout(IO_TIMEOUT).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let error = client.read(&mut [0; 1]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        client.write_all(b"\n").unwrap();
+        client.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+        let mut response = [0; 5];
+        client.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"ready");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn fixture_headers_reject_eof_before_completion() {
+        for prefix in [&b""[..], &b"GET / HTTP/1.1\r\n"[..]] {
+            let (mut client, mut server) = fixture_connection();
+            client.write_all(prefix).unwrap();
+            client.shutdown(std::net::Shutdown::Write).unwrap();
+            assert_eq!(
+                read_fixture_headers(&mut server, IO_TIMEOUT)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::UnexpectedEof,
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_headers_reject_oversized_input() {
+        let (mut client, mut server) = fixture_connection();
+        client.write_all(&[b'X'; 8192]).unwrap();
+        assert_eq!(
+            read_fixture_headers(&mut server, IO_TIMEOUT)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData,
+        );
+    }
+
+    #[test]
+    fn fixture_headers_time_out_when_the_peer_stalls() {
+        let (client, mut stream) = fixture_connection();
+        let (finished, result) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let outcome = read_fixture_headers(&mut stream, Duration::from_millis(100))
+                .map_err(|error| error.kind());
+            finished.send(outcome).unwrap();
+        });
+        assert_eq!(
+            result.recv_timeout(IO_TIMEOUT).unwrap(),
+            Err(io::ErrorKind::TimedOut)
+        );
+        drop(client);
+        server.join().unwrap();
+    }
 
     #[test]
     fn display_urls_preserve_normalized_paths_without_private_url_parts() {
@@ -398,8 +513,7 @@ mod tests {
         let origin = fixture.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = fixture.accept().unwrap();
-            let mut buf = [0; 2048];
-            stream.read(&mut buf).unwrap();
+            read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\nsecret-body").unwrap();
         });
         struct Granted;
@@ -492,8 +606,7 @@ mod tests {
         let (finish, resume) = std::sync::mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = cancelled_server.accept().unwrap();
-            let mut request = [0; 1024];
-            stream.read(&mut request).unwrap();
+            read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nb")
                 .unwrap();
@@ -548,8 +661,7 @@ mod tests {
         );
         let server = std::thread::spawn(move || {
             let (mut stream, _) = json_server.accept().unwrap();
-            let mut request = [0; 1024];
-            stream.read(&mut request).unwrap();
+            read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
             let body = r#"{"value":"secret-json-body"}"#;
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
@@ -587,8 +699,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             for redirected in [false, true] {
                 let (mut stream, _) = redirect_server.accept().unwrap();
-                let mut request = [0; 2048];
-                stream.read(&mut request).unwrap();
+                read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
                 if redirected {
                     stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Private: secret-final-header\r\nConnection: close\r\n\r\nsecret-body").unwrap();
                 } else {
@@ -639,8 +750,7 @@ mod tests {
             let target = format!("http://{}/about", listener.local_addr().unwrap());
             let serving = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0; 1024];
-                stream.read(&mut buf).unwrap();
+                read_fixture_headers(&mut stream, IO_TIMEOUT).unwrap();
                 write!(stream, "HTTP/1.1 {status} Reply\r\nContent-Length: {declared}\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\n{body}").unwrap();
             });
             let failed = async_std::task::block_on(async_compat::Compat::new(async {
