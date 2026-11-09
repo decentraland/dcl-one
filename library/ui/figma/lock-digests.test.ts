@@ -186,6 +186,23 @@ describe('when the lock pins every tracked figma file', () => {
     }
   )
 
+  describe('and constructor is explicitly declared as an own deviation code', () => {
+    let value: Lock
+
+    beforeEach(async () => {
+      await annotate((lock) => {
+        const source = lock.sources[0]!
+        Object.assign(source.deviationCodes!, { constructor: 0 })
+        source.files['library/ui/figma/a.ts']!.deviation = 'constructor'
+      })
+      value = await lock()
+    })
+
+    it('should accept the declared code through the real validator', () => {
+      expect(pinnedFiles(value).problems).toEqual([])
+    })
+  })
+
   it('should accept a deviation code declared as an own key linked to a changes[] entry', async () => {
     await annotate((lock) => {
       const source = lock.sources[0]!
