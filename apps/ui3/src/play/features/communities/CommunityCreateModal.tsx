@@ -72,29 +72,31 @@ const openLink = (url: string): void => {
 }
 
 /** unity-explorer's checks on a chosen picture: PNG or JPEG, at most 500 KB and 512×512 px. Resolves
- *  to the picture as a data URL, or to the message to show. */
+ *  to the picture as a data URL, or to the message to show. The dimensions are read from the file
+ *  itself, and only a picture that passes is read into a data URL, so a large photo is refused
+ *  without being copied as text first. */
 export async function readCommunityPicture(file: File): Promise<{ dataUrl: string } | { error: string }> {
   if (file.type !== 'image/png' && file.type !== 'image/jpeg') return { error: IMAGE_GENERAL_ERROR }
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  }).catch(() => null)
-  if (dataUrl == null) return { error: IMAGE_GENERAL_ERROR }
+  const url = URL.createObjectURL(file)
   const size = await new Promise<{ w: number; h: number } | null>((resolve) => {
     const img = new Image()
     img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
     img.onerror = () => resolve(null)
-    img.src = dataUrl
-  })
+    img.src = url
+  }).finally(() => URL.revokeObjectURL(url))
   if (size == null) return { error: IMAGE_GENERAL_ERROR }
   const tooHeavy = file.size > MAX_IMAGE_BYTES
   const tooBig = size.w > MAX_IMAGE_PX || size.h > MAX_IMAGE_PX
   if (tooHeavy && tooBig) return { error: IMAGE_GENERAL_ERROR }
   if (tooHeavy) return { error: IMAGE_WEIGHT_ERROR }
   if (tooBig) return { error: IMAGE_RESOLUTION_ERROR }
-  return { dataUrl }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  }).catch(() => null)
+  return dataUrl == null ? { error: IMAGE_GENERAL_ERROR } : { dataUrl }
 }
 
 /** unity-explorer's text for the content check's findings: one line per field that has any. */

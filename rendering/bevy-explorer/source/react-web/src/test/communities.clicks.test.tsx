@@ -413,6 +413,9 @@ describe('community delete', () => {
 describe('community picture checks', () => {
   const file = (bytes: number, type = 'image/png'): File => new File([new Uint8Array(bytes)], 'pic', { type })
   const stubImage = (w: number, h: number): void => {
+    // jsdom has no object URLs: the check reads the dimensions from one
+    URL.createObjectURL = vi.fn(() => 'blob:pic')
+    URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
       'Image',
       class {
@@ -440,5 +443,14 @@ describe('community picture checks', () => {
     expect(await readCommunityPicture(file(512001))).toEqual({ error: 'Invalid image file selected. Please check file type and size.' })
     stubImage(100, 100)
     expect(await readCommunityPicture(file(512001))).toEqual({ error: 'Selected image exceeds 500KB size limit.' })
+  })
+
+  it('refuses a large picture without reading it as text, and frees its object URL', async () => {
+    stubImage(4000, 3000)
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+    expect(await readCommunityPicture(file(5_000_000, 'image/jpeg'))).toEqual({ error: 'Invalid image file selected. Please check file type and size.' })
+    expect(read).not.toHaveBeenCalled()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:pic')
+    read.mockRestore()
   })
 })
