@@ -10,6 +10,7 @@ mod gpu_memory;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+mod meshopt_ext;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -666,7 +667,13 @@ impl DecentralandApp {
             .add_plugins(EmbedAssetsPlugin)
             .add_plugins(ParticleSystemPlugin)
             .add_plugins(LivestreamManagerPlugin)
-            .add_plugins(media::plugin::MediaPlugin);
+            .add_plugins(media::plugin::MediaPlugin)
+            // after DefaultPlugins' GltfPlugin: the loader registered last for .gltf/.glb
+            // wins, and this one decodes EXT_meshopt_compression before the stock loader
+            // (same uri resolver as the GltfPlugin set in the plugin groups below)
+            .add_plugins(meshopt_ext::MeshoptPlugin {
+                uri_resolver: Some(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
+            });
 
         if !decentraland_app_config.arguments.launch.preview {
             app.add_plugins(DclImposterPlugin {
