@@ -14,6 +14,7 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | `dcl-preview-tunnel{,-protocol}/` | Preview relay and wire types | scene CLI |
 | `async/` | Capped exponential backoff, bounded condition waits and HTTP probes | Shop parity/trade tooling, Redis conformance tooling |
 | `catalyst-api/` | TypeScript DTOs, OpenAPI documents | sites, ui3, catalyst |
+| `shop/` | The Shop's portable core: model, money, prices, sale and payment rules, cart partitioning, contract ABIs and endpoint map; plain TypeScript with no host access ([ADR](../docs/adr/2026-11-09-shop-portable-core.md)) | ui3 (web Shop, `/play` HUD), sites; planned: the Explorer React HUD |
 | `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms, social, scene CLI, scene authoring, the SDK |
 | `js-sdk-toolchain/` | The creator SDK: `@dcl/sdk`, `ecs`, `react-ecs`, `js-runtime`, `sdk-commands`, `playground-assets` (npm, own lockfiles) | scenes; reads `protocol/` |
 | `ui/` | Shared UI foundations, components, app-specific UI (`apps/<app>/`) and Figma tooling ([standard](../docs/ui-standards.md#shared-ui-libraryui)); only the component template exists today | None yet; planned: web apps under `apps/`, the Explorer React HUD |

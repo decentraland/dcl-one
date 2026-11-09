@@ -8,13 +8,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import type { EvmAddress } from "../../model/address";
-import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "../../model/chain";
+import type { EvmAddress } from "@shop/model/address";
+import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "@shop/model/chain";
 import { shopClient } from "../../api/shop";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
 import ManaMark from "../../../atoms/ManaMark";
-import { formatMana, type ManaWei } from "../../model/money";
-import type { WalletGuidance } from "../../model/settlement";
+import { formatMana, type ManaWei } from "@shop/model/money";
+import type { WalletGuidance } from "@shop/model/settlement";
 import { shopPath } from "../../routes";
 import ManaGuidance from "../../wallet/ManaGuidance";
 import { useShopWallet } from "../../wallet/context";

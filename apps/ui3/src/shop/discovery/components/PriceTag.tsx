@@ -1,9 +1,9 @@
 // from: shop@2d3bf62:app/src/components/Price/Price.tsx, app/src/components/CurrencyIcon/CurrencyIcon.tsx, app/src/lib/currency.ts (formatCredits)
 
 import ManaMark from "../../../atoms/ManaMark";
-import { formatMana, type ManaWei } from "../../model/money";
-import type { CardPrice } from "../cardPrice";
-import { t } from "../intl";
+import { formatMana, type ManaWei } from "@shop/model/money";
+import type { CardPrice } from "@shop/discovery/cardPrice";
+import { t } from "@shop/discovery/intl";
 import Icon from "./Icon";
 import "./pricetag.css";
 

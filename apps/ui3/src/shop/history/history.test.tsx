@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createDemo, DemoShell, type DemoScenario } from "../checkout/demo";
 import type { PurchaseRecord } from "../credits/credits";
-import { BOOK } from "../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { buildActivityFeed, filterActivity, type SaleRecord } from "./activity";
 import ActivityPage from "./ActivityPage";
 import BuyStatusPage from "./BuyStatusPage";

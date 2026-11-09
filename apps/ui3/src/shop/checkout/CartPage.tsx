@@ -10,14 +10,14 @@ import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { fetchCatalogByIds, fetchListings } from "../discovery/api";
-import type { CatalogItem } from "../discovery/lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { useShopQuery } from "../discovery/query";
 import FittingRoom from "../detail/components/FittingRoom";
 import { clearTopUpHandoffs } from "../credits/returns";
 import { saveReceipt, type SuccessNavState } from "../history/receipt";
-import { creditsCeil, creditsFloor, type ManaWei } from "../model/money";
-import { manaChainOf } from "../payment/rule";
+import { creditsCeil, creditsFloor, type ManaWei } from "@shop/model/money";
+import { manaChainOf } from "@shop/payment/rule";
 import { SHOP_BASE } from "../routes";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
 import { settlementChainId } from "./chain/config";
@@ -35,7 +35,7 @@ import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
 import "./cartpage.css";
-import { listingTypeFor } from "../market/access-rule";
+import { listingTypeFor } from "@shop/market/access-rule";
 
 export type CartNavState = { resumeCheckout?: boolean; creditsAdded?: number };
 

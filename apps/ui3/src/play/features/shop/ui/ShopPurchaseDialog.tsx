@@ -16,7 +16,7 @@
 // three of what was bought (the design draws three); more scroll sideways, with the same thumb below.
 
 import { useEffect, useRef, useState } from 'react'
-import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
+import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import { Button, ScrollThumb, Spinner } from '../../../design'
 import balanceIcon from '../../../assets/shop/modal/balance-credit.svg'
 import badge0 from '../../../assets/shop/modal/credits-badge-0.svg'

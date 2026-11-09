@@ -12,8 +12,8 @@ import Button from "../../atoms/Button";
 import ManaMark from "../../atoms/ManaMark";
 import EmptyState from "../../components/EmptyState";
 import type { ShopClient } from "../api/shop";
-import { chainLabel, gasTokenSymbol } from "../model/chain";
-import { reasonText } from "../payment/copy";
+import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
+import { reasonText } from "@shop/payment/copy";
 import { useShopWallet } from "../wallet/context";
 import {
   fetchLandNfts,

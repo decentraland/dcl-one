@@ -9,14 +9,14 @@ import { NET, nameResult } from "../land/fixtures";
 import { fakeWallet, stubClient, type Answer } from "../land/testkit";
 import { ShopHarness, type SessionKind } from "../land/testkit-react";
 import { marketplaceOn } from "../market/testing-flags";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { controllerAbi, NAME_PRICE_WEI, registrarAbi, useCreditsAbi } from "./names";
 import NamesHub from "./NamesHub";
 import { interimNameOffer } from "./offer";
 import { RESUME_NAME_KEY } from "./resume";
-import type { EvmAddress } from "../model/address";
-import type { PurchaseOffer } from "../model/purchase";
-import { nameRegistration } from "../payment/fixtures";
+import type { EvmAddress } from "@shop/model/address";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import { nameRegistration } from "@shop/payment/fixtures";
 import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 
 const MANA = 10n ** 18n;
