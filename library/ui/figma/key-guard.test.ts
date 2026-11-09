@@ -740,7 +740,7 @@ describe('when selecting a main push range', () => {
         '-e',
         '-c',
         // This repository stands in for trusted/: the step's fresh copy of the guard is not needed here.
-        `git() { case "$1 $3" in '-C cat-file') return 0;; esac; command git "$@"; }\n` +
+        `git() { case " $* " in *' cat-file '*) return 0;; esac; command git "$@"; }\n` +
           `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` +
           scan
       ],

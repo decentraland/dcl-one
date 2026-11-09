@@ -354,6 +354,21 @@ describe('when the privileged scan reads the url allowlist', () => {
     expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
   })
 
+  it('should ignore a replace ref an earlier step created for the committed key guard', async () => {
+    await writeFile(allowlistFile(), entry)
+    commit()
+    const committed = await readFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'))
+    await writeFile(path.join(root, 'tampered.mjs'), tampered)
+    const evil = git('hash-object', '-w', path.join(root, 'tampered.mjs'))
+    git('replace', git('rev-parse', 'HEAD:library/ui/figma/key-guard.mjs'), evil)
+    // Without --no-replace-objects, cat-file would print the tampered blob.
+    expect(git('cat-file', 'blob', 'HEAD:library/ui/figma/key-guard.mjs')).toContain('leak')
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(existsSync(path.join(root, 'leak'))).toBe(false)
+    expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+  })
+
   it('should replace a key guard copy an earlier step planted in $RUNNER_TEMP before running it', async () => {
     await writeFile(path.join(root, 'key-guard.mjs'), tampered)
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
