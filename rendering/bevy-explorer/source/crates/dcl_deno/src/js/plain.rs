@@ -10,7 +10,8 @@ use serde::de::DeserializeOwned;
 /// and keep their prototype, so the decode itself still runs under `catch_unwind`.
 pub struct Plain<T>(pub T);
 
-#[derive(Debug)]
+#[derive(Debug, deno_error::JsError)]
+#[class(type)]
 pub struct PlainError(String);
 
 impl std::fmt::Display for PlainError {
@@ -24,13 +25,13 @@ impl std::error::Error for PlainError {}
 impl<'a, T: DeserializeOwned> FromV8<'a> for Plain<T> {
     type Error = PlainError;
 
-    fn from_v8(
-        scope: &mut v8::HandleScope<'a>,
+    fn from_v8<'i>(
+        scope: &mut v8::PinScope<'a, 'i>,
         value: v8::Local<'a, v8::Value>,
     ) -> Result<Self, Self::Error> {
         let mut budget = MAX_NODES;
         let copy = plain_copy(scope, value, 0, &mut budget)?;
-        let scope = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(let scope, scope);
         // a panic here unwinds through serde_v8's Rust frames only; V8 has returned by then
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             serde_v8::from_v8(scope, copy)
@@ -46,7 +47,7 @@ const MAX_DEPTH: usize = 64;
 const MAX_NODES: usize = 1 << 20;
 
 fn plain_copy<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     value: v8::Local<'s, v8::Value>,
     depth: usize,
     budget: &mut usize,
@@ -80,7 +81,7 @@ fn plain_copy<'s>(
     {
         return Err(unsupported(scope, value));
     }
-    let scope = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(let scope, scope);
     if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
         let length = array.length() as usize;
         if length > *budget {
@@ -125,7 +126,7 @@ fn plain_copy<'s>(
     Ok(copy.into())
 }
 
-fn unsupported(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> PlainError {
+fn unsupported(scope: &mut v8::PinScope, value: v8::Local<v8::Value>) -> PlainError {
     let kind = value.type_of(scope).to_rust_string_lossy(scope);
     PlainError(format!(
         "argument holds a {kind} that cannot be passed to this op"

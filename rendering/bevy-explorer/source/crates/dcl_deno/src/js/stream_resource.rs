@@ -1,3 +1,4 @@
+use crate::js::errors::OpError;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -8,12 +9,10 @@ use std::{
 };
 
 use deno_core::{
-    error::{type_error, AnyError},
-    op2,
-    unsync::TaskQueue,
-    AsyncResult, BufView, CancelFuture, CancelHandle, JsBuffer, OpDecl, OpState, RcRef, Resource,
-    ResourceId,
+    error::AnyError, op2, unsync::TaskQueue, AsyncResult, BufView, CancelFuture, CancelHandle,
+    JsBuffer, OpDecl, OpState, RcRef, Resource, ResourceId,
 };
+use deno_error::JsErrorBox;
 
 // Replaces deno_web's ReadableStream resource ops (the producer side of a fetch upload).
 // deno_web hands JS a raw pointer to the channel and dereferences whatever pointer comes
@@ -41,7 +40,7 @@ const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 struct Channel {
     chunks: VecDeque<BufView>,
     size: usize,
-    error: Option<AnyError>,
+    error: Option<JsErrorBox>,
     closed: bool,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
@@ -95,7 +94,7 @@ impl Channel {
         1
     }
 
-    fn write_error(&mut self, error: AnyError) {
+    fn write_error(&mut self, error: JsErrorBox) {
         self.error = Some(error);
         if let Some(waker) = self.read_waker.take() {
             waker.wake();
@@ -112,7 +111,7 @@ impl Channel {
         }
     }
 
-    fn read(&mut self, limit: usize) -> Result<BufView, AnyError> {
+    fn read(&mut self, limit: usize) -> Result<BufView, JsErrorBox> {
         let Some(mut chunk) = self.chunks.pop_front() else {
             return match self.error.take() {
                 Some(error) => Err(error),
@@ -159,12 +158,13 @@ impl ReadableStreamResource {
         }
     }
 
-    async fn read(self: Rc<Self>, limit: usize) -> Result<BufView, AnyError> {
+    async fn read(self: Rc<Self>, limit: usize) -> Result<BufView, JsErrorBox> {
         let cancel_handle = RcRef::map(&self, |r| &r.cancel_handle);
         let _permit = self.read_queue.acquire().await;
         poll_fn(|cx| self.channel.borrow_mut().poll_read_ready(cx))
             .or_cancel(cancel_handle)
-            .await?;
+            .await
+            .map_err(JsErrorBox::from_err)?;
         self.channel.borrow_mut().read(limit)
     }
 
@@ -259,7 +259,7 @@ fn op_readable_stream_resource_allocate_sized(
 fn op_readable_stream_resource_get_sink(
     state: &mut OpState,
     #[smi] rid: ResourceId,
-) -> Result<ResourceId, AnyError> {
+) -> Result<ResourceId, OpError> {
     let channel = state
         .resource_table
         .get::<ReadableStreamResource>(rid)?
@@ -268,12 +268,12 @@ fn op_readable_stream_resource_get_sink(
     Ok(state.resource_table.add(ReadableStreamSink(channel)))
 }
 
-#[op2(async)]
+#[op2]
 async fn op_readable_stream_resource_write_buf(
     state: Rc<RefCell<OpState>>,
     #[smi] sink: ResourceId,
     #[buffer] buffer: JsBuffer,
-) -> Result<bool, AnyError> {
+) -> Result<bool, OpError> {
     let channel = sink_channel(&state.borrow(), sink)?;
     poll_fn(|cx| channel.borrow_mut().poll_write_ready(cx)).await;
     let mut channel = channel.borrow_mut();
@@ -289,7 +289,7 @@ fn op_readable_stream_resource_write_sync(
     state: &mut OpState,
     #[smi] sink: ResourceId,
     #[buffer] buffer: JsBuffer,
-) -> Result<u32, AnyError> {
+) -> Result<u32, OpError> {
     Ok(sink_channel(state, sink)?.borrow_mut().write(buffer))
 }
 
@@ -298,10 +298,10 @@ fn op_readable_stream_resource_write_error(
     state: &mut OpState,
     #[smi] sink: ResourceId,
     #[string] error: String,
-) -> Result<bool, AnyError> {
+) -> Result<bool, OpError> {
     let channel = sink_channel(state, sink)?;
     let mut channel = channel.borrow_mut();
-    channel.write_error(type_error(error));
+    channel.write_error(JsErrorBox::type_error(error));
     Ok(!channel.closed)
 }
 
@@ -309,13 +309,13 @@ fn op_readable_stream_resource_write_error(
 fn op_readable_stream_resource_close(
     state: &mut OpState,
     #[smi] sink: ResourceId,
-) -> Result<(), AnyError> {
+) -> Result<(), OpError> {
     // dropping the sink closes the channel
     state.resource_table.take::<ReadableStreamSink>(sink)?;
     Ok(())
 }
 
-#[op2(async)]
+#[op2]
 fn op_readable_stream_resource_await_close(
     state: &mut OpState,
     #[smi] rid: ResourceId,

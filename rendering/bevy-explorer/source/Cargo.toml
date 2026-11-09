@@ -309,6 +309,11 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = [
   "handshake",
   "native-tls",
 ] }
+# ICU is not a default deno_core feature; without it Intl and locale APIs break.
+deno_core = { version = "0.413", features = ["include_icu_data"] }
+deno_error = "=0.7.1"
+deno_web = "0.291"
+deno_webidl = "0.260"
 boimp = { git = "https://github.com/robtfm/boimp", branch = "feat/composite-bake-via-storage-texture" }
 crc = "3"
 num-traits = "0.2"
@@ -549,24 +554,6 @@ bevy_platform = { path = "../bevy/crates/bevy_platform" }
 
 ffmpeg-next = { git = "https://github.com/robtfm/rust-ffmpeg", branch = "audio-linesize-0-6.1" }
 parry3d-f64 = { git = "https://github.com/robtfm/parry", branch = "fix-bvh-negative-scale-0.25" }
-deno_core = { git = "https://github.com/robtfm/deno_core", branch = "0_307_hotfix" }
-serde_v8 = { git = "https://github.com/robtfm/deno_core", branch = "0_307_hotfix" }
-deno_ops = { git = "https://github.com/robtfm/deno_core", branch = "0_307_hotfix" }
-
-deno_console = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_fetch = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_net = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_url = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_webidl = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_web = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-
-# deno_console = { path = "../deno/ext/console" }
-# deno_fetch = { path = "../deno/ext/fetch" }
-# deno_net = { path = "../deno/ext/net" }
-# deno_url = { path = "../deno/ext/url" }
-# deno_webidl = { path = "../deno/ext/webidl" }
-# deno_web = { path = "../deno/ext/web" }
-
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
 # blender emits them for morph targets) get NO reader, so MorphTargetImage comes up

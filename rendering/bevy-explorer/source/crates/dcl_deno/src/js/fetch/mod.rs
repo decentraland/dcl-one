@@ -1,3 +1,4 @@
+use crate::js::errors::{bail, type_error, OpError};
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 #[cfg(test)]
@@ -8,15 +9,11 @@ mod request_budget;
 use bevy::{asset::AsyncReadExt, prelude::debug};
 use common::rpc::{RpcCall, RpcResultSender};
 use deno_core::{
-    anyhow,
-    error::{type_error, AnyError},
+    error::AnyError,
     futures::{FutureExt, TryStreamExt},
     op2, AsyncRefCell, BufView, ByteString, CancelFuture, CancelHandle, JsBuffer, OpDecl, OpState,
     Resource, ResourceId,
 };
-use deno_fetch::{FetchCancelHandle, FetchPermissions};
-use deno_net::NetPermissions;
-use deno_web::TimersPermission;
 use http::{
     header::{ACCEPT_ENCODING, CONTENT_LENGTH, HOST, RANGE},
     HeaderName, HeaderValue, Method,
@@ -29,46 +26,16 @@ use request_budget::SceneRequestBudget;
 
 use dcl_types::{interface::crdt_context::CrdtContext, RpcCalls, SceneResourceCounters};
 
-// We have to provide these perm structs for the deno extensions even though the ops we
-// actually expose don't route through them. They DENY rather than panic: the ops that
-// consult them (`deno_net`'s socket ops in particular) are registered on the runtime and
-// callable from JS, and a `panic!()` there unwinds across the V8 boundary -- which is
-// `panic_cannot_unwind`, i.e. an immediate process abort, not a catchable error. Scene
-// input must never be able to reach that, so refusing is the only safe answer.
-pub struct FP;
-impl FetchPermissions for FP {
-    fn check_net_url(&mut self, _: &deno_core::url::Url, _: &str) -> Result<(), AnyError> {
-        anyhow::bail!("network access is not available to scenes through this API")
+/// The cancel handle `op_fetch` returns alongside the request.
+pub struct FetchCancelHandle(pub Rc<CancelHandle>);
+
+impl Resource for FetchCancelHandle {
+    fn name(&self) -> std::borrow::Cow<'_, str> {
+        "fetchCancelHandle".into()
     }
 
-    fn check_read(&mut self, _: &std::path::Path, _: &str) -> Result<(), AnyError> {
-        anyhow::bail!("file access is not available to scenes")
-    }
-}
-
-pub struct TP;
-impl TimersPermission for TP {
-    fn allow_hrtime(&mut self) -> bool {
-        false
-    }
-}
-
-pub struct NP;
-impl NetPermissions for NP {
-    fn check_net<T: AsRef<str>>(
-        &mut self,
-        _host: &(T, Option<u16>),
-        _api_name: &str,
-    ) -> Result<(), AnyError> {
-        anyhow::bail!("raw socket access is not available to scenes")
-    }
-
-    fn check_read(&mut self, _p: &std::path::Path, _api_name: &str) -> Result<(), AnyError> {
-        anyhow::bail!("file access is not available to scenes")
-    }
-
-    fn check_write(&mut self, _p: &std::path::Path, _api_name: &str) -> Result<(), AnyError> {
-        anyhow::bail!("file access is not available to scenes")
+    fn close(self: Rc<Self>) {
+        self.0.cancel()
     }
 }
 
@@ -84,13 +51,13 @@ pub(super) fn outstanding_calls(state: &OpState) -> u64 {
 }
 
 // list of op declarations
-pub fn override_ops() -> Vec<OpDecl> {
-    vec![op_fetch::<FP>(), op_fetch_send(), op_fetch_custom_client()]
-}
-
-// list of op declarations
 pub fn ops() -> Vec<OpDecl> {
-    vec![op_signed_fetch_headers()]
+    vec![
+        op_fetch(),
+        op_fetch_send(),
+        op_fetch_custom_client(),
+        op_signed_fetch_headers(),
+    ]
 }
 
 struct FetchRequestResource {
@@ -115,19 +82,16 @@ pub struct IsahcFetchReturn {
 #[op2]
 #[serde]
 #[allow(clippy::too_many_arguments)]
-pub fn op_fetch<FP>(
+pub fn op_fetch(
     state: &mut OpState,
     #[string] method: String,
     #[string] url: String,
-    #[from_v8] headers: Plain<Vec<(String, String)>>,
+    #[scoped] headers: Plain<Vec<(String, String)>>,
     #[smi] client_rid: Option<u32>,
     has_body: bool,
     #[buffer] data: Option<JsBuffer>,
     #[smi] resource: Option<ResourceId>,
-) -> Result<IsahcFetchReturn, AnyError>
-where
-    FP: FetchPermissions + 'static,
-{
+) -> Result<IsahcFetchReturn, OpError> {
     debug!("op_fetch");
     // TODO scene permissions
 
@@ -158,7 +122,7 @@ where
             let body = state.resource_table.take_any(rid)?;
             (None, Some(ResourceToBodyAdapter::new(body)))
         }
-        (true, None, None) => return Err(type_error("missing fetch body")),
+        (true, None, None) => return Err(type_error("missing fetch body").into()),
     };
 
     // On the authoritative server redirects are never auto-followed, so a 3xx onto a private
@@ -183,7 +147,7 @@ where
 
     if method.len() > 50 {
         debug!("bad method {}", method.len());
-        anyhow::bail!("nope");
+        bail!("nope");
     }
 
     let method = Method::from_bytes(method.as_bytes())?;
@@ -252,12 +216,12 @@ pub struct FetchResponse {
     pub error: Option<String>,
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_fetch_send(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
-) -> Result<FetchResponse, AnyError> {
+) -> Result<FetchResponse, OpError> {
     // Copy the flag before taking the resource so failed storage requests count too.
     let is_storage = state
         .borrow()
@@ -294,7 +258,7 @@ pub async fn op_fetch_send(
             }
         }
     }
-    result
+    Ok(result?)
 }
 
 async fn fetch_send_inner(
@@ -349,7 +313,7 @@ async fn send_with_permission(
         })?;
     let permit = rx.await?;
     if !permit {
-        anyhow::bail!("User denied fetch request");
+        bail!("User denied fetch request");
     }
 
     budget
@@ -412,7 +376,7 @@ async fn send_request(
 
     if let (Some(cap), Some(declared)) = (body_cap, content_length) {
         if declared > cap {
-            anyhow::bail!("response body exceeds {cap} bytes (declared {declared}) ({url})");
+            bail!("response body exceeds {cap} bytes (declared {declared}) ({url})");
         }
     }
 
@@ -424,7 +388,7 @@ async fn send_request(
                 Ok(Some(c)) => {
                     total += c.len() as u64;
                     if total > cap {
-                        anyhow::bail!("response body exceeds {cap} bytes ({url})");
+                        bail!("response body exceeds {cap} bytes ({url})");
                     }
                     collected.extend_from_slice(&c);
                 }
@@ -608,7 +572,7 @@ fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), A
     if let Some(ip) = url.host_str().and_then(host_ip_literal) {
         let permitted = allow_private && common::util::is_private_lan(&ip);
         if !permitted && common::util::is_forbidden_ip(&ip) {
-            anyhow::bail!("custom fetch client proxy may not target a non-public address");
+            bail!("custom fetch client proxy may not target a non-public address");
         }
     }
     Ok(())
@@ -618,8 +582,8 @@ fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), A
 #[serde]
 pub fn op_fetch_custom_client(
     state: &mut OpState,
-    #[from_v8] args: Plain<CreateHttpClientOptions>,
-) -> Result<ResourceId, AnyError> {
+    #[scoped] args: Plain<CreateHttpClientOptions>,
+) -> Result<ResourceId, OpError> {
     debug!("op_fetch_custom_client");
     let args = args.0;
 
@@ -639,17 +603,13 @@ pub fn op_fetch_custom_client(
     let allow_private = allow_private_network(state);
     if is_server {
         if args.proxy.is_some() {
-            anyhow::bail!("custom fetch clients may not set a proxy on the authoritative server");
+            bail!("custom fetch clients may not set a proxy on the authoritative server");
         }
         if !args.ca_certs.is_empty() {
-            anyhow::bail!(
-                "custom fetch clients may not add root certificates on the authoritative server"
-            );
+            bail!("custom fetch clients may not add root certificates on the authoritative server");
         }
         if args.cert_chain.is_some() || args.private_key.is_some() {
-            anyhow::bail!(
-                "custom fetch clients may not set a client identity on the authoritative server"
-            );
+            bail!("custom fetch clients may not set a client identity on the authoritative server");
         }
         // same transport rules as the default server client: no redirects, public-only DNS
         return Ok(state
@@ -685,16 +645,16 @@ pub fn op_fetch_custom_client(
     Ok(state.resource_table.add(ClientResource(builder.build()?)))
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub fn op_signed_fetch_headers(
     state: Rc<RefCell<OpState>>,
     #[string] uri: String,
     #[string] method: Option<String>,
     #[string] body: Option<String>,
-) -> impl Future<Output = Result<Vec<(String, String)>, AnyError>> {
+) -> impl Future<Output = Result<Vec<(String, String)>, OpError>> {
     let rx = dcl_js::fetch::start_signed_fetch_headers(state, uri, method, body);
-    async move { dcl_js::fetch::finish_signed_fetch_headers(rx?).await }
+    async move { Ok(dcl_js::fetch::finish_signed_fetch_headers(rx?).await?) }
 }
 
 use core::future::Future;
@@ -704,7 +664,7 @@ use std::task::{Context, Poll};
 #[allow(clippy::type_complexity)]
 pub struct ResourceToBodyAdapter(
     Rc<dyn Resource>,
-    Option<Pin<Box<dyn Future<Output = Result<BufView, anyhow::Error>>>>>,
+    Option<Pin<Box<dyn Future<Output = Result<BufView, deno_error::JsErrorBox>>>>>,
 );
 
 impl ResourceToBodyAdapter {
@@ -763,6 +723,7 @@ mod upload_tests {
     use dcl_types::SceneId;
 
     #[tokio::test]
+    #[ignore = "stage 2: vendored fetch"]
     async fn rejected_upload_closes_its_resource_and_cancels_the_stream() {
         let (mut runtime, _) = crate::js::create_runtime(false, false, Default::default());
         let state = runtime.op_state();

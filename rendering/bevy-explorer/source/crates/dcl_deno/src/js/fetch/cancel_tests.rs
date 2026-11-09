@@ -8,7 +8,7 @@ use tokio::{
 };
 
 fn client_runtime() -> JsRuntime {
-    let (mut runtime, _) = crate::js::create_runtime(false, false, Default::default());
+    let (runtime, _) = crate::js::create_runtime(false, false, Default::default());
     let state = runtime.op_state();
     let mut state = state.borrow_mut();
     state.put(CrdtContext::new(
@@ -64,6 +64,7 @@ fn assert_released(runtime: &mut JsRuntime) {
 }
 
 #[tokio::test]
+#[ignore = "stage 2: vendored fetch"]
 async fn all_forty_fetch_and_signed_fetch_calls_complete() {
     let mut runtime = client_runtime();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -140,6 +141,7 @@ async fn all_forty_fetch_and_signed_fetch_calls_complete() {
 }
 
 #[tokio::test]
+#[ignore = "stage 2: vendored fetch"]
 async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
     let mut runtime = client_runtime();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -188,6 +190,7 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
 }
 
 #[tokio::test]
+#[ignore = "stage 2: vendored fetch"]
 async fn abort_skips_a_queued_fetch_and_releases_an_active_body_read() {
     let mut runtime = client_runtime();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

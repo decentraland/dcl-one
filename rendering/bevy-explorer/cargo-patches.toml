@@ -15,17 +15,6 @@ gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7ce28c7b4c6d
 # https://github.com/robtfm/client-sdk-rust (branch decentraland-0.9.7)
 livekit = { git = "https://github.com/robtfm/client-sdk-rust", rev = "7f9ed8515625f5149dc074d13bd50e451a442a59" }
 livekit-api = { git = "https://github.com/robtfm/client-sdk-rust", rev = "7f9ed8515625f5149dc074d13bd50e451a442a59" }
-# https://github.com/robtfm/deno (branch 1_46_hotfix)
-deno_console = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_fetch = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_net = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_url = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_web = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_webidl = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-# https://github.com/robtfm/deno_core (branch 0_307_hotfix)
-deno_core = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
-deno_ops = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
-serde_v8 = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
 # https://github.com/robtfm/draco-oxide (branch fix/wasm32-rans-refill)
 draco-nd-vector = { git = "https://github.com/robtfm/draco-oxide", rev = "5acfcf680d4bd17222d910b74ff8bf76a8161575" }
 draco-oxide-core = { git = "https://github.com/robtfm/draco-oxide", rev = "5acfcf680d4bd17222d910b74ff8bf76a8161575" }

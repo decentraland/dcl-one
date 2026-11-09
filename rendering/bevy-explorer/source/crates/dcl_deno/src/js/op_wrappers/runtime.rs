@@ -1,7 +1,8 @@
+use crate::js::errors::OpError;
 use common::rpc::ReadFileResponse;
 use dcl_component::proto_components::sdk::components::PbRealmInfo;
 use dcl_js::runtime::{SceneInfoResponse, WorldTime};
-use deno_core::{error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 
 // list of op declarations
@@ -17,38 +18,38 @@ pub fn ops() -> Vec<OpDecl> {
     ]
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_read_file(
     op_state: Rc<RefCell<OpState>>,
     #[string] filename: String,
-) -> Result<ReadFileResponse, AnyError> {
-    dcl_js::runtime::op_read_file(op_state, filename).await
+) -> Result<ReadFileResponse, OpError> {
+    Ok(dcl_js::runtime::op_read_file(op_state, filename).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_scene_information(
     op_state: Rc<RefCell<OpState>>,
-) -> Result<SceneInfoResponse, AnyError> {
-    dcl_js::runtime::op_scene_information(op_state).await
+) -> Result<SceneInfoResponse, OpError> {
+    Ok(dcl_js::runtime::op_scene_information(op_state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_realm_information(op_state: Rc<RefCell<OpState>>) -> Result<PbRealmInfo, AnyError> {
-    dcl_js::runtime::op_realm_information(op_state).await
+async fn op_realm_information(op_state: Rc<RefCell<OpState>>) -> Result<PbRealmInfo, OpError> {
+    Ok(dcl_js::runtime::op_realm_information(op_state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_world_time(op_state: Rc<RefCell<OpState>>) -> Result<WorldTime, AnyError> {
-    dcl_js::runtime::op_world_time(op_state).await
+async fn op_world_time(op_state: Rc<RefCell<OpState>>) -> Result<WorldTime, OpError> {
+    Ok(dcl_js::runtime::op_world_time(op_state).await?)
 }
 
-#[op2(async)]
-async fn op_camera_fov(op_state: Rc<RefCell<OpState>>) -> Result<f32, AnyError> {
-    dcl_js::runtime::op_camera_fov(op_state).await
+#[op2]
+async fn op_camera_fov(op_state: Rc<RefCell<OpState>>) -> Result<f32, OpError> {
+    Ok(dcl_js::runtime::op_camera_fov(op_state).await?)
 }
 
 #[op2]

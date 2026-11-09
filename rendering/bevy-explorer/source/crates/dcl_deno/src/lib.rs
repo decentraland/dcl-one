@@ -42,7 +42,7 @@ pub fn terminate_scene(scene_id: SceneId) {
 
 /// must be called from main thread on linux before any isolates are created
 pub fn init_runtime() {
-    let _ = deno_core::v8::Platform::new(1, false);
+    deno_core::JsRuntime::init_platform(None);
 }
 
 #[allow(clippy::too_many_arguments)]

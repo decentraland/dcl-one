@@ -377,7 +377,7 @@ impl Harness {
         }
     }
 
-    fn with_net(mut self, net: WsNet) -> Self {
+    fn with_net(self, net: WsNet) -> Self {
         self.runtime.op_state().borrow_mut().put(net);
         self
     }
@@ -443,7 +443,7 @@ impl Harness {
             .runtime
             .execute_script("<eval>", script.to_owned())
             .unwrap();
-        let scope = &mut self.runtime.handle_scope();
+        deno_core::scope!(scope, self.runtime);
         deno_core::v8::Local::new(scope, value).to_rust_string_lossy(scope)
     }
 

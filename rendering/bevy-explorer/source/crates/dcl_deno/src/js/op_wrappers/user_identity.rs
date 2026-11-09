@@ -1,7 +1,8 @@
+use crate::js::errors::OpError;
 use std::{cell::RefCell, rc::Rc};
 
 use dcl_js::user_identity::UserData;
-use deno_core::{error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 
 // list of op declarations
 pub fn ops() -> Vec<OpDecl> {
@@ -9,17 +10,17 @@ pub fn ops() -> Vec<OpDecl> {
 }
 pub struct UserEthAddress(pub String);
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_get_user_data(state: Rc<RefCell<OpState>>) -> Result<UserData, AnyError> {
-    dcl_js::user_identity::op_get_user_data(state).await
+async fn op_get_user_data(state: Rc<RefCell<OpState>>) -> Result<UserData, OpError> {
+    Ok(dcl_js::user_identity::op_get_user_data(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_get_player_data(
     state: Rc<RefCell<OpState>>,
     #[string] id: String,
-) -> Result<UserData, AnyError> {
-    dcl_js::user_identity::op_get_player_data(state, id).await
+) -> Result<UserData, OpError> {
+    Ok(dcl_js::user_identity::op_get_player_data(state, id).await?)
 }

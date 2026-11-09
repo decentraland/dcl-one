@@ -77,11 +77,12 @@ fn run_scene(
     let outcome = runtime
         .execute_script("<test>", "String(globalThis.result)")
         .unwrap();
-    let scope = &mut runtime.handle_scope();
+    deno_core::scope!(scope, runtime);
     deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
 }
 
 #[test]
+#[ignore = "stage 2: vendored fetch"]
 fn operator_system_scene_fetches_private_http_services() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());

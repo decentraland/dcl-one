@@ -156,28 +156,21 @@ globalThis.require = require;
 globalThis.console = console;
 globalThis.self = {};
 
-// this does NOT seem like the nicest way to do re-exports but i can't figure out how to do it otherwise
+// The deno_web scripts load lazily; everything the scene uses is loaded here, before
+// `sealRealm` removes the internals they read.
+const loadExtScript = denoRef.core.loadExtScript;
+
 // Fetch's AbortSignal uses the DOMException global when a caller aborts or times out.
-import { DOMException } from "ext:deno_web/01_dom_exception.js";
-import { AbortController, AbortSignal } from "ext:deno_web/03_abort_signal.js";
+const { DOMException } = loadExtScript("ext:deno_web/01_dom_exception.js");
+const { AbortController, AbortSignal } = loadExtScript("ext:deno_web/03_abort_signal.js");
 globalThis.DOMException = DOMException;
 globalThis.AbortController = AbortController;
 globalThis.AbortSignal = AbortSignal;
 
-import { Request } from "ext:deno_fetch/23_request.js"
-globalThis.Request = Request;
+// stage 2: vendored fetch. deno_fetch's JS needs the deno_fetch crate, so scenes get no
+// `fetch` or `Request` until the vendored copy lands.
 
-import * as fetch from "ext:deno_fetch/26_fetch.js";
-// On the authoritative server a 3xx is never auto-followed (see `build_scene_client` in
-// fetch/mod.rs): the scene gets the redirect response back and re-issues the request itself,
-// so every hop is one it chose and one the per-request checks see. Decided per call -- the
-// scene context is not in place while this module is evaluated.
-globalThis.fetch = (input, init) =>
-    isAuthoritativeServer()
-        ? fetch.fetch(input, { ...init, redirect: "manual" })
-        : fetch.fetch(input, init);
-
-import * as timers from "ext:deno_web/02_timers.js";
+const timers = loadExtScript("ext:deno_web/02_timers.js");
 globalThis.setTimeout = timers.setTimeout;
 globalThis.setInterval = timers.setInterval;
 globalThis.clearTimeout = timers.clearTimeout;
@@ -185,22 +178,12 @@ globalThis.clearTimeout = timers.clearTimeout;
 import * as websocket from "ext:BevyExplorer/websocket.js";
 globalThis.WebSocket = websocket.WebSocket;
 
-import * as textEncoding from "ext:deno_web/08_text_encoding.js";
+const textEncoding = loadExtScript("ext:deno_web/08_text_encoding.js");
 globalThis.TextEncoder = textEncoding.TextEncoder;
 globalThis.TextDecoder = textEncoding.TextDecoder;
 
-// we need to ensure all modules are evaluated, else deno complains in debug mode
-import * as _0 from "ext:deno_url/01_urlpattern.js"
-import * as _1 from "ext:deno_web/02_structured_clone.js"
-import * as _2 from "ext:deno_web/04_global_interfaces.js"
-import * as _3 from "ext:deno_web/05_base64.js"
-import * as _5 from "ext:deno_web/10_filereader.js"
-import * as _6 from "ext:deno_web/13_message_port.js"
-import * as _7 from "ext:deno_web/14_compression.js"
-import * as _8 from "ext:deno_fetch/27_eventsource.js"
-import * as _9 from "ext:deno_web/16_image_data.js"
-
-import * as performance from "ext:deno_web/15_performance.js"
+const performance = loadExtScript("ext:deno_web/15_performance.js");
+performance.setTimeOrigin();
 globalThis.performance = performance.performance;
 
 // Native super-user bridge transport. The web super-user scene gets a real BroadcastChannel from the

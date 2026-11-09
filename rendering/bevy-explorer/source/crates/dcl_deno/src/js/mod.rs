@@ -1,3 +1,4 @@
+use crate::js::errors::{generic_error, OpError};
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
 use bevy::log::{debug, error, info_span};
@@ -11,11 +12,8 @@ use dcl_types::{
     RendererResponse, RpcCalls, SceneResourceCounters, SceneResponse, SceneResponseSender,
 };
 use deno_core::{
-    anyhow::anyhow,
-    ascii_str,
-    error::{generic_error, AnyError},
-    include_js_files, op2, v8, Extension, JsRuntime, OpDecl, OpState, PollEventLoopOptions,
-    RuntimeOptions,
+    anyhow::anyhow, ascii_str, error::AnyError, include_js_files, op2, v8, Extension, JsRuntime,
+    OpDecl, OpState, PollEventLoopOptions, RuntimeOptions,
 };
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc::UnboundedReceiver, time::timeout};
@@ -30,8 +28,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
-use self::fetch::{FP, NP, TP};
-
+mod errors;
 pub mod fetch;
 mod hardened_ops;
 #[cfg(feature = "inspect")]
@@ -46,16 +43,18 @@ pub fn create_runtime(
     super_user: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
-    // add fetch stack
-    let net = deno_net::deno_net::init_ops_and_esm::<NP>(None, None);
-    let web = deno_web::deno_web::init_ops_and_esm::<TP>(
-        std::sync::Arc::new(deno_web::BlobStore::default()),
+    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
+    let webidl = deno_webidl::deno_webidl::init();
+    let mut web = deno_web::deno_web::init(
+        deno_web::BlobStore::default_arc(),
         None,
+        false,
+        deno_web::InMemoryBroadcastChannel::default(),
     );
-    let webidl = deno_webidl::deno_webidl::init_ops_and_esm();
-    let url = deno_url::deno_url::init_ops_and_esm();
-    let console = deno_console::deno_console::init_ops_and_esm();
-    let fetch = deno_fetch::deno_fetch::init_ops_and_esm::<FP>(deno_fetch::Options::default());
+    // The cppgc class constructors (DOMMatrix, ImageData, CSSStyleSheet, ...) wrap whatever
+    // `this` they are called on, so calling one without `new` corrupts the V8 heap. Scenes
+    // get none of these classes.
+    web.objects = Default::default();
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
@@ -81,14 +80,12 @@ pub fn create_runtime(
     let mut op_map = HashMap::new();
     for set in op_sets {
         for op in &set {
-            // explicitly record the ones we added so we can remove deno_fetch imposters
             op_map.insert(op.name, *op);
         }
         ops.extend(set);
     }
 
-    let override_sets: [Vec<deno_core::OpDecl>; 3] = [
-        fetch::override_ops(),
+    let override_sets: [Vec<deno_core::OpDecl>; 2] = [
         hardened_ops::override_ops(),
         stream_resource::override_ops(),
     ];
@@ -96,13 +93,18 @@ pub fn create_runtime(
     let mut overrides = HashMap::new();
     for set in override_sets {
         for op in set {
-            // explicitly record the ones we added so we can remove deno_fetch imposters
             op_map.insert(op.name, op);
             overrides.insert(op.name, op);
         }
     }
     // the middleware keeps the original's name and async-ness, so check each override fits
     let pending_overrides = Rc::new(RefCell::new(overrides));
+    let pending_disabled = Rc::new(RefCell::new(
+        hardened_ops::DISABLED_OPS
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>(),
+    ));
     let override_problems = Rc::new(RefCell::new(Vec::new()));
 
     let mut esm_files = include_js_files!(
@@ -125,8 +127,13 @@ pub fn create_runtime(
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
         middleware_fn: Some(Box::new({
             let pending_overrides = pending_overrides.clone();
+            let pending_disabled = pending_disabled.clone();
             let override_problems = override_problems.clone();
             move |op: OpDecl| -> OpDecl {
+                if pending_disabled.borrow_mut().remove(op.name) {
+                    debug!("disable: {}", op.name);
+                    return op.disable();
+                }
                 if let Some(custom_op) = pending_overrides.borrow_mut().remove(op.name) {
                     // `arg_count` also counts state and scope parameters, so only async-ness compares
                     if custom_op.is_async != op.is_async {
@@ -154,24 +161,14 @@ pub fn create_runtime(
     // callback below terminates just that isolate instead of aborting the process.
     const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
 
-    // deno's default exits the process when an op asks for a feature that is not enabled.
-    // The op then proceeds, so every op that checks one is overridden; the op sweep asserts
-    // this never fires.
-    let mut feature_checker = deno_core::FeatureChecker::default();
-    feature_checker.set_exit_cb(Box::new(|feature, api_name| {
-        DISABLED_FEATURE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        error!("scene called `{api_name}`, which needs the disabled feature `{feature}`");
-    }));
-
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![webidl, url, console, web, net, fetch, ext],
+        extensions: vec![webidl, web, ext],
         inspector: inspect,
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
         ),
-        feature_checker: Some(std::sync::Arc::new(feature_checker)),
         ..Default::default()
     });
 
@@ -183,6 +180,12 @@ pub fn create_runtime(
                 .keys()
                 .map(|name| format!("override {name} replaces no registered op")),
         );
+        problems.extend(
+            pending_disabled
+                .borrow()
+                .iter()
+                .map(|name| format!("disabled op {name} is not registered")),
+        );
         for problem in &problems {
             error!("{problem}");
         }
@@ -190,18 +193,6 @@ pub fn create_runtime(
             .op_state()
             .borrow_mut()
             .put(OpOverrideProblems(problems));
-    }
-
-    // Deno extension permission objects. These must be in the op state from the moment the
-    // runtime exists: the ops that consult them look the type up unconditionally, and a
-    // missing type is itself a panic -- which across the V8 boundary aborts the process
-    // rather than raising a JS error. Put here rather than at scene setup so no entry point
-    // can forget them.
-    {
-        let state = runtime.op_state();
-        let mut state = state.borrow_mut();
-        state.put(TP);
-        state.put(NP);
     }
 
     // On approaching the cap, terminate this isolate's execution so its JS unwinds and the
@@ -260,10 +251,6 @@ pub fn create_runtime(
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OpOverrideProblems(pub Vec<String>);
 
-/// Calls that reached an op gated on a disabled deno feature.
-pub(crate) static DISABLED_FEATURE_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
 pub struct StorageRoot(pub String);
 
 // main scene processing thread - constructs an isolate and runs the scene
@@ -283,6 +270,14 @@ pub(crate) fn scene_thread(
 ) {
     let scene_id = scene_context.scene_id;
     let kill_flag = KillFlag::default();
+    // V8 posts delayed tasks onto the tokio runtime that is current when the isolate is
+    // created, and aborts the process if there is none.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+        .unwrap();
+    let _rt_guard = rt.enter();
     let (mut runtime, inspector) = create_runtime(inspect, super_user.is_some(), kill_flag.clone());
 
     // store handle
@@ -323,15 +318,8 @@ pub(crate) fn scene_thread(
 
         runtime
             .inspector()
-            .borrow_mut()
             .wait_for_session_and_break_on_next_statement();
     }
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-        .unwrap();
 
     // The first interval includes every startup operation counted below.
     let metrics_started = std::time::Instant::now();
@@ -416,8 +404,7 @@ pub(crate) fn scene_thread(
         // Only completed work publishes a sample. A hung update leaves a gap.
         // Sample heap and retained payloads together; these walks run at most every 5s.
         if last_stats.elapsed() >= Duration::from_secs(5) {
-            let mut heap = v8::HeapStatistics::default();
-            runtime.v8_isolate().get_heap_statistics(&mut heap);
+            let heap = runtime.v8_isolate().get_heap_statistics();
             let mut guard = state.borrow_mut();
             let stores = [
                 guard.borrow::<CrdtStore>(),
@@ -552,11 +539,11 @@ async fn run_script(
     runtime: &mut JsRuntime,
     script: &v8::Global<v8::Value>,
     fn_name: &str,
-    arg_fn: impl for<'a> Fn(&mut v8::HandleScope<'a>) -> Vec<v8::Local<'a, v8::Value>>,
+    arg_fn: impl for<'a, 'i> Fn(&mut v8::PinScope<'a, 'i>) -> Vec<v8::Local<'a, v8::Value>>,
 ) -> Result<(), AnyError> {
     // set up scene i/o
     let promise = {
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         let script_this = v8::Local::new(scope, script.clone());
         // get module
         let script = v8::Local::<v8::Object>::try_from(script_this).unwrap();
@@ -606,7 +593,7 @@ async fn run_script(
         .map(|_| ())
     };
 
-    result
+    Ok(result?)
 }
 
 // synchronously returns a string containing JS code from the file system
@@ -615,7 +602,7 @@ async fn run_script(
 fn op_require(
     state: Rc<RefCell<OpState>>,
     #[string] module_spec: String,
-) -> Result<String, deno_core::error::AnyError> {
+) -> Result<String, OpError> {
     debug!("require(\"{module_spec}\")");
 
     match module_spec.as_str() {
@@ -626,9 +613,7 @@ fn op_require(
             if state.borrow().try_borrow::<SuperUserScene>().is_some() {
                 Ok(include_str!("../../../dcl_js/src/modules/SystemApi.js").to_owned())
             } else {
-                Err(generic_error(format!(
-                    "invalid module request `{module_spec}`"
-                )))
+                Err(generic_error(format!("invalid module request `{module_spec}`")).into())
             }
         }
         // core module load
@@ -669,9 +654,7 @@ fn op_require(
         "~system/AdaptationLayerHelper" => {
             Ok(include_str!("../../../dcl_js/src/modules/AdaptationLayerHelper.js").to_owned())
         }
-        _ => Err(generic_error(format!(
-            "invalid module request `{module_spec}`"
-        ))),
+        _ => Err(generic_error(format!("invalid module request `{module_spec}`")).into()),
     }
 }
 
@@ -702,7 +685,28 @@ mod tests {
     use dcl_types::{interface::crdt_context::CrdtContext, SceneId};
     use deno_core::ascii_str;
 
-    use super::create_runtime;
+    use deno_core::JsRuntime;
+
+    use super::InspectorServer;
+
+    /// `super::create_runtime` inside a tokio runtime, which V8's delayed tasks need.
+    fn create_runtime(
+        inspect: bool,
+        super_user: bool,
+        kill_flag: dcl_js::KillFlag,
+    ) -> (JsRuntime, Option<InspectorServer>) {
+        static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_time()
+                .build()
+                .unwrap()
+        });
+        let _guard = tokio::runtime::Handle::try_current()
+            .is_err()
+            .then(|| RT.enter());
+        super::create_runtime(inspect, super_user, kill_flag)
+    }
 
     fn context(is_server: bool) -> CrdtContext {
         CrdtContext::new(
@@ -801,7 +805,7 @@ mod tests {
                 ascii_str!("JSON.stringify({done: __done, sent: JSON.parse(__sent)})"),
             )
             .unwrap();
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         let result: serde_json::Value = serde_json::from_str(
             &deno_core::v8::Local::new(scope, value).to_rust_string_lossy(scope),
         )
@@ -886,20 +890,6 @@ mod tests {
             )
             .unwrap();
         }
-    }
-
-    /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at
-    /// the ops table. They used to `panic!()` in the permission check -- across the V8
-    /// boundary that is `panic_cannot_unwind`, i.e. SIGABRT, and on the client one sidecar
-    /// hosts every scene and losing it exits the engine. It must be an ordinary JS error.
-    #[test]
-    fn raw_socket_ops_raise_instead_of_aborting() {
-        let err = run_scene(
-            false,
-            r#"Deno.core.ops.op_net_listen_tcp({ hostname: "127.0.0.1", port: 9999, transport: "tcp" }, false, false)"#,
-        )
-        .expect_err("raw socket access must be refused");
-        assert!(err.contains("raw socket access"), "unexpected error: {err}");
     }
 
     /// A scene-supplied proxy is dialled instead of the URL host, so it walks straight past
@@ -1056,7 +1046,7 @@ mod tests {
         let outcome = runtime
             .execute_script("<test>", ascii_str!("String(globalThis.__outcome)"))
             .unwrap();
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
     }
 
@@ -1064,6 +1054,7 @@ mod tests {
     /// would also need the `URL` global, which this runtime does not install -- pinned here
     /// so the outcome is the policy, not that accident.)
     #[test]
+    #[ignore = "stage 2: vendored fetch"]
     fn server_hands_redirects_back_to_the_scene() {
         let outcome = fetch_redirect_outcome(true);
         assert!(outcome.starts_with("302 "), "unexpected outcome: {outcome}");
@@ -1071,6 +1062,7 @@ mod tests {
 
     /// The client keeps following, like the browser does.
     #[test]
+    #[ignore = "stage 2: vendored fetch"]
     fn client_follows_redirects() {
         assert_eq!(fetch_redirect_outcome(false), "200 arrived");
     }

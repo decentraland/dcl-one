@@ -1,3 +1,4 @@
+use crate::js::errors::{bail, OpError};
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -13,7 +14,7 @@ use std::{
 use common::rpc::{RpcCall, RpcResultSender};
 use dcl_types::{RpcCalls, SceneResourceCounters};
 use deno_core::{
-    anyhow::{self, anyhow},
+    anyhow::anyhow,
     error::AnyError,
     futures::{
         future::LocalBoxFuture,
@@ -159,7 +160,7 @@ fn take_slot(state: &mut OpState) -> Result<Arc<SlotGuard>, AnyError> {
     }
     let slots = state.borrow::<WsSlots>().0.clone();
     if !add_within(&slots, 1, MAX_OPEN_SOCKETS) {
-        anyhow::bail!("WebSocket refused: the scene already holds {MAX_OPEN_SOCKETS} sockets");
+        bail!("WebSocket refused: the scene already holds {MAX_OPEN_SOCKETS} sockets");
     }
     Ok(Arc::new(SlotGuard {
         slots,
@@ -207,19 +208,19 @@ struct WsTarget {
 
 fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTarget, AnyError> {
     if url.len() > MAX_URL_BYTES {
-        anyhow::bail!("WebSocket URL is longer than {MAX_URL_BYTES} bytes");
+        bail!("WebSocket URL is longer than {MAX_URL_BYTES} bytes");
     }
     let mut parsed = deno_core::url::Url::parse(url)?;
     let secure = match parsed.scheme() {
         "wss" => true,
         "ws" => false,
-        _ => anyhow::bail!("WebSocket URL must use ws:// or wss://"),
+        _ => bail!("WebSocket URL must use ws:// or wss://"),
     };
     if !secure && !allow_private {
-        anyhow::bail!("WebSocket URL scheme must be `wss`");
+        bail!("WebSocket URL scheme must be `wss`");
     }
     if parsed.fragment().is_some() {
-        anyhow::bail!("WebSocket URL must not have a fragment");
+        bail!("WebSocket URL must not have a fragment");
     }
     let host = parsed
         .host_str()
@@ -237,7 +238,7 @@ fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTar
     let origin = format!("{}://{host}:{port}", parsed.scheme());
 
     if protocols.len() > MAX_PROTOCOLS_BYTES {
-        anyhow::bail!("WebSocket protocols are longer than {MAX_PROTOCOLS_BYTES} bytes");
+        bail!("WebSocket protocols are longer than {MAX_PROTOCOLS_BYTES} bytes");
     }
     let protocols: Vec<String> = if protocols.is_empty() {
         Vec::new()
@@ -246,13 +247,13 @@ fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTar
     };
     for (i, protocol) in protocols.iter().enumerate() {
         if protocol.is_empty() || !protocol.bytes().all(is_token_byte) {
-            anyhow::bail!("invalid WebSocket protocol `{protocol}`");
+            bail!("invalid WebSocket protocol `{protocol}`");
         }
         if protocols[..i]
             .iter()
             .any(|other| other.eq_ignore_ascii_case(protocol))
         {
-            anyhow::bail!("WebSocket protocol `{protocol}` is repeated");
+            bail!("WebSocket protocol `{protocol}` is repeated");
         }
     }
 
@@ -382,12 +383,12 @@ pub fn op_ws_create(
     state: &mut OpState,
     #[string] url: String,
     #[string] protocols: String,
-) -> Result<ResourceId, AnyError> {
+) -> Result<ResourceId, OpError> {
     let result = create(state, &url, &protocols);
     if result.is_err() {
         count(state, |c| c.ws_refused += 1);
     }
-    result
+    Ok(result?)
 }
 
 fn create(state: &mut OpState, url: &str, protocols: &str) -> Result<ResourceId, AnyError> {
@@ -522,16 +523,16 @@ fn tls_connector() -> Result<tokio_native_tls::TlsConnector, AnyError> {
 }
 
 fn get_resource(state: &OpState, rid: ResourceId) -> Result<Rc<WsResource>, AnyError> {
-    state.resource_table.get::<WsResource>(rid)
+    Ok(state.resource_table.get::<WsResource>(rid)?)
 }
 
 /// Completes the connection [`op_ws_create`] started and returns the agreed protocol.
-#[op2(async)]
+#[op2]
 #[string]
 pub async fn op_ws_connect(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
-) -> Result<String, AnyError> {
+) -> Result<String, OpError> {
     let resource = get_resource(&state.borrow(), rid)?;
     let connect = resource
         .connect
@@ -547,26 +548,26 @@ pub async fn op_ws_connect(
         Ok(Ok(Err(ConnectError::Refused(e)))) => {
             resource.shut_down();
             count(&mut state.borrow_mut(), |c| c.ws_refused += 1);
-            return Err(e);
+            return Err(e.into());
         }
         Ok(Ok(Err(ConnectError::Failed(e)))) => {
             resource.shut_down();
             count(&mut state.borrow_mut(), |c| c.ws_failed += 1);
-            return Err(e);
+            return Err(e.into());
         }
         Ok(Err(_)) => {
             resource.shut_down();
             count(&mut state.borrow_mut(), |c| c.ws_failed += 1);
-            anyhow::bail!("WebSocket handshake failed");
+            bail!("WebSocket handshake failed");
         }
         Err(_) => {
             resource.shut_down();
-            anyhow::bail!("WebSocket was closed before the connection was established");
+            bail!("WebSocket was closed before the connection was established");
         }
     };
 
     let Some(slot) = resource.slot.borrow().clone() else {
-        anyhow::bail!("WebSocket was closed before the connection was established");
+        bail!("WebSocket was closed before the connection was established");
     };
     let handle = tokio::runtime::Handle::try_current()?;
     let (outbound_sx, outbound_rx) = mpsc::unbounded_channel();
@@ -691,7 +692,7 @@ fn send(
 ) -> Result<(), AnyError> {
     let resource = get_resource(state, rid)?;
     if resource.close_requested.get() {
-        anyhow::bail!("WebSocket is closing");
+        bail!("WebSocket is closing");
     }
     let outbound = resource.outbound.borrow();
     let outbound = outbound
@@ -704,14 +705,12 @@ fn send(
         len.saturating_add(MESSAGE_OVERHEAD),
         MAX_WS_BUFFERED_BYTES,
     ) {
-        anyhow::bail!(
-            "WebSocket send refused: outbound buffer exceeds {MAX_WS_BUFFERED_BYTES} bytes"
-        );
+        bail!("WebSocket send refused: outbound buffer exceeds {MAX_WS_BUFFERED_BYTES} bytes");
     }
     resource.backlog.bytes.fetch_add(len, Ordering::SeqCst);
     if outbound.send(Outbound::Message(message(), len)).is_err() {
         resource.backlog.release(len);
-        anyhow::bail!("WebSocket is closed");
+        bail!("WebSocket is closed");
     }
     count(state, |c| {
         c.ws_msgs_out += 1;
@@ -725,8 +724,8 @@ pub fn op_ws_send_text(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[string] data: String,
-) -> Result<(), AnyError> {
-    send(state, rid, data.len(), || Message::text(data))
+) -> Result<(), OpError> {
+    Ok(send(state, rid, data.len(), || Message::text(data))?)
 }
 
 #[op2]
@@ -734,8 +733,10 @@ pub fn op_ws_send_binary(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[anybuffer] data: &[u8],
-) -> Result<(), AnyError> {
-    send(state, rid, data.len(), || Message::binary(data.to_vec()))
+) -> Result<(), OpError> {
+    Ok(send(state, rid, data.len(), || {
+        Message::binary(data.to_vec())
+    })?)
 }
 
 #[op2(fast)]
@@ -743,8 +744,10 @@ pub fn op_ws_send_binary_ab(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[arraybuffer] data: &[u8],
-) -> Result<(), AnyError> {
-    send(state, rid, data.len(), || Message::binary(data.to_vec()))
+) -> Result<(), OpError> {
+    Ok(send(state, rid, data.len(), || {
+        Message::binary(data.to_vec())
+    })?)
 }
 
 /// Starts the closing handshake once [`op_ws_connect`] has finished, even if the scene has
@@ -754,9 +757,9 @@ pub fn op_ws_send_binary_ab(
 pub fn op_ws_close(
     state: &mut OpState,
     #[smi] rid: ResourceId,
-    #[from_v8] code: Plain<Option<f64>>,
-    #[from_v8] reason: Plain<Option<String>>,
-) -> Result<(), AnyError> {
+    #[scoped] code: Plain<Option<f64>>,
+    #[scoped] reason: Plain<Option<String>>,
+) -> Result<(), OpError> {
     let code = match code.0 {
         None => None,
         Some(code)
@@ -765,12 +768,12 @@ pub fn op_ws_close(
             Some(code as u16)
         }
         Some(_) => {
-            anyhow::bail!("The close code must be either 1000 or in the range of 3000 to 4999.")
+            bail!("The close code must be either 1000 or in the range of 3000 to 4999.")
         }
     };
     let reason = reason.0.unwrap_or_default();
     if reason.len() > 123 {
-        anyhow::bail!("The close reason may not be longer than 123 bytes.");
+        bail!("The close reason may not be longer than 123 bytes.");
     }
     let resource = get_resource(state, rid)?;
     let outbound = resource.outbound.borrow().clone();
@@ -796,16 +799,16 @@ pub fn op_ws_close(
 
 /// Waits for the next event and returns its kind: 0 text, 1 binary, 2 close, 3 error. The
 /// payload, close code and reason or error are read with the getters below.
-#[op2(async)]
+#[op2]
 pub async fn op_ws_next_event(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
-) -> Result<u16, AnyError> {
+) -> Result<u16, OpError> {
     let resource = get_resource(&state.borrow(), rid)?;
     let event = {
         let mut inbound = RcRef::map(&resource, |r| &r.inbound).borrow_mut().await;
         let Some(receiver) = &mut *inbound else {
-            anyhow::bail!("WebSocket is not open");
+            bail!("WebSocket is not open");
         };
         receiver
             .recv()
@@ -853,7 +856,7 @@ pub async fn op_ws_next_event(
 pub fn op_ws_get_buffer(
     state: &mut OpState,
     #[smi] rid: ResourceId,
-) -> Result<Option<ToJsBuffer>, AnyError> {
+) -> Result<Option<ToJsBuffer>, OpError> {
     let resource = get_resource(state, rid)?;
     let data = resource.binary.borrow_mut().take();
     Ok(data.map(ToJsBuffer::from))
@@ -864,7 +867,7 @@ pub fn op_ws_get_buffer(
 pub fn op_ws_get_buffer_as_string(
     state: &mut OpState,
     #[smi] rid: ResourceId,
-) -> Result<Option<String>, AnyError> {
+) -> Result<Option<String>, OpError> {
     let resource = get_resource(state, rid)?;
     let text = resource.text.borrow_mut().take();
     Ok(text)
@@ -872,14 +875,14 @@ pub fn op_ws_get_buffer_as_string(
 
 #[op2(fast)]
 #[smi]
-pub fn op_ws_get_close_code(state: &mut OpState, #[smi] rid: ResourceId) -> Result<u32, AnyError> {
+pub fn op_ws_get_close_code(state: &mut OpState, #[smi] rid: ResourceId) -> Result<u32, OpError> {
     Ok(get_resource(state, rid)?.close_code.get().into())
 }
 
 /// The close reason after a close event, or the error message after an error event.
 #[op2]
 #[string]
-pub fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<String, AnyError> {
+pub fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<String, OpError> {
     let resource = get_resource(state, rid)?;
     let message = std::mem::take(&mut *resource.message.borrow_mut());
     Ok(message)
@@ -890,7 +893,7 @@ pub fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<St
 pub fn op_ws_get_buffered_amount(
     state: &mut OpState,
     #[smi] rid: ResourceId,
-) -> Result<u32, AnyError> {
+) -> Result<u32, OpError> {
     let buffered = get_resource(state, rid)?
         .backlog
         .bytes

@@ -1,3 +1,4 @@
+use crate::js::errors::OpError;
 use common::{
     inputs::{HudPanel, SystemActionEvent},
     profile::{CompactProfile, SerializedProfile},
@@ -5,7 +6,7 @@ use common::{
 };
 use dcl_component::proto_components::common::Vector2;
 use dcl_js::system_api::{JsBindingsData, PermissionTypeDetail};
-use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
@@ -133,16 +134,16 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
     }
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_check_for_update(state: Rc<RefCell<OpState>>) -> Result<(String, String), AnyError> {
-    dcl_js::system_api::op_check_for_update(state).await
+async fn op_check_for_update(state: Rc<RefCell<OpState>>) -> Result<(String, String), OpError> {
+    Ok(dcl_js::system_api::op_check_for_update(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
-async fn op_motd(state: Rc<RefCell<OpState>>) -> Result<String, AnyError> {
-    dcl_js::system_api::op_motd(state).await
+async fn op_motd(state: Rc<RefCell<OpState>>) -> Result<String, OpError> {
+    Ok(dcl_js::system_api::op_motd(state).await?)
 }
 
 #[op2]
@@ -151,28 +152,28 @@ fn op_get_current_login(state: &mut OpState) -> Option<String> {
     dcl_js::system_api::op_get_current_login(state)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
-async fn op_get_previous_login(state: Rc<RefCell<OpState>>) -> Result<Option<String>, AnyError> {
-    dcl_js::system_api::op_get_previous_login(state).await
+async fn op_get_previous_login(state: Rc<RefCell<OpState>>) -> Result<Option<String>, OpError> {
+    Ok(dcl_js::system_api::op_get_previous_login(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_login_previous(state: Rc<RefCell<OpState>>) -> Result<(), AnyError> {
-    dcl_js::system_api::op_login_previous(state).await
+async fn op_login_previous(state: Rc<RefCell<OpState>>) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_login_previous(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
-async fn op_login_new_code(state: Rc<RefCell<OpState>>) -> Result<Option<String>, AnyError> {
-    dcl_js::system_api::op_login_new_code(state).await
+async fn op_login_new_code(state: Rc<RefCell<OpState>>) -> Result<Option<String>, OpError> {
+    Ok(dcl_js::system_api::op_login_new_code(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
-async fn op_login_new_success(state: Rc<RefCell<OpState>>) -> Result<(), AnyError> {
-    dcl_js::system_api::op_login_new_success(state).await
+async fn op_login_new_success(state: Rc<RefCell<OpState>>) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_login_new_success(state).await?)
 }
 
 #[op2(fast)]
@@ -190,60 +191,60 @@ fn op_logout(state: &mut OpState) {
     dcl_js::system_api::op_logout(state)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_settings(state: Rc<RefCell<OpState>>) -> Result<Vec<SettingInfo>, AnyError> {
-    dcl_js::system_api::op_settings(state).await
+async fn op_settings(state: Rc<RefCell<OpState>>) -> Result<Vec<SettingInfo>, OpError> {
+    Ok(dcl_js::system_api::op_settings(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_set_setting(
     state: Rc<RefCell<OpState>>,
     #[string] name: String,
     val: f32,
-) -> Result<(), AnyError> {
-    dcl_js::system_api::op_set_setting(state, name, val).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_set_setting(state, name, val).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_kernel_fetch_headers(
     state: Rc<RefCell<OpState>>,
     #[string] uri: String,
     #[string] method: Option<String>,
     #[string] meta: Option<String>,
-) -> Result<Vec<(String, String)>, AnyError> {
-    dcl_js::system_api::op_kernel_fetch_headers(state, uri, method, meta).await
+) -> Result<Vec<(String, String)>, OpError> {
+    Ok(dcl_js::system_api::op_kernel_fetch_headers(state, uri, method, meta).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_set_avatar(
     state: Rc<RefCell<OpState>>,
-    #[from_v8] avatar: Plain<SetAvatarData>,
-) -> Result<u32, anyhow::Error> {
-    dcl_js::system_api::op_set_avatar(state, avatar.0).await
+    #[scoped] avatar: Plain<SetAvatarData>,
+) -> Result<u32, OpError> {
+    Ok(dcl_js::system_api::op_set_avatar(state, avatar.0).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
 pub async fn op_native_input(state: Rc<RefCell<OpState>>) -> String {
     dcl_js::system_api::op_native_input(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_get_bindings(state: Rc<RefCell<OpState>>) -> Result<JsBindingsData, anyhow::Error> {
-    dcl_js::system_api::op_get_bindings(state).await
+pub async fn op_get_bindings(state: Rc<RefCell<OpState>>) -> Result<JsBindingsData, OpError> {
+    Ok(dcl_js::system_api::op_get_bindings(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_set_bindings(
     state: Rc<RefCell<OpState>>,
-    #[from_v8] bindings: Plain<JsBindingsData>,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_set_bindings(state, bindings.0).await
+    #[scoped] bindings: Plain<JsBindingsData>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_set_bindings(state, bindings.0).await?)
 }
 
 #[op2]
@@ -253,97 +254,99 @@ pub fn op_set_ui_focus(
     text: bool,
     scroll: bool,
     covered: bool,
-    #[from_v8] menu: Plain<Option<HudPanel>>,
-) -> Result<(), AnyError> {
-    dcl_js::system_api::op_set_ui_focus(state, ui, text, scroll, covered, menu.0)
+    #[scoped] menu: Plain<Option<HudPanel>>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_set_ui_focus(
+        state, ui, text, scroll, covered, menu.0,
+    )?)
 }
 
-#[op2(async)]
+#[op2]
 #[string]
 pub async fn op_console_command(
     state: Rc<RefCell<OpState>>,
     #[string] cmd: String,
-    #[from_v8] args: Plain<Vec<String>>,
-) -> Result<String, anyhow::Error> {
-    dcl_js::system_api::op_console_command(state, cmd, args.0).await
+    #[scoped] args: Plain<Vec<String>>,
+) -> Result<String, OpError> {
+    Ok(dcl_js::system_api::op_console_command(state, cmd, args.0).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_live_scene_info(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<LiveSceneInfo>, anyhow::Error> {
-    dcl_js::system_api::op_live_scene_info(state).await
+) -> Result<Vec<LiveSceneInfo>, OpError> {
+    Ok(dcl_js::system_api::op_live_scene_info(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_get_home_scene(state: Rc<RefCell<OpState>>) -> Result<HomeScene, anyhow::Error> {
-    dcl_js::system_api::op_get_home_scene(state).await
+pub async fn op_get_home_scene(state: Rc<RefCell<OpState>>) -> Result<HomeScene, OpError> {
+    Ok(dcl_js::system_api::op_get_home_scene(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_service_urls(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<(String, String)>, anyhow::Error> {
-    dcl_js::system_api::op_get_service_urls(state).await
+) -> Result<Vec<(String, String)>, OpError> {
+    Ok(dcl_js::system_api::op_get_service_urls(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState, anyhow::Error> {
-    dcl_js::system_api::op_get_welcome(state).await
+pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState, OpError> {
+    Ok(dcl_js::system_api::op_get_welcome(state).await?)
 }
 
-#[op2(async)]
-pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_accept_terms(state).await
+#[op2]
+pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_accept_terms(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_satellite_view(
     state: Rc<RefCell<OpState>>,
-) -> Result<Option<SatelliteView>, anyhow::Error> {
-    dcl_js::system_api::op_get_satellite_view(state).await
+) -> Result<Option<SatelliteView>, OpError> {
+    Ok(dcl_js::system_api::op_get_satellite_view(state).await?)
 }
 
 #[op2]
 pub fn op_set_home_scene(
     state: Rc<RefCell<OpState>>,
     #[string] realm: String,
-    #[from_v8] parcel: Plain<Vector2>,
+    #[scoped] parcel: Plain<Vector2>,
 ) {
     dcl_js::system_api::op_set_home_scene(state, realm, parcel.0);
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_system_action_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_system_action_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_system_action_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<SystemActionEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_system_action_stream(state, rid).await
+) -> Result<Option<SystemActionEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_system_action_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_chat_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_chat_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_chat_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<ChatMessage>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_chat_stream(state, rid).await
+) -> Result<Option<ChatMessage>, OpError> {
+    Ok(dcl_js::system_api::op_read_chat_stream(state, rid).await?)
 }
 
 #[op2(fast)]
@@ -355,18 +358,18 @@ pub fn op_send_chat(
     dcl_js::system_api::op_send_chat(state, message, channel)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_chat_reaction_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_chat_reaction_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<ChatReactionData>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_chat_reaction_stream(state, rid).await
+) -> Result<Option<ChatReactionData>, OpError> {
+    Ok(dcl_js::system_api::op_read_chat_reaction_stream(state, rid).await?)
 }
 
 #[op2(fast)]
@@ -385,36 +388,36 @@ pub fn op_bridge_to_page(state: Rc<RefCell<OpState>>, #[string] msg: String) {
     dcl_js::system_api::op_bridge_to_page(state, msg)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_bridge_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_bridge_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[string]
 pub async fn op_read_bridge_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<String, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_bridge_stream(state, rid).await
+) -> Result<String, OpError> {
+    Ok(dcl_js::system_api::op_read_bridge_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_user_profile(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<SerializedProfile, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_get_user_profile(state, address).await
+) -> Result<SerializedProfile, OpError> {
+    Ok(dcl_js::system_api::op_get_user_profile(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_compact_profiles(
     state: Rc<RefCell<OpState>>,
-    #[from_v8] addresses: Plain<Vec<String>>,
-) -> Result<Vec<CompactProfile>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_get_compact_profiles(state, addresses.0).await
+    #[scoped] addresses: Plain<Vec<String>>,
+) -> Result<Vec<CompactProfile>, OpError> {
+    Ok(dcl_js::system_api::op_get_compact_profiles(state, addresses.0).await?)
 }
 
 #[op2(fast)]
@@ -422,32 +425,32 @@ pub fn op_quit(state: Rc<RefCell<OpState>>) {
     dcl_js::system_api::op_quit(state);
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_permission_request_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_permission_request_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_permission_request_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<PermissionRequestEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_permission_request_stream(state, rid).await
+) -> Result<Option<PermissionRequestEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_permission_request_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_permission_used_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_permission_used_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_permission_used_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<PermissionUsed>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_permission_used_stream(state, rid).await
+) -> Result<Option<PermissionUsed>, OpError> {
+    Ok(dcl_js::system_api::op_read_permission_used_stream(state, rid).await?)
 }
 
 #[op2(fast)]
@@ -461,20 +464,26 @@ pub fn op_set_permanent_permission(
     state: Rc<RefCell<OpState>>,
     #[string] level: &str,
     #[string] value: Option<String>,
-    #[from_v8] permission_type: Plain<PermissionType>,
-    #[from_v8] allow: Plain<Option<PermissionValue>>,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_set_permanent_permission(state, level, value, permission_type.0, allow.0)
+    #[scoped] permission_type: Plain<PermissionType>,
+    #[scoped] allow: Plain<Option<PermissionValue>>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_set_permanent_permission(
+        state,
+        level,
+        value,
+        permission_type.0,
+        allow.0,
+    )?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_permanent_permissions(
     state: Rc<RefCell<OpState>>,
     #[string] level: String,
     #[string] value: Option<String>,
-) -> Result<Vec<PermanentPermissionItem>, anyhow::Error> {
-    dcl_js::system_api::op_get_permanent_permissions(state, &level, value).await
+) -> Result<Vec<PermanentPermissionItem>, OpError> {
+    Ok(dcl_js::system_api::op_get_permanent_permissions(state, &level, value).await?)
 }
 
 #[op2]
@@ -494,85 +503,85 @@ pub fn op_set_interactable_area(
     dcl_js::system_api::op_set_interactable_area(state, left, top, right, bottom);
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_get_mic_state(state: Rc<RefCell<OpState>>) -> Result<MicState, anyhow::Error> {
-    dcl_js::system_api::op_get_mic_state(state).await
+pub async fn op_get_mic_state(state: Rc<RefCell<OpState>>) -> Result<MicState, OpError> {
+    Ok(dcl_js::system_api::op_get_mic_state(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_set_mic_enabled(state: Rc<RefCell<OpState>>, enabled: bool) {
     dcl_js::system_api::op_set_mic_enabled(state, enabled).await;
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_voice_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_voice_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_voice_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<VoiceMessage>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_voice_stream(state, rid).await
+) -> Result<Option<VoiceMessage>, OpError> {
+    Ok(dcl_js::system_api::op_read_voice_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_hover_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_hover_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_hover_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<HoverEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_hover_stream(state, rid).await
+) -> Result<Option<HoverEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_hover_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_proximity_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_proximity_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_proximity_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<ProximityEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_proximity_stream(state, rid).await
+) -> Result<Option<ProximityEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_proximity_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_photo_mode_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_photo_mode_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_photo_mode_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<PhotoModeState>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_photo_mode_stream(state, rid).await
+) -> Result<Option<PhotoModeState>, OpError> {
+    Ok(dcl_js::system_api::op_read_photo_mode_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_world_access_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_world_access_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_world_access_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<WorldAccessEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_world_access_stream(state, rid).await
+) -> Result<Option<WorldAccessEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_world_access_stream(state, rid).await?)
 }
 
 #[op2]
@@ -580,210 +589,210 @@ pub fn op_set_world_password(state: Rc<RefCell<OpState>>, #[string] password: Op
     dcl_js::system_api::op_set_world_password(state, password);
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_profile_changed_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_profile_changed_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_profile_changed_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<ProfileChangedEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_profile_changed_stream(state, rid).await
+) -> Result<Option<ProfileChangedEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_profile_changed_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_scene_loading_ui_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_scene_loading_ui_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_scene_loading_ui_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<SceneLoadingUi>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_scene_loading_ui_stream(state, rid).await
+) -> Result<Option<SceneLoadingUi>, OpError> {
+    Ok(dcl_js::system_api::op_read_scene_loading_ui_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_analytics_event_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_analytics_event_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_analytics_event_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<AnalyticsEvent>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_analytics_event_stream(state, rid).await
+) -> Result<Option<AnalyticsEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_analytics_event_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_avatar_modifiers(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<AvatarModifierState>, anyhow::Error> {
-    dcl_js::system_api::op_get_avatar_modifiers(state).await
+) -> Result<Vec<AvatarModifierState>, OpError> {
+    Ok(dcl_js::system_api::op_get_avatar_modifiers(state).await?)
 }
 
 // Social / Friends
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_friendship_event_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_friendship_event_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_friendship_event_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<FriendshipEventUpdate>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_friendship_event_stream(state, rid).await
+) -> Result<Option<FriendshipEventUpdate>, OpError> {
+    Ok(dcl_js::system_api::op_read_friendship_event_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_get_friends(state: Rc<RefCell<OpState>>) -> Result<Vec<FriendData>, anyhow::Error> {
-    dcl_js::system_api::op_get_friends(state).await
+pub async fn op_get_friends(state: Rc<RefCell<OpState>>) -> Result<Vec<FriendData>, OpError> {
+    Ok(dcl_js::system_api::op_get_friends(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_mutual_friends(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<Vec<FriendData>, anyhow::Error> {
-    dcl_js::system_api::op_get_mutual_friends(state, address).await
+) -> Result<Vec<FriendData>, OpError> {
+    Ok(dcl_js::system_api::op_get_mutual_friends(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_sent_friend_requests(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<FriendRequestData>, anyhow::Error> {
-    dcl_js::system_api::op_get_sent_friend_requests(state).await
+) -> Result<Vec<FriendRequestData>, OpError> {
+    Ok(dcl_js::system_api::op_get_sent_friend_requests(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_received_friend_requests(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<FriendRequestData>, anyhow::Error> {
-    dcl_js::system_api::op_get_received_friend_requests(state).await
+) -> Result<Vec<FriendRequestData>, OpError> {
+    Ok(dcl_js::system_api::op_get_received_friend_requests(state).await?)
 }
 
-#[op2(async)]
-pub async fn op_get_social_initialized(state: Rc<RefCell<OpState>>) -> Result<bool, anyhow::Error> {
-    dcl_js::system_api::op_get_social_initialized(state).await
+#[op2]
+pub async fn op_get_social_initialized(state: Rc<RefCell<OpState>>) -> Result<bool, OpError> {
+    Ok(dcl_js::system_api::op_get_social_initialized(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_online_friends(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<FriendStatusData>, anyhow::Error> {
-    dcl_js::system_api::op_get_online_friends(state).await
+) -> Result<Vec<FriendStatusData>, OpError> {
+    Ok(dcl_js::system_api::op_get_online_friends(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_friend_connectivity_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_friend_connectivity_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_friend_connectivity_stream(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: u32,
-) -> Result<Option<FriendConnectivityEvent>, anyhow::Error> {
-    dcl_js::system_api::op_read_friend_connectivity_stream(state, rid).await
+) -> Result<Option<FriendConnectivityEvent>, OpError> {
+    Ok(dcl_js::system_api::op_read_friend_connectivity_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_send_friend_request(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
     #[string] message: Option<String>,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_send_friend_request(state, address, message).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_send_friend_request(state, address, message).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_accept_friend_request(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_accept_friend_request(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_accept_friend_request(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_reject_friend_request(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_reject_friend_request(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_reject_friend_request(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_cancel_friend_request(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_cancel_friend_request(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_cancel_friend_request(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_delete_friend(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_delete_friend(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_delete_friend(state, address).await?)
 }
 
 // Social / Blocking
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_block_user(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_block_user(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_block_user(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_unblock_user(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_unblock_user(state, address).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_unblock_user(state, address).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_blocked_users(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<BlockedUserData>, anyhow::Error> {
-    dcl_js::system_api::op_get_blocked_users(state).await
+) -> Result<Vec<BlockedUserData>, OpError> {
+    Ok(dcl_js::system_api::op_get_blocked_users(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_blocking_status(
     state: Rc<RefCell<OpState>>,
-) -> Result<BlockingStatusData, anyhow::Error> {
-    dcl_js::system_api::op_get_blocking_status(state).await
+) -> Result<BlockingStatusData, OpError> {
+    Ok(dcl_js::system_api::op_get_blocking_status(state).await?)
 }
 
 #[op2(fast)]
@@ -791,13 +800,13 @@ pub fn op_get_dm_user_state_stream(state: Rc<RefCell<OpState>>, #[string] addres
     dcl_js::system_api::op_get_dm_user_state_stream(state, address)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_dm_user_state_stream(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: u32,
-) -> Result<Option<DmUserStateData>, anyhow::Error> {
-    dcl_js::system_api::op_read_dm_user_state_stream(state, rid).await
+) -> Result<Option<DmUserStateData>, OpError> {
+    Ok(dcl_js::system_api::op_read_dm_user_state_stream(state, rid).await?)
 }
 
 #[op2(fast)]
@@ -805,13 +814,13 @@ pub fn op_close_dm_user_state_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u3
     dcl_js::system_api::op_close_dm_user_state_stream(state, rid)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_dm_history(
     state: Rc<RefCell<OpState>>,
     #[string] address: String,
-) -> Result<Vec<DmHistoryEntryData>, anyhow::Error> {
-    dcl_js::system_api::op_get_dm_history(state, address).await
+) -> Result<Vec<DmHistoryEntryData>, OpError> {
+    Ok(dcl_js::system_api::op_get_dm_history(state, address).await?)
 }
 
 #[op2(fast)]
@@ -819,53 +828,53 @@ pub fn op_delete_dm_history(state: Rc<RefCell<OpState>>, #[string] address: Stri
     dcl_js::system_api::op_delete_dm_history(state, address)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_community_connectivity_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_community_connectivity_stream(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: u32,
-) -> Result<Option<CommunityMemberConnectivityData>, anyhow::Error> {
-    dcl_js::system_api::op_read_community_connectivity_stream(state, rid).await
+) -> Result<Option<CommunityMemberConnectivityData>, OpError> {
+    Ok(dcl_js::system_api::op_read_community_connectivity_stream(state, rid).await?)
 }
 
 #[op2]
-pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[from_v8] ids: Plain<Vec<String>>) {
+pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[scoped] ids: Plain<Vec<String>>) {
     dcl_js::system_api::op_set_community_channels(state, ids.0)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_block_update_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_block_update_stream(state).await
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_read_block_update_stream(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: u32,
-) -> Result<Option<BlockUpdateData>, anyhow::Error> {
-    dcl_js::system_api::op_read_block_update_stream(state, rid).await
+) -> Result<Option<BlockUpdateData>, OpError> {
+    Ok(dcl_js::system_api::op_read_block_update_stream(state, rid).await?)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_deploy_outfits(
     state: Rc<RefCell<OpState>>,
-    #[from_v8] outfits: Plain<OutfitsData>,
-) -> Result<(), anyhow::Error> {
-    dcl_js::system_api::op_deploy_outfits(state, outfits.0).await
+    #[scoped] outfits: Plain<OutfitsData>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::system_api::op_deploy_outfits(state, outfits.0).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 pub async fn op_get_outfit_thumbnails(
     state: Rc<RefCell<OpState>>,
-) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
-    dcl_js::system_api::op_get_outfit_thumbnails(state).await
+) -> Result<Vec<OutfitThumbnailData>, OpError> {
+    Ok(dcl_js::system_api::op_get_outfit_thumbnails(state).await?)
 }
 
 #[op2]
