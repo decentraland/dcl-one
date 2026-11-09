@@ -209,7 +209,7 @@ describe('editor host signing', () => {
     const abort = new AbortController()
     const dropped = expect(host().signedFetch(url, { method: 'DELETE', signal: abort.signal })).rejects.toThrow('aborted')
     await screen.findByRole('dialog')
-    abort.abort()
+    act(() => abort.abort())
     await dropped
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetched).not.toHaveBeenCalled()

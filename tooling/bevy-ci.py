@@ -82,6 +82,7 @@ APP_INPUTS = {
     'Makefile': ('web', 'headless'),
     # Each producer has its own build script; web edits must not rebuild headless.
     'build-web.py': ('web',),
+    'install-web-tools.py': ('web',),
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
     'install-tools.sh': (*LANES, 'native-matrix'),

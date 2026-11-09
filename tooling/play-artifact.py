@@ -24,6 +24,7 @@ PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
 # configuration (the flake lock and package set pin the protoc and wasm-pack the web job
 # builds with); generated outputs and local overrides are excluded.
 INPUTS = ('apps/bevy-explorer/build-web.py',
+          'apps/bevy-explorer/install-web-tools.py',
           'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-tools.sh',
           '.github/actions/bevy-explorer-tools/action.yml', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix',
           'tooling/play-artifact.py',
