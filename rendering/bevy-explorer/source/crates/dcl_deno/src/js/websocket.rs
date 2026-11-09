@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -41,6 +41,8 @@ use super::plain::Plain;
 
 const MAX_OPEN_SOCKETS: usize = 32;
 const MAX_WS_BUFFERED_BYTES: usize = 8 * 1024 * 1024;
+/// Charged per queued message on top of its payload, so empty sends also fill the cap.
+const MESSAGE_OVERHEAD: usize = 64;
 /// Inbound messages of this size or more, per frame or reassembled from fragments, close the
 /// socket before the payload is buffered.
 const MAX_INBOUND_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -193,6 +195,8 @@ fn count(state: &mut OpState, f: impl FnOnce(&mut SceneResourceCounters)) {
 
 struct WsTarget {
     uri: http::Uri,
+    /// `scheme://host:port`, what the permission prompt shows.
+    origin: String,
     /// The URL host as the resolver takes it, with IPv6 literals bracketed.
     resolve_host: String,
     /// The host for TLS server-name checks, without brackets; `None` for `ws`.
@@ -230,6 +234,7 @@ fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTar
     let _ = parsed.set_username("");
     let _ = parsed.set_password(None);
     let uri: http::Uri = parsed.as_str().parse()?;
+    let origin = format!("{}://{host}:{port}", parsed.scheme());
 
     if protocols.len() > MAX_PROTOCOLS_BYTES {
         anyhow::bail!("WebSocket protocols are longer than {MAX_PROTOCOLS_BYTES} bytes");
@@ -259,6 +264,7 @@ fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTar
     });
     Ok(WsTarget {
         uri,
+        origin,
         resolve_host: host,
         tls_host,
         port,
@@ -297,6 +303,23 @@ enum Inbound {
     Error(String),
 }
 
+/// Outbound messages queued but not yet written.
+#[derive(Default)]
+struct Backlog {
+    /// Payload bytes, as `bufferedAmount` reports them.
+    bytes: AtomicUsize,
+    /// Payload bytes plus [`MESSAGE_OVERHEAD`] per message, held under the cap.
+    charged: AtomicUsize,
+}
+
+impl Backlog {
+    fn release(&self, len: usize) {
+        self.bytes.fetch_sub(len, Ordering::SeqCst);
+        self.charged
+            .fetch_sub(len + MESSAGE_OVERHEAD, Ordering::SeqCst);
+    }
+}
+
 /// A scene socket. Dropping or closing the resource drops the connection and frees its slot.
 struct WsResource {
     connect: RefCell<Option<LocalBoxFuture<'static, Result<Connected, ConnectError>>>>,
@@ -307,7 +330,7 @@ struct WsResource {
     inbound_cancel: CancelHandle,
     closing: Arc<Notify>,
     close_requested: Cell<bool>,
-    buffered: Arc<AtomicUsize>,
+    backlog: Arc<Backlog>,
     pump: RefCell<Option<JoinHandle<()>>>,
     text: RefCell<Option<String>>,
     binary: RefCell<Option<Vec<u8>>>,
@@ -379,7 +402,7 @@ fn create(state: &mut OpState, url: &str, protocols: &str) -> Result<ResourceId,
         .ok_or_else(|| anyhow!("WebSocket is unavailable before the scene starts"))?
         .push(RpcCall::RequestGenericPermission {
             ty: common::structs::PermissionType::Websocket,
-            message: Some(url.to_owned()),
+            message: Some(target.origin.clone()),
             response: sx,
         })?;
 
@@ -414,7 +437,7 @@ fn create(state: &mut OpState, url: &str, protocols: &str) -> Result<ResourceId,
         inbound_cancel: CancelHandle::new(),
         closing: Arc::new(Notify::new()),
         close_requested: Cell::new(false),
-        buffered: Arc::new(AtomicUsize::new(0)),
+        backlog: Arc::default(),
         pump: RefCell::new(None),
         text: RefCell::new(None),
         binary: RefCell::new(None),
@@ -435,7 +458,7 @@ async fn dial(
         .resolve(&target.resolve_host, target.port, allow_private)
         .await
         .map_err(|e| {
-            if e.to_string().contains("non-public") {
+            if e.is::<common::util::NonPublicAddress>() {
                 ConnectError::Refused(e)
             } else {
                 ConnectError::Failed(e)
@@ -453,11 +476,8 @@ async fn dial(
         .map_err(|e| failed(e.into()))?;
     let stream = match &target.tls_host {
         Some(host) => {
-            let connector = native_tls::TlsConnector::builder()
-                .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
-                .build()
-                .map_err(|e| failed(e.into()))?;
-            let tls = tokio_native_tls::TlsConnector::from(connector)
+            let tls = tls_connector()
+                .map_err(failed)?
                 .connect(host, tcp)
                 .await
                 .map_err(|e| failed(e.into()))?;
@@ -484,6 +504,21 @@ async fn dial(
         .unwrap_or_default()
         .to_owned();
     Ok(Connected { socket, protocol })
+}
+
+/// One connector for every socket, so the system roots are loaded once.
+fn tls_connector() -> Result<tokio_native_tls::TlsConnector, AnyError> {
+    static CONNECTOR: OnceLock<Result<native_tls::TlsConnector, String>> = OnceLock::new();
+    CONNECTOR
+        .get_or_init(|| {
+            native_tls::TlsConnector::builder()
+                .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map(Into::into)
+        .map_err(|e| anyhow!("TLS is unavailable: {e}"))
 }
 
 fn get_resource(state: &OpState, rid: ResourceId) -> Result<Rc<WsResource>, AnyError> {
@@ -544,7 +579,7 @@ pub async fn op_ws_connect(
         connected.socket,
         outbound_rx,
         inbound_sx,
-        resource.buffered.clone(),
+        resource.backlog.clone(),
         resource.closing.clone(),
         close_timeout,
         slot,
@@ -562,7 +597,7 @@ async fn pump(
     socket: Socket,
     outbound: mpsc::UnboundedReceiver<Outbound>,
     inbound: mpsc::Sender<Inbound>,
-    buffered: Arc<AtomicUsize>,
+    backlog: Arc<Backlog>,
     closing: Arc<Notify>,
     close_timeout: Duration,
     _slot: Arc<SlotGuard>,
@@ -574,7 +609,7 @@ async fn pump(
     };
     tokio::select! {
         _ = read(stream, inbound.clone(), &closing) => {}
-        _ = write(sink, outbound, inbound, buffered, &closing) => {}
+        _ = write(sink, outbound, inbound, backlog, &closing) => {}
         _ = linger => {}
     }
 }
@@ -609,14 +644,14 @@ async fn write(
     mut sink: SplitSink<Socket, Message>,
     mut outbound: mpsc::UnboundedReceiver<Outbound>,
     inbound: mpsc::Sender<Inbound>,
-    buffered: Arc<AtomicUsize>,
+    backlog: Arc<Backlog>,
     closing: &Notify,
 ) {
     while let Some(next) = outbound.recv().await {
         let result = match next {
             Outbound::Message(message, len) => {
                 let result = sink.send(message).await;
-                buffered.fetch_sub(len, Ordering::SeqCst);
+                backlog.release(len);
                 result
             }
             Outbound::Close(frame) => {
@@ -647,11 +682,12 @@ fn received_close_code(code: u16) -> u16 {
     }
 }
 
+/// Queues a message of `len` payload bytes; `message` is built only once the send is accepted.
 fn send(
     state: &mut OpState,
     rid: ResourceId,
-    message: Message,
     len: usize,
+    message: impl FnOnce() -> Message,
 ) -> Result<(), AnyError> {
     let resource = get_resource(state, rid)?;
     if resource.close_requested.get() {
@@ -663,13 +699,18 @@ fn send(
         .ok_or_else(|| anyhow!("WebSocket is not open"))?;
     // Refuse a send that would push still-pending outbound bytes past the cap, so a scene
     // writing faster than the peer drains cannot grow the sidecar heap without bound.
-    if !add_within(&resource.buffered, len, MAX_WS_BUFFERED_BYTES) {
+    if !add_within(
+        &resource.backlog.charged,
+        len.saturating_add(MESSAGE_OVERHEAD),
+        MAX_WS_BUFFERED_BYTES,
+    ) {
         anyhow::bail!(
             "WebSocket send refused: outbound buffer exceeds {MAX_WS_BUFFERED_BYTES} bytes"
         );
     }
-    if outbound.send(Outbound::Message(message, len)).is_err() {
-        resource.buffered.fetch_sub(len, Ordering::SeqCst);
+    resource.backlog.bytes.fetch_add(len, Ordering::SeqCst);
+    if outbound.send(Outbound::Message(message(), len)).is_err() {
+        resource.backlog.release(len);
         anyhow::bail!("WebSocket is closed");
     }
     count(state, |c| {
@@ -685,8 +726,7 @@ pub fn op_ws_send_text(
     #[smi] rid: ResourceId,
     #[string] data: String,
 ) -> Result<(), AnyError> {
-    let len = data.len();
-    send(state, rid, Message::text(data), len)
+    send(state, rid, data.len(), || Message::text(data))
 }
 
 #[op2]
@@ -695,7 +735,7 @@ pub fn op_ws_send_binary(
     #[smi] rid: ResourceId,
     #[anybuffer] data: &[u8],
 ) -> Result<(), AnyError> {
-    send(state, rid, Message::binary(data.to_vec()), data.len())
+    send(state, rid, data.len(), || Message::binary(data.to_vec()))
 }
 
 #[op2(fast)]
@@ -704,11 +744,12 @@ pub fn op_ws_send_binary_ab(
     #[smi] rid: ResourceId,
     #[arraybuffer] data: &[u8],
 ) -> Result<(), AnyError> {
-    send(state, rid, Message::binary(data.to_vec()), data.len())
+    send(state, rid, data.len(), || Message::binary(data.to_vec()))
 }
 
-/// Starts the closing handshake, or cancels a connection still being made. The socket is
-/// dropped when the peer answers or after the close timeout.
+/// Starts the closing handshake once [`op_ws_connect`] has finished, even if the scene has
+/// not yet seen that result; before then it cancels the connection. The socket is dropped
+/// when the peer answers or after the close timeout.
 #[op2]
 pub fn op_ws_close(
     state: &mut OpState,
@@ -850,6 +891,9 @@ pub fn op_ws_get_buffered_amount(
     state: &mut OpState,
     #[smi] rid: ResourceId,
 ) -> Result<u32, AnyError> {
-    let buffered = get_resource(state, rid)?.buffered.load(Ordering::SeqCst);
+    let buffered = get_resource(state, rid)?
+        .backlog
+        .bytes
+        .load(Ordering::SeqCst);
     Ok(u32::try_from(buffered).unwrap_or(u32::MAX))
 }
