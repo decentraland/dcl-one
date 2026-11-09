@@ -978,6 +978,8 @@ pub fn scene_spawner(
 
 #[cfg(test)]
 mod resumable_tests;
+#[cfg(test)]
+mod spawn_bench;
 
 #[cfg(test)]
 mod tests {
