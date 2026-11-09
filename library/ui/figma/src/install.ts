@@ -74,6 +74,7 @@ async function cleanTarget(
       'status',
       '--porcelain',
       '--untracked-files=all',
+      '--ignored=matching',
       '--',
       target
     ])
@@ -100,8 +101,16 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   const outDir = await resolveContained(root, relative)
   const snapshot = path.resolve(app.cwd, app.config.snapshotDir)
   const lockPath = path.resolve(app.cwd, app.config.snapshotLock)
-  await verifyFdsCache(snapshot, lockPath)
   const lockBytes = await readFile(lockPath)
+  const assertLock = async () => {
+    if (!lockBytes.equals(await readFile(lockPath)))
+      throw new Error('The source lock changed during install')
+  }
+  const verifyCache = async () => {
+    await verifyFdsCache(snapshot, lockPath)
+    await assertLock()
+  }
+  await verifyCache()
   const lock = JSON.parse(lockBytes.toString('utf8')) as {
     publicFoundations?: { files: Record<string, { sha256: string; origin: { kind: string } }> }
   }
@@ -109,6 +118,7 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   const source = app.createSource('snapshot')
   if (source.name !== 'snapshot') throw new Error('install requires a snapshot source')
   await source.ready?.()
+  await assertLock()
   const [collections, textStyles, gradients, icons] = await Promise.all([
     source.getTokenCollections(),
     source.getTextStyles(),
@@ -166,9 +176,7 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
     planned.set('source.json', regenerated)
   }
   const verifyInputs = async () => {
-    await verifyFdsCache(snapshot, lockPath)
-    if (!lockBytes.equals(await readFile(lockPath)))
-      throw new Error('The source lock changed during install')
+    await verifyCache()
     for (const [file, entry] of Object.entries(publicFiles)) {
       if (
         entry.origin.kind !== 'generated' &&
@@ -292,8 +300,16 @@ async function publishInstall(
       await rename(temporary, outDir)
     } catch (error) {
       if (backup) {
-        await rename(backup, outDir)
-        backup = undefined
+        try {
+          await rename(backup, outDir)
+          backup = undefined
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            `Install publication failed, previous tree retained at ${backup}`,
+            { cause: rollbackError }
+          )
+        }
       }
       throw error
     }
