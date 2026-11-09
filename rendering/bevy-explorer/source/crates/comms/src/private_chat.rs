@@ -268,7 +268,9 @@ fn connect_private_chat_room(
         let client = ipfs.ipfs().client();
         let wallet = wallet.clone();
         *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-            mint_gatekeeper_adapter("GET", client, uri, &wallet, meta).await
+            mint_gatekeeper_adapter("GET", client, uri, &wallet, meta)
+                .await
+                .map_err(anyhow::Error::from)
         }));
     }
 

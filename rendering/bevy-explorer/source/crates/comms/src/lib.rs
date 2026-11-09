@@ -571,39 +571,51 @@ impl std::fmt::Display for GatekeeperRefusal {
 
 impl std::error::Error for GatekeeperRefusal {}
 
-/// Which scene a scene-room mint was for, attached to its error.
+/// Why a gatekeeper mint gave no adapter: the gatekeeper refused, or the request never got an
+/// answer to read.
 #[derive(Debug)]
-struct RefusalContext {
-    is_world: bool,
-    scene_id: String,
+pub(crate) enum MintError {
+    Refused(GatekeeperRefusal),
+    Transport(anyhow::Error),
 }
 
-impl std::fmt::Display for RefusalContext {
+impl std::fmt::Display for MintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "scene room for {}", self.scene_id)
+        match self {
+            MintError::Refused(refusal) => refusal.fmt(f),
+            MintError::Transport(error) => write!(f, "{error:#}"),
+        }
     }
 }
 
+impl std::error::Error for MintError {}
+
 /// Signed request to a comms-gatekeeper endpoint, returning the adapter string it mints. `meta`
-/// travels in the signed identity headers, not the body. A non-200 answer is a
-/// [`GatekeeperRefusal`] error.
+/// travels in the signed identity headers, not the body.
 pub(crate) async fn mint_gatekeeper_adapter(
     method: &str,
     client: reqwest::Client,
     uri: Uri,
     wallet: &Wallet,
     meta: String,
-) -> Result<String, anyhow::Error> {
-    let headers = sign_service_request(method, &uri.to_string(), wallet, meta).await?;
+) -> Result<String, MintError> {
+    let headers = sign_service_request(method, &uri.to_string(), wallet, meta)
+        .await
+        .map_err(MintError::Transport)?;
 
+    let method = method
+        .parse()
+        .map_err(|e: http::method::InvalidMethod| MintError::Transport(e.into()))?;
     let mut request = client
-        .request(method.parse()?, uri.to_string())
+        .request(method, uri.to_string())
         .timeout(std::time::Duration::from_secs(10))
         .header("Content-Type", "application/json");
     for (k, v) in headers {
         request = request.header(k, v);
     }
-    let response = platform::TracedJsonResponse::send(request).await?;
+    let response = platform::TracedJsonResponse::send(request)
+        .await
+        .map_err(|e| MintError::Transport(e.into()))?;
 
     if response.status() != StatusCode::OK {
         let status = response.status().as_u16();
@@ -612,10 +624,21 @@ pub(crate) async fn mint_gatekeeper_adapter(
             .await
             .ok()
             .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
-        return Err(GatekeeperRefusal { status, message }.into());
+        return Err(MintError::Refused(GatekeeperRefusal { status, message }));
     }
 
-    Ok(response.json::<GatekeeperResponse>().await?.adapter)
+    response
+        .json::<GatekeeperResponse>()
+        .await
+        .map(|answer| answer.adapter)
+        .map_err(MintError::Transport)
+}
+
+/// A finished scene-room mint: which scene it was for and what the gatekeeper gave.
+struct SceneRoomMint {
+    scene: SetCurrentScene,
+    is_world: bool,
+    result: Result<String, MintError>,
 }
 
 #[derive(Component)]
@@ -655,7 +678,7 @@ pub struct SceneRoomAdapterOverride(pub Option<String>);
 fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,
-    mut gatekeeper_task: Local<Option<Task<Result<(String, SetCurrentScene), anyhow::Error>>>>,
+    mut gatekeeper_task: Local<Option<Task<SceneRoomMint>>>,
     mut current: ResMut<SceneRoomConnection>,
     mut admission: ResMut<SceneAdmission>,
     mut scene: EventReader<SetCurrentScene>,
@@ -759,36 +782,38 @@ fn connect_scene_room(
                 serde_json::to_string(&ev).unwrap()
             };
             let is_world = world.is_some();
-            let scene_id = ev.scene_id.clone();
             *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-                mint_gatekeeper_adapter("POST", client, uri, &wallet, meta)
-                    .await
-                    .map(|adapter| (adapter, ev))
-                    .map_err(|e| e.context(RefusalContext { is_world, scene_id }))
+                let result = mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await;
+                SceneRoomMint {
+                    scene: ev,
+                    is_world,
+                    result,
+                }
             }));
         }
     }
 
     if let Some(mut task) = gatekeeper_task.take() {
-        match task.complete() {
-            None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => {
-                warn!("failed to get scene room from gatekeeper: {e:#}");
-                let refused = e
-                    .downcast_ref::<RefusalContext>()
-                    .zip(e.downcast_ref::<GatekeeperRefusal>())
-                    .map(|(context, refusal)| {
-                        SceneAdmission::from_refusal(
-                            refusal.status,
-                            refusal.message.as_deref(),
-                            context.is_world,
-                            &context.scene_id,
-                        )
-                    })
-                    .unwrap_or_else(SceneAdmission::unknown);
-                admission.set_if_neq(refused);
+        let Some(mint) = task.complete() else {
+            *gatekeeper_task = Some(task);
+            return;
+        };
+        match mint.result {
+            Err(MintError::Refused(refusal)) => {
+                warn!("scene room refused by the gatekeeper: {refusal}");
+                admission.set_if_neq(SceneAdmission::from_refusal(
+                    refusal.status,
+                    refusal.message.as_deref(),
+                    mint.is_world,
+                    &mint.scene.scene_id,
+                ));
             }
-            Some(Ok((adapter, ev))) => {
+            Err(MintError::Transport(e)) => {
+                warn!("failed to get scene room from gatekeeper: {e:#}");
+                admission.set_if_neq(SceneAdmission::unknown());
+            }
+            Ok(adapter) => {
+                let ev = mint.scene;
                 admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 // client-only (gatekeeper is disabled on servers): the client's scene
                 // rooms feed its single shared context, all scenes share one view
