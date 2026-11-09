@@ -10,8 +10,12 @@
 //! from the variant CID. Anything else, at any step, reads the original. A variant that fails to
 //! decode is marked bad for the session and its asset reloaded from the original.
 //!
-//! Model (`glb`) variants are not taken: they embed their textures as KTX2 under
-//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it.
+//! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
+//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Model
+//! variants have none yet: `glb` embeds its textures as KTX2 under `KHR_texture_basisu`, which
+//! the glTF loader rejects when a file requires it, and `glb-meshopt` (meshes only, under
+//! `EXT_meshopt_compression` and `KHR_mesh_quantization`) waits for the loader's meshopt decoder,
+//! behind a feature of its own.
 //!
 //! Preview and local scenes (preview mode, `b64-` ids, loopback or file content servers) never
 //! ask for a manifest.
@@ -50,9 +54,86 @@ use crate::{
 /// through), so a dds decodes at the original path. A path without an extension goes to the
 /// last image loader, which guesses too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
-/// The manifest formats this client takes, in the debug panel's words.
-pub const TAKEN_FORMATS: &str = "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb";
+/// Every `format` the manifest schema (v1) may name, taken or not.
+const SCHEMA_FORMATS: [&str; 5] = ["ktx2-bc7", "ktx2-bc1", "ktx2-bc5", "glb", "glb-meshopt"];
 const RECENT_FALLBACKS: usize = 20;
+
+/// What a supported variant's bytes are handed to the loaders as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decoded {
+    /// A BC KTX2 texture, unwrapped to the DDS the image loaders read.
+    BcTexture(ktx2::BcFormat),
+    // `glb-meshopt` (kind `model`, at `glb`/`gltf` paths, no GPU need) is handed to the glTF
+    // loader as it is; its row joins [`SUPPORTED_FORMATS`] behind the feature that compiles the
+    // loader's meshopt decoder in.
+}
+
+/// A manifest format this client takes: the schema's `kind`/`format` pair, the content files it
+/// may replace, what the GPU must support and what the bytes decode as.
+#[derive(Debug)]
+pub struct SupportedFormat {
+    pub kind: &'static str,
+    pub format: &'static str,
+    /// Lower-case extensions of the files the variant may stand in for.
+    pub extensions: &'static [&'static str],
+    /// Whether a file without an extension may be one of them (an image: its loader guesses the
+    /// format from the bytes).
+    pub without_extension: bool,
+    /// The GPU must decode BC textures.
+    pub needs_bc: bool,
+    pub decoded: Decoded,
+}
+
+impl SupportedFormat {
+    fn accepts_path(&self, file_path: &str) -> bool {
+        match extension(file_path) {
+            Some(ext) => self.extensions.contains(&ext.as_str()),
+            None => self.without_extension,
+        }
+    }
+}
+
+const fn bc_texture(format: &'static str, bc: ktx2::BcFormat) -> SupportedFormat {
+    SupportedFormat {
+        kind: "texture",
+        format,
+        extensions: &TEXTURE_EXTENSIONS,
+        without_extension: true,
+        needs_bc: true,
+        decoded: Decoded::BcTexture(bc),
+    }
+}
+
+/// The manifest formats this client takes. A variant is loaded only through a row here; the
+/// manifest's order of preference decides between rows.
+pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
+    bc_texture("ktx2-bc7", ktx2::BcFormat::Bc7),
+    bc_texture("ktx2-bc1", ktx2::BcFormat::Bc1),
+    bc_texture("ktx2-bc5", ktx2::BcFormat::Bc5),
+];
+
+/// The row for a manifest variant's `kind`/`format`, if this client takes it.
+pub fn supported_format(variant: &Variant) -> Option<&'static SupportedFormat> {
+    SUPPORTED_FORMATS
+        .iter()
+        .find(|row| row.kind == variant.kind && row.format == variant.format)
+}
+
+/// The formats this client takes and the schema's it does not, in the debug panel's words.
+pub fn taken_formats() -> String {
+    let taken: Vec<_> = SUPPORTED_FORMATS.iter().map(|row| row.format).collect();
+    let not_taken: Vec<_> = SCHEMA_FORMATS
+        .iter()
+        .copied()
+        .filter(|format| !taken.contains(format))
+        .collect();
+    let mut words = format!("{} (loaded as DDS)", taken.join(", "));
+    if !not_taken.is_empty() {
+        words.push_str("; not ");
+        words.push_str(&not_taken.join(", "));
+    }
+    words
+}
 /// Consecutive transport failures (manifest or variant) after which the service is treated as
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
 const BREAKER_FAILURES: u32 = 5;
@@ -139,17 +220,19 @@ fn extension(file_path: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// Whether a file of this type could be replaced at all; others never wait on a manifest.
+/// Whether a file of this type could be replaced by any supported format; others never wait on
+/// a manifest.
 pub fn could_have_variant(file_path: &str) -> bool {
-    extension(file_path).is_none_or(|ext| TEXTURE_EXTENSIONS.contains(&ext.as_str()))
+    SUPPORTED_FORMATS
+        .iter()
+        .any(|row| row.accepts_path(file_path))
 }
 
-/// Whether this client can load `variant` at `file_path`: a BC texture, on a GPU with BC
-/// support, at an image path.
+/// Whether this client can load `variant` at `file_path`: a supported format, for a file type
+/// it may replace, on a GPU that has what it needs (`bc`: BC texture support).
 pub fn supports(variant: &Variant, file_path: &str, bc: bool) -> bool {
-    bc && variant.kind == "texture"
-        && ktx2::BcFormat::from_variant_format(&variant.format).is_some()
-        && could_have_variant(file_path)
+    supported_format(variant)
+        .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(file_path))
 }
 
 /// The first variant this client supports that has not failed this session.
@@ -354,9 +437,10 @@ impl BevyVariants {
     }
 }
 
-/// The DDS a variant unwraps to, and whether it came from the cache.
+/// What the loader reads for a variant (the DDS a BC texture unwraps to), and whether it came
+/// from the cache.
 pub(crate) struct VariantRead {
-    pub(crate) dds: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     pub(crate) cached: bool,
 }
 
@@ -495,7 +579,7 @@ impl IpfsIo {
         }
         let variant = select_variant(options, file, bc, |cid| variants.is_bad(cid))?.clone();
 
-        let format = ktx2::BcFormat::from_variant_format(&variant.format)?;
+        let Decoded::BcTexture(format) = supported_format(&variant)?.decoded;
 
         let url = format!("{base}/bevy/contents/{}", variant.cid);
         let key = CacheKey::Content(variant.cid.clone());
@@ -522,7 +606,10 @@ impl IpfsIo {
         let dds = crate::web_cache::read(&dds_url).await;
         if let Some(dds) = dds.filter(|dds| dds.starts_with(b"DDS ")) {
             variants.served(path, served, true);
-            return Some(VariantRead { dds, cached: true });
+            return Some(VariantRead {
+                bytes: dds,
+                cached: true,
+            });
         }
 
         // the cache holds bytes under a content key only once they hash to it
@@ -595,7 +682,7 @@ impl IpfsIo {
         }
         variants.served(path, served, from_cache);
         Some(VariantRead {
-            dds,
+            bytes: dds,
             cached: from_cache,
         })
     }

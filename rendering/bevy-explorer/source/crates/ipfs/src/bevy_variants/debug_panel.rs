@@ -96,7 +96,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     json!({
         "base": variants.base(),
         "state": state,
-        "formats": super::TAKEN_FORMATS,
+        "formats": super::taken_formats(),
         "manifestCounts": counts,
         "manifests": (!manifests.is_empty()).then(|| manifests.join("\n")),
         "served": [session.downloaded, session.cached],

@@ -3,7 +3,8 @@
 //! UNORM takes sRGB or linear from how the texture is requested. Every size read from the file
 //! is checked against what the header implies before anything is allocated or decoded.
 
-/// The texture formats a variant may have, by the manifest's `format`.
+/// The BC payloads a texture variant may carry; the manifest's `format` names one through
+/// `super::SUPPORTED_FORMATS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BcFormat {
     Bc1,
@@ -12,15 +13,6 @@ pub enum BcFormat {
 }
 
 impl BcFormat {
-    pub fn from_variant_format(format: &str) -> Option<Self> {
-        match format {
-            "ktx2-bc1" => Some(Self::Bc1),
-            "ktx2-bc5" => Some(Self::Bc5),
-            "ktx2-bc7" => Some(Self::Bc7),
-            _ => None,
-        }
-    }
-
     /// The UNORM `VkFormat`s the format's KTX2 may declare (BC1 with or without alpha).
     fn vk_formats(self) -> &'static [u32] {
         match self {
