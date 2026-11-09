@@ -14,16 +14,18 @@ platform (see [Sandboxing](#sandboxing)).
 - `uuav-server/` - compiled to `uuav-helper(.exe)`, the process that hosts
   the core
 - `uuav-ipc/` - the wire protocol and the native channels shared by both
-- `dist/<target>/` - the committed runtime set (Git LFS): the helper, the
-  FFmpeg libraries it links and their license texts, pinned by
-  [`tooling/uuav/uuav-binaries.lock.json`](../../tooling/uuav/uuav-binaries.lock.json)
+- `dist/<target>/` - a runtime set built here with `build.sh` (ignored):
+  the helper, the FFmpeg libraries it links and their license texts. On
+  Linux and macOS `nix build .#uuav-dist` from the repository root builds
+  the same set from [`infra/packages/uuav.nix`](../../infra/packages/uuav.nix)
 
 The workspace is self-contained and pins its own compiler
 (`rust-toolchain.toml`, independent of the Explorer's): the helper is a
-prebuilt process whose bytes must reproduce, while the client crate builds
-on any stable compiler the host uses. Its crates keep their `uuav-*` names
-rather than the `dcl-*` convention of `library/`
-([ADR](../../docs/adr/2026-11-03-uuav-native-video.md)).
+separate process shipped as a binary, while the client crate builds on any
+stable compiler the host uses. Its crates keep their `uuav-*` names rather
+than the `dcl-*` convention of `library/`
+([ADR](../../docs/adr/2026-11-03-uuav-native-video.md), amended by
+[the Nix build](../../docs/adr/2026-11-08-uuav-nix-built-runtime.md)).
 
 ## How it works
 
@@ -169,6 +171,10 @@ python3 ../../tooling/uuav/stage-dist.py host .target/debug/examples
 UUAV_FORCE_SW_DECODE=1 .target/debug/examples/smoke [media-url] # software decode
 ```
 
+With Nix the same run needs no cargo: `nix build .#uuav-dist .#uuav-smoke`
+from the repository root, stage `result` into a directory, copy
+`result-1/bin/smoke` beside it and run that.
+
 `gaps.rs` and `soak.rs` probe audio gaps and pacing the same way.
 
 ## Building
@@ -180,31 +186,55 @@ majors can never drift apart. FFmpeg is used as LGPL-3.0 shared libraries
 (`--enable-version3`, required by the Apache-2.0 mbedTLS that provides TLS
 on macOS and Linux); the license texts ship next to the binaries.
 
-### macOS (universal: Apple Silicon + Intel)
+### Linux and macOS: Nix
 
-The binaries are universal, but the build host must be Apple Silicon (the
-x86_64 slice is cross-compiled). Prerequisites: Xcode or the Command Line
-Tools, `rustup target add aarch64-apple-darwin x86_64-apple-darwin` (done by
-`rust-toolchain.toml`), `brew install nasm pkg-config cmake`.
+[`infra/packages/uuav.nix`](../../infra/packages/uuav.nix) builds FFmpeg
+`n8.1` with a statically linked mbedTLS 3.6 and libxml2, libva on Linux and
+VideoToolbox on macOS, then the helper with the compiler
+`rust-toolchain.toml` names. From the repository root:
 
 ```bash
-./scripts/build-ffmpeg-macos.sh   # FFmpeg n8.1 + mbedTLS 3.6, universal LGPL shared build
-./build.sh                        # dist/macos-universal
+nix build .#uuav-dist                                # result/: the runtime set
+nix build .#uuav-ffmpeg -o library/uuav/.third_party/ffmpeg   # the prefix for cargo
+nix build .#uuav-checks                              # fmt, clippy -D warnings, tests
 ```
 
-`build.sh` merges the slices with `lipo`, copies the seven FFmpeg dylibs,
-ad-hoc code-signs everything (mandatory on arm64) and runs
-`tooling/uuav/doctor-libs-macos.sh`, which fails the build if any deployed
-binary is thin. Dylib loading needs no `install_name_tool`: FFmpeg is
-configured with `--install-name-dir='@rpath'` and `uuav-helper` carries an
-`LC_RPATH @loader_path`, so the set resolves from the helper's directory.
+The first build compiles FFmpeg (a few minutes); every later one is a store
+hit until an input changes. With the prefix linked, `build.sh` and plain
+`cargo` commands in this directory work as on any machine: the helper
+links against the Nix FFmpeg and `dist/<target>/` is assembled from it
+(`macos-arm64`, `linux-x86_64`). `cargo build -p uuav-client --example
+smoke` and the tests need nothing else. On Linux `patchelf` must be on
+`PATH` for `build.sh` (`nix shell nixpkgs#patchelf`).
+
+Everything shipped carries `$ORIGIN` (Linux) or `@loader_path` (macOS)
+first in its runtime search path, so the set resolves from the helper's
+directory. The Linux set still resolves glibc, zlib and libdrm from the Nix
+store it was built in; the explorer packaging step that relinks them against
+the distribution comes with the Explorer integration. libva is built and
+shipped so the package does not depend on the distribution's; the hardware
+driver (`iHD`, `i965`, `radeonsi`, ...) is the distribution's, dlopened from
+its DRI directory. On a machine without a usable driver (CI runners,
+containers) the core logs a warning and decodes in software. The macOS set
+links system libraries and frameworks only: nixpkgs links Apple's libiconv
+from the store, so `uuav.nix` points every binary back at
+`/usr/lib/libiconv.2.dylib`, re-signs it and fails on any store reference
+left. macOS ships Apple Silicon only; ad-hoc code signing is mandatory there
+and `build.sh` does it.
 
 ### Windows (x86_64, mingw)
 
 Prerequisites: MSYS2 with `mingw-w64-x86_64-gcc` on `PATH` (the linker is
 `x86_64-w64-mingw32-gcc`; GNU ld is used because it can be told not to stamp
 the PE header, which is what makes two builds byte-identical),
-`rustup target add x86_64-pc-windows-gnu`.
+`rustup target add x86_64-pc-windows-gnu` (done by `rust-toolchain.toml`),
+LLVM (`winget install LLVM.LLVM`: libclang serves bindgen) and Python 3
+(`python`; `python3` is the Store stub on a stock Windows). bindgen's
+libclang does not always find clang's builtin headers on Windows
+(`mm_malloc.h` missing from mingw's `malloc.h`); `build.sh` and the
+workflow export `BINDGEN_EXTRA_CLANG_ARGS` from
+`tooling/uuav/bindgen-clang-args.sh`, do the same before a bare `cargo`
+command.
 
 ```bash
 bash ../../tooling/uuav/fetch-ffmpeg-windows.sh   # the hash-pinned BtbN LGPL shared build
@@ -213,25 +243,13 @@ bash build.sh                                     # dist/windows-x86_64
 
 The five DLLs in the helper's import closure ship (`avcodec`, `avformat`,
 `avutil`, `swresample`, `swscale`); the BtbN build links its support
-libraries statically.
-
-### Linux (x86_64)
-
-Prerequisites: `apt-get install build-essential nasm pkg-config cmake meson
-ninja-build libxml2-dev libdrm-dev zlib1g-dev patchelf libclang-dev`.
-
-```bash
-./scripts/build-ffmpeg-linux.sh   # FFmpeg n8.1 + mbedTLS 3.6 + libva 2.22, LGPL shared build
-./build.sh                        # dist/linux-<arch>
-```
-
-Everything shipped carries a `$ORIGIN` RUNPATH; the remaining shared
-dependencies are glibc, zlib, libxml2 and libdrm, present on every desktop
-distribution. libva is built from source and shipped so the package does not
-depend on the distribution's; the hardware driver (`iHD`, `i965`,
-`radeonsi`, ...) is the distribution's, dlopened from its DRI directory. On
-a machine without a usable driver (CI runners, containers) the core logs a
-warning and decodes in software.
+libraries statically. The pin is
+[`tooling/uuav/ffmpeg-windows.json`](../../tooling/uuav/ffmpeg-windows.json):
+a month-end `autobuild` release (the only ones BtbN keeps), its asset and
+sha256. On Linux, and on Windows inside a WSL2 distribution with Nix,
+`nix build .#uuav-dist-windows` cross-compiles the helper with mingw-w64 and
+assembles the same set from the same asset; the output is byte-identical
+across machines, so a `result-*` copied to the Windows side is the set.
 
 ## Runtime deployment
 
@@ -240,7 +258,7 @@ Everything ships in one directory, next to the executable that links
 helper's libraries resolve from:
 
 ```
-dist/macos-universal/          dist/windows-x86_64/       dist/linux-x86_64/
+macos-arm64/                   windows-x86_64/            linux-x86_64/
   uuav-helper                    uuav-helper.exe            uuav-helper
   libavcodec.62.dylib            avcodec-62.dll             libavcodec.so.62
   libavdevice.62.dylib           avformat-62.dll            libavdevice.so.62
@@ -254,86 +272,43 @@ dist/macos-universal/          dist/windows-x86_64/       dist/linux-x86_64/
                                                             LICENSE-*.txt
 ```
 
-`tooling/uuav/stage-dist.py <target|host> <dir>` copies a set next to a
-binary (a packaged app, a test binary, the smoke example) and refuses an
-unfetched Git LFS pointer. The FFmpeg majors (avcodec **62**, avformat
-**62**, avutil **60**, swresample **6**, swscale **9**) are tied to the
-8.1 release and must match what the helper linked; keep `.third_party/ffmpeg`
-and `ffmpeg-sys-next = "8.1.0"` in `Cargo.toml` in lockstep. If a library is
-missing on a user machine the helper dies at load - watch for the "uuav
-helper terminated" error with a loader exit code.
+`tooling/uuav/stage-dist.py <set|host> <dir>` copies a set (a `nix build`
+result, or `dist/<host target>/` with `host`) next to a binary (a packaged
+app, a test binary, the smoke example) and refuses an incomplete one. The
+FFmpeg majors (avcodec **62**, avformat **62**, avutil **60**, swresample
+**6**, swscale **9**) are tied to the 8.1 release and must match what the
+helper linked; keep the FFmpeg commit in `infra/packages/uuav.nix`, the
+Windows asset and `ffmpeg-sys-next = "8.1.0"` in `Cargo.toml` in lockstep.
+If a library is missing on a user machine the helper dies at load - watch
+for the "uuav helper terminated" error with a loader exit code.
 
-## CI verification of the shipped binaries
+## CI
 
-The committed binaries are pinned by a hash lock,
-`tooling/uuav/uuav-binaries.lock.json`, and two workflows enforce it:
+[`uuav.yml`](../../.github/workflows/uuav.yml) runs on every pull request
+that touches this tree, `tooling/uuav/`, `infra/packages/uuav.nix` or the
+flake, and on `main`:
 
-- **`uuav-verify.yml`** runs on every PR touching this tree, `tooling/uuav/`
-  or the shared `tooling/native-lock/`. It re-hashes every shipped binary
-  and every build input that feeds one (Rust source trees, manifests, the
-  `Cargo.lock` closure of the shipping root, `.cargo/config.toml`, the FFmpeg
-  builder scripts) against the lock, reads the FFmpeg configure line
-  embedded in each shipped library and compares it with the recorded
-  provenance, and requires new native binaries to be stored in Git LFS. It
-  also formats, checks, tests and lints the FFmpeg-free crates (`uuav-ipc`,
-  `uuav-client`) on Linux, macOS and Windows and asserts nothing in this
-  workspace links `uuav-client`.
-- **`uuav-native.yml`** runs on demand (`workflow_dispatch`, or the
-  `ci:uuav-native` label on a PR that touches UUAV inputs). It rebuilds all three targets from pinned
-  inputs - macOS and Linux FFmpeg from the source commits in the lock,
-  Windows FFmpeg fetched as the hash-pinned BtbN release asset - lints and
-  tests the whole workspace where the FFmpeg headers exist, then runs two
-  gates: Gate A (`tooling/uuav/repro-gate.sh`) builds twice from two source
-  trees through one canonical path (`tooling/uuav/build-canonical.sh`) and
-  requires byte-identical cargo artifacts; Gate B
-  (`tooling/native-lock/reproduces-lock.py`) compares the fresh build against
-  the committed hashes, hard-failing only when the runner's toolchain
-  matches the one pinned in the lock. The Linux job also runs the headless
-  smoke in software mode. Nothing is committed.
+- **Linux and macOS** restore the Nix store snapshot
+  (`nix-community/cache-nix-action`, saved from `main` runs, keyed on the
+  flake lock, the package file, `Cargo.lock`, the toolchain and the Windows
+  pin), build `uuav-dist`, `uuav-smoke` and `uuav-checks` (fmt, clippy with
+  `-D warnings`, the workspace tests), stage the set and upload it. Linux
+  also runs the headless smoke in software decode and cross-builds the
+  Windows set. A cache hit makes the whole job a store restore plus the
+  copy; a miss rebuilds exactly what changed.
+- **Windows** checks the crates on a Windows runner (the fetch script,
+  MSYS2's mingw gcc, fmt, clippy, the tests with the DLLs on `PATH`),
+  downloads the Linux leg's `uuav-windows-x86_64` set, builds the smoke
+  harness natively and runs it against that set in software decode. The
+  shipped Windows set comes from the Nix build only.
 
-A target marked `pending` in the lock (no binaries committed yet) is built
-and gated like the others but not verified; the first relock promotes it.
-
-### Relocking after a deliberate rebuild
-
-`uuav-native.yml` hands back, per target, the rebuilt runtime set and the
-`toolchain-<os>.txt` its "Record the toolchain actually used" step wrote.
-Relocking is the human step that commits both:
-
-1. Copy the files from that run's `uuav-<target>` artifact into
-   `dist/<target>/` (macOS can be built and relocked locally on Apple
-   Silicon: `scripts/build-ffmpeg-macos.sh`, then
-   `tooling/uuav/build-canonical.sh`, and write `toolchain-macos.txt` with
-   the same commands as the workflow step).
-2. Relock that target, passing the toolchain the build recorded:
-
-```
-python3 tooling/native-lock/verify-binaries.py --lock tooling/uuav/uuav-binaries.lock.json --update --only macos-universal --toolchain toolchain-macos.txt
-```
-
-3. Check `git lfs ls-files` lists every binary, and that
-   `python3 tooling/native-lock/verify-binaries.py --lock tooling/uuav/uuav-binaries.lock.json`
-   passes offline before committing.
-
-`--toolchain` is what makes the relock honest about who built the bytes.
-Without it, `--update` refuses on any host whose pinned components differ
-from `targets.<t>.rust.toolchain` - including the host that just bumped
-`rust-toolchain.toml`. `--update` rewrites only machine-derived fields; it
-never touches the upstream pins (FFmpeg, mbedTLS and libva tags and commits,
-the BtbN release asset and its sha256), which are deliberate human moves.
-
-Two things about the round trip are easy to get wrong:
-
-- **Gate B needs a second run.** The round that produces the binaries
-  compares them against the lock as it stands *before* the relock, so it
-  still skips. It becomes a real byte comparison on the next labelled run,
-  after the relocked lock and the new binaries are pushed.
-- **`library/uuav` must not move between the build and the relock.** The
-  binaries come from the commit CI built; `source_digest` is taken from the
-  working tree at relock time.
-
-The lock digests the source files as raw bytes, so `.gitattributes` forces
-`eol=lf` across this tree.
+`tooling/tests/test_uuav_workflow.py` pins the workflow's shape (the cache
+steps and key, the installables, the smoke after the roots, the Windows pin
+format) and `test_uuav_stage_dist.py` the staging tool. Nothing built is
+committed: the pins are `flake.lock`, the FFmpeg commit and hash in
+`infra/packages/uuav.nix`, nixpkgs' mbedTLS, libxml2 and libva, the
+workspace `Cargo.lock` and the BtbN asset digest. Bumping any of them is an
+ordinary pull request whose CI builds the result.
 
 ## For the host
 
@@ -349,5 +324,6 @@ What the Explorer integration (a later change) relies on:
   that call must stay on one thread.
 - Run an audio output and pull `uuav_player_read_audio` from its callback
   at the sample rate and channel count passed to `uuav_init`.
-- Ship `dist/<target>/` next to the executable (`stage-dist.py`), including
-  the license texts.
+- Ship the runtime set next to the executable (`stage-dist.py` on a
+  `nix build .#uuav-dist` result or `dist/<target>/`), including the license
+  texts.

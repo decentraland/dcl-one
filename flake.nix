@@ -15,18 +15,17 @@
       systems = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
     in {
-      packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
+      packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; };
           rust = pkgs.rust-bin.fromRustupToolchainFile ./services/catalyst/rust-toolchain.toml;
-        in import ./infra/packages {
-          inherit pkgs;
           craneLib = (crane.mkLib pkgs).overrideToolchain rust;
+        in import ./infra/packages/uuav.nix { inherit pkgs craneLib; }
+        // (if pkgs.stdenv.hostPlatform.isLinux then import ./infra/packages {
+          inherit pkgs craneLib;
           revision = self.rev or self.dirtyRev or "unversioned";
-        }) // {
-          # The tool environments alone: the macOS CI legs take ffmpeg from here.
-          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
-        };
+        # The tool environments alone: the macOS CI legs take ffmpeg from here.
+        } else import ./infra/packages/tools.nix { inherit pkgs; }));
 
       checks.x86_64-linux.dev-service = import ./infra/dev/service-test {
         pkgs = import nixpkgs { system = "x86_64-linux"; };

@@ -287,16 +287,15 @@
     },
     {
       "id": "uuav-native",
-      "description": "UUAV native video player: the client crate the Explorer links, the sandboxed uuav-helper, the committed runtime set and its lock, the native build and verification workflows",
+      "description": "UUAV native video player: the client crate the Explorer links, the sandboxed uuav-helper, the Nix-built runtime set and its workflow",
       "owners": [
         "@decentraland/client"
       ],
       "paths": [
         "/library/uuav/",
         "/tooling/uuav/",
-        "/tooling/native-lock/",
-        "/.github/workflows/uuav-native.yml",
-        "/.github/workflows/uuav-verify.yml"
+        "/infra/packages/uuav.nix",
+        "/.github/workflows/uuav.yml"
       ]
     },
     {
