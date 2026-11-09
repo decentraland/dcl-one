@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { FakeConsole } from '../driver/console.ts'
+import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
-import { MAX_BOOTS, arrive, closeSessions, openSession, parsePosition, sameRealm } from '../driver/session.ts'
+import { type AuthIdentity, addressOf } from '../driver/identity.ts'
+import { MAX_BOOTS, arrive, closeSessions, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
 import type { Target } from '../driver/target.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -87,6 +88,71 @@ describe('arrive', () => {
     assert.equal(state.arrivals, 3)
     assert.deepEqual(fake.sent('changerealm'), ['/changerealm https://zone.example.test'])
     assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100'])
+  })
+})
+
+describe('signIn', () => {
+  const account = '0x' + '11'.repeat(32)
+  const web: Target = { ...target, transport: 'web', accounts: [account] }
+  const landed = '{"address":"0xabc","guest":false,"phase":"entering"}'
+  /** The identity a `/hud_login` line carries. */
+  const identityOf = (line: string): AuthIdentity => JSON.parse(Buffer.from(line.split(' ')[1]!, 'base64').toString('utf8')) as AuthIdentity
+
+  test('on the web signs in through the HUD with the account, the pick and the destination, then waits for the world', async () => {
+    let reads = 0
+    const fake = new FakeConsole({ hud_login: landed, world_state: () => world({ inWorld: ++reads > 1 }) })
+    const state = await signIn(new Explorer(fake), web, 'account', { name: 'tester', look: 2 }, { realm: 'https://zone.example.test', position: '100,100' })
+    assert.equal(state.inWorld, true)
+    const [line] = fake.sent('hud_login')
+    assert.match(line!, /^\/hud_login \S+ --name tester --look 2 --realm https:\/\/zone\.example\.test --position 100,100$/)
+    assert.deepEqual(fake.sent('login_identity'), [])
+    assert.deepEqual(fake.sent('hud_click'), [])
+    assert.equal(identityOf(line!).authChain[0]!.payload, addressOf(account))
+  })
+
+  test("a web guest is a fresh account marked as one, bound for the target's realm and parcel", async () => {
+    const fake = new FakeConsole({ hud_login: landed, world_state: () => world() })
+    await signIn(new Explorer(fake), web, 'guest')
+    const [line] = fake.sent('hud_login')
+    assert.match(line!, /^\/hud_login \S+ --name e2etester --look 1 --guest --realm https:\/\/realm\.example\.test --position 0,0$/)
+    assert.notEqual(identityOf(line!).authChain[0]!.payload, addressOf(account))
+    assert.deepEqual(fake.sent('login_guest'), [])
+  })
+
+  test("a web sign-in the HUD refuses fails the boot with the HUD's reason, the identity redacted", async () => {
+    const fake = new FakeConsole({
+      hud_login: (line) => {
+        throw new ConsoleError(line, 'the account has no profile yet: a first login needs --name and --look')
+      },
+      world_state: () => world()
+    })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), (error: unknown) => {
+      assert.ok(error instanceof ConsoleError)
+      assert.match(error.message, /^`\/hud_login <redacted> --name e2etester --look 1 --realm \S+ --position 0,0` failed: the account has no profile yet/)
+      return true
+    })
+    assert.deepEqual(fake.sent('world_state'), [])
+  })
+
+  test('a destination the HUD did not take fails the boot at once, not after the world\'s wait', async () => {
+    const fake = new FakeConsole({ hud_login: '{"address":"0xabc","guest":false,"phase":"lobby"}', world_state: () => world() })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), /the HUD did not take the destination https:\/\/realm\.example\.test at 0,0: it answered the sign-in in phase lobby/)
+    assert.deepEqual(fake.sent('world_state'), [])
+  })
+
+  test('a web app whose HUD has no /hud_login fails the boot saying so, with no fall back to the engine', async () => {
+    const fake = new FakeConsole({ login_identity: 'logged in with identity', world_state: () => world() })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), /the web app under test has no \/hud_login/)
+    assert.deepEqual(fake.sent('login_identity'), [])
+  })
+
+  test('on the standalone the engine signs in, already at its realm', async () => {
+    const fake = new FakeConsole({ login_identity: 'logged in with identity', login_guest: '', world_state: () => world() })
+    await signIn(new Explorer(fake), { ...target, accounts: [account] }, 'account')
+    assert.match(fake.sent('login_identity')[0]!, /^\/login_identity \S+ --name e2etester --look 1$/)
+    assert.deepEqual(fake.sent('hud_login'), [])
+    await signIn(new Explorer(fake), target, 'guest')
+    assert.deepEqual(fake.sent('login_guest'), ['/login_guest'])
   })
 })
 
