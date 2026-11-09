@@ -2,6 +2,8 @@
 """Select web preview builds and publish only validated static build outputs."""
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
 import http.client
 from html.parser import HTMLParser
 import json
@@ -26,6 +28,13 @@ PIPELINE_INPUTS = {
 PACKAGE = '@dcl-regenesislabs/dcl-one-ui-review'
 MARKER = '<!-- web-pr-previews -->'
 CDN_USER_AGENT = 'dcl-one-web-preview/1.0 (+https://github.com/decentraland/dcl-one)'
+CDN_PACKAGE_ROOT = f'https://cdn.decentraland.org/{PACKAGE}/'
+REVIEWER_ENTRY = '/dcl-ui-review/index.html'
+# npm's semver parser uses JavaScript's safe integer range.
+MAX_RUN_ID = 9007199254740991
+API_COMMAND_BUDGET = 180
+API_REQUEST_TIMEOUT = 30
+API_DEADLINE = ContextVar('web_preview_api_deadline', default=None)
 STATIC_EXTENSIONS = {
     '.html',
     '.js',
@@ -116,14 +125,30 @@ def require_reviewer(repository, run_id):
     return reviewer_ready(jobs, artifacts)
 
 
-def package_reviewer(source, target, revision, run_id, attempt):
+def source_identity(revision, run_id, attempt):
     if (
-        not re.fullmatch(r'[0-9a-f]{40}', revision)
-        or run_id < 1
+        not isinstance(revision, str)
+        or not re.fullmatch(r'[0-9a-f]{40}', revision)
+        or type(run_id) is not int
+        or not 1 <= run_id <= MAX_RUN_ID
         or type(attempt) is not int
         or attempt < 1
     ):
         raise ValueError('Invalid preview source identity')
+    return {'revision': revision, 'run': run_id, 'attempt': attempt}
+
+
+def matches_source(source, revision, run_id, attempt):
+    return (
+        isinstance(source, dict)
+        and type(source.get('run')) is int
+        and type(source.get('attempt')) is int
+        and source == source_identity(revision, run_id, attempt)
+    )
+
+
+def package_reviewer(source, target, revision, run_id, attempt):
+    identity = source_identity(revision, run_id, attempt)
     if not (source / 'dcl-ui-review/index.html').is_file():
         raise ValueError('Missing built reviewer entry: dcl-ui-review/index.html')
     files = list(source.rglob('*'))
@@ -154,7 +179,7 @@ def package_reviewer(source, target, revision, run_id, attempt):
         json.dumps(
             {
                 'name': PACKAGE,
-                'version': '0.1.0',
+                'version': f'0.1.{run_id}',
                 'license': 'Apache-2.0',
                 'description': 'Static UI reviewer preview for dcl-one',
                 'repository': {
@@ -165,9 +190,22 @@ def package_reviewer(source, target, revision, run_id, attempt):
         )
         + '\n'
     )
-    (target / 'preview-source.json').write_text(
-        json.dumps({'revision': revision, 'run': run_id, 'attempt': attempt}) + '\n'
-    )
+    (target / 'preview-source.json').write_text(json.dumps(identity) + '\n')
+
+
+@contextmanager
+def api_budget(seconds=API_COMMAND_BUDGET):
+    token = API_DEADLINE.set(time.monotonic() + seconds)
+    try:
+        yield
+    finally:
+        API_DEADLINE.reset(token)
+
+
+def require_api_time(delay=0):
+    deadline = API_DEADLINE.get()
+    if deadline is not None and deadline - time.monotonic() < delay + API_REQUEST_TIMEOUT:
+        raise TimeoutError('GitHub API command budget exhausted; retry this job later')
 
 
 def api(path, *, method='GET', body=None, paginate=False, collection=None):
@@ -179,6 +217,7 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
     attempts = 3 if method in ('GET', 'PATCH') else 1
     for attempt in range(attempts):
         delay = 2**attempt
+        require_api_time()
         try:
             result = subprocess.run(
                 args,
@@ -186,7 +225,7 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=30,
+                timeout=API_REQUEST_TIMEOUT,
             )
         except subprocess.TimeoutExpired:
             if attempt == attempts - 1:
@@ -220,6 +259,7 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
                             for item in (page[collection] if collection else page)
                         ]
                     return value
+        require_api_time(delay)
         print(f'Transient GitHub API failure; retrying ({attempt + 1}/{attempts})', file=sys.stderr)
         time.sleep(delay)
 
@@ -323,8 +363,6 @@ def newest_run_for_pr(repository, run_id, run, pr):
         if associations and not any(same_pull_request(item, pr) for item in associations):
             continue
         jobs = api(f'repos/{repository}/actions/runs/{candidate_id}/jobs?per_page=100')['jobs']
-        if not jobs:
-            continue
         selection = selection_job(jobs)
         if selection and selection.get('conclusion') == 'skipped':
             continue
@@ -362,7 +400,7 @@ def resolve(repository, run_id, *, expected_attempt=None, eligible=publishable, 
         pr = api(f'repos/{repository}/pulls/{int(candidate["number"])}')
         if same_pull_request(candidate, pr) and eligible(run, pr, repository):
             matches.append(pr)
-    return run, matches[0] if len(matches) == 1 else None
+    return run, matches[0] if matches and (target_pr is not None or len(matches) == 1) else None
 
 
 def cdn_url(version):
@@ -370,7 +408,7 @@ def cdn_url(version):
         r'[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+', version
     ):
         raise ValueError('Invalid published preview version')
-    return f'https://cdn.decentraland.org/{PACKAGE}/{version}'
+    return CDN_PACKAGE_ROOT + version
 
 
 class ReviewerAssets(HTMLParser):
@@ -426,6 +464,30 @@ def read_cdn_source(url):
         return json.load(response)
 
 
+def prior_preview_url(body, revision, run_id, attempt):
+    links = re.findall(r'\[Preview\]\(([^\s)]+)\)', body)
+    if len(links) != 1:
+        return ''
+    link = links[0]
+    if not link.startswith(CDN_PACKAGE_ROOT) or not link.endswith(REVIEWER_ENTRY):
+        return ''
+    version = link[len(CDN_PACKAGE_ROOT) : -len(REVIEWER_ENTRY)]
+    try:
+        url = cdn_url(version)
+    except ValueError:
+        return ''
+    if link != url + REVIEWER_ENTRY:
+        return ''
+    try:
+        source = read_cdn_source(url)
+    except HTTPError as error:
+        error.close()
+        if error.code in (404, 410):
+            return ''
+        raise
+    return link if matches_source(source, revision, run_id, attempt) else ''
+
+
 def verify_reviewer_resources(url, entry, html):
     parser = ReviewerAssets()
     parser.feed(html)
@@ -443,16 +505,16 @@ def verify_reviewer_resources(url, entry, html):
 
 def verify_cdn(version, revision, run_id, timeout=60, *, attempt):
     url = cdn_url(version)
+    entry = url + REVIEWER_ENTRY
 
     def probe():
-        if read_cdn_source(url) != {'revision': revision, 'run': run_id, 'attempt': attempt}:
+        if not matches_source(read_cdn_source(url), revision, run_id, attempt):
             raise ValueError('CDN preview belongs to a different source build')
-        with cdn_open(f'{url}/dcl-ui-review/index.html') as response:
+        with cdn_open(entry) as response:
             if response.status != 200 or 'text/html' not in response.headers.get(
                 'Content-Type', ''
             ):
                 raise CdnResourceNotReady('CDN reviewer entry is not HTML')
-            entry = f'{url}/dcl-ui-review/index.html'
             verify_reviewer_resources(url, entry, response.read().decode('utf-8'))
             return entry
 
@@ -474,15 +536,13 @@ def complete_cdn(repository, event):
     deadline = time.monotonic() + 60
     version = payload.get('packageVersion', '')
     source = retry_cdn(lambda: read_cdn_source(cdn_url(version)), deadline)
-    if (
-        not isinstance(source, dict)
-        or not isinstance(source.get('revision'), str)
-        or not re.fullmatch(r'[0-9a-f]{40}', source['revision'])
-        or type(source.get('run')) is not int
-        or source['run'] < 1
-        or type(source.get('attempt')) is not int
-        or source['attempt'] < 1
-    ):
+    if not isinstance(source, dict):
+        raise ValueError('Invalid CDN source receipt')
+    try:
+        identity = source_identity(source.get('revision'), source.get('run'), source.get('attempt'))
+    except ValueError as error:
+        raise ValueError('Invalid CDN source receipt') from error
+    if source != identity:
         raise ValueError('Invalid CDN source receipt')
     run, pr = resolve(repository, source['run'], expected_attempt=source['attempt'])
     if pr is None:
@@ -512,6 +572,24 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     if selection and selection.get('conclusion') == 'skipped':
         print('Preview selection was skipped; keep the existing preview status')
         return
+    comments = api(f'repos/{repository}/issues/{pr["number"]}/comments?per_page=100', paginate=True)
+    current = next(
+        (
+            comment
+            for comment in comments
+            if comment['user']['login'] == 'github-actions[bot]'
+            and comment['body'].startswith(MARKER)
+        ),
+        None,
+    )
+    if (
+        current
+        and not reviewer_url
+        and publication_result in ('uploading', 'waiting for human approval')
+    ):
+        reviewer_url = prior_preview_url(
+            current['body'], run['head_sha'], run_id, run['run_attempt']
+        )
     if selection and selection.get('conclusion') in ('failure', 'cancelled', 'timed_out'):
         rows.append(
             f'| Preview selection | {selection["conclusion"]} | '
@@ -544,11 +622,9 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     no_products = not rows
     if no_products:
         rows.append('| Web previews | not selected | No web products in the cumulative PR diff |')
-    verified_marker = f'<!-- verified-preview:{run_id}:{run["run_attempt"]} -->'
     body = '\n'.join(
         [
             MARKER,
-            *([verified_marker] if reviewer_url else []),
             '### Web previews',
             '',
             f'Commit `{run["head_sha"][:7]}`. [Build run]({run["html_url"]}).',
@@ -558,21 +634,8 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
             *rows,
         ]
     )
-    comments = api(f'repos/{repository}/issues/{pr["number"]}/comments?per_page=100', paginate=True)
-    current = next(
-        (
-            comment
-            for comment in comments
-            if comment['user']['login'] == 'github-actions[bot]'
-            and comment['body'].startswith(MARKER)
-        ),
-        None,
-    )
     if no_products and current is None:
         print('No selected web products to report')
-        return
-    if current and not reviewer_url and verified_marker in current['body'].splitlines():
-        print('Keep the verified preview instead of a late publication-progress update')
         return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id, expected_attempt=expected_attempt, eligible=reportable)
@@ -588,7 +651,7 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     api(path, method='PATCH' if current else 'POST', body={'body': body})
 
 
-def main():
+def run_cli():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     select = sub.add_parser('select')
@@ -663,6 +726,11 @@ def main():
         return
     if args.command == 'package-reviewer':
         package_reviewer(args.source, args.target, run['head_sha'], run_id, run['run_attempt'])
+
+
+def main():
+    with api_budget():
+        run_cli()
 
 
 if __name__ == '__main__':

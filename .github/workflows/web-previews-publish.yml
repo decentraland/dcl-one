@@ -145,7 +145,7 @@ jobs:
         env:
           BRANCH_NAME: web-preview-publication
   report:
-    needs: [source, reviewer]
+    needs: [source, pending, reviewer]
     if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -168,7 +168,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
+          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.pending.result == 'failure' && 'pending status update failed' || needs.pending.result == 'cancelled' && 'pending status update cancelled' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report
   cdn:
     name: Verify uploaded reviewer and report its URL
