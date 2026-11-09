@@ -39,6 +39,7 @@ pub enum ConnectivityStatus {
 #[derive(Default)]
 pub struct SocialClientHandler {
     pub is_initialized: bool,
+    pub has_snapshot: bool,
     pub sent_requests: HashMap<Address, FriendshipRequestResponse>,
     pub received_requests: HashMap<Address, FriendshipRequestResponse>,
     pub friends: HashMap<Address, FriendProfile>,

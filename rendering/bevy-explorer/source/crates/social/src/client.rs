@@ -137,6 +137,8 @@ pub struct SocialClientHandler {
     friendship_receiver: UnboundedReceiver<FriendData>,
 
     pub is_initialized: bool,
+    /// Whether a snapshot has ever arrived; stays true through a disconnect.
+    pub has_snapshot: bool,
     pub sent_requests: HashMap<Address, FriendshipRequestResponse>,
     pub received_requests: HashMap<Address, FriendshipRequestResponse>,
     pub friends: HashMap<Address, FriendProfile>,
@@ -187,6 +189,7 @@ impl SocialClientHandler {
 
         Some(Self {
             is_initialized: false,
+            has_snapshot: false,
             sender: event_sx,
             query_sender: query_sx,
             friendship_receiver: response_rx,
@@ -437,6 +440,7 @@ impl SocialClientHandler {
                     self.blocked_by = blocked_by;
                     self.dm_privacy = dm_privacy;
                     self.is_initialized = true;
+                    self.has_snapshot = true;
                 }
                 FriendData::FriendshipEvent(ev) => {
                     (self.friend_event_callback)(&ev);

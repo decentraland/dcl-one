@@ -141,11 +141,11 @@ impl<'a> Blocks<'a> {
     /// `Live` with the sets as they are once the client has had a snapshot, whether or not it
     /// is still connected; `Unavailable` before that.
     pub fn from_client(
-        initialized: bool,
+        has_snapshot: bool,
         blocked: &'a HashSet<Address>,
         blocked_by: &'a HashSet<Address>,
     ) -> Self {
-        if initialized {
+        if has_snapshot {
             Blocks::Live {
                 blocked,
                 blocked_by,
@@ -196,7 +196,7 @@ impl BanBlock<'_, '_> {
                 reason: BlocksUnavailableReason::NotSignedIn,
             },
             Some(client) => {
-                Blocks::from_client(client.is_initialized, &client.blocked, &client.blocked_by)
+                Blocks::from_client(client.has_snapshot, &client.blocked, &client.blocked_by)
             }
         }
     }
