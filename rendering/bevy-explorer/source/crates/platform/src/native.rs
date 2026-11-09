@@ -22,6 +22,8 @@ pub(crate) use crate::devtools::Trace;
 pub mod deeplink;
 mod dm_history;
 pub use dm_history::*;
+mod outfit_thumbnails;
+pub use outfit_thumbnails::*;
 
 pub struct WebSocket {
     inner: WebSocketStream<ConnectStream>,
