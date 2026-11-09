@@ -9,9 +9,10 @@
   - the Explorer's direct crates.io dependencies against the newest release on crates.io
   - the lock's shape: sources, duplicated crates
   - the age of the scene runtime's V8 (the transitive `v8` crate) against deno_core, rusty_v8 and Chrome
+  - the age of the catalyst's V8 (its direct `v8` pin, services/catalyst/Cargo.lock) against rusty_v8 and Chrome
 Every GitHub and crates.io response is cached under .cache/upstream-drift/api so reruns are cheap.
 `render` (tooling/upstream-drift-site.py) turns the data, the research and the review into the site.
-`v8-report` reads the V8 section of data.json, prints it and writes the issue body when V8 is stale.
+`v8-report` reads the V8 sections of data.json, prints them and writes the issue body when either V8 is stale.
 """
 import argparse
 import base64
@@ -30,6 +31,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / 'rendering/bevy-explorer'
+CATALYST_LOCK = ROOT / 'services/catalyst/Cargo.lock'
 CACHE = ROOT / '.cache/upstream-drift'
 API_CACHE = CACHE / 'api'
 DATA = CACHE / 'data.json'
@@ -448,19 +450,36 @@ def chrome_stable():
             'date': datetime.datetime.fromtimestamp(release['time'] / 1000, datetime.UTC).date().isoformat()}
 
 
-def v8_findings(v8):
-    """Why the scene runtime's V8 needs attention; empty when it is current enough."""
-    locked, accepted, chrome = v8['locked'], v8['accepted'], v8['chrome']
+def v8_lock_findings(v8):
+    """Findings on the lock itself, and whether the locked V8 is known well enough to age-check."""
+    locked = v8['locked']
     findings = []
     if v8.get('unregistered'):
         findings.append(f"v8 outside crates.io, its age is not checked: {', '.join(v8['unregistered'])}")
     if locked is None:
-        return findings
+        return findings, False
     if locked['milestone'] is None:
         findings.append(f"cannot tell the V8 version of the locked v8 {locked['crate']}")
-        return findings
+        return findings, False
     if len(v8['locked_versions']) > 1:
         findings.append(f"the lock has more than one v8: {', '.join(v8['locked_versions'])}")
+    return findings, True
+
+
+def chrome_gap_findings(v8):
+    locked, chrome = v8['locked'], v8['chrome']
+    if chrome and chrome['milestone'] - locked['milestone'] >= CHROME_GAP_LIMIT:
+        return [f"M{locked['milestone']} is {chrome['milestone'] - locked['milestone']} milestones behind Chrome stable "
+                f"M{chrome['milestone']} (limit {CHROME_GAP_LIMIT})"]
+    return []
+
+
+def v8_findings(v8):
+    """Why the scene runtime's V8 needs attention; empty when it is current enough."""
+    locked, accepted = v8['locked'], v8['accepted']
+    findings, checkable = v8_lock_findings(v8)
+    if not checkable:
+        return findings
     if not (accepted and accepted['milestone']):
         # Degraded data must keep the issue open, not close it.
         findings.append(f"unable to resolve which v8 deno_core {v8['deno_core']['version']} accepts "
@@ -469,24 +488,47 @@ def v8_findings(v8):
         findings.append(f"behind deno_core: v8 {locked['crate']} (V8 {locked['v8']}, M{locked['milestone']}) is locked while "
                         f"deno_core {v8['deno_core']['version']} accepts v8 {accepted['crate']} (V8 {accepted['v8']}, M{accepted['milestone']}); "
                         'bump deno_core, deno_web and deno_webidl together')
-    if chrome and chrome['milestone'] - locked['milestone'] >= CHROME_GAP_LIMIT:
-        findings.append(f"M{locked['milestone']} is {chrome['milestone'] - locked['milestone']} milestones behind Chrome stable "
-                        f"M{chrome['milestone']} (limit {CHROME_GAP_LIMIT})")
-    return findings
+    return findings + chrome_gap_findings(v8)
 
 
-def collect_v8(lock_pkgs):
+def catalyst_v8_findings(v8):
+    """The catalyst pins v8 directly, so any newer rusty_v8 is a bump it can take."""
+    locked, newest = v8['locked'], v8['newest']
+    findings, checkable = v8_lock_findings(v8)
+    if not checkable:
+        return findings
+    if not (newest and newest['milestone']):
+        findings.append('unable to resolve the newest rusty_v8 on crates.io')
+    elif parse_version(locked['crate'])[0] < parse_version(newest['crate'])[0]:
+        findings.append(f"behind the newest rusty_v8: v8 {locked['crate']} (V8 {locked['v8']}, M{locked['milestone']}) is pinned while "
+                        f"v8 {newest['crate']} (V8 {newest['v8']}, M{newest['milestone']}) is out; bump the `=` pin in services/catalyst/Cargo.toml")
+    return findings + chrome_gap_findings(v8)
+
+
+def v8_lock(lock_pkgs):
+    """The lock's registry v8 versions and any v8 from git or a path, or None without a v8."""
     v8_pkgs = [p for p in lock_pkgs if p['name'] == 'v8']
     if not v8_pkgs:
         return None
-    locked_versions = sorted({p['version'] for p in v8_pkgs if 'crates.io' in p['source']}, key=lambda v: parse_version(v)[0])
-    unregistered = sorted(f"{p['version']} ({p['source'] or 'path'})" for p in v8_pkgs if 'crates.io' not in p['source'])
-    v8_meta = crates_io('v8')
+    return (sorted({p['version'] for p in v8_pkgs if 'crates.io' in p['source']}, key=lambda v: parse_version(v)[0]),
+            sorted(f"{p['version']} ({p['source'] or 'path'})" for p in v8_pkgs if 'crates.io' not in p['source']))
+
+
+def v8_describer(v8_meta):
     released = {v['num']: v['created_at'][:10] for v in v8_meta['versions']}
 
     def describe(version):
         return {'crate': version, 'date': released.get(version), **v8_engine(version, rusty_v8_readme(version))} if version else None
+    return describe
 
+
+def collect_v8(lock_pkgs):
+    lock = v8_lock(lock_pkgs)
+    if not lock:
+        return None
+    locked_versions, unregistered = lock
+    v8_meta = crates_io('v8')
+    describe = v8_describer(v8_meta)
     deno_core = crates_io('deno_core')['crate']['max_stable_version']
     req = v8_requirement('deno_core', deno_core)
     v8 = {'locked_versions': locked_versions, 'unregistered': unregistered,
@@ -502,10 +544,28 @@ def collect_v8(lock_pkgs):
     return v8
 
 
-def collect_v8_or_error(lock_pkgs):
-    """collect_v8, or {'error': ...}: an outage must not cost the night its site and fork PR."""
+def collect_catalyst_v8(lock_pkgs):
+    lock = v8_lock(lock_pkgs)
+    if not lock:
+        return None
+    locked_versions, unregistered = lock
+    v8_meta = crates_io('v8')
+    describe = v8_describer(v8_meta)
+    v8 = {'locked_versions': locked_versions, 'unregistered': unregistered,
+          'locked': describe(locked_versions[0] if locked_versions else None),
+          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable(),
+          'chrome_gap_limit': CHROME_GAP_LIMIT}
+    v8['findings'] = catalyst_v8_findings(v8)
+    print(f"  catalyst v8: pinned {(v8['locked'] or {}).get('crate')} (M{(v8['locked'] or {}).get('milestone')}), "
+          f"newest {(v8['newest'] or {}).get('crate')}, Chrome stable M{v8['chrome']['milestone']}: "
+          f"{len(v8['findings'])} finding(s)", file=sys.stderr)
+    return v8
+
+
+def collect_v8_or_error(lock_pkgs, collect=None):
+    """collect_v8 (or `collect`), or {'error': ...}: an outage must not cost the night its site and fork PR."""
     try:
-        return collect_v8(lock_pkgs)
+        return (collect or collect_v8)(lock_pkgs)
     except Exception as error:
         print(f'  v8: {error!r}', file=sys.stderr)
         return {'error': repr(error)}
@@ -531,23 +591,60 @@ def v8_report_markdown(v8):
     return '\n'.join(lines) + '\n'
 
 
+def catalyst_v8_report_markdown(v8):
+    def row(label, entry):
+        if not entry:
+            return f'| {label} | – | – | – | |'
+        return f"| {label} | {entry['crate']} | {entry.get('v8') or '?'} | M{entry.get('milestone') or '?'} | {entry.get('date') or ''} |"
+    chrome = v8['chrome']
+    lines = ['The catalyst hosts SDK7 world scenes on V8 through a direct `v8` pin (rusty_v8) in '
+             '`services/catalyst/Cargo.toml`, locked in `services/catalyst/Cargo.lock`. No deno_core bounds it, so any '
+             'newer rusty_v8 is a bump to take.', '',
+             '| | v8 crate | V8 | Chrome | released |', '| --- | --- | --- | --- | --- |',
+             row('pinned', v8['locked']), row('newest rusty_v8', v8['newest']),
+             f"| Chrome stable | – | – | M{chrome['milestone']} | {chrome['date']} ({chrome['version']}) |", '']
+    if v8['findings']:
+        lines += ['Findings:', ''] + [f'- {f}' for f in v8['findings']]
+    else:
+        lines.append('No findings.')
+    return '\n'.join(lines) + '\n'
+
+
+# data.json key, section title, renderer
+V8_WORKSPACES = [('v8', 'Bevy Explorer scene runtime', v8_report_markdown),
+                 ('catalyst_v8', 'Catalyst SDK7 scene host', catalyst_v8_report_markdown)]
+
+
 def v8_report(body_path):
-    v8 = json.loads(DATA.read_text()).get('v8')
-    if not v8:
-        print('no v8 crate in the lock')
-        return 0
-    if 'error' in v8:
-        # Leave the issue as it is: fail without touching the body.
-        print(f"the V8 freshness data could not be collected: {v8['error']}", file=sys.stderr)
+    data = json.loads(DATA.read_text())
+    sections, findings, collected, errors = [], [], 0, 0
+    for key, title, render in V8_WORKSPACES:
+        v8 = data.get(key)
+        if not v8:
+            sections.append(f'## {title}\n\nNo v8 crate in the lock.\n')
+            continue
+        if 'error' in v8:
+            # The other workspace's findings still count; this one keeps the issue open.
+            errors += 1
+            finding = f"unable to resolve the V8 freshness data: {v8['error']}"
+            print(f'{title}: {finding}', file=sys.stderr)
+            sections.append(f'## {title}\n\nFindings:\n\n- {finding}\n')
+            findings.append((title, finding))
+            continue
+        collected += 1
+        sections.append(f'## {title}\n\n' + render(v8))
+        findings += [(title, f) for f in v8['findings']]
+    if errors and not collected:
+        # Nothing usable: leave the issue as it is and fail without touching the body.
         return 1
-    text = v8_report_markdown(v8)
+    text = '\n'.join(sections)
     print(text)
     if os.environ.get('GITHUB_ACTIONS'):
-        for finding in v8['findings']:
-            print(f'::warning title=V8 freshness::{finding}')
+        for title, finding in findings:
+            print(f'::warning title=V8 freshness ({title})::{finding}')
     if body_path:
         body = Path(body_path)
-        if v8['findings']:
+        if findings:
             body.write_text(text + '\nUpdated nightly by `.github/workflows/bevy-explorer-upstream.yml`.\n')
         else:
             body.unlink(missing_ok=True)
@@ -592,6 +689,9 @@ def main():
     data['registry'] = collect_registry_drift(source_dir, lock_pkgs)
     print('v8', file=sys.stderr)
     data['v8'] = collect_v8_or_error(lock_pkgs)
+    print('catalyst v8', file=sys.stderr)
+    # Read inside the guard: a missing catalyst lock is a collect error, not a crash.
+    data['catalyst_v8'] = collect_v8_or_error(CATALYST_LOCK, lambda path: collect_catalyst_v8(lock_packages(path.read_text())))
     CACHE.mkdir(parents=True, exist_ok=True)
     DATA.write_text(json.dumps(data, indent=1))
     # one file per source for the research agents, with the advisories against its crates

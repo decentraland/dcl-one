@@ -150,6 +150,7 @@ function overview(){
   ${Object.entries(verdicts).map(([k,v])=>`<div class="metric"><div class="v">${v}</div><div class="l">${esc(k)}</div></div>`).join('')}</div>
   ${D.review_summary ? `<div class="sum">${D.review_summary}</div>` : ''}
   ${v8Panel()}
+  ${catalystV8Panel()}
   <h3>Sources</h3><table><thead><tr><th>source</th><th>parent</th><th>base</th><th>latest</th><th>carried</th><th>missing</th><th>releases missed</th><th>branch moved</th><th>advisories</th><th>verdict</th></tr></thead><tbody>
   ${rows.map(s => { const r = rec(s); return `<tr><td><a href="#sources/${encodeURIComponent(s.url)}">${esc(name(s))}</a><br><span class="muted">${esc((s.crates||[]).slice(0,3).map(c=>c.name).join(', '))}${s.crates.length>3?' +'+(s.crates.length-3):''}</span></td>
     <td>${esc(s.parent||'–')}</td><td>${esc(s.base?.tag||'–')}<br><span class="muted">${esc(s.base?.date||'')}</span></td><td>${esc(s.parent_latest_release?.tag||'–')}<br><span class="muted">${esc(s.parent_latest_release?.date||'')}</span></td>
@@ -159,10 +160,19 @@ function overview(){
 function v8Panel(){
   const v = D.v8; if (!v) return '';
   if (v.error) return `<h3>Scene runtime V8</h3><p class="empty">Not collected: ${esc(v.error)}</p>`;
-  const row = (label, e, note) => `<tr><td>${esc(label)}</td><td>${e ? `<a href="https://crates.io/crates/v8/${esc(e.crate)}" target="_blank" rel="noreferrer">${esc(e.crate)}</a>` : '–'}</td><td>${esc(e?.v8 || '?')}</td><td>${e?.milestone ? 'M' + e.milestone : '?'}</td><td>${esc(e?.date || '')} <span class="muted">${esc(note || '')}</span></td></tr>`;
   return `<h3>Scene runtime V8</h3><p class="muted">The <code>v8</code> crate deno_core locks; RustSec has no V8 advisories, so its age is checked here. Chrome gap limit: ${v.chrome_gap_limit} milestones.</p>
-  <table><thead><tr><th></th><th>v8 crate</th><th>V8</th><th>Chrome</th><th>released</th></tr></thead><tbody>
-  ${row('locked', v.locked)}${row(`newest deno_core (${v.deno_core.version}) accepts`, v.accepted, v.deno_core.v8_req)}${row('newest rusty_v8', v.newest)}
+  ${v8Table(v, [['locked', v.locked], [`newest deno_core (${v.deno_core.version}) accepts`, v.accepted, v.deno_core.v8_req], ['newest rusty_v8', v.newest]])}`;
+}
+function catalystV8Panel(){
+  const v = D.catalyst_v8; if (!v) return '';
+  if (v.error) return `<h3>Catalyst V8</h3><p class="empty">Not collected: ${esc(v.error)}</p>`;
+  return `<h3>Catalyst V8</h3><p class="muted">The catalyst's direct <code>v8</code> pin for SDK7 world scenes; no deno_core bounds it, so any newer rusty_v8 is a bump to take. Chrome gap limit: ${v.chrome_gap_limit} milestones.</p>
+  ${v8Table(v, [['pinned', v.locked], ['newest rusty_v8', v.newest]])}`;
+}
+function v8Table(v, rows){
+  const row = (label, e, note) => `<tr><td>${esc(label)}</td><td>${e ? `<a href="https://crates.io/crates/v8/${esc(e.crate)}" target="_blank" rel="noreferrer">${esc(e.crate)}</a>` : '–'}</td><td>${esc(e?.v8 || '?')}</td><td>${e?.milestone ? 'M' + e.milestone : '?'}</td><td>${esc(e?.date || '')} <span class="muted">${esc(note || '')}</span></td></tr>`;
+  return `<table><thead><tr><th></th><th>v8 crate</th><th>V8</th><th>Chrome</th><th>released</th></tr></thead><tbody>
+  ${rows.map(r => row(...r)).join('')}
   <tr><td>Chrome stable</td><td>–</td><td>–</td><td>M${v.chrome.milestone}</td><td>${esc(v.chrome.date)} <span class="muted">${esc(v.chrome.version)}</span></td></tr></tbody></table>
   ${v.findings.length ? `<ul>${v.findings.map(f => `<li><span class="badge b-security">behind</span> ${esc(f)}</li>`).join('')}</ul>` : '<p class="empty">V8 is current.</p>'}`;
 }

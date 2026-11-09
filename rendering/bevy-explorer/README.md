@@ -70,9 +70,12 @@ it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/
 RustSec has no V8 advisories, so the same run checks the scene runtime's `v8` crate: `upstream-drift.py
 v8-report` compares the locked V8 with what the newest deno_core accepts, the newest rusty_v8 and Chrome
 stable, and keeps the "scene runtime V8 is behind" issue open while the lock is behind deno_core or 12+
-Chrome milestones old, or while it cannot resolve them. On pull requests and weekly, `bevy-explorer-deny.yml`
-runs `cargo deny check advisories bans` with `source/deny.toml`: a second `v8` or an advisory missing from its
-baseline ignore list fails; drop an ignore entry once its crate is fixed.
+Chrome milestones old, or while it cannot resolve them. The same issue has a section for the catalyst's
+directly pinned `v8` (`services/catalyst/Cargo.toml`, SDK7 world scenes), open while that pin is behind the
+newest rusty_v8 or 12+ Chrome milestones old; a collect failure for one workspace keeps the other's findings.
+On pull requests and weekly, `bevy-explorer-deny.yml` runs `cargo deny check advisories bans` with
+`source/deny.toml` (and `catalyst-deny.yml` with `services/catalyst/deny.toml`): a second `v8` or an advisory
+missing from its baseline ignore list fails; drop an ignore entry once its crate is fixed.
 
 ## Native builds and HUD updates
 

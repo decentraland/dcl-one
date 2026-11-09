@@ -127,6 +127,83 @@ class VersionLogicTests(unittest.TestCase):
                 self.assertEqual(drift.v8_report(str(body)), 1)
             self.assertEqual(body.read_text(), 'previous body')
 
+    def catalyst_state(self, locked, newest, chrome):
+        return {'locked_versions': [locked['crate']] if locked else [], 'locked': locked, 'newest': newest,
+                'chrome': {'milestone': chrome, 'version': f'{chrome}.0.1', 'date': '2026-11-01'}, 'chrome_gap_limit': 12}
+
+    def test_catalyst_v8_findings_flag_any_newer_rusty_v8(self):
+        findings = drift.catalyst_v8_findings(self.catalyst_state({'crate': '152.2.0', 'v8': '15.2.124.1', 'milestone': 152},
+                                                                  {'crate': '152.3.0', 'v8': '15.2.130.0', 'milestone': 152}, 157))
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith('behind the newest rusty_v8: v8 152.2.0'))
+        self.assertIn('services/catalyst/Cargo.toml', findings[0])
+
+    def test_catalyst_v8_findings_quiet_on_the_newest_rusty_v8(self):
+        entry = {'crate': '152.2.0', 'v8': '15.2.124.1', 'milestone': 152}
+        self.assertEqual(drift.catalyst_v8_findings(self.catalyst_state(entry, entry, 157)), [])
+
+    def test_catalyst_v8_findings_flag_the_chrome_gap_and_an_unresolved_newest(self):
+        findings = drift.catalyst_v8_findings(self.catalyst_state({'crate': '140.0.0', 'v8': '14.0', 'milestone': 140}, None, 157))
+        self.assertEqual(findings, ['unable to resolve the newest rusty_v8 on crates.io',
+                                    'M140 is 17 milestones behind Chrome stable M157 (limit 12)'])
+
+    def test_collect_catalyst_v8_reads_the_direct_pin(self):
+        meta = {'v8': {'versions': [{'num': '152.2.0', 'created_at': '2026-10-01T00:00:00Z'}, {'num': '153.0.0', 'created_at': '2026-11-02T00:00:00Z'}],
+                       'crate': {'max_stable_version': '153.0.0'}}}
+        lock = [{'name': 'v8', 'version': '152.2.0', 'source': 'registry+https://github.com/rust-lang/crates.io-index'}]
+        with patch.object(drift, 'crates_io', side_effect=meta.get), \
+             patch.object(drift, 'rusty_v8_readme', return_value=None), \
+             patch.object(drift, 'chrome_stable', return_value={'milestone': 157, 'version': '157.0.1', 'date': '2026-11-01'}):
+            v8 = drift.collect_catalyst_v8(lock)
+        self.assertEqual((v8['locked']['crate'], v8['locked']['date'], v8['newest']['milestone']), ('152.2.0', '2026-10-01', 153))
+        self.assertEqual(len(v8['findings']), 1)
+        self.assertIn('| pinned | 152.2.0 | 15.2 | M152 | 2026-10-01 |', drift.catalyst_v8_report_markdown(v8))
+
+    def test_collect_v8_or_error_covers_a_missing_catalyst_lock(self):
+        missing = Path(tempfile.gettempdir(), 'no-such-dir', 'Cargo.lock')
+        error = drift.collect_v8_or_error(missing, lambda path: drift.collect_catalyst_v8(drift.lock_packages(path.read_text())))
+        self.assertIn('FileNotFoundError', error['error'])
+
+    def write_report(self, data):
+        with tempfile.TemporaryDirectory() as tmp:
+            path, body = Path(tmp, 'data.json'), Path(tmp, 'body.md')
+            path.write_text(drift.json.dumps(data))
+            with patch.object(drift, 'DATA', path), patch('sys.stdout'):
+                code = drift.v8_report(str(body))
+            return code, body.read_text() if body.exists() else None
+
+    def explorer_current(self):
+        entry = {'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}
+        state = self.v8_state(entry, entry, 151)
+        state.update(newest=entry, chrome={'milestone': 151, 'version': '151.0.1', 'date': '2026-11-01'}, findings=[])
+        return state
+
+    def test_v8_report_opens_the_issue_for_the_catalyst_alone(self):
+        catalyst = self.catalyst_state({'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}, {'crate': '153.0.0', 'v8': '15.3', 'milestone': 153}, 157)
+        catalyst['findings'] = drift.catalyst_v8_findings(catalyst)
+        code, body = self.write_report({'v8': self.explorer_current(), 'catalyst_v8': catalyst})
+        self.assertEqual(code, 0)
+        self.assertIn('## Bevy Explorer scene runtime', body)
+        self.assertIn(drift.v8_report_markdown(self.explorer_current()), body)
+        self.assertIn('## Catalyst SDK7 scene host', body)
+        self.assertIn('behind the newest rusty_v8', body)
+
+    def test_v8_report_keeps_the_other_findings_when_one_workspace_fails(self):
+        catalyst = self.catalyst_state({'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}, {'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}, 157)
+        catalyst['findings'] = []
+        code, body = self.write_report({'v8': {'error': 'boom'}, 'catalyst_v8': catalyst})
+        self.assertEqual(code, 0)
+        self.assertIn("- unable to resolve the V8 freshness data: boom", body)
+        self.assertIn('| pinned | 152.2.0 |', body)
+
+    def test_v8_report_removes_the_body_when_both_are_current(self):
+        entry = {'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}
+        catalyst = {**self.catalyst_state(entry, entry, 157), 'findings': []}
+        self.assertEqual(self.write_report({'v8': self.explorer_current(), 'catalyst_v8': catalyst}), (0, None))
+
+    def test_v8_report_fails_when_neither_workspace_was_collected(self):
+        self.assertEqual(self.write_report({'v8': {'error': 'a'}, 'catalyst_v8': {'error': 'b'}}), (1, None))
+
     def test_v8_issue_step_runs_last_and_matches_the_exact_title(self):
         text = WORKFLOW.read_text()
         issue = text.index('- name: Open, update or close the V8 freshness issue')
