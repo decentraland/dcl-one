@@ -45,6 +45,16 @@ pub mod local_storage;
 pub mod op_wrappers;
 pub mod websocket;
 
+/// Tests build runtimes on sibling libtest threads, which the protected platform can't serve
+/// on hosts with memory protection keys; only tests take the unprotected one.
+#[cfg(test)]
+fn test_platform() {
+    deno_core::JsRuntime::init_platform(
+        Some(deno_core::v8::new_unprotected_default_platform(0, false).make_shared()),
+        false,
+    );
+}
+
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
@@ -52,6 +62,9 @@ pub fn create_runtime(
     preview: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
+    #[cfg(test)]
+    test_platform();
+
     // add fetch stack
     let net = deno_net::deno_net::init_ops_and_esm::<NP>(None, None);
     let web = deno_web::deno_web::init_ops_and_esm::<TP>(
