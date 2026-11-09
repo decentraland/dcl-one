@@ -336,7 +336,9 @@
         "/library/ui/test/foundations-source.test.ts",
         "/library/ui/test/foundations.test.tsx",
         "/library/ui/foundations/source.json",
-        "/library/ui/foundations/typography/font-source.json"
+        "/library/ui/foundations/typography/font-source.json",
+        "/library/ui/figma/src/install.ts",
+        "/library/ui/figma/src/install.test.ts"
       ]
     },
     {

@@ -68,7 +68,10 @@
         "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
         "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment.",
-        "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests."
+        "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
+        "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
+        "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
+        "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -756,11 +759,13 @@
           ]
         },
         "library/ui/figma/port-verification.mjs": {
-          "sha256": "ac5b77575c9e6f01432b2d11bf364927e4ed19e05d3ff41dd26616dcb7f84663",
+          "sha256": "ec41df35b8d4ed7161556f42cecb2f731934fdb68747c91bde94a853385a7bd4",
           "fds": null,
           "deviation": [
             "dcl-one-only",
-            "bot-review-279"
+            "bot-review-279",
+            "public-foundations-integrity",
+            "verified-install"
           ]
         },
         "library/ui/figma/port-verification.test.ts": {
@@ -2306,18 +2311,20 @@
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/cli.test.ts": {
-          "sha256": "5dd0abb313c61fe516225f08bc8bf2924ce522f3dabf7ec8ab08860624d0b8e2",
+          "sha256": "b85bf0bbaa535096339c83b135d854369f2143ba6147db6bb7edf2d36a8aafd1",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.test.ts",
             "sha256": "e0a6f001d53d1eb8e69c5601873d52c348bff503c067b3804f749e834ff8acd5"
           },
           "deviation": [
             "live-access-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "port:9c6dfbe6",
+            "seal-removed"
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "f1f44a2a63b9bc9e1d439a6441b921b59187aefaf2f32fd48eba6023a6055f39",
+          "sha256": "c6d617effe0d3a0eb212d82a41ed6f7d8f57c15615fe209d56f19eef331d24ad",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2326,7 +2333,9 @@
             "live-access-removed",
             "capture-removed",
             "live-read-restored",
-            "cache-hardening"
+            "cache-hardening",
+            "port:9c6dfbe6",
+            "seal-removed"
           ]
         },
         "library/ui/figma/src/config.ts": {
@@ -3069,6 +3078,29 @@
             "review-followup-2"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
+        },
+        "library/ui/figma/src/install.test.ts": {
+          "fds": null,
+          "deviation": [
+            "port:9c6dfbe6",
+            "seal-removed",
+            "foundation-review",
+            "verified-install"
+          ],
+          "sha256": "b7041238fbdd688862a5275a5f2a6a2683a79b502ff09a882743ed0ce5b51951"
+        },
+        "library/ui/figma/src/install.ts": {
+          "fds": {
+            "path": "dcl-mcp-figma/src/promotion/promote.ts",
+            "sha256": "9a0aead291c7ad0daf492447122e0b6ce87402a223d4309443219424621f55df"
+          },
+          "deviation": [
+            "port:9c6dfbe6",
+            "seal-removed",
+            "foundation-review",
+            "verified-install"
+          ],
+          "sha256": "d8bb29109e43229e22bc1dcd62b0654b10f7453f2ae8b88d299a4a3ae23758ea"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
@@ -3934,7 +3966,11 @@
         "review-followup-2": 47,
         "bot-review-279-b": 48,
         "bot-review-279-c": 49,
-        "public-foundations-integrity": 50
+        "public-foundations-integrity": 50,
+        "port:9c6dfbe6": 51,
+        "seal-removed": 51,
+        "foundation-review": 52,
+        "verified-install": 53
       }
     }
   ],

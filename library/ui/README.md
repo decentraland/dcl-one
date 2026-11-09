@@ -86,4 +86,8 @@ A generated component throws during render when it receives a variant combinatio
 
 `upstream.lock.json` records the imported sources, their revisions and licenses, the digest of every ported file and of every file of the pinned capture.
 
-This tree ships the pinned `9c6dfbe6` capture. Reported live differences in colors (89 primitives and 42 semantics), text styles (34 rather than 32), spacing (18 rather than 16) and body/sm line height await a coordinated capture refresh. They are not adopted by installation.
+This tree ships the pinned `9c6dfbe6` capture. Reported live differences in colors (89 primitives and 42 semantics), text styles (34 rather than 32), spacing (18 rather than 16) and body/sm line height await a coordinated capture refresh. They are not included until the capture is refreshed and foundations are regenerated.
+
+### Regenerate foundations
+
+Maintainers run `pnpm figma fetch-source` to materialize the pinned cache, then `pnpm figma install foundations`. This single install boundary regenerates the five families and `source.json`, preserves maintained CSS and licensed assets, and refuses unverified input or dirty targets. For an isolated reproduction, use `pnpm figma install foundations --out ../.agent-work/figma-install/proof/foundations`. Repeating installation makes no changes.

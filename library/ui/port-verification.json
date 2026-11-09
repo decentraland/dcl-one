@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "3203612bc1cfd184bc79872207f2a9eac7cb1f85815f6aeec76f8d873b1173bc",
+  "lockHash": "ed4390e08b5042d84fed3f8789d74855bbcb4ab65f1757ba33c2835b95e4f126",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "8f0f83af910baeda4da20f9d4c6c03aac81b82d6",
+  "figmaTree": "59a9136464ed76541b33c2953cd091473ef1eb51",
   "checks": {
     "fetch-source": {
       "result": "pass",
@@ -11,7 +11,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "434 ported files and 39 public foundation files match pinned bytes and origins"
+      "detail": "436 ported files and 39 public foundation files match pinned bytes and origins"
     },
     "diff": {
       "result": "pass",
@@ -28,6 +28,10 @@
     "navbar-bounds": {
       "result": "pass",
       "detail": "19 of 19 targeted navbar bounds checks pass"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "clean verified-cache install reproduces all 39 tracked files including provenance, second install changes nothing"
     }
   }
 }
