@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, runDiff, runSync, type App } from '../app.js'
-import { writePromotionManifest } from '../promotion/manifest.js'
 import { LEDGER } from './consumers.js'
 import { lifecycleFixture, fixtureBytes, put, json, SNAP, GEN } from './lifecycle-fixture.js'
 import { checkLedger, loadLedger, serializeLedger, sha256 } from './orphaned-assets.js'
@@ -106,13 +105,6 @@ describe('when a recapture stops generating an asset', () => {
     expect(await causes(base, head)).toEqual([])
   })
 
-  it('should admit it after the review promotion manifest is regenerated', async () => {
-    await writePromotionManifest(app)
-    const manifest = await json(head, 'figma/review/src/review/promotion.json')
-    expect(Object.keys(manifest.files)).toContain(orphan)
-    expect(await causes(base, head)).toEqual([])
-  })
-
   it('should report it as retained, not removed, in diff', async () => {
     const report = await runDiff(app, { source: 'snapshot' })
     expect(report.diff.removed).toEqual([])
@@ -173,14 +165,6 @@ describe('when a recapture stops generating an asset', () => {
     ])('should reject admission for %s', async (_, file, content) => {
       await put(head, file, content(path.basename(orphan)))
       expect((await causes(base, head)).join('\n')).toContain('the asset is still used by')
-    })
-
-    it('should reject a path elsewhere in the review promotion manifest', async () => {
-      const manifest = await json(head, 'figma/review/src/review/promotion.json')
-      await put(head, 'figma/review/src/review/promotion.json', { ...manifest, note: orphan })
-      expect((await causes(base, head)).join('\n')).toContain(
-        'figma/review/src/review/promotion.json'
-      )
     })
 
     it('should fail closed on an unreadable text file', async () => {

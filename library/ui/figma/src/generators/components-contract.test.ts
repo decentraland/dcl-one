@@ -3,24 +3,23 @@ import path from 'node:path'
 import { ESLint } from 'eslint'
 import ts from 'typescript'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { projectRoot } from '../../test/snapshot.js'
-import { loadConfig } from '../config.js'
+import { fixturesDir, projectRoot, snapshotDir, testConfig } from '../../test/snapshot.js'
 import type { ComponentSpec, TextRole, ViewNode } from '../ir/components.js'
 import { buildComponentSpecs, withTextRoles } from '../mappers/component-spec.js'
 import { generateComponents } from './components.js'
 
-async function navbarSpec(): Promise<ComponentSpec> {
-  const config = await loadConfig(projectRoot)
+async function demoNavSpec(): Promise<ComponentSpec> {
+  const config = await testConfig()
   const data = JSON.parse(
-    await readFile(path.join(projectRoot, 'figma-snapshot/components/Nav bar.json'), 'utf8')
+    await readFile(path.join(snapshotDir, 'components/Demo Nav.json'), 'utf8')
   )
   return buildComponentSpecs({
-    pages: [{ name: 'Nav bar', category: 'Navigation', data }],
+    pages: [{ name: 'Demo Nav', category: 'Navigation', data }],
     config,
     collections: [],
     textStyles: [],
     icons: new Map()
-  }).find((spec) => spec.name === 'NavBar')!
+  }).find((spec) => spec.name === 'DemoNav')!
 }
 
 function sourceFor(spec: ComponentSpec): string {
@@ -58,14 +57,14 @@ function contractDiagnostics(source: string, assignments: string): string[] {
 }
 
 describe('generated public component contracts', () => {
-  describe('when NavBar has sparse captured variant combinations', () => {
+  describe('when DemoNav has sparse captured variant combinations', () => {
     let spec: ComponentSpec
     let source: string
     let valid: string
     let invalid: string
 
     beforeEach(async () => {
-      spec = await navbarSpec()
+      spec = await demoNavSpec()
       source = sourceFor(spec)
       valid = ''
       invalid = ''
@@ -74,7 +73,7 @@ describe('generated public component contracts', () => {
           for (const balances of ['none', 'credits', 'creditsMana']) {
             for (const theme of ['dark', 'light']) {
               const props = { viewport, signedIn, balances, theme }
-              const line = `const v${viewport}${signedIn}${balances}${theme}: NavBarProps = ${JSON.stringify(props)};\n`
+              const line = `const v${viewport}${signedIn}${balances}${theme}: DemoNavProps = ${JSON.stringify(props)};\n`
               if (balances === 'none' || (signedIn && theme === 'dark')) valid += line
               else invalid += '// @ts-expect-error uncaptured variant combination\n' + line
             }
@@ -96,10 +95,10 @@ describe('generated public component contracts', () => {
         contractDiagnostics(
           source,
           [
-            'const defaults: NavBarProps = {};',
-            'const credits: NavBarProps = { signedIn: true, balances: "credits" };',
+            'const defaults: DemoNavProps = {};',
+            'const credits: DemoNavProps = { signedIn: true, balances: "credits" };',
             '// @ts-expect-error default signedIn is false',
-            'const invalid: NavBarProps = { balances: "credits" };'
+            'const invalid: DemoNavProps = { balances: "credits" };'
           ].join('\n')
         )
       ).toEqual([])
@@ -111,7 +110,7 @@ describe('generated public component contracts', () => {
     let spec: ComponentSpec
 
     beforeEach(async () => {
-      spec = await navbarSpec()
+      spec = await demoNavSpec()
       source = sourceFor(spec)
     })
 
@@ -125,9 +124,9 @@ describe('generated public component contracts', () => {
           source,
           [
             '// @ts-expect-error positional text labels have different roles in each view',
-            'const unsafe: NavBarProps = { label: "Explore" };',
+            'const unsafe: DemoNavProps = { label: "Explore" };',
             '// @ts-expect-error later positional labels are not public either',
-            'const unsafeLater: NavBarProps = { label8: "Explore" };'
+            'const unsafeLater: DemoNavProps = { label8: "Explore" };'
           ].join('\n')
         )
       ).toEqual([])
@@ -141,9 +140,9 @@ describe('generated public component contracts', () => {
       const omitted = spec.slots.filter((slot) => slot.kind === 'text').map((slot) => slot.name)
       expect(omitted.length).toBeGreaterThan(1)
       expect(source).toContain(
-        `const navBarSuppressedProps = Object.freeze([${omitted.map((name) => `'${name}'`).join(', ')}] as const)`
+        `const demoNavSuppressedProps = Object.freeze([${omitted.map((name) => `'${name}'`).join(', ')}] as const)`
       )
-      expect(source).toContain('suppressed={navBarSuppressedProps}')
+      expect(source).toContain('suppressed={demoNavSuppressedProps}')
       expect(source).not.toMatch(/\b_label\d*\b/)
     })
 
@@ -154,23 +153,23 @@ describe('generated public component contracts', () => {
     })
 
     it('should pass the library lint once promoted', async () => {
-      expect(await lintAsPromoted('NavBar', source)).toEqual([])
+      expect(await lintAsPromoted('DemoNav', source)).toEqual([])
     })
 
     it('should fail that lint if a suppressed prop were bound to an unused alias (control)', async () => {
       const aliased = source.replace('  forceState,\n', '  label: _label,\n  forceState,\n')
       expect(aliased).not.toBe(source)
-      expect(await lintAsPromoted('NavBar', aliased)).toContainEqual(
+      expect(await lintAsPromoted('DemoNav', aliased)).toContainEqual(
         expect.stringContaining('@typescript-eslint/no-unused-vars')
       )
     })
 
     it('should regenerate byte-identically from a fresh capture read', async () => {
-      expect(sourceFor(await navbarSpec())).toBe(source)
+      expect(sourceFor(await demoNavSpec())).toBe(source)
     })
 
     it('should name the component for the runtime error on an uncaptured selection', () => {
-      expect(source).toContain("component='NavBar'")
+      expect(source).toContain("component='DemoNav'")
     })
 
     it('should retain semantic link targets independently of text overrides', () => {
@@ -188,7 +187,7 @@ describe('generated public component contracts', () => {
     let spec: ComponentSpec
 
     beforeEach(async () => {
-      spec = await navbarSpec()
+      spec = await demoNavSpec()
       delete spec.exposeTextSlots
     })
 
@@ -200,7 +199,7 @@ describe('generated public component contracts', () => {
 
     it('should preserve text overrides if the setting is omitted', () => {
       expect(
-        contractDiagnostics(sourceFor(spec), 'const props: NavBarProps = { label: "Explore" };')
+        contractDiagnostics(sourceFor(spec), 'const props: DemoNavProps = { label: "Explore" };')
       ).toEqual([])
     })
 
@@ -208,7 +207,7 @@ describe('generated public component contracts', () => {
       expect(
         contractDiagnostics(
           sourceFor({ ...spec, exposeTextSlots: true }),
-          'const props: NavBarProps = { label: "Explore" };'
+          'const props: DemoNavProps = { label: "Explore" };'
         )
       ).toEqual([])
     })
@@ -217,7 +216,7 @@ describe('generated public component contracts', () => {
 
 describe('when a variant value contains a line terminator', () => {
   it('should emit a parsable union type', async () => {
-    const spec = await navbarSpec()
+    const spec = await demoNavSpec()
     const prop = spec.props.find((item) => item.kind === 'enum')!
     const hostile = 'one\ntwo\rthree\u2028four\u2029five'
     prop.default = hostile
@@ -237,10 +236,10 @@ describe('when a variant value contains a line terminator', () => {
 describe('when a JavaScript caller supplies suppressed text slots', () => {
   // The runtime drops them before the DOM (figma-runtime.dom.test.tsx renders that); the type forbids them.
   it('should type each as never and list it for the runtime to drop', async () => {
-    const spec = await navbarSpec()
+    const spec = await demoNavSpec()
     const source = sourceFor(spec)
     const suppressed =
-      /const navBarSuppressedProps = Object\.freeze\(\[([^\]]*)\] as const\)/.exec(source)?.[1] ??
+      /const demoNavSuppressedProps = Object\.freeze\(\[([^\]]*)\] as const\)/.exec(source)?.[1] ??
       ''
     for (const slot of spec.slots.filter((item) => item.kind === 'text')) {
       expect(suppressed).toContain(`'${slot.name}'`)
@@ -252,7 +251,7 @@ describe('when a JavaScript caller supplies suppressed text slots', () => {
 describe('when a component binds text roles', () => {
   let source: string
 
-  // The fixture ids written onto the captured NavBar views, as a capture that records descendant ids would.
+  // The fixture ids written onto the synthetic DemoNav views, as a capture that records descendant ids would.
   // The four menu tabs are links, so their roles declare the link prop names.
   const HREFS: Record<string, string> = {
     discoverLabel: 'discoverHref',
@@ -261,10 +260,10 @@ describe('when a component binds text roles', () => {
     learnLabel: 'learnHref'
   }
 
-  async function navbarWithRoles(hrefs: Record<string, string> = HREFS): Promise<ComponentSpec> {
-    const spec = await navbarSpec()
+  async function demoNavWithRoles(hrefs: Record<string, string> = HREFS): Promise<ComponentSpec> {
+    const spec = await demoNavSpec()
     const { targets } = JSON.parse(
-      await readFile(path.join(projectRoot, 'test/fixtures/navbar-text-roles.json'), 'utf8')
+      await readFile(path.join(fixturesDir, 'demo-nav-text-roles.json'), 'utf8')
     ) as {
       targets: { role: string; view: string; path: string; nodeId: string; namePath: string[] }[]
     }
@@ -289,7 +288,7 @@ describe('when a component binds text roles', () => {
   }
 
   beforeEach(async () => {
-    source = sourceFor(await navbarWithRoles())
+    source = sourceFor(await demoNavWithRoles())
   })
 
   it('should type each string role as an optional string prop', () => {
@@ -328,16 +327,16 @@ describe('when a component binds text roles', () => {
   })
 
   it('should fail generation when a declared href takes the name of a semantic handler', async () => {
-    const spec = await navbarWithRoles({ ...HREFS, shopLabel: 'onMenu' })
-    expect(() => sourceFor(spec)).toThrow('NavBar: generated prop onMenu is declared twice')
+    const spec = await demoNavWithRoles({ ...HREFS, shopLabel: 'onMenu' })
+    expect(() => sourceFor(spec)).toThrow('DemoNav: generated prop onMenu is declared twice')
   })
 
   it('should fail generation when a role under a linked action declares no href', async () => {
     const { shopLabel: _shop, ...withoutShop } = HREFS
     void _shop
-    const spec = await navbarWithRoles(withoutShop)
+    const spec = await demoNavWithRoles(withoutShop)
     expect(() => sourceFor(spec)).toThrow(
-      'Text role shopLabel sits under the linked action NavMenuTab: declare its href in textRoles'
+      'Text role shopLabel sits under the linked action MenuTab: declare its href in textRoles'
     )
   })
 
@@ -346,8 +345,8 @@ describe('when a component binds text roles', () => {
       contractDiagnostics(
         source,
         [
-          'const none: NavBarProps = { signInLabel: "Entrar" };',
-          'const both: NavBarProps = { signedIn: true, notificationCount: 3, notificationsLabel: "3 notificaciones" };'
+          'const none: DemoNavProps = { signInLabel: "Entrar" };',
+          'const both: DemoNavProps = { signedIn: true, notificationCount: 3, notificationsLabel: "3 notificaciones" };'
         ].join('\n')
       )
     ).toEqual([])
@@ -359,18 +358,18 @@ describe('when a component binds text roles', () => {
         source,
         [
           '// @ts-expect-error a count needs its accessible label',
-          'const bare: NavBarProps = { signedIn: true, notificationCount: 3 };',
+          'const bare: DemoNavProps = { signedIn: true, notificationCount: 3 };',
           '// @ts-expect-error a count is a number',
-          'const text: NavBarProps = { signedIn: true, notificationCount: "3", notificationsLabel: "3" };',
+          'const text: DemoNavProps = { signedIn: true, notificationCount: "3", notificationsLabel: "3" };',
           '// @ts-expect-error a string role takes text, not a number',
-          'const label: NavBarProps = { signInLabel: 3 };'
+          'const label: DemoNavProps = { signInLabel: 3 };'
         ].join('\n')
       )
     ).toEqual([])
   })
 
   it('should pass the library lint once promoted', async () => {
-    expect(await lintAsPromoted('NavBar', source)).toEqual([])
+    expect(await lintAsPromoted('DemoNav', source)).toEqual([])
   })
 })
 
@@ -379,10 +378,10 @@ describe('when figma.config.json semantics name a prop that is not a valid bindi
     ['href', 'default'],
     ['onActivate', 'arguments']
   ])('should fail generation for %s %s', async (key, name) => {
-    const spec = await navbarSpec()
+    const spec = await demoNavSpec()
     spec.semantics = {
       ...spec.semantics,
-      'DCL Logo': { role: 'action', label: 'Decentraland', [key]: name }
+      Logo: { role: 'action', label: 'Home', [key]: name }
     }
     expect(() => sourceFor(spec)).toThrow(
       `Invalid generated TypeScript identifier: ${JSON.stringify(name)}`

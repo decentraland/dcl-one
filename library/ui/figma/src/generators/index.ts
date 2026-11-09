@@ -5,7 +5,7 @@ import type { FigmaSource } from '../sources/types.js'
 import { generateComponents, type ManifestEntry } from './components.js'
 import { generateIcons, type SkippedIcon } from './icons.js'
 import { generateTokens } from './tokens.js'
-import type { GeneratedFile, GeneratorContext } from './types.js'
+import type { GeneratedFile, GeneratorContext, ImageFills } from './types.js'
 
 type GenerateSummary = {
   source: FigmaSource['name']
@@ -19,6 +19,7 @@ type GenerateSummary = {
   componentViews: number
   needsManual: { component: string; page: string; reasons: string[] }[]
   skippedComponentPages: string[]
+  imageFills: { mode: ImageFills; replaced: { component: string; count: number }[] }
   files: number
 }
 
@@ -42,7 +43,10 @@ async function generateAll(
     source.getIcons()
   ])
 
-  const tokenFiles = generateTokens({ collections, textStyles, gradients }, context)
+  const tokenFiles = generateTokens(
+    { collections, textStyles, gradients, excludedPrimitives: config?.excludedPrimitives },
+    context
+  )
   const iconOutput = generateIcons(icons, context)
 
   const { specs, skippedPages, nameCollisions } = config
@@ -52,7 +56,10 @@ async function generateAll(
         icons: new Map(iconOutput.meta.map((meta) => [meta.name, meta.component]))
       })
     : { specs: [], skippedPages: [], nameCollisions: [] }
-  const componentOutput = generateComponents(specs, context)
+  const componentOutput = generateComponents(specs, {
+    ...context,
+    imageFills: config?.imageFills ?? 'assets'
+  })
 
   const files = [...tokenFiles, ...iconOutput.files, ...(config ? componentOutput.files : [])].sort(
     (a, b) => a.path.localeCompare(b.path)
@@ -80,6 +87,7 @@ async function generateAll(
         }))
       ],
       skippedComponentPages: skippedPages,
+      imageFills: componentOutput.imageFills,
       files: files.length
     }
   }

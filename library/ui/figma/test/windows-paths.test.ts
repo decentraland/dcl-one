@@ -26,7 +26,11 @@ const invalid = (paths: string[]) =>
 describe('when checking library/ui paths for a Windows checkout', () => {
   it('should hold no path that Windows rejects', () => {
     const paths = libraryPaths()
-    expect(paths.length).toBeGreaterThan(1000)
+    // A real listing, not an empty or failed one: the synthetic snapshot alone is dozens of paths.
+    expect(paths.length).toBeGreaterThan(300)
+    expect(paths).toContain(
+      'library/ui/figma/test/fixtures/synthetic-snapshot/components/Demo%3A Legacy Bars.json'
+    )
     expect(invalid(paths)).toEqual([])
   })
 
@@ -68,10 +72,9 @@ const capturesIn = async (directory: string) =>
       })
   )
 
-const captures = [
-  ...(await capturesIn(path.join(figma, 'figma-snapshot/components'))),
-  ...(await capturesIn(path.join(figma, 'test/fixtures/figma-snapshot/components')))
-]
+// Only tracked captures: the synthetic test snapshot. The capture cache (figma-snapshot) is gitignored and is
+// never present in CI.
+const captures = await capturesIn(path.join(figma, 'test/fixtures/synthetic-snapshot/components'))
 
 describe('when mapping every existing Figma page name to its capture file', () => {
   const pages = [
@@ -95,10 +98,13 @@ describe('when mapping every existing Figma page name to its capture file', () =
     expect(new Set(names.map(encodePageFileName)).size).toBe(names.length)
   })
 
-  it('should change the file name of the legacy Bars page only', () => {
+  it('should change the file name of the two legacy pages named with a colon only', () => {
     expect(names.filter((name) => encodePageFileName(name) !== `${name}.json`)).toEqual([
-      'Bars: Nav bar - Tabs bar - Footer'
+      'Bars: Nav bar - Tabs bar - Footer',
+      'Demo: Legacy Bars'
     ])
+    expect(encodePageFileName('Demo: Legacy Bars')).toBe('Demo%3A Legacy Bars.json')
+    expect(captures.map((capture) => capture.file)).toContain('Demo%3A Legacy Bars.json')
   })
 
   it('should store every capture under the encoded name of its page', () => {

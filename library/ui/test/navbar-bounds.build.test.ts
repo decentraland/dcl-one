@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -15,7 +15,14 @@ const root = path.resolve(import.meta.dirname, '..')
 const review = path.join(root, 'figma/review')
 // The folder the Review is served from, named apart so no path-shaped literal of it is spelled out here.
 const FOLDER = 'dcl-ui-review'
-const VARIANTS = 18
+// Every NavBar combination in the built catalog, so a variant added later is measured too.
+const catalog = JSON.parse(
+  await readFile(path.join(review, 'src/review/catalog.json'), 'utf8')
+) as {
+  components: { name: string; variants: unknown[] }[]
+}
+const VARIANTS = catalog.components.find((component) => component.name === 'NavBar')!.variants
+  .length
 const TOLERANCE = 1
 
 const types: Record<string, string> = {
@@ -34,18 +41,11 @@ let session: Awaited<ReturnType<typeof openSession>>
 
 beforeAll(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), 'navbar-bounds-'))
-  const publicDir = path.join(scratch, 'public')
-  await mkdir(path.join(publicDir, FOLDER), { recursive: true })
-  await copyFile(
-    path.join(review, 'public', FOLDER, 'fidelity.json'),
-    path.join(publicDir, FOLDER, 'fidelity.json')
-  )
   const outDir = path.join(scratch, 'out')
   await build({
     configFile: path.join(review, 'review.vite.config.ts'),
     base: '/',
     logLevel: 'silent',
-    publicDir,
     build: { outDir, emptyOutDir: true }
   })
   server = createServer((request, response) => {
@@ -93,7 +93,7 @@ async function measure(variant: number): Promise<Bounds> {
   await session.send('Page.navigate', {
     url: `${origin}/${FOLDER}/?audit=1&component=NavBar&variant=${variant}`
   })
-  const { result } = (await session.send('Runtime.evaluate', {
+  const { result, exceptionDetails } = (await session.send('Runtime.evaluate', {
     expression: `new Promise((resolve, reject) => {
       const started = Date.now()
       const poll = () => {
@@ -112,15 +112,26 @@ async function measure(variant: number): Promise<Bounds> {
     })`,
     awaitPromise: true,
     returnByValue: true
-  })) as { result: { value: Bounds } }
+  })) as {
+    result: { value: Bounds }
+    exceptionDetails?: { text: string; exception?: { description?: string } }
+  }
+  // A variant that throws while rendering must report its own error, not a missing measurement.
+  if (exceptionDetails)
+    throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
   return result.value
 }
 
 describe('every NavBar combination in the built Review', () => {
+  it('should find the NavBar combinations in the catalog', () => {
+    expect(VARIANTS).toBeGreaterThan(0)
+  })
+
   it.each(Array.from({ length: VARIANTS }, (_, index) => index))(
     'variant %i keeps every descendant inside its root box',
     async (variant) => {
       const bounds = await measure(variant)
+      expect(session.runtimeErrors).toEqual([])
       expect(bounds.width).toBeGreaterThan(0)
       expect(bounds.overflow).toEqual([])
     },

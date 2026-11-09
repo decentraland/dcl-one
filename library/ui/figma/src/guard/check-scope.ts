@@ -559,11 +559,9 @@ async function retiredLibraryAndExclusions(
 const RETIRABLE_AGGREGATES = [
   'snapshot',
   'promotion-manifest',
-  'fidelity',
   'components-index',
   'components-manifest',
   'catalog',
-  'references',
   'inventory'
 ]
 const ENTRY_AGGREGATES = [
@@ -571,11 +569,9 @@ const ENTRY_AGGREGATES = [
   'library-promotion',
   'snapshot',
   'promotion-manifest',
-  'fidelity',
   'components-index',
   'components-manifest',
   'catalog',
-  'references',
   'inventory',
   'sync-state',
   'pages',

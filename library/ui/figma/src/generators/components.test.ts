@@ -15,7 +15,7 @@ const fileContent = async (path: string) =>
 describe('generateComponents', () => {
   describe('when generating the Button', () => {
     it('should emit a typed component that registers itself and defaults to the primary view', async () => {
-      const source = await fileContent('components/buttons/Button.tsx')
+      const source = await fileContent('components/demo-controls/Button.tsx')
 
       expect(source).toContain("variant?: 'primary' | 'secondary' | 'quaternary' | 'tertiary'")
       expect(source).toContain("variant = 'primary'")
@@ -28,9 +28,9 @@ describe('generateComponents', () => {
     })
 
     it('should reference tokens and text styles instead of raw colours', async () => {
-      const source = await fileContent('components/buttons/Button.module.css')
+      const source = await fileContent('components/demo-controls/Button.module.css')
 
-      expect(source).toContain('background: var(--dcl-primary-primary);')
+      expect(source).toContain('background: var(--dcl-brand-primary);')
       expect(
         source.startsWith(
           '@layer dcl.reset, dcl.foundations, dcl.components;\n\n@layer dcl.components {\n'
@@ -42,7 +42,7 @@ describe('generateComponents', () => {
     })
 
     it('should emit hover rules that work with real hover and with the forced state used by stories', async () => {
-      const source = await fileContent('components/buttons/Button.module.css')
+      const source = await fileContent('components/demo-controls/Button.module.css')
 
       expect(source).toContain(
         "&:hover:not(:disabled):not([data-interaction-mode='controlled']), &[data-force-state='hover'] {"
@@ -64,9 +64,9 @@ describe('generateComponents', () => {
 
   describe('when a component embeds another one', () => {
     it('should import it from its own page folder so it is registered', async () => {
-      const source = await fileContent('components/controllers/SwitchTitle.tsx')
+      const source = await fileContent('components/demo-toggles/SwitchTitle.tsx')
 
-      expect(source).toContain("import '../buttons/Switch'")
+      expect(source).toContain("import '../demo-controls/Switch'")
     })
   })
 
@@ -75,8 +75,8 @@ describe('generateComponents', () => {
       const manifest = await fileContent('components/manifest.ts')
       const index = await fileContent('components/index.ts')
 
-      expect(manifest).toContain('"unresolved-instance:ContextualMenuIcons"')
-      expect(index).toContain("export * from './buttons/Button'")
+      expect(manifest).toContain('"unresolved-instance:MenuGlyphs"')
+      expect(index).toContain("export * from './demo-controls/Button'")
       expect(index).toContain("export * from './manifest'")
     })
   })
@@ -175,7 +175,8 @@ describe('generateComponents with a Figma name that holds a line terminator', ()
     ['a line separator', '\u2028'],
     ['a paragraph separator', '\u2029']
   ])('should keep %s inside the header comment instead of emitting code', async (_, terminator) => {
-    const specs = await componentSpecs()
+    // A copy: the shared specs must not keep this case's edits.
+    const specs = structuredClone(await componentSpecs())
     const target = specs[0]!
     target.figmaName = `Button${terminator}export const injected = 1`
     target.page = `Page${terminator}globalThis.pwned = true`
@@ -200,7 +201,8 @@ describe('generateComponents with opt-in semantics', () => {
   ]
   // The first component with a nested box gets a navigation root and one action.
   const withSemantics = async () => {
-    const specs = await componentSpecs()
+    // A copy: the shared specs must not keep this case's edits.
+    const specs = structuredClone(await componentSpecs())
     const target = specs.find((spec) => spec.views.some((view) => boxes(view.root).length > 0))!
     const box = target.views.flatMap((view) => boxes(view.root))[0]!
     target.semantics = {
@@ -314,7 +316,7 @@ describe('generateComponents with Figma motion', () => {
   })
 
   it('should emit no transition for a view without motion', async () => {
-    const css = await fileContent('components/buttons/Button.module.css')
+    const css = await fileContent('components/demo-controls/Button.module.css')
 
     expect(css).not.toContain('transition')
   })

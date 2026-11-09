@@ -61,7 +61,7 @@ box-sizing: border-box;
 width: 40px;
 flex-shrink: 0;
 height: 40px;
-background: url("../assets/497b500bf9aa38ae.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v0n2_1 {

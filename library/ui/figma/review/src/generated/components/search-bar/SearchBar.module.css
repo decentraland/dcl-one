@@ -548,7 +548,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/e4274f63fdedc1ac.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n1_0_2_1 {
@@ -585,7 +585,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/cc01c70f3f91924f.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n1_0_2_2 {
@@ -622,7 +622,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/c66e55989fd0693e.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n1_1 {
@@ -1111,7 +1111,7 @@ flex: none;
 position: absolute;
 left: 9.52px;
 top: 2.8px;
-background: url("../assets/b334dbece392c34b.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_1_1 {
@@ -1224,7 +1224,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/eee0dc615a7c1e90.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_2_1 {
@@ -1337,7 +1337,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 8.96px;
-background: url("../assets/d2cb09f66831d1ef.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_3_1 {
@@ -1540,7 +1540,7 @@ flex: none;
 position: absolute;
 left: 15.68px;
 top: 2.8px;
-background: url("../assets/bb8eef539481fe64.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_5_1 {
@@ -1687,7 +1687,7 @@ flex: none;
 position: absolute;
 left: 2.53px;
 top: 2.54px;
-background: url("../assets/bae8ec7a23d8e2fd.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_7_1 {
@@ -1800,7 +1800,7 @@ flex: none;
 position: absolute;
 left: -2.7px;
 top: 5.04px;
-background: url("../assets/81b0f75e672aa423.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_8_1 {
@@ -1921,7 +1921,7 @@ flex: none;
 position: absolute;
 left: 0.56px;
 top: -0.51px;
-background: url("../assets/033111d337317034.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1_9_1 {
@@ -3114,7 +3114,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/26728c32545109f8.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v8n1_0_2_1 {
@@ -3151,7 +3151,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/6b5abf59a6c5b534.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v8n1_0_2_2 {
@@ -3188,7 +3188,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/3e26454762e7ef20.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v8n1_1 {
@@ -3679,7 +3679,7 @@ flex: none;
 position: absolute;
 left: 9.52px;
 top: 2.8px;
-background: url("../assets/68df6ea32d8f8302.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_1_1 {
@@ -3792,7 +3792,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/f111a17fe53a647e.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_2_1 {
@@ -3905,7 +3905,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 8.96px;
-background: url("../assets/a7eed6f83fc8861b.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_3_1 {
@@ -4108,7 +4108,7 @@ flex: none;
 position: absolute;
 left: 15.68px;
 top: 2.8px;
-background: url("../assets/d40c5e8c1026c56c.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_5_1 {
@@ -4255,7 +4255,7 @@ flex: none;
 position: absolute;
 left: 2.53px;
 top: 2.54px;
-background: url("../assets/b433ba960c6a8ba2.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_7_1 {
@@ -4368,7 +4368,7 @@ flex: none;
 position: absolute;
 left: -2.7px;
 top: 5.04px;
-background: url("../assets/2d0cd42e3c4bb96e.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_8_1 {
@@ -4489,7 +4489,7 @@ flex: none;
 position: absolute;
 left: 0.56px;
 top: -0.51px;
-background: url("../assets/548d300826660295.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v10n1_9_1 {

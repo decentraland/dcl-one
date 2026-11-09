@@ -251,6 +251,50 @@ describe('ui-library-key-scan.yml', () => {
   })
 })
 
+describe('when the Figma capture lives in figma-design-system', () => {
+  const ui = () => load('ui-library.yml')
+  const runs = (job: string) => ui().jobs[job]!.steps.map((step) => step.run ?? '')
+
+  it('should require the port verification record on every pull request and push, before any install', () => {
+    const step = ui().jobs['key-guard']!.steps.find((item) =>
+      item.run?.includes('port-verification.mjs')
+    )!
+    expect(step.run).toContain('--base "$base" --head "$HEAD_SHA"')
+    expect(step.env).toMatchObject({
+      PR_BASE: '${{ github.event.pull_request.base.sha }}',
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+    })
+    expect(JSON.stringify(ui().jobs['key-guard'])).not.toContain('pnpm install')
+  })
+
+  it('should check the lock digests before installing, and the built gallery after building it', () => {
+    const steps = runs('library')
+    const digests = steps.findIndex((run) => run === 'node figma/lock-digests.mjs')
+    const install = steps.findIndex((run) => run.startsWith('pnpm install'))
+    const build = steps.findIndex((run) => run === 'pnpm review:build')
+    const check = steps.findIndex((run) =>
+      run.startsWith('node figma/review/scripts/check-build.mjs')
+    )
+    expect(digests).toBeGreaterThanOrEqual(0)
+    expect(digests).toBeLessThan(install)
+    expect(check).toBeGreaterThan(build)
+  })
+
+  it('should run no check that needs the capture in this repository', () => {
+    const all = [...runs('key-guard'), ...runs('library')].join('\n')
+    for (const command of [
+      'figma diff',
+      'figma guard',
+      'check-mappings',
+      'promotion-verify',
+      'review-manifest',
+      'review:check',
+      'fetch-source'
+    ])
+      expect(all).not.toContain(command)
+  })
+})
+
 describe('the controller-owned push boundary', () => {
   it('should bind the metadata job name to the push event and keep PR check names stable', () => {
     const name = load('ui-library.yml').jobs['key-guard']!.name!

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { projectRoot, snapshotSource } from '../../test/snapshot.js'
-import { loadConfig } from '../config.js'
+import { snapshotSource, testConfig } from '../../test/snapshot.js'
 import { generateComponents } from '../generators/components.js'
 import type { ComponentSpec } from '../ir/components.js'
 import type { RawComponent, RawInteraction } from '../ir/raw-components.js'
@@ -88,7 +87,7 @@ describe('timed variant loops', () => {
             data: { page: { id: 'page', name: 'Spinner & Skeleton Animation' }, components: [raw] }
           }
         ],
-        config: await loadConfig(projectRoot),
+        config: await testConfig(),
         collections: await source.getTokenCollections(),
         textStyles: await source.getTextStyles(),
         icons: new Map([['Glyph', 'IconGlyph']])

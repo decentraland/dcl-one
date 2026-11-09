@@ -75,6 +75,20 @@ jobs:
         env:
           RANGE: ${{ steps.scope.outputs.range }}
         run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"
+      # A change to upstream.lock.json is a port from figma-design-system, where the Figma capture lives. The
+      # checks against that capture run there and locally (pnpm figma fetch-source); this step requires the record
+      # of their results for this exact lock, FDS commit and library tree, and passes untouched for any other change.
+      - name: Require the port verification record when the lock changes
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          base="$BEFORE"
+          [ "$EVENT" != pull_request ] || base="$PR_BASE"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
+          node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
 
   library:
     needs: key-guard
@@ -87,41 +101,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          # The pull request's base parent is checked out for the retirement guard below.
-          fetch-depth: 2
           lfs: false
       - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # Every tracked file under figma/ matches the digest upstream.lock.json pins for it.
+      - run: node figma/lock-digests.mjs
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      # Fails when committed generated output no longer matches the committed snapshot.
-      - run: pnpm figma diff
-      # Retirements, removals and listings must agree with the base: nothing disappears without a committed
-      # retirement or orphan-ledger record. Keyless and secret-free: it reads only the two checkouts.
-      - name: Check retirements and removals against the base
-        if: github.event_name == 'pull_request'
-        run: |
-          GIT_LFS_SKIP_SMUDGE=1 git worktree add --detach "$RUNNER_TEMP/figma-base" HEAD^1
-          # Scope, not tolerance: with no library in the base there is nothing to guard against yet.
-          if [ ! -d "$RUNNER_TEMP/figma-base/library/ui/figma" ]; then
-            echo "first introduction of library/ui; no base ledger to compare"
-            exit 0
-          fi
-          git -C "$RUNNER_TEMP/figma-base" lfs pull --include "library/ui/**"
-          pnpm figma guard --base "$RUNNER_TEMP/figma-base/library/ui" --run-kind developer
-      # Fails on any mapping error or Figma drift between *.figma.ts and the saved capture.
-      - run: pnpm figma check-mappings
-      - run: pnpm figma promotion-verify
-      - run: pnpm figma review-manifest
-      - run: git diff --exit-code -- figma/review/src/review/catalog.json figma/review/public/dcl-ui-review/icons
       - run: pnpm review:build
-      - run: pnpm review:check
+      # The built gallery works where it is served: catalog and variant navigation and a non-empty render.
+      - run: node figma/review/scripts/check-build.mjs figma/review/review-dist
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

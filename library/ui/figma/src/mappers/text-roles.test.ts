@@ -1,26 +1,24 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadConfig } from '../config.js'
+import { fixturesDir, snapshotDir, testConfig } from '../../test/snapshot.js'
 import type { ComponentSpec, TextRole, ViewNode } from '../ir/components.js'
 import { buildComponentSpecs } from './component-spec.js'
 import { RESERVED_IDENTIFIERS } from '../generators/naming.js'
 import { applyTextRoles } from './text-roles.js'
 
-const projectRoot = path.resolve(import.meta.dirname, '../..')
-
 type Target = { role: string; view: string; path: string; nodeId: string; namePath: string[] }
 
-async function navBarInput(
+async function demoNavInput(
   edit?: (data: { components: { name: string; base: { tree: unknown } }[] }) => void
 ) {
-  const config = await loadConfig(projectRoot)
+  const config = await testConfig()
   const data = JSON.parse(
-    await readFile(path.join(projectRoot, 'figma-snapshot/components/Nav bar.json'), 'utf8')
+    await readFile(path.join(snapshotDir, 'components/Demo Nav.json'), 'utf8')
   )
   edit?.(data)
   return {
-    pages: [{ name: 'Nav bar', category: 'Navigation', data }],
+    pages: [{ name: 'Demo Nav', category: 'Navigation', data }],
     config,
     collections: [],
     textStyles: [],
@@ -28,14 +26,13 @@ async function navBarInput(
   }
 }
 
-async function navBarSpec(): Promise<ComponentSpec> {
-  return buildComponentSpecs(await navBarInput()).find((spec) => spec.name === 'NavBar')!
+async function demoNavSpec(): Promise<ComponentSpec> {
+  return buildComponentSpecs(await demoNavInput()).find((spec) => spec.name === 'DemoNav')!
 }
 
 async function targets(): Promise<Target[]> {
-  return JSON.parse(
-    await readFile(path.join(projectRoot, 'test/fixtures/navbar-text-roles.json'), 'utf8')
-  ).targets
+  return JSON.parse(await readFile(path.join(fixturesDir, 'demo-nav-text-roles.json'), 'utf8'))
+    .targets
 }
 
 function nodeAt(spec: ComponentSpec, view: string, at: string): ViewNode {
@@ -67,14 +64,14 @@ describe('applyTextRoles', () => {
 
   beforeEach(async () => {
     list = await targets()
-    spec = withIds(await navBarSpec(), list)
+    spec = withIds(await demoNavSpec(), list)
   })
 
   describe('when every configured node id is captured with its layer names', () => {
-    it('should bind all 58 text nodes of the 9 visible roles and declare the label role', () => {
+    it('should bind all 78 text nodes of the 9 visible roles and declare the label role', () => {
       const roles = applyTextRoles(spec, rolesFor(list))
 
-      expect(list).toHaveLength(58)
+      expect(list).toHaveLength(78)
       for (const target of list)
         expect(nodeAt(spec, target.view, target.path).slot).toBe(target.role)
       expect(roles.map((role) => role.name).sort()).toEqual([
@@ -98,7 +95,7 @@ describe('applyTextRoles', () => {
 
     it('should tell apart the four tabs that share one layer-name path by their ids', () => {
       const view = 'viewport:largeDesktop|balances:none|theme:dark|signedIn'
-      const tabs = list.filter((target) => target.view === view && target.path.startsWith('0.0.1.'))
+      const tabs = list.filter((target) => target.view === view && target.path.startsWith('0.1.'))
       expect(new Set(tabs.map((target) => JSON.stringify(target.namePath))).size).toBe(1)
 
       applyTextRoles(spec, rolesFor(list))
@@ -117,7 +114,7 @@ describe('applyTextRoles', () => {
       const roles = rolesFor(list)
       roles.signInLabel!.nodes[0]!.nodeId = '90001:999'
       expect(() => applyTextRoles(spec, roles)).toThrow(
-        'NavBar text roles: signInLabel: unknown Figma node id 90001:999'
+        'DemoNav text roles: signInLabel: unknown Figma node id 90001:999'
       )
     })
   })
@@ -129,18 +126,20 @@ describe('applyTextRoles', () => {
         ...roles.shopLabel!.nodes[0]!.namePath.slice(0, -1),
         'Renamed'
       ]
-      expect(() => applyTextRoles(spec, roles)).toThrow('shopLabel: name path mismatch for 90001:3')
+      expect(() => applyTextRoles(spec, roles)).toThrow(
+        `shopLabel: name path mismatch for ${roles.shopLabel!.nodes[0]!.nodeId}`
+      )
     })
   })
 
   describe('when a node id names a layer that is not text', () => {
     it('should fail generation', () => {
       const view = 'viewport:largeDesktop|balances:none|theme:dark'
-      nodeAt(spec, view, '1').figmaId = '90001:500'
+      nodeAt(spec, view, '1.0').figmaId = '90001:500'
       const roles = rolesFor(list)
       roles.signInLabel!.nodes.push({
         nodeId: '90001:500',
-        namePath: [nodeAt(spec, view, '').name, 'Sign In / Profile']
+        namePath: [nodeAt(spec, view, '').name, 'Right', 'SignIn']
       })
       expect(() => applyTextRoles(spec, roles)).toThrow(
         'signInLabel: node 90001:500 is not a text layer'
@@ -236,7 +235,7 @@ describe('applyTextRoles', () => {
         roles[name] = roles.shopLabel!
         delete roles.shopLabel
         expect(() => applyTextRoles(spec, roles)).toThrow(
-          `NavBar text roles: ${name} is not a valid prop name`
+          `DemoNav text roles: ${name} is not a valid prop name`
         )
       }
     )
@@ -252,7 +251,7 @@ describe('applyTextRoles', () => {
       }
     )
 
-    it.each([['rest'], ['styles'], ['navBarViews'], ['navBarCases'], ['navBarSuppressedProps']])(
+    it.each([['rest'], ['styles'], ['demoNavViews'], ['demoNavCases'], ['demoNavSuppressedProps']])(
       'should reject the role name %s, which the generated module binds itself',
       (name) => {
         const roles = rolesFor(list)
@@ -286,7 +285,7 @@ describe('applyTextRoles', () => {
 })
 
 type RawTree = { id?: string; name?: string; children?: RawTree[] }
-type RawNavBar = {
+type RawDemoNav = {
   name: string
   base: { id: string; name: string; tree: RawTree }
   others: {
@@ -296,8 +295,8 @@ type RawNavBar = {
   }[]
 }
 
-function rawNavBar(data: { components: unknown[] }): RawNavBar {
-  return (data.components as RawNavBar[]).find((component) => component.name === 'NavBar')!
+function rawDemoNav(data: { components: unknown[] }): RawDemoNav {
+  return (data.components as RawDemoNav[]).find((component) => component.name === 'DemoNav')!
 }
 
 function rawAt(tree: RawTree, at: string): RawTree {
@@ -307,24 +306,24 @@ function rawAt(tree: RawTree, at: string): RawTree {
 }
 
 // A REST capture with ids: every variant is a whole-tree replace carrying its own ids, the root id equals the
-// variant envelope id, and only the 58 fixture text layers (plus the roots) carry one.
+// variant envelope id, and only the 78 fixture text layers (plus the roots) carry one.
 async function restSpecs(list: Target[], roles?: Record<string, TextRole>) {
-  const keyed = await navBarSpec()
+  const keyed = await demoNavSpec()
   const variantOf = new Map(keyed.views.map((view, index) => [view.key, index]))
-  const input = await navBarInput((data) => {
-    const navBar = rawNavBar(data)
+  const input = await demoNavInput((data) => {
+    const demoNav = rawDemoNav(data)
     const trees = [
-      navBar.base.tree,
-      ...navBar.others.map((variant) => variant.patches[0]!.replace!)
+      demoNav.base.tree,
+      ...demoNav.others.map((variant) => variant.patches[0]!.replace!)
     ]
-    navBar.base.tree.id = navBar.base.id
-    navBar.others.forEach((variant, index) => (trees[index + 1]!.id = variant.id))
+    demoNav.base.tree.id = demoNav.base.id
+    demoNav.others.forEach((variant, index) => (trees[index + 1]!.id = variant.id))
     for (const target of list)
       rawAt(trees[variantOf.get(target.view)!]!, target.path).id = target.nodeId
   })
   if (roles)
-    input.config.components.NavBar = { ...input.config.components.NavBar, textRoles: roles }
-  return buildComponentSpecs(input).find((item) => item.name === 'NavBar')!
+    input.config.components.DemoNav = { ...input.config.components.DemoNav, textRoles: roles }
+  return buildComponentSpecs(input).find((item) => item.name === 'DemoNav')!
 }
 
 describe('buildComponentSpecs with text roles', () => {
@@ -334,7 +333,7 @@ describe('buildComponentSpecs with text roles', () => {
     list = await targets()
   })
 
-  describe('when a REST capture carries the 58 text ids and the configuration binds the roles', () => {
+  describe('when a REST capture carries the 78 text ids and the configuration binds the roles', () => {
     it('should bind every role and keep the ids out of the spec', async () => {
       const spec = await restSpecs(list, rolesFor(list))
 
@@ -354,31 +353,31 @@ describe('buildComponentSpecs with text roles', () => {
 
   describe('when a capture carries ids but nothing binds them', () => {
     it('should produce the same spec as a capture without ids', async () => {
-      expect(JSON.stringify(await restSpecs(list))).toBe(JSON.stringify(await navBarSpec()))
+      expect(JSON.stringify(await restSpecs(list))).toBe(JSON.stringify(await demoNavSpec()))
     })
   })
 
   describe('when a legacy partial variant inherits the base tree', () => {
     // The mobile signed-out variant becomes a partial patch of the base, whose text has the id 90001:1.
     async function partialSpec(
-      patches: RawNavBar['others'][number]['patches'],
+      patches: RawDemoNav['others'][number]['patches'],
       roles: Record<string, TextRole>
     ) {
-      const input = await navBarInput((data) => {
-        const navBar = rawNavBar(data)
-        navBar.base.tree.id = navBar.base.id
-        rawAt(navBar.base.tree, '1.0.0.0').id = '90001:1'
-        const variant = navBar.others.find((item) =>
+      const input = await demoNavInput((data) => {
+        const demoNav = rawDemoNav(data)
+        demoNav.base.tree.id = demoNav.base.id
+        rawAt(demoNav.base.tree, '1.0.0').id = '90001:1'
+        const variant = demoNav.others.find((item) =>
           item.name.startsWith('viewport=mobile, signed-in=false, balances=none, theme=dark')
         )!
         variant.patches = [{ at: [], set: { name: variant.name } }, ...patches]
       })
-      input.config.components.NavBar = { ...input.config.components.NavBar, textRoles: roles }
-      return buildComponentSpecs(input).find((item) => item.name === 'NavBar')!
+      input.config.components.DemoNav = { ...input.config.components.DemoNav, textRoles: roles }
+      return buildComponentSpecs(input).find((item) => item.name === 'DemoNav')!
     }
     const base = 'viewport:largeDesktop|balances:none|theme:dark'
     const mobile = 'viewport:mobile|balances:none|theme:dark'
-    const namePath = (root: string) => [root, 'Sign In / Profile', '<Button>', 'Base', 'Button']
+    const namePath = (root: string) => [root, 'Right', 'SignIn', 'Label']
 
     it('should not give the variant the base node id, and leave its unmapped text unbound without failing', async () => {
       const spec = await partialSpec([], {
@@ -394,12 +393,12 @@ describe('buildComponentSpecs with text roles', () => {
           ]
         }
       })
-      expect(nodeAt(spec, base, '1.0.0.0').slot).toBe('signInLabel')
-      expect(nodeAt(spec, mobile, '1.0.0.0').slot).not.toBe('signInLabel')
+      expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
+      expect(nodeAt(spec, mobile, '1.0.0').slot).not.toBe('signInLabel')
     })
 
     it('should bind the variant node through its own set.id', async () => {
-      const spec = await partialSpec([{ at: [1, 0, 0, 0], set: { id: '90001:2' } }], {
+      const spec = await partialSpec([{ at: [1, 0, 0], set: { id: '90001:2' } }], {
         signInLabel: {
           type: 'string',
           nodes: [
@@ -416,8 +415,8 @@ describe('buildComponentSpecs with text roles', () => {
           ]
         }
       })
-      expect(nodeAt(spec, base, '1.0.0.0').slot).toBe('signInLabel')
-      expect(nodeAt(spec, mobile, '1.0.0.0').slot).toBe('signInLabel')
+      expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
+      expect(nodeAt(spec, mobile, '1.0.0').slot).toBe('signInLabel')
     })
 
     it('should fail generation when a role points at a variant node whose only id was inherited', async () => {
@@ -445,15 +444,15 @@ describe('buildComponentSpecs with text roles', () => {
 
   describe('when figma.config.json binds an id the capture lacks', () => {
     it('should fail generation', async () => {
-      const input = await navBarInput()
-      input.config.components.NavBar = {
-        ...input.config.components.NavBar,
+      const input = await demoNavInput()
+      input.config.components.DemoNav = {
+        ...input.config.components.DemoNav,
         textRoles: {
           signInLabel: { type: 'string', nodes: [{ nodeId: '90001:1', namePath: ['x'] }] }
         }
       }
       expect(() => buildComponentSpecs(input)).toThrow(
-        'NavBar text roles: signInLabel: unknown Figma node id 90001:1'
+        'DemoNav text roles: signInLabel: unknown Figma node id 90001:1'
       )
     })
   })
@@ -465,9 +464,9 @@ describe('configured generated names', () => {
     ['viewport', 'class'],
     ['signed-in', 'eval']
   ])('should fail generation when propNames maps %s to %s', async (figmaName, name) => {
-    const input = await navBarInput()
-    input.config.components.NavBar = {
-      ...input.config.components.NavBar,
+    const input = await demoNavInput()
+    input.config.components.DemoNav = {
+      ...input.config.components.DemoNav,
       propNames: { [figmaName]: name }
     }
     expect(() => buildComponentSpecs(input)).toThrow(
@@ -476,12 +475,12 @@ describe('configured generated names', () => {
   })
 
   it('should keep a valid configured prop name as written', async () => {
-    const input = await navBarInput()
-    input.config.components.NavBar = {
-      ...input.config.components.NavBar,
+    const input = await demoNavInput()
+    input.config.components.DemoNav = {
+      ...input.config.components.DemoNav,
       propNames: { viewport: 'screen' }
     }
-    const spec = buildComponentSpecs(input).find((item) => item.name === 'NavBar')!
+    const spec = buildComponentSpecs(input).find((item) => item.name === 'DemoNav')!
     expect(spec.props.map((prop) => prop.name)).toContain('screen')
   })
 })

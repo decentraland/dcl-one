@@ -2,13 +2,12 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadConfig } from './config.js'
-import { projectRoot, snapshotSource } from '../test/snapshot.js'
+import { snapshotSource, testConfig } from '../test/snapshot.js'
 import { generateAll } from './generators/index.js'
 import { diffFiles, isEmptyDiff, writeFiles } from './sync.js'
 
 const context = {}
-const generate = async () => generateAll(snapshotSource(), context, await loadConfig(projectRoot))
+const generate = async () => generateAll(snapshotSource(), context, await testConfig())
 
 describe('sync', () => {
   let outDir: string

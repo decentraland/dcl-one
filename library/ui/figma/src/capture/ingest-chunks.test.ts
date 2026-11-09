@@ -28,7 +28,7 @@ const readPage = async (name: string) =>
   }
 
 const crosshair = async () => {
-  const page = await readPage('Cursor')
+  const page = await readPage('Demo Cursors')
   const component = page.components.find((entry) => entry.name === 'Crosshair')!
   return { page: page.page, component, svg: component.base.tree.children![0]! }
 }
@@ -40,15 +40,15 @@ const chunkOf = (page: { id: string; name: string }, component: unknown): Captur
 
 describe('ingestChunks', () => {
   describe('when the captured artwork matches its checksum', () => {
-    it('should accept the real Crosshair circle and reproduce the checksum the plugin computed', async () => {
+    it('should accept the Crosshair ring and reproduce the checksum the plugin computes', async () => {
       const { svg } = await crosshair()
 
       expect(checksum(svg.svg!)).toBe(svg.sum)
       expect(svgProblem(svg.svg!)).toBeUndefined()
     })
 
-    it('should accept a real PNG whose CRCs are intact', async () => {
-      const cursors = await readPage('Cursor')
+    it('should accept a captured PNG whose CRCs are intact', async () => {
+      const cursors = await readPage('Demo Cursors')
       const others = JSON.stringify(cursors)
       const png = /"png":"([^"]+)"/.exec(others)![1]!
 
@@ -70,7 +70,7 @@ describe('ingestChunks', () => {
 
     it('should reject a truncated svg and a PNG with a broken CRC', async () => {
       const { svg } = await crosshair()
-      const cursors = JSON.stringify(await readPage('Cursor'))
+      const cursors = JSON.stringify(await readPage('Demo Cursors'))
       const png = /"png":"([^"]+)"/.exec(cursors)![1]!
       const broken = `${png.slice(0, 120)}A${png.slice(121)}`
 
@@ -83,21 +83,25 @@ describe('ingestChunks', () => {
     it('should upsert by id and leave the page file byte for byte unchanged', async () => {
       const { page, component } = await crosshair()
       const dir = await mkdtemp(path.join(tmpdir(), 'ingest-'))
-      const file = path.join(dir, 'components', 'Cursor.json')
+      const file = path.join(dir, 'components', 'Demo Cursors.json')
 
       const first = await ingestChunks(dir, [chunkOf(page, component)])
       const afterFirst = await readFile(file, 'utf8')
       const second = await ingestChunks(dir, [chunkOf(page, component)])
 
-      expect(first).toEqual([{ page: 'Cursor', components: 1, added: 1, replaced: 0, removed: 0 }])
-      expect(second).toEqual([{ page: 'Cursor', components: 1, added: 0, replaced: 1, removed: 0 }])
+      expect(first).toEqual([
+        { page: 'Demo Cursors', components: 1, added: 1, replaced: 0, removed: 0 }
+      ])
+      expect(second).toEqual([
+        { page: 'Demo Cursors', components: 1, added: 0, replaced: 1, removed: 0 }
+      ])
       expect(await readFile(file, 'utf8')).toBe(afterFirst)
     })
   })
 
   describe('when a page is re-captured after a component was deleted in Figma', () => {
     const twoComponents = async () => {
-      const cursors = await readPage('Cursor')
+      const cursors = await readPage('Demo Cursors')
       const [kept, deleted] = cursors.components
       const dir = await mkdtemp(path.join(tmpdir(), 'ingest-'))
       await ingestChunks(dir, [
@@ -119,8 +123,10 @@ describe('ingestChunks', () => {
         { pages: [{ page, total: 1, start: 0, components: [kept] }], resume: null }
       ])
 
-      expect(report).toEqual([{ page: 'Cursor', components: 1, added: 0, replaced: 1, removed: 1 }])
-      expect(await namesIn(dir, 'Cursor.json')).not.toContain(deleted.name)
+      expect(report).toEqual([
+        { page: 'Demo Cursors', components: 1, added: 0, replaced: 1, removed: 1 }
+      ])
+      expect(await namesIn(dir, 'Demo Cursors.json')).not.toContain(deleted.name)
     })
 
     it('should keep the other components when the chunks are a partial re-capture', async () => {
@@ -130,14 +136,17 @@ describe('ingestChunks', () => {
         { pages: [{ page, total: 2, start: 0, components: [kept] }], resume: null }
       ])
 
-      expect(report).toEqual([{ page: 'Cursor', components: 2, added: 0, replaced: 1, removed: 0 }])
+      expect(report).toEqual([
+        { page: 'Demo Cursors', components: 2, added: 0, replaced: 1, removed: 0 }
+      ])
     })
   })
 
   describe('when components are captured by id into the External page', () => {
     it('should keep the External components that were not part of this run', async () => {
-      const external = await readPage('External')
-      const [first, second] = external.components
+      // The plugin files library components under the page id `external`; two captured components stand in.
+      const [first, second] = (await readPage('Demo Cursors')).components
+      const external = { page: { id: 'external', name: 'External' } }
       const dir = await mkdtemp(path.join(tmpdir(), 'ingest-'))
       await ingestChunks(dir, [
         { pages: [{ page: external.page, components: [first, second] }], resume: null }
@@ -155,7 +164,7 @@ describe('ingestChunks', () => {
 
   describe('when a set was captured in variant parts', () => {
     const partsOf = async () => {
-      const cursors = await readPage('Cursor')
+      const cursors = await readPage('Demo Cursors')
       const set = cursors.components.find((component) => component.others.length >= 2)!
       const total = set.others.length
       const part = (start: number, end: number) => ({
@@ -168,7 +177,9 @@ describe('ingestChunks', () => {
     const ingestParts = async (page: { id: string; name: string }, parts: unknown[]) => {
       const dir = await mkdtemp(path.join(tmpdir(), 'ingest-'))
       await ingestChunks(dir, [{ pages: [{ page, components: parts }], resume: null }])
-      return JSON.parse(await readFile(path.join(dir, 'components', 'Cursor.json'), 'utf8')) as {
+      return JSON.parse(
+        await readFile(path.join(dir, 'components', 'Demo Cursors.json'), 'utf8')
+      ) as {
         components: Array<{ id: string; others: unknown[]; variantRange?: unknown }>
       }
     }
@@ -200,18 +211,20 @@ describe('ingestChunks', () => {
       const dir = await mkdtemp(path.join(tmpdir(), 'ingest-'))
       await ingestChunks(dir, [chunkOf(page, component)])
 
-      const report = await ingestChunks(dir, [chunkOf({ id: page.id, name: 'Cursors' }, component)])
+      const report = await ingestChunks(dir, [
+        chunkOf({ id: page.id, name: 'Demo Pointers' }, component)
+      ])
 
       expect(report).toEqual([
-        { page: 'Cursors', components: 1, added: 0, replaced: 1, removed: 0 }
+        { page: 'Demo Pointers', components: 1, added: 0, replaced: 1, removed: 0 }
       ])
-      expect(await readdir(path.join(dir, 'components'))).toEqual(['Cursors.json'])
+      expect(await readdir(path.join(dir, 'components'))).toEqual(['Demo Pointers.json'])
     })
   })
 
   describe('when a component carries image fills', () => {
-    const realPng = async () =>
-      /"png":"([^"]+)"/.exec(JSON.stringify(await readPage('Cursor')))![1]!
+    const capturedPng = async () =>
+      /"png":"([^"]+)"/.exec(JSON.stringify(await readPage('Demo Cursors')))![1]!
     const withImages = async (images: Record<string, string>) => {
       const { page, component } = await crosshair()
       return { page, components: [{ ...structuredClone(component), images }] } as Parameters<
@@ -220,13 +233,13 @@ describe('ingestChunks', () => {
     }
 
     it('should accept a complete PNG data URI', async () => {
-      const page = await withImages({ photo: `data:image/png;base64,${await realPng()}` })
+      const page = await withImages({ photo: `data:image/png;base64,${await capturedPng()}` })
 
       expect(() => validatePage(page)).not.toThrow()
     })
 
     it('should reject a PNG data URI that keeps its signature but is truncated', async () => {
-      const png = Buffer.from(await realPng(), 'base64')
+      const png = Buffer.from(await capturedPng(), 'base64')
       const truncated = png.subarray(0, Math.floor(png.length / 2)).toString('base64')
       const page = await withImages({ photo: `data:image/png;base64,${truncated}` })
 

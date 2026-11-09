@@ -59,7 +59,7 @@ describe('figma from a consuming project', () => {
 
       const { tools } = await client.listTools()
       const resolved = await call('figma_resolve_component', {
-        nodeId: '14113:6739',
+        nodeId: '20:1',
         variantProperties: { 'Property 1': 'Terciary' }
       })
       await client.close()
@@ -86,7 +86,7 @@ describe('figma from a consuming project', () => {
       )
 
       const { tools } = await client.listTools()
-      const resolved = await call('figma_resolve_component', { name: 'Button-Contained-Text' })
+      const resolved = await call('figma_resolve_component', { name: 'Synthetic Button' })
       await client.close()
 
       expect(tools).toHaveLength(10)
@@ -102,7 +102,7 @@ describe('figma from a consuming project', () => {
     it('should fail the call with mapping-root-not-configured instead of guessing a location', async () => {
       const { client, call } = await startServer(consumer, [])
 
-      const resolved = await call('figma_resolve_component', { nodeId: '14113:6739' })
+      const resolved = await call('figma_resolve_component', { nodeId: '20:1' })
       await client.close()
 
       expect(resolved.isError).toBe(true)
@@ -119,7 +119,7 @@ describe('figma from a consuming project', () => {
         '^9.0.0'
       ])
 
-      const resolved = await call('figma_resolve_component', { nodeId: '14113:6739' })
+      const resolved = await call('figma_resolve_component', { nodeId: '20:1' })
       await client.close()
 
       expect(resolved.isError).toBe(true)

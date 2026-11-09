@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "pages": {
+    "10:4": {
+      "hash": "synthetic-10-4",
+      "version": "v-saved"
+    },
+    "10:5": {
+      "hash": "synthetic-10-5",
+      "version": "v-saved"
+    },
+    "10:6": {
+      "hash": "synthetic-10-6",
+      "version": "v-saved"
+    },
+    "10:7": {
+      "hash": "synthetic-10-7",
+      "version": "v-saved"
+    }
+  }
+}

@@ -321,7 +321,7 @@ box-sizing: border-box;
 width: 48px;
 flex-shrink: 0;
 height: 48px;
-background: url("../assets/f848db76a5af821a.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v0n1 {
@@ -1588,7 +1588,7 @@ box-sizing: border-box;
 width: 40px;
 flex-shrink: 0;
 height: 40px;
-background: url("../assets/2000dc05cdf4e738.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v1n0_1_1 {

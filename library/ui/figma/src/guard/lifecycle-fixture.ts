@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createApp, runSync } from '../app.js'
 import { writeReviewManifest } from '../review-manifest.js'
-import { runtimeFiles, writePromotionManifest } from '../promotion/manifest.js'
+import { runtimeFiles } from '../promotion/eligibility.js'
 import { listFiles } from './fs-safe.js'
 import { computeOwned } from './apply-retirements.js'
 import { emptyRetirements, type Retirements } from './retirements.js'
@@ -101,12 +101,6 @@ async function buildLifecycleFixture(splitPages: boolean, duplicateNames: boolea
   const app = await createApp(path.join(root, 'figma'))
   await runSync(app, { source: 'snapshot', developer: true })
   await writeReviewManifest(app)
-  await put(root, 'figma/review/src/review/references.json', {
-    [`${first}-0`]: { file: '/dcl-ui-review/references/live-2-1.png' },
-    [`${second}-0`]: { file: '/dcl-ui-review/references/live-2-2.png' }
-  })
-  for (const id of ['2-1', '2-2'])
-    await put(root, `figma/review/public/dcl-ui-review/references/live-${id}.png`, 'fixture PNG')
   for (const name of runtimeFiles)
     await put(root, `figma/review/src/components/${name}`, '// fixture runtime\n')
   await cp(path.join(root, GEN), path.join(root, LIB), { recursive: true })
@@ -141,7 +135,6 @@ async function buildLifecycleFixture(splitPages: boolean, duplicateNames: boolea
     components: publicNames,
     files: {}
   })
-  await writePromotionManifest(app)
   const shared = `${GEN}/assets/${(await readdir(path.join(root, GEN, 'assets')))[0]}`
   const records: Retirements = {
     schema: 1,

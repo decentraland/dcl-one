@@ -31,12 +31,12 @@ describe('generateTokens', () => {
 
   describe('when generating the CSS variables', () => {
     it('should keep semantic tokens as references to primitives', () => {
-      expect(files.get('tokens/tokens.css')).toContain('--dcl-bg-page: var(--dcl-neutrals-shadow);')
+      expect(files.get('tokens/tokens.css')).toContain('--dcl-bg-page: var(--dcl-neutral-dark);')
     })
 
     it('should render transparent primitives as rgba', () => {
       expect(files.get('tokens/tokens.css')).toContain(
-        '--dcl-transparencies-white-10: rgba(255, 255, 255, 0.1);'
+        '--dcl-alpha-white-10: rgba(255, 255, 255, 0.1);'
       )
     })
 
@@ -87,7 +87,8 @@ describe('generateTokens', () => {
         (m) => m[1]!
       )
 
-      expect(referenced.length).toBeGreaterThan(150)
+      // Every Primitives, Semantic, Spacing and Layout variable but the breakpoint, plus both gradients.
+      expect(referenced.length).toBe(29)
       expect(referenced.filter((name) => !defined.has(name))).toEqual([])
     })
 
@@ -96,7 +97,7 @@ describe('generateTokens', () => {
 
       expect(theme).toContain("marginX: 'var(--dcl-layout-margin-x)'")
       expect(theme).toContain("labelSmCaps: 'var(--dcl-font-size-label-sm-caps)'")
-      expect(theme).toContain("lightRainbow: 'var(--dcl-gradient-light-rainbow)'")
+      expect(theme).toContain("sunset: 'var(--dcl-gradient-sunset)'")
     })
 
     it('should expose CSS variable references only', () => {

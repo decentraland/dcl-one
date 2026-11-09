@@ -144,6 +144,140 @@ describe('readSwatches', () => {
     })
   })
 
+  describe('when a swatch shows an excluded primitive', () => {
+    const withTest = primitives({
+      'Primary/Primary': ['#ff2d55'],
+      'Primary/Primary blue TEST': ['#0400ff']
+    })
+    const excluded = ['Primitives/Primary/Primary blue TEST']
+
+    it('should report it as excluded and keep the saved variable', () => {
+      const result = readSwatches(
+        page(column('Reds', swatch('Primary', '#FF2D55'), swatch('Primary blue TEST', '#0400FF'))),
+        withTest,
+        excluded
+      )
+
+      expect(result.changes).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+      expect(result.collections).toEqual(withTest)
+      expect(result.errors).toEqual([])
+    })
+
+    it('should not take a new value from the swatch', () => {
+      const result = readSwatches(
+        page(column('Reds', swatch('Primary', '#FF2D55'), swatch('Primary blue TEST', '#00FF00'))),
+        withTest,
+        excluded
+      )
+
+      expect(result.changes).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+      expect(result.collections).toEqual(withTest)
+    })
+
+    it('should still update a sibling swatch in the same column', () => {
+      const result = readSwatches(
+        page(column('Reds', swatch('Primary', '#FF0000'), swatch('Primary blue TEST', '#0400FF'))),
+        withTest,
+        excluded
+      )
+
+      expect(result.changes).toEqual([
+        {
+          kind: 'updated',
+          name: 'Primary/Primary',
+          from: '#ff2d55',
+          to: '#ff0000',
+          fromAlpha: 1,
+          toAlpha: 1
+        },
+        { kind: 'excluded', name: 'Primary/Primary blue TEST' }
+      ])
+      expect(
+        result.collections[0]!.variables.find((variable) => variable.name === 'Primary/Primary')
+      ).toMatchObject({ values: { Value: { hex: '#ff0000', alpha: 1 } } })
+    })
+
+    it('should still report an unrelated malformed swatch', () => {
+      const result = readSwatches(
+        page(
+          column(
+            'Reds',
+            swatch('Primary', '#FF2D55', '#00FF00'),
+            swatch('Primary blue TEST', '#0400FF')
+          )
+        ),
+        withTest,
+        excluded
+      )
+
+      expect(result.errors).toEqual([
+        expect.stringMatching(
+          /^Swatch "Primary" \(s:\d+\) says #FF2D55 but is filled with #00ff00 at 1$/
+        )
+      ])
+    })
+
+    it('should still report a malformed swatch of the excluded primitive itself', () => {
+      const result = readSwatches(
+        page(
+          column(
+            'Reds',
+            swatch('Primary', '#FF2D55'),
+            swatch('Primary blue TEST', '#0400FF', '#00FF00')
+          )
+        ),
+        withTest,
+        excluded
+      )
+
+      expect(result.errors).toEqual([
+        expect.stringMatching(
+          /^Swatch "Primary blue TEST" \(s:\d+\) says #0400FF but is filled with #00ff00 at 1$/
+        )
+      ])
+    })
+
+    it('should report it once, without a kept note, when its swatch is missing', () => {
+      const result = readSwatches(
+        page(column('Reds', swatch('Primary', '#FF2D55'))),
+        withTest,
+        excluded
+      )
+
+      expect(result.changes).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+      expect(result.notes).toEqual([])
+      expect(result.collections).toEqual(withTest)
+    })
+
+    it('should report it once when two swatches show it', () => {
+      const result = readSwatches(
+        page(
+          column(
+            'Reds',
+            swatch('Primary', '#FF2D55'),
+            swatch('Primary blue TEST', '#0400FF'),
+            swatch('Primary blue TEST', '#0400FF')
+          )
+        ),
+        withTest,
+        excluded
+      )
+
+      expect(result.changes).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+    })
+
+    it('should not add it when the capture does not have it yet', () => {
+      const result = readSwatches(
+        page(column('Reds', swatch('Primary', '#FF2D55'), swatch('Primary blue TEST', '#0400FF'))),
+        saved,
+        excluded
+      )
+
+      expect(result.changes).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+      expect(result.collections).toEqual(saved)
+    })
+  })
+
   describe('when the hex text disagrees with the swatch fill', () => {
     it('should report the swatch instead of reading either value', () => {
       const result = readSwatches(

@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "lockHash": "43517f0faeb527e7f8918da67b27977b1696584774b4eec47cb6b774691d7d92",
+  "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "figmaTree": "054f8ce7376af9b11e109c064b04161101258fba",
+  "checks": {
+    "fetch-source": {
+      "result": "pass",
+      "detail": "544 capture files match the pinned digest table"
+    },
+    "deviations": {
+      "result": "pass",
+      "detail": "457 files pinned, every difference names a code"
+    },
+    "diff": {
+      "result": "pass",
+      "detail": "0 added, 0 changed, 0 removed"
+    },
+    "check-mappings": {
+      "result": "pass",
+      "detail": "exit 0"
+    },
+    "review-manifest": {
+      "result": "pass",
+      "detail": "catalog unchanged after regeneration"
+    },
+    "navbar-bounds": {
+      "result": "pass",
+      "detail": "navbar-bounds build test passes"
+    }
+  }
+}

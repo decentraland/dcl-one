@@ -97,19 +97,6 @@ function parseAggregate(
     return { rest: json(rest), entries, order }
   }
 
-  if (aggregate === 'references') {
-    const data = JSON.parse(text) as Record<string, unknown>
-    for (const [key, value] of Object.entries(data)) {
-      const component = key.replace(/-\d+$/, '')
-      entries.set(key, {
-        owner: componentOwner(ownership, component)?.pageId ?? null,
-        value: json(value)
-      })
-      order.push(key)
-    }
-    return { rest: '', entries, order }
-  }
-
   if (aggregate === 'sync-state' || aggregate === 'pages') {
     const data = JSON.parse(text) as { pages?: PageEntry[] } & Record<string, unknown>
     const { pages = [], ...rest } = data
@@ -179,24 +166,6 @@ function parseAggregate(
       entries,
       order
     )
-    return { rest: json(rest), entries, order }
-  }
-  if (aggregate === 'fidelity') {
-    const data = JSON.parse(text) as {
-      cases?: Record<string, unknown>
-      signature?: string
-      generatedAt?: string
-    }
-    const { cases = {}, ...rest } = data
-    delete rest.signature
-    delete rest.generatedAt
-    for (const [key, value] of Object.entries(cases)) {
-      entries.set(key, {
-        owner: componentOwner(ownership, key.replace(/-\d+$/, ''))?.pageId ?? null,
-        value: json(value)
-      })
-      order.push(key)
-    }
     return { rest: json(rest), entries, order }
   }
   if (aggregate === 'inventory') {

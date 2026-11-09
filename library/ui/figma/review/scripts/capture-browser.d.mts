@@ -1,5 +1,6 @@
 type CaptureSession = {
   runtimeErrors: string[]
+  consoleErrors: string[]
   send: (method: string, params?: Record<string, unknown>) => Promise<unknown>
   close: () => Promise<void>
 }

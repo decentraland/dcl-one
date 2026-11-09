@@ -55,14 +55,14 @@ describe('figma stdio server', () => {
   })
 
   describe('when calling figma_get_tokens', () => {
-    it('should return 83+36+16+26 variables and 32 text styles', async () => {
+    it('should return 10+5+8+5 variables and 7 text styles', async () => {
       const { text } = await call('figma_get_tokens')
       const result = JSON.parse(text)
 
       expect(result.counts).toMatchObject({
-        variables: 161,
-        byCollection: { Primitives: 83, Semantic: 36, Spacing: 16, Layout: 26 },
-        textStyles: 32
+        variables: 28,
+        byCollection: { Primitives: 10, Semantic: 5, Spacing: 8, Layout: 5 },
+        textStyles: 7
       })
     })
 
@@ -78,9 +78,9 @@ describe('figma stdio server', () => {
     it('should exclude disabled pages from generated component discovery', async () => {
       const result = JSON.parse((await call('figma_list_components', { kind: 'components' })).text)
       expect(result.components.length).toBeGreaterThan(0)
-      expect(result.components.some((entry: { page: string }) => entry.page === 'Buttons')).toBe(
-        false
-      )
+      expect(
+        result.components.some((entry: { page: string }) => entry.page === 'Demo Controls')
+      ).toBe(false)
     })
 
     it('should only return components that need manual work when asked', async () => {
@@ -96,12 +96,12 @@ describe('figma stdio server', () => {
 
     it('should group icon variants under one component', async () => {
       const result = JSON.parse(
-        (await call('figma_list_components', { search: 'navbar/wallet' })).text
+        (await call('figma_list_components', { search: 'toggle/bell' })).text
       )
 
       expect(result.components).toEqual([
         expect.objectContaining({
-          name: 'navbar/wallet',
+          name: 'toggle/bell',
           variants: ['active=false', 'active=true']
         })
       ])
@@ -113,7 +113,7 @@ describe('figma stdio server', () => {
       const result = JSON.parse(
         (await call('figma_get_component_spec', { name: 'ProgressBar' })).text
       )
-      expect(result).toMatchObject({ name: 'ProgressBar', page: 'Progress Bar' })
+      expect(result).toMatchObject({ name: 'ProgressBar', page: 'Demo Feedback' })
       expect(Object.keys(result.views).length).toBeGreaterThan(0)
     })
 
@@ -127,15 +127,13 @@ describe('figma stdio server', () => {
 
   describe('when calling figma_export_icons', () => {
     it('should return the SVG markup of a named icon', async () => {
-      const result = JSON.parse(
-        (await call('figma_export_icons', { names: ['general/like'] })).text
-      )
+      const result = JSON.parse((await call('figma_export_icons', { names: ['sample/like'] })).text)
 
       expect(result.icons[0].svg).toContain('<svg')
     })
 
-    it('should refuse to dump hundreds of icons inline', async () => {
-      const { isError, text } = await call('figma_export_icons', { category: 'general' })
+    it('should refuse to dump more icons inline than the limit allows', async () => {
+      const { isError, text } = await call('figma_export_icons', { category: 'sample' })
 
       expect(isError).toBe(true)
       expect(text).toContain('Narrow the filter')
@@ -143,7 +141,7 @@ describe('figma stdio server', () => {
 
     it('should refuse an outDir outside the workspace', async () => {
       const { isError, text } = await call('figma_export_icons', {
-        names: ['general/like'],
+        names: ['sample/like'],
         outDir: '/etc/dcl'
       })
 
@@ -156,7 +154,7 @@ describe('figma stdio server', () => {
     it('should list the pages and mark the ones with a configured generator', async () => {
       const result = JSON.parse((await call('figma_list_pages')).text)
 
-      expect(result.pages).toHaveLength(57)
+      expect(result.pages).toHaveLength(13)
       expect(result.pages.find((p: { name: string }) => p.name === 'Icons').configured).toEqual({
         kind: 'icons',
         category: 'Icons'
@@ -169,7 +167,7 @@ describe('figma stdio server', () => {
       const { isError, text } = await call('figma_diff')
 
       expect(isError).toBe(false)
-      expect(JSON.parse(text).summary).toMatchObject({ icons: 474, tokens: 161 })
+      expect(JSON.parse(text).summary).toMatchObject({ icons: 23, tokens: 28 })
     })
   })
 })

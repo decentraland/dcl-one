@@ -11,8 +11,9 @@ import { viewLoop, viewMotion, type StateExtras } from './motion.js'
 import { assertIdentifier, kebabCase, textStyleClass } from './naming.js'
 import { inLayer } from './css-layers.js'
 import { header } from './render.js'
+import { replaceRasterFills } from './image-fills.js'
 import { unsafeSvgReason } from './svg-safety.js'
-import type { GeneratedFile, GeneratorContext } from './types.js'
+import type { GeneratedFile, GeneratorContext, ImageFills } from './types.js'
 
 type ManifestEntry = {
   name: string
@@ -510,6 +511,8 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
   const files: GeneratedFile[] = []
   const manifest: ManifestEntry[] = []
   const assets = new Map<string, string>()
+  const mode: ImageFills = context.imageFills ?? 'assets'
+  const replaced: { component: string; count: number }[] = []
   const folders = new Map(specs.map((spec) => [spec.name, pageFolder(spec.page)]))
   for (const spec of specs) {
     const folder = pageFolder(spec.page)
@@ -518,9 +521,15 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
       path: `components/${folder}/${spec.name}.tsx`,
       content: emitComponent(spec, context, folders, cssRules)
     })
+    let css = cssRules.join('\n\n') + '\n'
+    if (mode === 'placeholder') {
+      const result = replaceRasterFills(css)
+      css = result.css
+      if (result.replaced) replaced.push({ component: spec.name, count: result.replaced })
+    }
     files.push({
       path: `components/${folder}/${spec.name}.module.css`,
-      content: inLayer('dcl.components', externalizeSvgs(cssRules.join('\n\n') + '\n', assets))
+      content: inLayer('dcl.components', externalizeSvgs(css, assets))
     })
     manifest.push({
       name: spec.name,
@@ -566,7 +575,7 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
       ''
     ].join('\n')
   })
-  return { files, manifest }
+  return { files, manifest, imageFills: { mode, replaced } }
 }
 
 // Figma names are free text; a line terminator would end the `//` comment and turn the rest into code.

@@ -319,7 +319,8 @@ describe('when auditing a live file', () => {
     const colorsPage = (
       value: string,
       fill: Record<string, number>,
-      extra: LiveNode[] = []
+      extra: LiveNode[] = [],
+      label = 'Primary'
     ): LiveNode => ({
       id: 'colors',
       name: 'Colors',
@@ -341,7 +342,7 @@ describe('when auditing a live file', () => {
                   type: 'RECTANGLE',
                   fills: [{ type: 'SOLID', color: { ...fill, a: 1 } }]
                 },
-                { id: 'label', name: 'label', type: 'TEXT', characters: 'Primary' },
+                { id: 'label', name: 'label', type: 'TEXT', characters: label },
                 { id: 'value', name: 'value', type: 'TEXT', characters: value }
               ]
             },
@@ -403,6 +404,60 @@ describe('when auditing a live file', () => {
         changedPages: expect.arrayContaining(['Colors']),
         colorChanges: [{ kind: 'updated', name: 'Primary/Primary', from: '#ff2d55', to: '#0400ff' }]
       })
+    })
+    it('should report an excluded primitive without changing the saved colours', async () => {
+      const config = JSON.parse(await readFile(path.join(directory, 'figma.config.json'), 'utf8'))
+      config.excludedPrimitives = ['Primitives/Primary/Primary blue TEST']
+      await writeFile(path.join(directory, 'figma.config.json'), JSON.stringify(config))
+      const saved = JSON.stringify({
+        collections: [
+          {
+            name: 'Primitives',
+            modes: ['Value'],
+            variables: [
+              {
+                name: 'Primary/Primary blue TEST',
+                type: 'COLOR',
+                values: { Value: { hex: '#0400ff', alpha: 1 } }
+              }
+            ]
+          }
+        ]
+      })
+      await writeFile(path.join(directory, 'variables.json'), saved)
+      app = await createApp(directory)
+      fetchFn
+        .mockResolvedValueOnce(Response.json(file))
+        .mockResolvedValueOnce(
+          Response.json({
+            version: file.version,
+            nodes: {
+              page: {
+                document: {
+                  ...page,
+                  children: [
+                    ...page.children!,
+                    { ...file.document.children![0]!.children![0]!, children: [] }
+                  ]
+                }
+              }
+            }
+          })
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: file.version,
+            nodes: {
+              colors: {
+                document: colorsPage('#00FF00', { r: 0, g: 1, b: 0 }, [], 'Primary blue TEST')
+              }
+            }
+          })
+        )
+      const report = await pullLive(app, { report: 'report.json' }, client)
+      expect(report.changedPages).not.toContain('Colors')
+      expect(report.colorChanges).toEqual([{ kind: 'excluded', name: 'Primary/Primary blue TEST' }])
+      expect(await readFile(path.join(directory, 'variables.json'), 'utf8')).toBe(saved)
     })
     it('should fail when a swatch text disagrees with its fill', async () => {
       fetchFn

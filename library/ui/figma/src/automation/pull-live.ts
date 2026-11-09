@@ -35,7 +35,7 @@ import {
 import { exportImageFills, exportNodes } from './exports.js'
 import { readSwatches, type SwatchChange } from './color-swatches.js'
 import { validatePage } from '../capture/ingest-chunks.js'
-import { stripImageMetadata, stripPngMetadata } from '../capture/strip-image-metadata.js'
+import { stripImageMetadata } from '../capture/strip-image-metadata.js'
 import { writeReviewManifest } from '../review-manifest.js'
 import { stripFileKey, stripFileKeyText } from '../capture/strip-file-key.js'
 import { assertDistinctPageFiles, encodePageFileName } from '../capture/page-file-name.js'
@@ -61,14 +61,6 @@ const save = async (file: string, data: unknown) => {
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, JSON.stringify(stripFileKey(data), null, 2) + '\n')
 }
-type Catalog = {
-  components: {
-    name: string
-    page: string
-    variants: { id: string; width: number; height: number }[]
-  }[]
-}
-type Reference = { file: string; width: number; height: number; offsetX?: number; offsetY?: number }
 type Baseline = {
   schema: number
   pages: Record<string, { hash: string; version: string }>
@@ -260,7 +252,11 @@ async function pullLive(
         continue
       }
       const live = await readLivePage(client, fileKey, page.id!, file.version)
-      const result = readSwatches(live, await app.createSource('snapshot').getTokenCollections())
+      const result = readSwatches(
+        live,
+        await app.createSource('snapshot').getTokenCollections(),
+        app.config.excludedPrimitives
+      )
       if (result.errors.length)
         throw new Error(`Colors swatches need fixing in Figma:\n${result.errors.join('\n')}`)
       // Variable names come from live swatch labels: one naming the file or its key is rejected
@@ -274,7 +270,7 @@ async function pullLive(
         )
       report.colorChanges = result.changes
       report.colorNotes = result.notes
-      if (result.changes.length) {
+      if (result.changes.some((change) => change.kind !== 'excluded')) {
         collections = result.collections
         report.changedPages.push(page.name)
       }
@@ -371,48 +367,7 @@ async function pullLive(
       foundationsCaptured: selected.some((page) => page.name === 'Colors')
     })
     await writeReviewManifest(staged, stagedReview)
-    const catalog = (await json(path.join(stagedReview, 'src/review/catalog.json'))) as Catalog
-    const oldCatalog = (await json(path.join(reviewRoot, 'src/review/catalog.json'))) as Catalog
-    const oldReferences = (await json(
-      path.join(reviewRoot, 'src/review/references.json')
-    )) as Record<string, Reference>
-    const referencesById = new Map(
-      oldCatalog.components.flatMap((component) =>
-        component.variants.map(
-          (variant, index) => [variant.id, oldReferences[`${component.name}-${index}`]] as const
-        )
-      )
-    )
-    const freshIds = catalog.components
-      .filter((component) => captures.has(component.page))
-      .flatMap((component) => component.variants.map((variant) => variant.id))
-    const pngs = await exportNodes(client, fileKey, file.version, freshIds, 'png')
-    const references: Record<string, Reference> = {}
-    for (const component of catalog.components)
-      for (const [index, variant] of component.variants.entries()) {
-        const key = `${component.name}-${index}`
-        const png = pngs.get(variant.id)
-        if (png) {
-          const filename = `live-${variant.id.replace(/[^a-zA-Z0-9_-]/g, '-')}.png`
-          const target = path.join(stagedReview, 'public/dcl-ui-review/references', filename)
-          await mkdir(path.dirname(target), { recursive: true })
-          // Reference exports are imported rasters too: they keep only rendering and colour chunks.
-          await writeFile(target, stripPngMetadata(png))
-          references[key] = {
-            file: `/dcl-ui-review/references/${filename}`,
-            width: png.readUInt32BE(16),
-            height: png.readUInt32BE(20),
-            offsetX: 0,
-            offsetY: 0
-          }
-        } else {
-          const existing = referencesById.get(variant.id)
-          if (!existing) throw new Error(`Missing reference for unchanged variant: ${variant.id}`)
-          references[key] = existing
-        }
-      }
-    await save(path.join(stagedReview, 'src/review/references.json'), references)
-    // Every capture read above is pinned to file.version (page nodes, renders) or content-addressed (image
+    // Every capture read above is pinned to file.version (page nodes) or content-addressed (image
     // fills), so a newer file version cannot leak into the output. Only the readiness selection, which comes
     // from the unpinned whole-file read, must still hold.
     const latest = await readLiveFile(client, fileKey)
@@ -445,7 +400,6 @@ async function pullLive(
       path.join(stagedReview, 'src/review'),
       path.join(reviewRoot, 'src/review')
     )
-    await copyManagedTree(path.join(stagedReview, 'public'), path.join(reviewRoot, 'public'))
     return report
   } catch (error) {
     report.error = errorText(error)

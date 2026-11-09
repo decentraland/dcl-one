@@ -1,32 +1,37 @@
+import { cp } from 'node:fs/promises'
 import path from 'node:path'
-import { loadConfig } from '../src/config.js'
+import { loadConfigFile, type FigmaConfig } from '../src/config.js'
 import type { ComponentSpec } from '../src/ir/components.js'
 import { SnapshotSource } from '../src/sources/snapshot-source.js'
 import { loadSpecsFromSource } from '../src/specs.js'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
-// Tests read a frozen copy so a live Figma change cannot break them (scripts/freeze-test-snapshot.mjs).
-const snapshotDir = path.resolve(projectRoot, 'test/fixtures/figma-snapshot')
+// Tests read a hand-written synthetic snapshot (fixtures/synthetic-snapshot/README.md), never a Figma capture,
+// with the fixture config that describes its pages.
+const fixturesDir = path.resolve(projectRoot, 'test/fixtures')
+const snapshotDir = path.join(fixturesDir, 'synthetic-snapshot')
+const testConfigFile = path.join(fixturesDir, 'figma.config.json')
 
 const snapshotSource = () => new SnapshotSource(snapshotDir)
 
-const FIXTURE_ALIASES = { Button: 'ButtonSet' }
+const testConfig = (): Promise<FigmaConfig> => loadConfigFile(testConfigFile)
+
+// Copies the snapshot data into a test tree as a capture directory, without the fixture's README, which no
+// capture holds and the ownership guard would rightly report as unowned.
+const copySnapshot = (target: string) =>
+  cp(snapshotDir, target, {
+    recursive: true,
+    filter: (file) => file !== path.join(snapshotDir, 'README.md')
+  })
 
 let cached: Promise<ComponentSpec[]> | undefined
 
-// Building the specs expands ~170 variants, so every test file shares one result per worker.
+// Every test file shares one build of the specs per worker.
 function componentSpecs(): Promise<ComponentSpec[]> {
   cached ??= (async () => {
-    const base = await loadConfig(projectRoot)
-    const config = {
-      ...base,
-      selection: undefined,
-      // The frozen capture holds every page, so the set named "Button" collides with the aliased
-      // Button-Contained-Text; a test-only alias keeps both. Same-named sets stay excluded.
-      componentNames: { ...base.componentNames, ...FIXTURE_ALIASES }
-    }
+    const config = { ...(await testConfig()), selection: undefined }
     const source = snapshotSource()
-    // Mapper tests cover every capture, independently of publication inventory.
+    // Mapper tests cover every page of the snapshot, independently of publication inventory.
     source.getGenerationInventory = async () => undefined
     return (await loadSpecsFromSource(source, config)).specs
   })()
@@ -39,4 +44,14 @@ async function componentSpec(name: string): Promise<ComponentSpec> {
   return spec
 }
 
-export { componentSpec, componentSpecs, projectRoot, snapshotDir, snapshotSource }
+export {
+  copySnapshot,
+  componentSpec,
+  componentSpecs,
+  fixturesDir,
+  projectRoot,
+  snapshotDir,
+  snapshotSource,
+  testConfig,
+  testConfigFile
+}

@@ -7,8 +7,9 @@ import path from 'node:path'
 import os from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { browserArgs } from './browser-args.mjs'
-import { CaptureTimeout } from './capture-retry.mjs'
 import { cleanupCapture, removeProfile, stopBrowser } from './capture-teardown.mjs'
+
+class CaptureTimeout extends Error {}
 
 async function findBrowser(candidates) {
   for (const candidate of candidates.filter(Boolean)) {
@@ -107,6 +108,7 @@ async function openSession(executable, { signal } = {}) {
     signal?.addEventListener('abort', abort, { once: true })
     const session = {
       runtimeErrors: [],
+      consoleErrors: [],
       close: async () => {
         signal?.removeEventListener('abort', abort)
         await close()
@@ -121,6 +123,10 @@ async function openSession(executable, { signal } = {}) {
         session.runtimeErrors.push(
           message.params.exceptionDetails.exception?.description ??
             message.params.exceptionDetails.text
+        )
+      else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error')
+        session.consoleErrors.push(
+          message.params.args.map((arg) => String(arg.value ?? arg.description ?? '')).join(' ')
         )
     })
     session.send = (method, params = {}) =>

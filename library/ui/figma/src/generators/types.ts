@@ -1,5 +1,8 @@
 type GeneratedFile = { path: string; content: string }
 
-type GeneratorContext = Record<string, never>
+type ImageFills = 'assets' | 'placeholder'
 
-export type { GeneratedFile, GeneratorContext }
+// An omitted imageFills means 'assets'. Keyless: this tree's generators take no file key.
+type GeneratorContext = { imageFills?: ImageFills }
+
+export type { GeneratedFile, GeneratorContext, ImageFills }

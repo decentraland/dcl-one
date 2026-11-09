@@ -8,6 +8,7 @@ type Swatch = { id: string; column: string; label: string; hex: string; alpha: n
 type SwatchChange =
   | { kind: 'updated'; name: string; from: string; to: string; fromAlpha: number; toAlpha: number }
   | { kind: 'added'; name: string; to: string; toAlpha: number }
+  | { kind: 'excluded'; name: string }
 
 const VALUE = /^#([0-9a-f]{6})(?:\s*-\s*(\d{1,3})%)?$/i
 const PRIMITIVES = 'Primitives'
@@ -72,7 +73,12 @@ function findSwatches(page: LiveNode, errors: string[]): Swatch[] {
 
 type Primitive = { name: string; hex: string; alpha: number }
 
-function readSwatches(page: LiveNode, collections: TokenCollection[]) {
+// An excluded primitive keeps its saved variable: its swatch is reported, never read into the capture.
+function readSwatches(
+  page: LiveNode,
+  collections: TokenCollection[],
+  excludedPrimitives: readonly string[] = []
+) {
   const errors: string[] = []
   const swatches = findSwatches(page, errors)
   const collection = collections.find((item) => item.name === PRIMITIVES)
@@ -117,6 +123,7 @@ function readSwatches(page: LiveNode, collections: TokenCollection[]) {
     const name = `${[...groups][0]!}/${swatch.label}`
     const existing = primitives.find((primitive) => primitive.name === name)
     shown.add(name)
+    if (excludedPrimitives.includes(`${PRIMITIVES}/${name}`)) continue
     if (existing && sameValue(swatch, existing)) continue
     // Documentation swatches labelled differently (Transparencies) are unchanged when their value matches.
     const twin =
@@ -148,9 +155,18 @@ function readSwatches(page: LiveNode, collections: TokenCollection[]) {
       changes.push({ kind: 'added', name, to: swatch.hex, toAlpha: swatch.alpha })
     }
   }
+  // One diagnostic per excluded primitive, whether its swatch is shown, repeated or missing.
+  const excluded = excludedPrimitives
+    .filter((entry) => entry.startsWith(`${PRIMITIVES}/`))
+    .map((entry) => entry.slice(PRIMITIVES.length + 1))
+  for (const name of excluded) changes.push({ kind: 'excluded', name })
   const groupsShown = new Set([...columnGroups.values()].flatMap((groups) => [...groups]))
   for (const primitive of primitives)
-    if (groupsShown.has(group(primitive.name)) && !shown.has(primitive.name))
+    if (
+      groupsShown.has(group(primitive.name)) &&
+      !shown.has(primitive.name) &&
+      !excluded.includes(primitive.name)
+    )
       notes.push(`${primitive.name} has no swatch on the Colors page and was kept`)
   return { collections: next, changes, notes, errors }
 }

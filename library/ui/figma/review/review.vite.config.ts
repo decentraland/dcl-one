@@ -1,7 +1,6 @@
 import path from 'node:path'
 import { readFile, writeFile } from 'node:fs/promises'
 import { defineConfig } from 'vite'
-import { reviewSignature } from './scripts/review-signature.mjs'
 
 let outDir = path.resolve(import.meta.dirname, 'review-dist')
 let relativeBase = false
@@ -10,7 +9,7 @@ export default defineConfig({
   root: import.meta.dirname,
   plugins: [
     {
-      name: 'review-source-signature',
+      name: 'review-root-entry',
       apply: 'build',
       configResolved(config) {
         outDir = path.resolve(config.root, config.build.outDir)
@@ -22,10 +21,6 @@ export default defineConfig({
         await writeFile(
           path.resolve(outDir, 'index.html'),
           relativeBase ? page.replaceAll('"../dcl-ui-review/', '"./dcl-ui-review/') : page
-        )
-        await writeFile(
-          path.resolve(outDir, 'dcl-ui-review/source-signature.json'),
-          JSON.stringify({ signature: await reviewSignature(import.meta.dirname) })
         )
       }
     },

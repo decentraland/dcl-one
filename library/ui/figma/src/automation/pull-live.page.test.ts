@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { crc32 } from 'node:zlib'
-import { readFileSync } from 'node:fs'
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync } from 'node:fs'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,16 +9,15 @@ import { createApp, runSync, type App } from '../app.js'
 import { FigmaClient } from '../figma/client.js'
 import { writeReviewManifest } from '../review-manifest.js'
 import type { LiveFile, LiveNode } from './live-file.js'
-import { decodePng } from '../capture/png-decode.js'
 import { pullLive } from './pull-live.js'
 import { encodePageFileName } from '../capture/page-file-name.js'
+import { copySnapshot, snapshotDir, testConfigFile } from '../../test/snapshot.js'
 
-// A successful `pull-live --page --apply` over a real (frozen) capture and a real generated Review:
+// A successful `pull-live --page --apply` over the synthetic snapshot and a generated Review:
 // the selected page is refreshed, every unselected page keeps its capture, readiness, baseline entry and
 // references, and the only files written are the ones listed in SHARED_REWRITES or the selected page.
-const fixtures = path.resolve(import.meta.dirname, '../../test/fixtures')
-const SELECTED = { id: '8711:14600', name: 'Text Input' }
-const UNSELECTED = { id: '8711:14972', name: 'Search Bar' }
+const SELECTED = { id: '10:5', name: 'Demo Field' }
+const UNSELECTED = { id: '10:6', name: 'Demo Search' }
 const VERSION = 'v-live'
 
 // 1x1 transparent PNG with valid CRCs.
@@ -97,10 +96,7 @@ type SavedSet = {
 }
 const savedSets = (
   JSON.parse(
-    readFileSync(
-      path.join(fixtures, 'figma-snapshot/components', encodePageFileName(SELECTED.name)),
-      'utf8'
-    )
+    readFileSync(path.join(snapshotDir, 'components', encodePageFileName(SELECTED.name)), 'utf8')
   ) as { components: SavedSet[] }
 ).components.map((set): LiveNode => ({
   id: set.id,
@@ -111,13 +107,6 @@ const savedSets = (
     name: entry.name
   }))
 }))
-// Every variant the refreshed page renders: the saved sets' and the new set's.
-const SELECTED_VARIANTS = [
-  ...savedSets.flatMap((set) => (set.children ?? []).map((node) => node.id)),
-  '9000:2',
-  '9000:3'
-].map((id) => id.replace(':', '-'))
-const selectedReference = new RegExp(`/live-(${SELECTED_VARIANTS.join('|')})\\.png$`)
 const selectedLive: LiveNode = {
   id: SELECTED.id,
   name: SELECTED.name,
@@ -148,21 +137,8 @@ describe('when one page is refreshed with --page --apply', () => {
     // The tool's own layout (layout.ts): the CLI in figma/, its snapshot and Review inside it.
     directory = path.join(await mkdtemp(path.join(os.tmpdir(), 'live-page-')), 'figma')
     vi.stubEnv('FIGMA_FILE_KEY', 'FAKEKEY000example000000')
-    await cp(path.join(fixtures, 'figma-snapshot'), path.join(directory, 'figma-snapshot'), {
-      recursive: true
-    })
-    // The frozen capture lists Tabs (15674:34262) on both Buttons and Tabs bar, from before Figma moved it.
-    // The scope guard rejects an automated run over two owners, so the stale Buttons copy is dropped.
-    const buttons = path.join(directory, 'figma-snapshot/components/Buttons.json')
-    const capture = await json(buttons)
-    await writeFile(
-      buttons,
-      JSON.stringify({
-        ...capture,
-        components: capture.components.filter((entry: { id: string }) => entry.id !== '15674:34262')
-      })
-    )
-    const config = await json(path.join(fixtures, 'figma.config.json'))
+    await copySnapshot(path.join(directory, 'figma-snapshot'))
+    const config = await json(testConfigFile)
     await writeFile(
       path.join(directory, 'figma.config.json'),
       JSON.stringify({
@@ -173,29 +149,10 @@ describe('when one page is refreshed with --page --apply', () => {
       })
     )
     app = await createApp(directory)
-    // The Review the run starts from: generated, catalogued, with one reference per variant.
+    // The Review the run starts from: generated and catalogued.
     // Setup only: a developer regeneration of the starting Review (automated runs are scope-checked).
     await runSync(app, { source: 'snapshot', developer: true })
     await writeReviewManifest(app)
-    const catalog = await json(path.join(directory, 'review/src/review/catalog.json'))
-    const references: Record<string, unknown> = {}
-    for (const component of catalog.components as {
-      name: string
-      variants: { id: string }[]
-    }[])
-      component.variants.forEach((entry, index) => {
-        references[`${component.name}-${index}`] = {
-          file: `/dcl-ui-review/references/${entry.id.replace(/[^a-zA-Z0-9_-]/g, '-')}.png`,
-          width: 1,
-          height: 1,
-          offsetX: 0,
-          offsetY: 0
-        }
-      })
-    await writeFile(
-      path.join(directory, 'review/src/review/references.json'),
-      JSON.stringify(references, null, 2) + '\n'
-    )
     saved = await json(path.join(directory, 'figma-snapshot/sync-state.json'))
     before = await tree(directory)
 
@@ -266,17 +223,9 @@ describe('when one page is refreshed with --page --apply', () => {
     ])
   })
 
-  it('should write the selected references without metadata and with the same pixels', async () => {
-    const dir = path.join(directory, 'review/public/dcl-ui-review/references')
-    const written = (await readdir(dir)).filter((file) => file.startsWith('live-9000-'))
-
-    expect(written.length).toBeGreaterThan(0)
-    expect(decodePng(EXPORTED).problem).toBeUndefined()
-    for (const file of written) {
-      const bytes = await readFile(path.join(dir, file))
-      expect(bytes.includes(Buffer.from('tEXt', 'latin1'))).toBe(false)
-      expect(decodePng(bytes).png!.pixels.equals(decodePng(EXPORTED).png!.pixels)).toBe(true)
-    }
+  it('should publish no reference PNG or reference index', () => {
+    expect(existsSync(path.join(directory, 'review/public/dcl-ui-review'))).toBe(false)
+    expect(existsSync(path.join(directory, 'review/src/review/references.json'))).toBe(false)
   })
 
   it('should refresh the selected capture and baseline entry', async () => {
@@ -292,15 +241,13 @@ describe('when one page is refreshed with --page --apply', () => {
     expect(baseline.pages[SELECTED.id].version).toBe(VERSION)
   })
 
-  it('should keep every unselected capture, readiness entry, baseline entry and reference', async () => {
+  it('should keep every unselected capture, readiness entry and baseline entry', async () => {
     const after = await tree(directory)
     const state = await json(path.join(directory, 'figma-snapshot/sync-state.json'))
     const baselineBefore = JSON.parse(
-      await readFile(path.join(fixtures, 'figma-snapshot/live-source.json'), 'utf8')
+      await readFile(path.join(snapshotDir, 'live-source.json'), 'utf8')
     )
     const baselineAfter = await json(path.join(directory, 'figma-snapshot/live-source.json'))
-    const catalog = await json(path.join(directory, 'review/src/review/catalog.json'))
-    const references = await json(path.join(directory, 'review/src/review/references.json'))
 
     expect(state.pages).toEqual(saved.pages)
     expect(state.pages.find((page: Readiness) => page.id === UNSELECTED.id).ready).toBe(true)
@@ -312,19 +259,6 @@ describe('when one page is refreshed with --page --apply', () => {
         file !== `figma-snapshot/components/${encodePageFileName(SELECTED.name)}`
     ))
       expect(after[file]).toBe(before[file])
-    for (const component of catalog.components as {
-      name: string
-      page: string
-      variants: { id: string }[]
-    }[])
-      component.variants.forEach((entry, index) => {
-        const reference = references[`${component.name}-${index}`]
-        if (component.page === SELECTED.name) expect(reference.file).toMatch(selectedReference)
-        else
-          expect(reference.file).toBe(
-            `/dcl-ui-review/references/${entry.id.replace(/[^a-zA-Z0-9_-]/g, '-')}.png`
-          )
-      })
   })
 
   it('should rewrite only the selected capture and the shared files a refresh owns', async () => {
@@ -336,12 +270,8 @@ describe('when one page is refreshed with --page --apply', () => {
     const SHARED_REWRITES = [
       /^figma-snapshot\/sync-state\.json$/,
       /^figma-snapshot\/live-source\.json$/,
-      /^review\/src\/review\/(catalog|references)\.json$/,
-      /^review\/src\/generated\//,
-      {
-        test: (file: string) =>
-          /^review\/public\/dcl-ui-review\/references\//.test(file) && selectedReference.test(file)
-      }
+      /^review\/src\/review\/catalog\.json$/,
+      /^review\/src\/generated\//
     ]
 
     expect(changed).toContain(`figma-snapshot/components/${encodePageFileName(SELECTED.name)}`)

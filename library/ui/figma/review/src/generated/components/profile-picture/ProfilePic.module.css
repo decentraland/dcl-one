@@ -34,7 +34,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/01f810938760aaac.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v0n1 {
@@ -81,7 +81,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/3159c4c59814d2de.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v1n1 {
@@ -128,7 +128,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/2a91b4227cacf169.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v2n1 {
@@ -175,7 +175,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/38e1746abdfbda72.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v3n1 {
@@ -222,7 +222,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/61bb7a9e64cf3116.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v4n1 {
@@ -269,7 +269,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/270d3f926d6878e3.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v6nroot {
@@ -305,7 +305,7 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/1ed3a667b8898c65.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 
 .v7nroot {
@@ -341,6 +341,6 @@ flex: none;
 position: absolute;
 left: 0px;
 top: 0px;
-background: url("../assets/598c334e79ce20d0.svg") center / contain no-repeat;
+background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
 }

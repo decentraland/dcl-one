@@ -1,6 +1,6 @@
-// Brave adds per-session noise to canvas reads ("farbling") on http pages, and the fidelity metrics are computed
-// from a canvas read: the same screenshot measured in two runs gave different pixel counts. Turning farbling off
-// makes Brave read the true pixels, the same values Chrome reads; Chrome ignores the unknown feature.
+// Brave adds per-session noise to canvas reads ("farbling") on http pages, so a check that reads pixels would
+// see different values in two runs. Turning farbling off makes Brave read the true pixels, the same values
+// Chrome reads; Chrome ignores the unknown feature.
 function browserArgs(profile) {
   return [
     '--headless=new',

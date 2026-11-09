@@ -10,7 +10,6 @@ import { exportNodes, exportImageFills } from './exports.js'
 import { pullLive, scopeReport } from './pull-live.js'
 import * as catalogEvidence from './catalog-diff.js'
 import type { LiveFile, LiveNode } from './live-file.js'
-import { buildOwnership, ownerOf } from '../guard/ownership.js'
 
 vi.mock('./exports.js', () => ({ exportNodes: vi.fn(), exportImageFills: vi.fn() }))
 
@@ -306,87 +305,6 @@ describe('when applying a fixture single-page sync', () => {
     })
   })
 
-  describe('and Footer is captured while ready beside legacy unowned evidence', () => {
-    const footerId = '15841:54899'
-    const references = 'figma/review/public/dcl-ui-review/references'
-    let legacy: Record<string, string>
-    beforeEach(async () => {
-      for (const relative of [
-        'figma/figma.config.json',
-        'figma/figma-snapshot/components/Alpha.json',
-        'figma/figma-snapshot/pages.json',
-        'figma/figma-snapshot/sync-state.json',
-        'figma/figma-snapshot/generation-inventory.json',
-        'figma/review/src/review/catalog.json'
-      ]) {
-        const target = path.join(root, relative)
-        await writeFile(
-          target,
-          (await readFile(target, 'utf8')).replaceAll('"1:1"', `"${footerId}"`)
-        )
-      }
-      selected.id = footerId
-      selected.children!.push({
-        id: '10:3',
-        name: 'FooterItem',
-        type: 'COMPONENT',
-        absoluteBoundingBox: { x: 0, y: 0, width: 22, height: 20 }
-      })
-      file.document.children![0]!.id = footerId
-      fetchFn.mockReset()
-      fetchFn
-        .mockResolvedValueOnce(Response.json(file))
-        .mockResolvedValueOnce(Response.json({ nodes: { [footerId]: { document: selected } } }))
-        .mockResolvedValueOnce(Response.json(file))
-      await mkdir(path.join(root, references), { recursive: true })
-      for (let index = 0; index < 20; index++)
-        await writeFile(
-          path.join(root, references, `Footer-legacy-${index}.png`),
-          `legacy ${index}`
-        )
-      legacy = await filesUnder(path.join(root, references))
-      app = await createApp(path.join(root, 'figma'))
-    })
-    it('should publish identity-owned references without changing the legacy PNGs', async () => {
-      await pullLive(
-        app,
-        { apply: true, page: footerId, report: '.figma-cache/report.json' },
-        client
-      )
-      const published = await filesUnder(path.join(root, references))
-      expect(published['live-10-3.png']).toBeDefined()
-      const index = JSON.parse(
-        await readFile(path.join(root, 'figma/review/src/review/references.json'), 'utf8')
-      )
-      expect(index['FooterItem-0'].file).toBe('/dcl-ui-review/references/live-10-3.png')
-      for (const [file, bytes] of Object.entries(legacy)) expect(published[file], file).toBe(bytes)
-      const ownership = await buildOwnership(root)
-      expect(ownerOf(ownership, `${references}/live-10-3.png`)).toEqual({
-        pageId: footerId,
-        componentId: '10:3'
-      })
-      for (let index = 0; index < 20; index++)
-        expect(ownerOf(ownership, `${references}/Footer-legacy-${index}.png`)).toBeNull()
-      const report = JSON.parse(
-        await readFile(path.join(root, 'figma/.figma-cache/report.json'), 'utf8')
-      )
-      expect(report.capturedPages.map((page: { id: string }) => page.id)).toContain(footerId)
-    })
-    it('should report an exact-path collision without overwriting legacy evidence', async () => {
-      const collision = `${references}/live-10-3.png`
-      await writeFile(path.join(root, collision), 'legacy unowned bytes')
-      expect(ownerOf(await buildOwnership(root), collision)).toBeNull()
-      before = await filesUnder(root)
-      await expect(
-        pullLive(app, { apply: true, page: footerId, report: '.figma-cache/report.json' }, client)
-      ).rejects.toThrow('Sync scope conflict')
-      expect(await filesUnder(root)).toEqual(before)
-      const report = JSON.parse(
-        await readFile(path.join(root, 'figma/.figma-cache/report.json'), 'utf8')
-      )
-      expect(report.scopeConflicts.join('\n')).toContain(collision)
-    })
-  })
   describe('and frozen catalog metadata would change', () => {
     beforeEach(async () => {
       const catalogPath = path.join(root, 'figma/review/src/review/catalog.json')

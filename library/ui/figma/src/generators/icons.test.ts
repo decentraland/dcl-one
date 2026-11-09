@@ -90,15 +90,23 @@ describe('generateIcons', () => {
     })
   })
 
-  describe('when generating the real snapshot', () => {
+  describe('when generating the synthetic snapshot', () => {
     it('should retain supported icons and report ambiguous or raster-only source masters', async () => {
       const { meta, skipped } = generateIcons(await snapshotSource().getIcons(), context)
 
-      expect(meta).toHaveLength(474)
-      expect(skipped).toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: 'map/avatar-pic' })])
-      )
-      expect(skipped.every((item) => item.reason.length > 0)).toBe(true)
+      // 22 single icons and one active/inactive pair; one raster-only and one ambiguous master are skipped.
+      expect(meta).toHaveLength(23)
+      expect(meta.find((entry) => entry.name === 'toggle/bell')).toMatchObject({
+        component: 'ToggleBell',
+        hasActiveState: true
+      })
+      expect(skipped).toEqual([
+        { name: 'sample/photo', reason: 'embeds a raster image' },
+        {
+          name: 'sample/ambiguous',
+          reason: 'unsupported or ambiguous variants: 3:26 (size=large)'
+        }
+      ])
     })
 
     it('should keep component names unique', async () => {

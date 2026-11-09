@@ -1,21 +1,22 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadConfig, type FigmaConfig } from '../config.js'
+import type { FigmaConfig } from '../config.js'
 import { generateAll } from '../generators/index.js'
 import { resolvePageIdentities, selectCapturePages, type PageState } from '../page-identity.js'
-import { projectRoot, snapshotSource } from '../../test/snapshot.js'
+import { fixturesDir, snapshotSource, testConfig } from '../../test/snapshot.js'
 import type { FigmaSource } from '../sources/types.js'
 
-describe('when replaying PR 38 readiness from a9150fa', () => {
+// A synthetic replay of a readiness change that renames ready pages and flips readiness elsewhere.
+describe('when replaying a readiness change that renames ready pages', () => {
   let config: FigmaConfig
   let source: FigmaSource
   let replay: { pages: PageState[] }
   beforeEach(async () => {
-    config = await loadConfig(projectRoot)
+    config = await testConfig()
     source = snapshotSource()
     replay = JSON.parse(
-      await readFile(path.join(projectRoot, 'test/fixtures/pr38-sync-state.json'), 'utf8')
+      await readFile(path.join(fixturesDir, 'readiness-replay-sync-state.json'), 'utf8')
     )
   })
   it('should preserve every generated file and its content regardless of readiness', async () => {
@@ -28,6 +29,6 @@ describe('when replaying PR 38 readiness from a9150fa', () => {
       selectCapturePages(resolvePageIdentities(config, replay.pages))
         .filter((page) => page.renamed)
         .map((page) => page.id)
-    ).toContain('9373:1395')
+    ).toEqual(['10:7', '10:6'])
   })
 })

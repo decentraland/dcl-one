@@ -1,9 +1,8 @@
 import { runtimeBase } from './review-base'
 
-// Every URL the Review builds at runtime goes through here. The data files (catalog, references, fidelity) keep
-// logical paths under /dcl-ui-review/, which is also where review:capture and review:check read them, so the
-// sealed inputs never change. reviewUrl maps a logical path onto wherever the app is served: the root, a CDN
-// prefix such as /@scope/package/1.2.3/, or a relative base.
+// Every URL the Review builds at runtime goes through here. Pages keep logical paths under /dcl-ui-review/, and
+// reviewUrl maps a logical path onto wherever the app is served: the root, a CDN prefix such as
+// /@scope/package/1.2.3/, or a relative base.
 const LOGICAL_ROOT = '/dcl-ui-review/'
 // The build puts every script under <app root>/dcl-ui-review/assets/ (assetsDir in review.vite.config.ts), so a
 // module's own URL leads back to the app root by this many levels.
@@ -35,8 +34,4 @@ function reviewPageUrl(query: string): string {
   return resolvePageUrl(query, runtimeBase(), import.meta.url)
 }
 
-function fidelityUrl(): string {
-  return reviewUrl(`${LOGICAL_ROOT}fidelity.json`)
-}
-
-export { fidelityUrl, resolvePageUrl, resolveReviewUrl, reviewPageUrl, reviewUrl }
+export { resolvePageUrl, resolveReviewUrl, reviewPageUrl, reviewUrl }

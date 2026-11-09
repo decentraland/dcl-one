@@ -5,6 +5,7 @@ import { resolveComponent } from './contract/resolve.js'
 import { makeLibrary } from './contract/test-fixtures.js'
 import type { ComponentSpec } from './ir/components.js'
 import { LfsPointerError } from './lfs.js'
+import { FdsCacheError } from './sources/fds-source.js'
 import { createRuntime, supersessionCandidates } from './runtime.js'
 
 const spec = (name: string, extra: Partial<ComponentSpec> = {}) =>
@@ -78,6 +79,49 @@ describe('when distinguishing configured capture failures from resolve-only mode
     const failure = runtime.resolveContext()
     await expect(failure).rejects.toThrow()
     await expect(failure).rejects.not.toBeInstanceOf(LfsPointerError)
+  })
+
+  it('should fail closed when the configured fetch-source cache is missing, naming the command that fills it', async () => {
+    await writeFile(
+      path.join(library.root, 'figma.config.json'),
+      JSON.stringify({
+        outDir: 'generated',
+        snapshotLock: 'upstream.lock.json',
+        pages: { Controls: { kind: 'components' } },
+        contract: { mappingRoot: 'src' }
+      })
+    )
+    await writeFile(
+      path.join(library.root, 'upstream.lock.json'),
+      JSON.stringify({
+        sources: [
+          {
+            repository: 'https://github.com/decentraland/figma-design-system',
+            revision: 'a'.repeat(40),
+            snapshot: { revision: 'a'.repeat(40), digests: { 'pages.json': 'b'.repeat(64) } }
+          }
+        ]
+      })
+    )
+    const runtime = await createRuntime({ cwd: library.root, env: {} })
+    const failure = runtime.resolveContext()
+    await expect(failure).rejects.toBeInstanceOf(FdsCacheError)
+    await expect(failure).rejects.toThrow('pnpm figma fetch-source')
+  })
+
+  it('should fail closed when the configured lock does not pin the capture', async () => {
+    await writeFile(
+      path.join(library.root, 'figma.config.json'),
+      JSON.stringify({
+        outDir: 'generated',
+        snapshotLock: 'upstream.lock.json',
+        pages: { Controls: { kind: 'components' } },
+        contract: { mappingRoot: 'src' }
+      })
+    )
+    await writeFile(path.join(library.root, 'upstream.lock.json'), JSON.stringify({ sources: [] }))
+    const runtime = await createRuntime({ cwd: library.root, env: {} })
+    await expect(runtime.resolveContext()).rejects.toBeInstanceOf(FdsCacheError)
   })
 
   it('should preserve mapping-only resolution when no Figma configuration exists', async () => {

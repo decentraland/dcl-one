@@ -6,6 +6,7 @@ import { EnvTokenProvider, FigmaClient } from './figma/client.js'
 import { generateAll, type GenerateResult } from './generators/index.js'
 import { RestSource } from './sources/rest-source.js'
 import { SnapshotSource } from './sources/snapshot-source.js'
+import { verifyFdsCache } from './sources/fds-source.js'
 import type { FigmaSource } from './sources/types.js'
 import { pendingRetirements } from './guard/apply-retirements.js'
 import { checkScope, type RunKind } from './guard/check-scope.js'
@@ -37,13 +38,17 @@ async function createApp(cwd = process.cwd(), configFile?: string): Promise<App>
     configFile: loadedConfigFile,
     cwd,
     createSource(kind) {
-      if (kind === 'snapshot')
+      if (kind === 'snapshot') {
+        const dir = path.resolve(cwd, config.snapshotDir)
+        const lock = config.snapshotLock && path.resolve(cwd, config.snapshotLock)
         return new SnapshotSource(
-          path.resolve(cwd, config.snapshotDir),
+          dir,
           configuredPages(config)
             .filter((page) => page.id === null)
-            .map((page) => page.name)
+            .map((page) => page.name),
+          lock ? () => verifyFdsCache(dir, lock) : undefined
         )
+      }
       return new RestSource(new FigmaClient(new EnvTokenProvider()), requireFileKey())
     },
     resolveOutDir: (override) => path.resolve(cwd, override ?? config.outDir)

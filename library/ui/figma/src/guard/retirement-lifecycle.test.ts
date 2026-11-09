@@ -47,11 +47,6 @@ describe('when applying a component retirement in a retained page', () => {
     expect(await readFile(path.join(root, 'index.ts'), 'utf8')).not.toContain('First')
     expect(await readFile(path.join(root, `${LIB}/page/Second.tsx`), 'utf8')).toContain('Second')
     expect((await json(root, 'components/promotion.json')).components).toEqual(['Second'])
-    expect(
-      (await json(root, 'figma/review/src/review/promotion.json')).components.map(
-        (component: { name: string }) => component.name
-      )
-    ).toEqual(['Second'])
     await expect(readFile(path.join(root, `${LIB}/page/First.figma.ts`))).rejects.toMatchObject({
       code: 'ENOENT'
     })

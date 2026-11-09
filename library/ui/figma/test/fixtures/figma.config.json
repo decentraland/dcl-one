@@ -1,245 +1,34 @@
 {
-  "snapshotDir": "figma-snapshot",
+  "snapshotDir": "synthetic-snapshot",
   "outDir": "generated",
   "pages": {
-    "1:5238": {
-      "id": "1:5238",
-      "name": "Colors",
-      "kind": "tokens"
-    },
-    "1:5237": {
-      "id": "1:5237",
-      "name": "Typography",
-      "kind": "tokens"
-    },
-    "legacy:Theme": {
+    "1:1": { "id": "1:1", "name": "Colors", "kind": "tokens" },
+    "1:2": { "id": "1:2", "name": "Typography", "kind": "tokens" },
+    "1:3": { "id": "1:3", "name": "Icons", "kind": "icons", "category": "Icons" },
+    "10:1": { "id": "10:1", "name": "Demo Controls", "kind": "components", "category": "Inputs" },
+    "10:2": { "id": "10:2", "name": "Demo Toggles", "kind": "components", "category": "Inputs" },
+    "10:3": { "id": "10:3", "name": "Demo Cursors", "kind": "components", "category": "Inputs" },
+    "10:4": { "id": "10:4", "name": "Demo Feedback", "kind": "components", "category": "Components" },
+    "10:7": { "id": "10:7", "name": "Demo Nav", "kind": "components", "category": "Components" },
+    "legacy:Demo: Legacy Bars": {
       "id": null,
-      "name": "Theme",
-      "kind": "tokens"
-    },
-    "1:5239": {
-      "id": "1:5239",
-      "name": "Icons",
-      "kind": "icons",
-      "category": "Icons"
-    },
-    "8706:13096": {
-      "id": "8706:13096",
-      "name": "Buttons",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "8711:14231": {
-      "id": "8711:14231",
-      "name": "Controllers",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "8706:13413": {
-      "id": "8706:13413",
-      "name": "Cursor",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "8711:15075": {
-      "id": "8711:15075",
-      "name": "Drop-downs",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "8711:14600": {
-      "id": "8711:14600",
-      "name": "Text Input",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "legacy:Bars: Nav bar - Tabs bar - Footer": {
-      "id": null,
-      "name": "Bars: Nav bar - Tabs bar - Footer",
+      "name": "Demo: Legacy Bars",
       "kind": "components",
       "category": "Components"
     },
-    "8711:15708": {
-      "id": "8711:15708",
-      "name": "Chat & Voice Chat",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:16580": {
-      "id": "8711:16580",
-      "name": "Friends",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:18209": {
-      "id": "8711:18209",
-      "name": "Map & Mini Map",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:17659": {
-      "id": "8711:17659",
-      "name": "Menus",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8698:2193": {
-      "id": "8698:2193",
-      "name": "Modals",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:19124": {
-      "id": "8711:19124",
-      "name": "Names",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8701:2529": {
-      "id": "8701:2529",
-      "name": "NFT Items & Badges",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:16075": {
-      "id": "8711:16075",
-      "name": "Notifications",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:18573": {
-      "id": "8711:18573",
-      "name": "Profile Picture",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:19160": {
-      "id": "8711:19160",
-      "name": "Progress Bar",
-      "kind": "components",
-      "category": "Components"
-    },
-    "9799:4691": {
-      "id": "9799:4691",
-      "name": "Photos",
-      "kind": "components",
-      "category": "Components"
-    },
-    "14175:341": {
-      "id": "14175:341",
-      "name": "Scrollbar",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:14972": {
-      "id": "8711:14972",
-      "name": "Search Bar",
-      "kind": "components",
-      "category": "Inputs"
-    },
-    "8711:15178": {
-      "id": "8711:15178",
-      "name": "Spinner & Skeleton Animation",
-      "kind": "components",
-      "category": "Components"
-    },
-    "legacy:Tags": {
-      "id": null,
-      "name": "Tags",
-      "kind": "components",
-      "category": "Components"
-    },
-    "8711:15254": {
-      "id": "8711:15254",
-      "name": "Toasts & Tooltips",
-      "kind": "components",
-      "category": "Components"
-    },
-    "9373:1396": {
-      "id": "9373:1396",
-      "name": "Communities",
-      "kind": "components",
-      "category": "Cards"
-    },
-    "9944:2964": {
-      "id": "9944:2964",
-      "name": "Community Streaming",
-      "kind": "components",
-      "category": "Cards"
-    },
-    "9373:2154": {
-      "id": "9373:2154",
-      "name": "Events",
-      "kind": "components",
-      "category": "Cards"
-    },
-    "9373:1395": {
-      "id": "9373:1395",
-      "name": "Places",
-      "kind": "components",
-      "category": "Cards"
-    },
-    "legacy:External": {
-      "id": null,
-      "name": "External",
-      "kind": "components",
-      "category": "Shared"
-    },
-    "15521:20146": {
-      "id": "15521:20146",
-      "name": "Layout & Spacing",
-      "kind": "components",
-      "category": "Foundations"
-    },
-    "8711:15316": {
-      "id": "8711:15316",
-      "name": "Nav bar",
-      "kind": "components",
-      "category": "Components"
-    },
-    "15841:54898": {
-      "id": "15841:54898",
-      "name": "Tabs bar",
-      "kind": "components",
-      "category": "Components"
-    },
-    "15841:54899": {
-      "id": "15841:54899",
-      "name": "Footer",
-      "kind": "components",
-      "category": "Components"
-    }
+    "10:8": { "id": "10:8", "name": "Demo Dialogs", "kind": "components", "category": "Components" },
+    "10:5": { "id": "10:5", "name": "Demo Field", "kind": "components", "category": "Inputs" },
+    "10:6": { "id": "10:6", "name": "Demo Search", "kind": "components", "category": "Inputs" }
   },
-  "variantAliases": {
-    "Terciary": "tertiary",
-    "Hidding": "hiding"
-  },
+  "variantAliases": { "Terciary": "tertiary" },
   "componentNames": {
-    "Button-Contained-Text": "Button",
-    "Button-Contained-Text-Icon": "ButtonWithIcon",
-    "Button-Multiple-Options": "SplitButton",
-    "Pill / Icn / Txt": "PillIconText",
-    "Pill / Txt": "PillText",
-    "button-pill-icon-text": "PillIconKeyText",
-    "Component 1": "PageDot",
-    "Index": "PageIndicator",
-    "Txt / Btn": "SortByButton",
-    "Btn Icn / Txt / Arrow": "FilterButton",
-    "Entry": "DropdownEntry",
-    "Input": "TextInput",
-    "Flags": "Flag"
+    "Synthetic Button": "Button",
+    "Txt / Sort": "SortByButton"
   },
-  "textStyleAliases": {
-    "H6 Semi Caps": "label/md-caps",
-    "H6 Regular": "body/md"
-  },
+  "textStyleAliases": { "Legacy Caption": "caption" },
   "components": {
     "FriendCTA": {
-      "stateWords": [
-        "hover",
-        "pressed",
-        "loading"
-      ],
+      "stateWords": ["hover", "pressed", "loading"],
       "optionAliases": {
         "AddFriendHover": "AddHover",
         "AddFriendLoading": "AddLoading",
@@ -247,107 +36,38 @@
         "BlockedPres": "BlockedPressed"
       }
     },
-    "Switch": {
-      "propNames": {
-        "Switch": "checked"
-      }
-    },
-    "SwitchTitle": {
-      "propNames": {
-        "Property 1": "checked"
-      }
-    },
-    "Button-Multiple-Options": {
-      "skipOptions": [
-        "HoverRight"
-      ],
-      "optionAliases": {
-        "HoverLeft": "Hover"
-      }
-    },
-    "Notify": {
-      "propNames": {
-        "Property 1": "active"
-      }
-    },
-    "NavBar": {
+    "Switch": { "propNames": { "Switch": "checked" } },
+    "SwitchTitle": { "propNames": { "Property 1": "checked" } },
+    "Split Button": { "skipOptions": ["HoverRight"], "optionAliases": { "HoverLeft": "Hover" } },
+    "Notify": { "propNames": { "Property 1": "active" } },
+    "DemoNav": {
+      "exposeTextSlots": false,
       "semantics": {
-        "@root": {
-          "role": "navigation",
-          "label": "Main"
-        },
-        "DCL Logo": {
-          "role": "action",
-          "label": "Decentraland",
-          "href": "logoHref",
-          "fallback": "none"
-        },
-        "decentraland-mana-logo 1": {
-          "role": "action",
-          "label": "Decentraland",
-          "href": "logoHref",
-          "fallback": "none"
-        },
-        "Tabs": {
-          "role": "list"
-        },
-        "NavMenuTab": {
-          "role": "action",
-          "href": "{slot}Href",
-          "listItem": true
-        },
-        "NavNotificationsButton": {
+        "@root": { "role": "navigation", "label": "Main" },
+        "Logo": { "role": "action", "label": "Home", "href": "logoHref", "fallback": "none" },
+        "Tabs": { "role": "list" },
+        "MenuTab": { "role": "action", "href": "{slot}Href", "listItem": true },
+        "NotificationsButton": {
           "role": "action",
           "label": "Notifications",
           "onActivate": "onNotifications"
         },
-        "NavProfileButton": {
-          "role": "action",
-          "label": "Profile",
-          "onActivate": "onProfile"
-        },
-        "Sign In / Profile": {
-          "role": "action",
-          "onActivate": "onSignIn"
-        },
-        "NavMenuTabMobile": {
-          "role": "action",
-          "label": "Menu",
-          "onActivate": "onMenu"
-        }
+        "ProfileButton": { "role": "action", "label": "Profile", "onActivate": "onProfile" },
+        "SignIn": { "role": "action", "onActivate": "onSignIn" },
+        "MenuButton": { "role": "action", "label": "Menu", "onActivate": "onMenu" }
       }
     }
   },
   "iconAliases": {
-    "Icn/DownArrow": "general/down-arrow",
-    "Icn/Filter": "general/filters",
-    "Icn/JumpIn": "general/jump-in",
-    "Icn/WarningError": "general/warning-error",
-    "Icn/Lock": "general/lock",
-    "Icn/StarOutline": "general/star",
-    "Icn/StarSolid": "general/star-filled",
-    "plus": "general/add",
-    "settings": "menus/settings",
-    "ContextualMenuIcons#Stat=Info": "menus/info",
-    "ContextualMenuIcons#Stat=X": "menus/x",
-    "ContextualMenuIcons#Stat=Report": "menus/report"
+    "LegacyArrow": "sample/arrow-down",
+    "MenuGlyphs#Stat=Info": "sample/heart"
   },
-  "contract": {
-    "mappingRoot": "library/components"
-  },
+  "contract": { "mappingRoot": "library/components" },
   "selection": {
     "readyOnly": true,
     "exceptions": [
-      {
-        "pageId": "8698:2193",
-        "componentId": "15906:10331",
-        "reason": "Owner-authorized web-modal background review"
-      }
+      { "pageId": "10:8", "componentId": "30:1", "reason": "Synthetic Review-only exception" }
     ]
   },
-  "promotion": {
-    "include": [
-      "NavBar"
-    ]
-  }
+  "promotion": { "include": ["DemoNav"] }
 }
