@@ -1407,9 +1407,14 @@ queues them without blocking the webhook (10,000 events, a dropped one counted
 in `badges_presence_events_dropped_total`) and its writer inserts batches into
 `social.presence_events`, keyed by LiveKit's event id, so a redelivered
 webhook is one row. The writer keeps only events in a place a badge could
-count now: a 30 s snapshot of the published badges' worlds and of the scene
-entities deployed on their parcels (one GIN-indexed `entity_pointers &&`
-read), every event when the snapshot cannot be read. A failed batch insert is
+count now: a 5 s snapshot of the published badges' worlds, parcels and the
+scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
+with the engine's lookahead and lookback. A scene entity the snapshot does not
+know (a redeploy since) is looked up once per batch by `entity_id` and dropped
+only when it is deployed off every badge parcel; one the node has not synced
+is kept for the engine. Every event is kept when the snapshot cannot be read.
+A badge published or moved earlier is seen within 5 s; joins before that are
+not counted, and the player's next join is. A failed batch insert is
 retried once after 1 s, then dropped and counted. Expected volume is every
 join and leave of the scene and world rooms of active presence badges while
 `BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
@@ -1420,7 +1425,9 @@ there on the next pass. The clock (bookkeeping times and the 5-minute future
 guard) is read per event, so a long drain stays current. Only a deterministic
 failure counts toward dropping an event (after 3 passes, logged and counted);
 a connection, pool, timeout, conflict or failover error is retried on the next
-pass without counting.
+pass without counting until the event has been queued for an hour, then counts
+too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
+reports the age of the oldest queued event each pass.
 
 Every presence transaction first takes one advisory lock: the engine and the
 `badges-presence-sweep` job are a single writer fleet-wide, so the runtime

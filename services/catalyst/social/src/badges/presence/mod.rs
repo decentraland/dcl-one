@@ -74,6 +74,9 @@ impl Default for Settings {
 /// An event that failed this many passes is dropped (logged and counted),
 /// so one bad row cannot stop the flow.
 const MAX_ATTEMPTS: u32 = 3;
+/// Past this age in the queue a transient failure counts too, so an event
+/// that always times out cannot hold the queue forever.
+const TRANSIENT_GRACE_MS: i64 = 3_600_000;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct EventRow {
@@ -121,8 +124,9 @@ pub async fn drain(
 
 /// Applies up to `event_batch` stored events in `seq` order, each in its own
 /// transaction that deletes it and with the clock read for it. `failures`
-/// counts the passes an event failed deterministically (kept by the job);
-/// the first failure ends the pass with the error.
+/// counts the passes an event failed (kept by the job); the first failure
+/// ends the pass with the error. The age of the oldest queued event is
+/// reported as `badges_presence_queue_oldest_seconds`.
 pub async fn apply_pending(
     pool: &PgPool,
     settings: &Settings,
@@ -130,13 +134,17 @@ pub async fn apply_pending(
     clock: Clock<'_>,
     failures: &mut HashMap<i64, u32>,
 ) -> anyhow::Result<usize> {
-    let seqs: Vec<i64> =
-        sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq LIMIT $1")
-            .bind(settings.event_batch)
-            .fetch_all(pool)
-            .await?;
+    let queued: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT seq, (extract(epoch FROM timezone('UTC', now()) - received_at) * 1000)::bigint \
+         FROM social.presence_events ORDER BY seq LIMIT $1",
+    )
+    .bind(settings.event_batch)
+    .fetch_all(pool)
+    .await?;
+    let oldest = queued.iter().map(|(_, age)| *age).max().unwrap_or(0);
+    metrics::gauge!("badges_presence_queue_oldest_seconds").set(oldest.max(0) as f64 / 1000.0);
     let mut applied = 0;
-    for seq in seqs {
+    for (seq, queued_ms) in queued {
         let flow = Flow {
             settings,
             now: clock(),
@@ -151,7 +159,8 @@ pub async fn apply_pending(
                 }
             }
             Err(error) => {
-                if !gives_up(failures, seq, &error) {
+                let aged = queued_ms > TRANSIENT_GRACE_MS;
+                if !gives_up(failures, seq, &error, aged) {
                     return Err(error.into());
                 }
                 metrics::counter!("badges_presence_events_total", "outcome" => "failed")
@@ -167,10 +176,11 @@ pub async fn apply_pending(
     Ok(applied)
 }
 
-/// Whether the event is dropped after this failure. Only a deterministic
-/// error counts toward [`MAX_ATTEMPTS`]; a transient one is retried forever.
-fn gives_up(failures: &mut HashMap<i64, u32>, seq: i64, error: &sqlx::Error) -> bool {
-    if is_transient(error) {
+/// Whether the event is dropped after this failure. A deterministic error
+/// counts toward [`MAX_ATTEMPTS`]; a transient one only once the event is
+/// `aged` past [`TRANSIENT_GRACE_MS`], so an outage alone drops nothing.
+fn gives_up(failures: &mut HashMap<i64, u32>, seq: i64, error: &sqlx::Error, aged: bool) -> bool {
+    if is_transient(error) && !aged {
         return false;
     }
     let attempts = failures.entry(seq).or_default();

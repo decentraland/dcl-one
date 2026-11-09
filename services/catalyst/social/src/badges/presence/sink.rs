@@ -4,7 +4,8 @@
 //! `social.presence_events` in batches (keyed by LiveKit's event id, so a
 //! redelivered webhook is one row). The engine applies the rows later.
 //! Only events in a place a presence badge could count are stored: the
-//! writer checks them against a short-lived snapshot of those places.
+//! writer checks them against a short-lived snapshot of those places, and
+//! looks up a scene entity the snapshot does not know (a redeploy).
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -27,16 +28,17 @@ use super::engine::naive;
 pub const QUEUE: usize = 10_000;
 const BATCH: usize = 500;
 /// How long a badge configured, published or archived waits to be seen.
-const PLACES_TTL: Duration = Duration::from_secs(30);
+const PLACES_TTL: Duration = Duration::from_secs(5);
 /// The pause before a failed batch insert is tried once more.
 const RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// The places of the badges whose windows an event now could count for (the
 /// engine's join lookahead and leave lookback): worlds by name, scenes by
-/// every entity ever deployed on one of their parcels.
+/// parcel and by every entity deployed on one of them when the snapshot was read.
 #[derive(Debug, Default)]
 struct ActivePlaces {
     worlds: HashSet<String>,
+    parcels: Vec<String>,
     scenes: HashSet<String>,
 }
 
@@ -69,18 +71,48 @@ impl ActivePlaces {
         };
         Ok(Self {
             worlds: worlds.into_iter().collect(),
+            parcels,
             scenes: scenes.into_iter().collect(),
         })
     }
 
-    fn counts(&self, event: &PresenceEvent) -> bool {
+    /// The scene entities of `batch` the snapshot does not know, when a scene
+    /// badge is active.
+    fn unknown_scenes(&self, batch: &[PresenceEvent]) -> Vec<String> {
+        if self.parcels.is_empty() {
+            return Vec::new();
+        }
+        let unknown: HashSet<&String> = batch
+            .iter()
+            .filter(|e| !e.world)
+            .filter_map(|e| e.scene_id.as_ref())
+            .filter(|s| !self.scenes.contains(*s))
+            .collect();
+        unknown.into_iter().cloned().collect()
+    }
+
+    /// Of `ids`, the entities deployed off every badge parcel. One the node
+    /// does not hold yet is not among them: the engine decides it.
+    async fn off_parcels(&self, pool: &PgPool, ids: &[String]) -> sqlx::Result<HashSet<String>> {
+        let off: Vec<String> = sqlx::query_scalar(
+            "SELECT entity_id FROM content.deployments \
+             WHERE entity_id = ANY($1) AND entity_type = 'scene' \
+               AND NOT entity_pointers && $2",
+        )
+        .bind(ids)
+        .bind(&self.parcels)
+        .fetch_all(pool)
+        .await?;
+        Ok(off.into_iter().collect())
+    }
+
+    fn counts(&self, event: &PresenceEvent, off: &HashSet<String>) -> bool {
         if event.world {
             self.worlds.contains(&event.realm_name)
         } else {
-            event
-                .scene_id
-                .as_ref()
-                .is_some_and(|s| self.scenes.contains(s))
+            event.scene_id.as_ref().is_some_and(|s| {
+                self.scenes.contains(s) || (!self.parcels.is_empty() && !off.contains(s))
+            })
         }
     }
 }
@@ -145,19 +177,19 @@ pub struct EventSink {
     places: TtlMap<(), Arc<ActivePlaces>>,
 }
 
-impl Default for EventSink {
-    fn default() -> Self {
-        Self::with_capacity(QUEUE)
-    }
-}
-
 impl EventSink {
-    pub fn with_capacity(capacity: usize) -> Self {
+    /// A sink with the engine's `settings`, so both agree on what a badge
+    /// could count.
+    pub fn new(settings: Settings) -> Self {
+        Self::with_capacity(QUEUE, settings)
+    }
+
+    pub fn with_capacity(capacity: usize, settings: Settings) -> Self {
         let (tx, rx) = mpsc::channel(capacity);
         Self {
             tx,
             rx: Mutex::new(Some(rx)),
-            settings: Settings::default(),
+            settings,
             places: TtlMap::new(PLACES_TTL),
         }
     }
@@ -174,16 +206,30 @@ impl EventSink {
                     .map(Arc::new)
             })
             .await;
-        match places {
-            Ok(places) => batch.retain(|e| places.counts(e)),
+        let places = match places {
+            Ok(places) => places,
             Err(error) => {
-                tracing::warn!(%error, "presence badge places not read; keeping every event")
+                tracing::warn!(%error, "presence badge places not read; keeping every event");
+                return;
             }
-        }
+        };
+        let unknown = places.unknown_scenes(batch);
+        let off = if unknown.is_empty() {
+            HashSet::new()
+        } else {
+            match places.off_parcels(pool, &unknown).await {
+                Ok(off) => off,
+                Err(error) => {
+                    tracing::warn!(%error, "presence scenes not read; keeping their events");
+                    HashSet::new()
+                }
+            }
+        };
+        batch.retain(|e| places.counts(e, &off));
     }
 
     /// Stores the counted events of `batch`, trying once more after a pause.
-    async fn store(
+    async fn insert_events(
         &self,
         pool: &PgPool,
         mut batch: Vec<PresenceEvent>,
@@ -201,7 +247,7 @@ impl EventSink {
                 batch.push(event);
             }
         }
-        self.store(pool, batch).await
+        self.insert_events(pool, batch).await
     }
 
     /// The `badges-presence-events` writer, on every process that receives
@@ -225,7 +271,7 @@ impl EventSink {
                 };
                 let rows = batch.len();
                 if rows > 0
-                    && let Err(error) = sink.store(&pool, std::mem::take(&mut batch)).await
+                    && let Err(error) = sink.insert_events(&pool, std::mem::take(&mut batch)).await
                 {
                     metrics::counter!("badges_presence_events_dropped_total", "reason" => "insert_failed")
                         .increment(rows as u64);
