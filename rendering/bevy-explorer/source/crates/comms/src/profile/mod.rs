@@ -245,6 +245,10 @@ impl ProfileEntry {
                 .is_none_or(|at| now.saturating_duration_since(at) >= grace)
     }
 
+    fn evictable_under_pressure(&self, now: web_time::Instant) -> bool {
+        self.evictable_after(now, PROFILE_PRESSURE_GRACE) && (self.satisfied() || self.due(now))
+    }
+
     /// accept a newer version from anywhere, and an equal version only from a more
     /// authoritative source; also lifts `announced` so a response can't be outranked by
     /// an announcement we haven't seen
@@ -403,13 +407,7 @@ impl ProfileCache {
                 Some(address) => self.entries.range((Excluded(address), Unbounded)).next(),
                 None => self.entries.iter().next(),
             }
-            .map(|(address, entry)| {
-                (
-                    *address,
-                    entry.evictable_after(now, PROFILE_PRESSURE_GRACE)
-                        && (entry.satisfied() || entry.due(now)),
-                )
-            });
+            .map(|(address, entry)| (*address, entry.evictable_under_pressure(now)));
             let Some((address, eligible)) = next else {
                 self.reclaim_cursor = None;
                 turn.complete_scan(std::mem::take(&mut self.scan_released));
@@ -1057,17 +1055,23 @@ fn drive_profile_fetches(
     // replaced by a lagging catalyst answer), and collect due entries into batches
     let local = wallet.address();
     let compact_unsupported = cache.compact_unsupported;
+    let ram_pressure = pressure
+        .as_ref()
+        .is_some_and(|pressure| pressure.ram_active);
     let mut full = Vec::new();
     let mut compact = Vec::new();
     cache.entries.retain(|address, entry| {
-        if !pressure
-            .as_ref()
-            .is_some_and(|pressure| pressure.ram_active)
-            && entry.evictable(now)
-            && Some(*address) != local
-        {
-            debug!("evicting stale profile entry for {address:#x}");
-            return false;
+        if Some(*address) != local {
+            if ram_pressure {
+                // Keep idle due entries available to the bounded Last cleanup instead of
+                // making them ineligible with another fetch. Readers can still refresh them.
+                if entry.evictable_under_pressure(now) {
+                    return true;
+                }
+            } else if entry.evictable(now) {
+                debug!("evicting stale profile entry for {address:#x}");
+                return false;
+            }
         }
         if entry.wants_fetch(now) {
             let tier = entry.fetch_tier(compact_unsupported);
@@ -2090,6 +2094,72 @@ mod tests {
             app.world().resource::<ReclaimBudget>().caches()[0].released,
             0
         );
+    }
+
+    #[test]
+    fn pressure_cleanup_gets_idle_due_profiles_before_the_fetch_driver_retries_them() {
+        use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+        use common::memory_reclaim::{
+            MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimSimulation,
+        };
+        for simulation in [ReclaimSimulation::Ram, ReclaimSimulation::Off] {
+            let now = web_time::Instant::now();
+            let idle = Address::repeat_byte(0xd1);
+            let active = Address::repeat_byte(0xd2);
+            let cooling = Address::repeat_byte(0xd3);
+            let mut cache = ProfileCache::default();
+            for address in [idle, active, cooling] {
+                let entry = cache.touch(address, ProfileTier::Compact);
+                entry.apply_compact(None, now - PROFILE_FETCH_RETRY);
+                entry.last_access = Some(now - std::time::Duration::from_secs(6));
+            }
+            cache.touch(active, ProfileTier::Compact);
+            cache.entries.get_mut(&cooling).unwrap().next_fetch = Some(now + PROFILE_FETCH_RETRY);
+
+            let mut app = App::new();
+            app.add_plugins((MinimalPlugins, AssetPlugin::default(), MemoryReclaimPlugin))
+                .init_resource::<Wallet>()
+                .insert_resource(cache)
+                .insert_resource(ipfs::IpfsResource {
+                    inner: Arc::new(IpfsIo::new(
+                        false,
+                        Box::new(MemoryAssetReader {
+                            root: Dir::default(),
+                        }),
+                        None,
+                        Default::default(),
+                        1,
+                        tokio::sync::mpsc::unbounded_channel().0,
+                    )),
+                })
+                .insert_resource(MemoryReclaimSettings {
+                    simulation,
+                    frame_budget: std::time::Duration::from_secs(1),
+                })
+                .add_systems(Update, drive_profile_fetches)
+                .add_memory_reclaimer(
+                    ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                    reclaim_profiles,
+                );
+            app.finish();
+            app.cleanup();
+            app.update();
+
+            let cache = app.world().resource::<ProfileCache>();
+            assert_eq!(
+                cache.entries.contains_key(&idle),
+                simulation == ReclaimSimulation::Off,
+                "the Update fetch driver must leave pressure-eligible idle entries for Last"
+            );
+            assert_eq!(cache.entries[&active].fetching, Some(ProfileTier::Compact));
+            assert!(cache.entries[&cooling].fetching.is_none());
+            let expected = if simulation == ReclaimSimulation::Ram {
+                vec![active]
+            } else {
+                vec![idle, active]
+            };
+            assert_eq!(cache.compact_batches[0].addresses, expected);
+        }
     }
 
     #[test]

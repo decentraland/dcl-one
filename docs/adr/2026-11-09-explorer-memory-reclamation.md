@@ -8,10 +8,15 @@ Use one shared pressure policy and cooperative frame budget, with ordinary Bevy
 systems owned by each cache. Registrations are assembled during plugin finalization
 into a stable priority/name order in `Last`; the coordinator never owns cache assets
 or scans entity ownership. RAM and native GPU pools trigger independently above
-70% and recover below 65%. Missing readings disable only the unavailable domain.
+70% and recover below 65%. Readings above 75% are classified `Full`; both `Warning`
+and `Full` trigger cleanup. Missing readings disable only the unavailable domain.
 
 Cache cleanup releases idle strong-handle pins. Consumers retain strong handles
-on the entities or values that use the asset. Emote aggregate ownership follows
+on the entities or values that use the asset. Each avatar definition retains its
+body and rendered wearable aggregates until that definition is despawned, including
+while a replacement outfit loads. Wearables discarded by category selection or hide
+filtering gain no definition handle.
+Emote aggregate ownership follows
 animation graph nodes on the avatar root; pending loads have per-avatar, per-slot
 ownership. Never force-remove a live Bevy asset or infer global ownership from an
 individual handle's Arc count. Permanent embedded assets remain pinned.
@@ -36,7 +41,9 @@ flowchart LR
 ## Consequences
 
 Inactive profiles become eligible after five seconds; unresolved profiles retain
-their fetch-retry deadline so cleanup cannot accelerate retries. Collectibles retain a
+their fetch-retry deadline so cleanup cannot accelerate retries. Once that deadline
+expires, the fetch driver leaves idle entries for bounded cleanup; recently accessed
+entries still fetch. Collectibles retain a
 three-frame grace. Active consumers and pending loads keep their own strong
 handles, so releasing a cache pin cannot invalidate their assets.
 

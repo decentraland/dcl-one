@@ -5,6 +5,9 @@ edition = "2021"
 
 [lib]
 
+[features]
+test-support = []
+
 [dependencies]
 common = { workspace = true }
 console = { workspace = true }

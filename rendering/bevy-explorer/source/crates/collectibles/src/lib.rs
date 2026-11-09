@@ -7,6 +7,27 @@ pub mod ext;
 pub mod urn;
 pub mod wearables;
 
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    use super::*;
+
+    /// Installs the real wearable cache schedules with already resolved remote pointers.
+    /// Tests supply their own asset reader and loader, without catalogue HTTP requests.
+    pub fn wearable_cache(
+        app: &mut App,
+        pointers: impl IntoIterator<Item = (wearables::WearableUrn, String)>,
+    ) {
+        app.add_plugins(CollectiblesTypePlugin::<wearables::Wearable>::default())
+            .add_systems(PostUpdate, expire_idle_wearables);
+        let mut cache = app
+            .world_mut()
+            .resource_mut::<Collectibles<wearables::Wearable>>();
+        for (urn, hash) in pointers {
+            cache.record_remote(urn, PointerResult::Hash(hash));
+        }
+    }
+}
+
 use std::{marker::PhantomData, path::PathBuf};
 
 use bevy::{

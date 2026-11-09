@@ -318,6 +318,7 @@ impl PlaybackFixture {
         ));
         world.spawn((
             AvatarDefinition {
+                _collectibles: Vec::new(),
                 render: crate::AvatarRenderDefinition {
                     body: Wearable {
                         category: WearableCategory::BODY_SHAPE,
