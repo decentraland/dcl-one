@@ -238,6 +238,29 @@ describe('/hud_login through the session', () => {
     await waitFor(() => expect(h.session().login.account).toBe(previous))
   })
 
+  it("a failed sign-in during a stored account's profile check leaves that account alone", async () => {
+    let profileArrives!: (response: Response) => void
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => (profileArrives = resolve)))
+    try {
+      const driver = new IdentityDriver()
+      driver.failWith = 'profile fetch failed: 503'
+      // a stored account (a real-shaped address: the profile of any other is not even asked for),
+      // its profile still loading: the auto Jump In waits for it
+      const h = renderSession({ userId: '0x' + 'cd'.repeat(20) }, driver)
+      await waitFor(() => expect(h.session().login.status).toBe('reuse-login-or-new'))
+      await waitFor(() => expect(h.session().login.engineReady).toBe(true))
+      await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
+      await waitFor(() => expect(h.session().phase).toBe('login'))
+      // the profile arrives: the stored account is not jumped into on the runner's behalf
+      profileArrives(new Response('{}', { status: 404 }))
+      await waitFor(() => expect(h.session().login.profile.settled).toBe(true))
+      expect(driver.calls).not.toContain('jumpIn')
+      expect(h.session().phase).toBe('login')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('reports a welcome page whose accept failed', async () => {
     const driver = new IdentityDriver()
     driver.welcome = { terms: true, newProfile: true }

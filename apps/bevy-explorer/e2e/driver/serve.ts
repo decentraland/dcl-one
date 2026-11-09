@@ -96,8 +96,9 @@ export function resolveFile(root: string, requestPath: string): string | undefin
  *  absolute address (`apps/sites/src/routes/routes/play_.bridge.about.ts`); so does this server. */
 export const BRIDGE_ABOUT_PATH = '/bridge-scene/static/BevyExplorerUI/about'
 const BRIDGE_CONTENT_PATH = '/bridge-scene/static/'
-// the entity's hash as a base32 CIDv1 (`baf…`, what the scene build writes) or a CIDv0 (`Qm…`)
-const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+|Qm[1-9A-HJ-NP-Za-km-z]{44})\?=&baseUrl=\/bridge-scene\/static\/$/
+// the entity's hash as a base32 CIDv1 (`baf…`), what the scene build writes and what Sites'
+// `play_.bridge.about.ts` accepts, kept in step with it
+const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=\/bridge-scene\/static\/$/
 
 /** The realm document with its scene's root-relative content url made absolute under `origin`.
  *  A document whose url is absolute already is left as it is (a build exported with
@@ -172,21 +173,19 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
 }
 
 /** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
-export function serveWebApp(root: string, port: number): Promise<StaticServer> {
+export async function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
-  // the bound port: a request only comes once the server listens
-  const origin = (): string => {
-    const address = server.address()
-    if (typeof address !== 'object' || address == null) throw new Error('the server is not listening')
-    return `http://127.0.0.1:${address.port}`
-  }
+  // the origin the realm document names: known once the server listens, before any request comes
+  let origin = ''
   const server: Server = createServer((request, response) => {
-    serveFile(absoluteRoot, origin, request, response).catch(() => {
+    serveFile(absoluteRoot, () => origin, request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500)
       response.end()
     })
   })
-  return listen(server, port)
+  const listening = await listen(server, port)
+  origin = listening.url.replace(/\/$/, '')
+  return listening
 }
 
 export function listen(server: Server, port: number): Promise<StaticServer> {

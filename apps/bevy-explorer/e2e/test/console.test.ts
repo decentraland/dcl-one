@@ -64,10 +64,11 @@ describe('ConsoleError', () => {
       '/hud_login --name tester --look 1 eyJhIjoxfQ== --guest',
       '/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ==',
       'login_identity eyJhIjoxfQ==',
+      '/hud_login "eyJhIjoxfQ==" --guest',
       '/teleport 1 2',
       '/hud_login'
     ]
-    const expected = ['eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', undefined, undefined]
+    const expected = ['eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', undefined, undefined]
     assert.deepEqual(lines.map(secretOf), expected)
     assert.equal(redactLine('/hud_login --guest eyJhIjoxfQ=='), '/hud_login --guest <redacted>')
     assert.equal(redactLine('/hud_login --name tester --look 1 eyJhIjoxfQ=='), '/hud_login --name tester --look 1 <redacted>')

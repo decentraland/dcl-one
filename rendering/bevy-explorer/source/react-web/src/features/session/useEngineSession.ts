@@ -3126,6 +3126,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         storedRef.current = login
         guestPick.current = pick ?? null
         hudDestination.current = hudDestinationOf(destination)
+        // the runner's sign-in stands in for a stored account's own: no Jump In with that one
+        // once its profile check ends, should this sign-in fail
+        autoEntered.current = true
         hudLoginPending.current = {
           resolve,
           reject,

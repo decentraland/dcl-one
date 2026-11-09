@@ -108,12 +108,6 @@ describe('bridgeAbout', () => {
     assert.equal(bridgeAbout('{}', 'http://127.0.0.1:1'), '{}')
   })
 
-  test('rewrites a CIDv0 hash as well', () => {
-    const cid = 'Qm' + 'a'.repeat(44)
-    const about = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${cid}?=&baseUrl=/bridge-scene/static/`] } })
-    assert.deepEqual(JSON.parse(bridgeAbout(about, 'http://127.0.0.1:1')), { configurations: { scenesUrn: [`urn:decentraland:entity:${cid}?=&baseUrl=http://127.0.0.1:1/bridge-scene/static/`] } })
-  })
-
   test('refuses a root-relative content url it does not know, naming it', () => {
     const unknown = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=/elsewhere/`] } })
     assert.throws(() => bridgeAbout(unknown, 'http://127.0.0.1:1'), /root-relative content url this server does not know how to serve: urn:decentraland:entity:bafkreiexample\?=&baseUrl=\/elsewhere\//)
