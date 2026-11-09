@@ -75,7 +75,12 @@ type Workflow = {
   env?: Record<string, unknown>
   jobs: Record<
     string,
-    { name?: string; env?: Record<string, unknown>; environment?: string; steps: WorkflowStep[] }
+    {
+      name?: string
+      env?: Record<string, unknown>
+      environment?: string | { name?: string }
+      steps: WorkflowStep[]
+    }
   >
 }
 const workflowFiles = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))
@@ -87,6 +92,46 @@ const triggers = (workflow: Workflow) =>
       ? workflow.on
       : Object.keys(workflow.on)
 const SECRET = 'secrets.FIGMA_FILE_KEY'
+// The only workflows that may read the key. web-previews-publish.yml is the CDN reviewer publisher; it is
+// allowed before it exists on main, and it must pass the same rules as the key scan once it does.
+const KEY_READERS = ['ui-library-key-scan.yml', 'web-previews-publish.yml']
+const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ github.workflow_sha }}']
+
+// A job that holds the key runs under the main-only web-preview environment, checks out only trusted code,
+// keeps the secret in a single step's env, runs no package manager or pull request script, and never prints
+// the key. Pull request files may only arrive as data (fetched objects or downloaded artifacts).
+function keyReaderViolations(workflow: Workflow): string[] {
+  const problems: string[] = []
+  for (const name of triggers(workflow))
+    if (name === 'pull_request' || name === 'pull_request_target')
+      problems.push(`triggered by ${name}`)
+  if (JSON.stringify(workflow.env ?? {}).includes(SECRET)) problems.push('key in workflow env')
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    if (!JSON.stringify(job).includes(SECRET)) continue
+    const environment =
+      typeof job.environment === 'string' ? job.environment : job.environment?.name
+    if (environment !== 'web-preview') problems.push(`${id}: environment is not web-preview`)
+    if (JSON.stringify(job.env ?? {}).includes(SECRET))
+      problems.push(`${id}: key outside a step env`)
+    for (const step of job.steps) {
+      if (JSON.stringify(step.with ?? {}).includes(SECRET) || step.run?.includes(SECRET))
+        problems.push(`${id}: key outside a step env`)
+      if (step.uses?.startsWith('actions/checkout@')) {
+        const ref = String(step.with?.ref ?? '')
+        if (!TRUSTED_REFS.includes(ref))
+          problems.push(`${id}: checkout of ${ref || 'the event ref'}`)
+        if (step.with?.['persist-credentials'] !== false)
+          problems.push(`${id}: checkout persists credentials`)
+      }
+      const run = step.run ?? ''
+      for (const tool of ['pnpm', 'npm', 'npx', 'yarn', 'corepack'])
+        if (new RegExp(`\\b${tool}\\b`).test(run)) problems.push(`${id}: runs ${tool}`)
+      if (/\b(bash|sh|source)\s+\S/.test(run)) problems.push(`${id}: runs a shell script`)
+      if (/\$\{?FIGMA_FILE_KEY\b|set -x/.test(run)) problems.push(`${id}: prints the key`)
+    }
+  }
+  return problems
+}
 
 describe('the ui-library.yml url scan', () => {
   const workflow = load('ui-library.yml')
@@ -130,11 +175,68 @@ describe('the Figma file key secret', () => {
     }
   )
 
-  it('should be referenced only by the workflow_run key scan', () => {
+  it('should be read only by the key scan and, once it lands, the web preview publisher', () => {
     const holders = workflowFiles.filter((file) =>
       readFileSync(path.join(workflows, file), 'utf8').includes(SECRET)
     )
-    expect(holders).toEqual(['ui-library-key-scan.yml'])
+    expect(holders).toContain('ui-library-key-scan.yml')
+    for (const file of holders) expect(KEY_READERS, file).toContain(file)
+  })
+
+  it.each(workflowFiles)(
+    'should hold the key in %s only under the trusted reader rules',
+    (file) => {
+      if (!readFileSync(path.join(workflows, file), 'utf8').includes(SECRET)) return
+      expect(keyReaderViolations(load(file))).toEqual([])
+    }
+  )
+
+  it('should reject a pull request workflow that checks out the head and runs its scripts', () => {
+    const untrusted = parse(`
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    environment: web-preview
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+      - env:
+          FIGMA_FILE_KEY: \${{ secrets.FIGMA_FILE_KEY }}
+        run: pnpm test && echo "$FIGMA_FILE_KEY"
+`) as Workflow
+    expect(keyReaderViolations(untrusted)).toEqual(
+      expect.arrayContaining([
+        'triggered by pull_request',
+        'test: checkout of ${{ github.event.pull_request.head.sha }}',
+        'test: checkout persists credentials',
+        'test: runs pnpm',
+        'test: prints the key'
+      ])
+    )
+  })
+
+  it('should reject a reader that holds the key outside the web-preview environment or at job level', () => {
+    const loose = parse(`
+on:
+  workflow_run:
+    workflows: [x]
+    types: [completed]
+jobs:
+  scan:
+    runs-on: ubuntu-26.04
+    env:
+      FIGMA_FILE_KEY: \${{ secrets.FIGMA_FILE_KEY }}
+    steps:
+      - run: node library/ui/figma/key-guard.mjs
+`) as Workflow
+    expect(keyReaderViolations(loose)).toEqual(
+      expect.arrayContaining([
+        'scan: environment is not web-preview',
+        'scan: key outside a step env'
+      ])
+    )
   })
 })
 
