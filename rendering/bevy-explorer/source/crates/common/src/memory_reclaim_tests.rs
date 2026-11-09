@@ -137,6 +137,88 @@ fn disabling_simulation_does_not_latch_normal_real_readings() {
     assert!(!state.ram_active && !state.gpu_active);
 }
 
+#[test]
+fn leaving_preview_discards_overrides_before_the_same_frames_cleanup() {
+    use crate::structs::PreviewMode;
+    use bevy::ecs::schedule::common_conditions::run_once;
+
+    for (measured_ram, measured_gpu) in [(false, false), (true, false), (false, true)] {
+        let mut app = app();
+        app.insert_resource(PreviewMode {
+            is_preview: true,
+            ..Default::default()
+        })
+        .insert_resource(MemoryReclaimSettings {
+            frame_budget: Duration::from_millis(16),
+            simulation: ReclaimSimulation::Both,
+        });
+        ready(&mut app);
+        ram(&mut app, Some(if measured_ram { 800 } else { 400 }));
+        gpu(&mut app, &[if measured_gpu { 800 } else { 400 }]);
+        app.update();
+        let settings = app.world().resource::<MemoryReclaimSettings>();
+        assert_eq!(settings.simulation, ReclaimSimulation::Both);
+        assert_eq!(settings.frame_budget, Duration::from_millis(16));
+
+        // A real pressure latch must survive at Normal when the simulation ends.
+        ram(&mut app, Some(if measured_ram { 680 } else { 400 }));
+        gpu(&mut app, &[if measured_gpu { 680 } else { 400 }]);
+        // Realm changes revoke preview in PostUpdate, after the First snapshot.
+        app.add_systems(
+            PostUpdate,
+            (|mut preview: ResMut<PreviewMode>| preview.is_preview = false).run_if(run_once),
+        );
+        app.update();
+
+        let settings = app.world().resource::<MemoryReclaimSettings>();
+        assert_eq!(
+            settings.simulation,
+            ReclaimSimulation::Off,
+            "preview overrides must expire in the realm-change frame"
+        );
+        assert_eq!(settings.frame_budget, Duration::from_millis(1));
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(
+            (state.ram_active, state.gpu_active),
+            (measured_ram, measured_gpu)
+        );
+        assert_eq!(
+            state.ram,
+            Some(if measured_ram {
+                MemoryPressure::Normal
+            } else {
+                MemoryPressure::Abundance
+            })
+        );
+        assert_eq!(
+            state.gpu,
+            Some(if measured_gpu {
+                MemoryPressure::Normal
+            } else {
+                MemoryPressure::Abundance
+            })
+        );
+        let budget = app.world().resource::<ReclaimBudget>();
+        assert_eq!((budget.ram, budget.gpu), (measured_ram, measured_gpu));
+        assert_eq!(
+            budget.deadline.unwrap() - budget.started.unwrap(),
+            Duration::from_millis(1),
+            "the same frame's cleanup must use the restored allowance"
+        );
+
+        app.world_mut().resource_mut::<PreviewMode>().is_preview = true;
+        app.update();
+        let settings = app.world().resource::<MemoryReclaimSettings>();
+        assert_eq!(settings.simulation, ReclaimSimulation::Off);
+        assert_eq!(settings.frame_budget, Duration::from_millis(1));
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(
+            (state.ram_active, state.gpu_active),
+            (measured_ram, measured_gpu)
+        );
+    }
+}
+
 fn clean_a(mut budget: ResMut<ReclaimBudget>, mut visits: ResMut<Visits>) {
     if let Some(mut turn) = budget.begin("a", 10) {
         while turn.inspect() {

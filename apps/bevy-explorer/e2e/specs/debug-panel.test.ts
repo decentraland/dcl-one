@@ -72,7 +72,7 @@ scenario('memory pressure releases an idle emote pin and preserves replay', asyn
   try {
     await explorer.run('/memory_reclaim both')
     const baseline = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
-      emote(state).completedScans > emote(before).completedScans && emote(state).scanStatus === 'no_eligible',
+      emote(state).completedScans > emote(before).completedScans && emote(state).lastScanReleased === 0,
     { timeoutMs: 30_000, what: 'only active emote pins to remain before loading wave' })
     await explorer.run('/memory_reclaim off')
     await waitForEmoteSlot()

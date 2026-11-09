@@ -1,6 +1,9 @@
 //! Cooperative cache reclamation. Registration is consumed at plugin finalization;
 //! the running app uses ordinary, statically scheduled Bevy systems.
-use crate::memory::{GpuMemoryBudget, MemoryPressure, MemoryStatus};
+use crate::{
+    memory::{GpuMemoryBudget, MemoryPressure, MemoryStatus},
+    structs::PreviewMode,
+};
 use bevy::{
     ecs::{
         schedule::{IntoScheduleConfigs, ScheduleConfigs},
@@ -373,10 +376,17 @@ fn snapshot_pressure(
 }
 
 fn begin_frame(
-    settings: Res<MemoryReclaimSettings>,
-    state: Res<MemoryReclaimState>,
+    mut settings: ResMut<MemoryReclaimSettings>,
+    mut state: ResMut<MemoryReclaimState>,
     mut budget: ResMut<ReclaimBudget>,
+    preview: Option<Res<PreviewMode>>,
 ) {
+    // Preview can end in PostUpdate, after the pressure snapshot.
+    if preview.is_some_and(|preview| !preview.is_preview) {
+        *settings = MemoryReclaimSettings::default();
+        state.ram_active = state.ram_latched;
+        state.gpu_active = state.gpu_latched;
+    }
     let now = Instant::now();
     budget.started = Some(now);
     budget.deadline = Some(now + settings.frame_budget);

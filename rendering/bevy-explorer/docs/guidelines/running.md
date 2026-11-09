@@ -361,11 +361,12 @@ of pins released across its last complete scan, including earlier bounded turns.
 The **Asset release** debug panel section shows the same state. In preview
 mode, `/memory_reclaim ram|gpu|both|off` simulates pressure for this reclaimer;
 `/memory_reclaim --budget-ms 1` sets its session allowance (0.1–16 ms). Simulation
-does not change platform readings and applies on the next frame.
+does not change platform readings and applies on the next frame. Leaving preview
+mode clears simulation and restores the default allowance before that frame's cleanup.
 
 Each domain starts cleanup above 70% and continues until below 65%. Native GPU
 pools are evaluated independently; a healthy pool cannot offset an over-budget
-pool. Missing readings disable that domain. Browser/headless runs use RAM unless
+pool. Missing readings clear that domain's pressure latch. Browser/headless runs use RAM unless
 pressure is explicitly simulated. The default allowance is 1 ms, with at most 10
 releases and 64 candidate inspections per cache turn. A slow destructor can exceed
 the cooperative allowance; later Bevy/renderer destruction is outside this timing.
