@@ -3,7 +3,7 @@
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-import { Trash } from "../../../atoms/icons";
+import { needsMarketplace, useMarketplaceAccess } from "../../market/access";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
@@ -138,6 +138,12 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   const quantity = lineUnits(line);
   const isMint = line.asset.token.kind === "item";
   const max = offer?.available ?? null;
+  // The Creator tag tells a creator's sale from a resale: only drawn where resales show (market/access.tsx).
+  const access = useMarketplaceAccess();
+  const marketplace = access === "on";
+  // A resale saved before, while the Marketplace is off for this visitor: never priced, only removable (useCheckout).
+  // While access is pending the line waits, as "Checking the price…".
+  const offMarket = access === "off" && needsMarketplace(line);
   const manaChain = offer ? manaChainOf(offer) : line.asset.chainId;
   const manaQuote = view?.options.find((o) => o.method === "mana")?.quote;
   const required = manaQuote?.method === "mana" ? mulMana(manaQuote.amount, quantity) : null;
@@ -167,9 +173,9 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   // One ready way to pay needs no chooser (upstream shows none). It stays for MANA-only lines (their reasons and
   // guidance), for a real choice, for any option with something to say, and when the line's saved method is no
   // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again, or has no price to show.
-  const showChoice =
-    !!view &&
-    (view.manaOnly || view.options.length > 1 || !option || !price || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
+  // Upstream's cart line has no chooser: the summary's rail buttons pay the whole cart. A line the rule
+  // restricts to MANA keeps it, for its reasons and wallet guidance, as does a line with no price to show.
+  const showChoice = !!view && (view.manaOnly || !option || !price);
   const choicePriced = !!view && view.options.length > 1;
   const favKey = favoriteKeyOf(line);
   // As upstream's rarityTileStyle: a line without a rarity gets the neutral tile and its grey outline.
@@ -202,7 +208,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
             </span>
           )}
           {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className="shop-cartline__creator" /> : null}
-          {isMint && offer?.sale === "primaryMint" ? (
+          {marketplace && isMint && offer?.sale === "primaryMint" ? (
             <span className="shop-cartline__tag" data-testid="cart-creator-tag">
               <CreatorLeaf />
               Creator
@@ -210,10 +216,10 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
           ) : null}
         </div>
         <div className="shop-cartline__foot">
-          {unavailable || soldOut ? (
-            <span className="shop-cartline__unavailable">
+          {unavailable || soldOut || offMarket ? (
+            <span className="shop-cartline__unavailable" data-kind={offMarket ? "off-market" : undefined}>
               <Icon name="warning-fill" size={24} className="shop-cartline__warn" />
-              {gone ? changeText(gone) : "Out of stock"}
+              {offMarket ? "Resales can't be bought in the Shop right now. Remove it to continue." : gone ? changeText(gone) : "Out of stock"}
             </span>
           ) : (
             <>
@@ -276,7 +282,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
       <div className="shop-cartline__actions">
         {favKey ? <FavoriteToggle favKey={favKey} name={line.display.name} disabled={disabled} /> : null}
         <button type="button" className="shop-cartline__icon-btn shop-cartline__remove" onClick={onRemove} disabled={disabled} aria-label={`Remove ${line.display.name}`} title="Remove">
-          <Trash size={24} />
+          <Icon name="trash" size={24} />
         </button>
       </div>
     </article>

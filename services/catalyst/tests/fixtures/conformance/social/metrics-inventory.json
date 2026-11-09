@@ -1,0 +1,1158 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088",
+    "sources": [
+      {
+        "path": "src/controllers/handlers/uws/status-handler.ts",
+        "sha256": "54d5e788302b5ae325d35432af0de7d073795a47dca703ebd610ace2597b2c3c"
+      },
+      {
+        "path": "src/controllers/handlers/uws/privacy-handler.ts",
+        "sha256": "599a49d4d540e86bd7e9ae299385b7fab357071d7356ad2610baef62bd6c6217"
+      },
+      {
+        "path": "node_modules/@dcl/uws-http-server/dist/src/metrics.js",
+        "sha256": "832458a0f898b114b6d8de0fb5a0377aa52f3870010c134dd5b72de17e8ebbda"
+      },
+      {
+        "path": "src/metrics.ts",
+        "sha256": "e872d06e154dd82ad0f6174aee657d0cf1c2bb3049f7282ef74e3b2dcab52f99"
+      }
+    ]
+  },
+  "scope": "Static literal name/type/label inventory across entire production Rust files, excluding dedicated test paths. Inline test-module hits are possible and require source review. Presence does not establish production execution, runtime event meaning, series initialization, histogram buckets, dynamic-name sites or sample values. Missing literals remain candidates until dynamic sites are checked.",
+  "known_differences": [
+    "WKC_METRICS_RESET_AT_NIGHT=true is accepted but the social view does not reset; the global recorder is preserved for other domains.",
+    "Node/V8/process default collectors are not fabricated by the Rust exporter. Their runtime-specific families are outside this declared-family inventory.",
+    "The filtered shared recorder can include shared-family labels emitted by other domains; source-compatible per-family instrumentation and labels require review.",
+    "The Social view renders all 44 source HELP/TYPE declarations and seeds only the 16 captured unlabelled counter/gauge zeros; the other 28 declarations have no invented initial samples. Registration and literal presence do not prove event or value equality.",
+    "Portable ordinary/guarded acceptance is observed after the Tokio sink accepts a frame, before flush. Native uWS backpressure/drop/drain/buffer observations remain unavailable; the success label does not establish native buffering equivalence.",
+    "Source logger event coverage and LOG_LEVEL filtering remain incomplete. Source authentication-race completion, stale subscriber reconciliation, and stream producer errors represented as ordinary Generator termination remain explicit event gaps."
+  ],
+  "metrics": [
+    {
+      "name": "http_request_duration_seconds",
+      "type": "histogram",
+      "source_labels": [
+        "code",
+        "handler",
+        "method"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 312,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "http_requests_total",
+      "type": "counter",
+      "source_labels": [
+        "code",
+        "handler",
+        "method"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 311,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "http_request_size_bytes",
+      "type": "histogram",
+      "source_labels": [
+        "code",
+        "handler",
+        "method"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "line": 209,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "wkc_logger_logs_total",
+      "type": "counter",
+      "source_labels": [
+        "level",
+        "logger"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 316,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "debug",
+            "error",
+            "info",
+            "level",
+            "logger",
+            "warn"
+          ]
+        }
+      ],
+      "status": "literal_type_or_labels_differ"
+    },
+    {
+      "name": "ws_active_connections_by_protocol",
+      "type": "gauge",
+      "source_labels": [
+        "protocol"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 129,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 233,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_connection_duration_seconds_by_protocol",
+      "type": "histogram",
+      "source_labels": [
+        "protocol"
+      ],
+      "source_buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 141,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_auth_errors_by_protocol",
+      "type": "counter",
+      "source_labels": [
+        "protocol",
+        "type"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 199,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol",
+            "type"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 215,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol",
+            "type"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_admission_evictions",
+      "type": "counter",
+      "source_labels": [
+        "protocol"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "line": 286,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_admission_rejections",
+      "type": "counter",
+      "source_labels": [
+        "protocol",
+        "reason"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "line": 305,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "protocol",
+            "reason"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_active_connections",
+      "type": "gauge",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 124,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 235,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 235,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_connections_rejected",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 224,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 236,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_messages_received",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 216,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 222,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 237,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 155,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 156,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_messages_sent",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 463,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 238,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_errors",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 239,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_close_codes",
+      "type": "counter",
+      "source_labels": [
+        "code"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 136,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 83,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_transport_errors",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 152,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 240,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_auth_errors",
+      "type": "counter",
+      "source_labels": [
+        "type"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 221,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_auth_race_condition_aborted",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 241,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_idle_timeouts",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 242,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_connection_duration_seconds",
+      "type": "histogram",
+      "source_labels": [],
+      "source_buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 138,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "rpc_procedure_call_total",
+      "type": "counter",
+      "source_labels": [
+        "code",
+        "procedure"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 382,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "rpc_procedure_call_duration_seconds",
+      "type": "histogram",
+      "source_labels": [
+        "code",
+        "procedure"
+      ],
+      "source_buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 384,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "rpc_in_procedure_call_size_bytes",
+      "type": "histogram",
+      "source_labels": [
+        "procedure"
+      ],
+      "source_buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 375,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "rpc_out_procedure_call_size_bytes",
+      "type": "histogram",
+      "source_labels": [
+        "code",
+        "procedure"
+      ],
+      "source_buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 412,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "rpc_updates_sent_on_subscription",
+      "type": "counter",
+      "source_labels": [
+        "event"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 433,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "stream_ws_messages_received",
+      "type": "counter",
+      "source_labels": [
+        "type"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 709,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 719,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "stream_ws_updates_sent",
+      "type": "counter",
+      "source_labels": [
+        "event"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 693,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "stream_ws_errors",
+      "type": "counter",
+      "source_labels": [
+        "type"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "line": 121,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 501,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 507,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "stream_ws_authentications",
+      "type": "counter",
+      "source_labels": [
+        "method"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 540,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "method"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 609,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "stream_ws_close_codes",
+      "type": "counter",
+      "source_labels": [
+        "code"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/stream.rs",
+          "line": 256,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_unexpected_send_result_events",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 243,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_backpressure_events",
+      "type": "counter",
+      "source_labels": [
+        "result"
+      ],
+      "source_buckets": null,
+      "candidate": [],
+      "status": "missing_literal_instrumentation"
+    },
+    {
+      "name": "ws_drain_events",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 244,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_message_size_bytes",
+      "type": "histogram",
+      "source_labels": [
+        "result"
+      ],
+      "source_buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/comms/src/metrics.rs",
+          "line": 160,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 216,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 464,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ws_queue_vs_backpressure_ratio",
+      "type": "gauge",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 204,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 245,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscribers_local_count",
+      "type": "gauge",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 316,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 246,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscribers_generators_count",
+      "type": "gauge",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 317,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 247,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscribers_stale_cleaned",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 248,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscribers_stale_connections_cleaned",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 249,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscription_duplicates_total",
+      "type": "counter",
+      "source_labels": [
+        "event"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/mod.rs",
+          "line": 179,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "type": "counter",
+      "source_labels": [
+        "event"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "line": 111,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "friendship_rate_limiter_unavailable",
+      "type": "counter",
+      "source_labels": [],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "line": 145,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "line": 151,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 250,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ai_compliance_validation_duration_seconds",
+      "type": "histogram",
+      "source_labels": [],
+      "source_buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10,
+        30
+      ],
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 488,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 507,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    },
+    {
+      "name": "ai_compliance_validation_total",
+      "type": "counter",
+      "source_labels": [
+        "result"
+      ],
+      "source_buckets": null,
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 487,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 496,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 503,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 509,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 512,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
+    }
+  ]
+}

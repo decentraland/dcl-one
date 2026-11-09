@@ -150,10 +150,11 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
-CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
+test makes Cargo build the runnable sidecar in the same profile directory, where the scene tests
+look for it.
 
 ```bash
-cargo build --package dcl_deno_ipc --profile ci-test --locked
 cargo test --all --profile ci-test --locked -- --test-threads=1
 ```
 
@@ -168,18 +169,34 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
+  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
+  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
   `micEnabled`, `localSpeaker`, `localRole`, `error`), `/entity_screen_position <entity>
   [--bounds]`, plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
+  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
+  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
+  the HUD sets from the user's communities (the engine drops community messages on any other).
 - Voice chat, as the HUD's buttons do it: `/voice_call <address>` rings a user, `/voice_accept`
   and `/voice_reject` answer a ringing call, `/voice_end` hangs up or leaves a stream,
   `/voice_community start|join|end|leave [<community id>]`, `/voice_hand up|down`,
   `/voice_mic on|off` (the call microphone; the nearby one is the `Microphone` key) and
   `/voice_moderate promote|demote|kick|reject <address>`. Each only queues the request; read
   `/voice_state` `call` for the outcome.
+- In development builds the lower-right bug button toggles the debug panel. In all builds,
+  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+  section or control, or enter `/debug Performance` directly. Expanded sections refresh
+  about once per second. `/debug help` lists the available sections. Engine plugins
+  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
+  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  Use the panel to inspect a scene, compare frame and memory measurements, diagnose
+  room and media connections, and exercise supported controls. Availability depends
+  on the build, platform and preview mode. `/performance_state` reports the effective
+  frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON

@@ -2,22 +2,24 @@
 //! routes (`worlds::core::auth` re-exports it) and the world comms mints:
 //! [`require_verified`] runs the 60-second window, a per-route list of
 //! metadata keys that switches the folded-payload fallback on (empty = the
-//! 6.x payload only), the same scene-signer gate, and answers its refusals
-//! in the worlds envelope ([`map_auth_error_api`]). The steps it runs (the
+//! 6.x payload only), the same scene-signer gate, and refuses with a
+//! [`SignedFetchRefusal`]: the shared cause, which decides the status, and
+//! the `@dcl/crypto-middleware` 6.3.0 message, which the routes answer as
+//! upstream's `onError` does ([`map_auth_error_api`]). The steps it runs (the
 //! chain, the timestamp window, the metadata parse, the one path rule) are
 //! `shared::signed_fetch`'s.
 
 use axum::http::HeaderMap;
 use serde_json::{Map, Value};
 
-use crate::auth::AuthChain;
 use crate::auth::eip1654::Eip1654Validator;
+use crate::auth::signed_fetch::{ChainShapeError, UnsignedLinks};
+use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 use crate::shared::identity::Address;
 use crate::shared::signed_fetch::{
-    AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SignedFetchError, SignedPath,
-    build_legacy_payload, build_payload_v6, candidate_paths, check_symmetric_skew,
-    extract_auth_chain, header_str, is_refused_signer, map_auth_error, parse_metadata,
-    truncate_detail,
+    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SignedFetchError,
+    SignedPath, build_legacy_payload, build_payload_v6, candidate_paths, check_symmetric_skew,
+    header_str, is_refused_signer, map_auth_error, parse_metadata,
 };
 use crate::worlds_envelope::ApiError;
 
@@ -49,6 +51,107 @@ impl VerifiedAuth {
     }
 }
 
+/// A refused signed fetch: `cause` decides the status (400, 401 or 503, as
+/// `SignedFetchError::http_status_and_message` splits them) and `message` is
+/// the text `@dcl/crypto-middleware` 6.3.0 `verify()` throws for it.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct SignedFetchRefusal {
+    pub cause: SignedFetchError,
+    pub message: String,
+}
+
+impl SignedFetchRefusal {
+    fn new(cause: SignedFetchError, message: impl Into<String>) -> Self {
+        Self {
+            cause,
+            message: message.into(),
+        }
+    }
+
+    pub fn status(&self) -> u16 {
+        self.cause.http_status_and_message().0
+    }
+}
+
+/// crypto-middleware's `safe()`: a fragment echoed into a message, cut to 64
+/// characters with `…`.
+fn safe(value: &str) -> String {
+    const MAX: usize = 64;
+    if value.chars().count() > MAX {
+        let head: String = value.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        value.to_string()
+    }
+}
+
+/// `JSON.stringify(JSON.parse(raw))` for the metadata upstream echoes: the
+/// delivered bytes without the whitespace between tokens, keys in delivered order.
+fn compact_json(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for c in raw.chars() {
+        if in_string {
+            out.push(c);
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if !c.is_whitespace() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `extractAuthChain`'s refusals over the shared chain shape.
+fn chain_refusal(headers: &HeaderMap, e: ChainShapeError) -> SignedFetchRefusal {
+    let message = match &e {
+        ChainShapeError::InsufficientLinks => "Invalid Auth Chain".to_string(),
+        ChainShapeError::TooLong => {
+            format!("Auth chain exceeds maximum length of {MAX_AUTH_CHAIN_LINKS}")
+        }
+        // Valid JSON that is not an auth link, or not JSON at all.
+        ChainShapeError::Unparseable { index, detail } => {
+            let raw = header_str(headers, &format!("{AUTH_CHAIN_HEADER_PREFIX}{index}"));
+            if raw.is_some_and(|raw| serde_json::from_str::<Value>(raw).is_ok()) {
+                format!("Invalid chain format: malformed auth link at position {index}")
+            } else {
+                format!("Invalid chain format: {}", safe(detail))
+            }
+        }
+        // Upstream lets these through to the signature check; the text names the link.
+        ChainShapeError::SignerNotFirst(index) | ChainShapeError::MissingSignature(index) => {
+            format!("Invalid chain format: malformed auth link at position {index}")
+        }
+        ChainShapeError::FirstNotSigner => {
+            "Invalid chain format: malformed auth link at position 0".to_string()
+        }
+    };
+    SignedFetchRefusal::new(e.into(), message)
+}
+
+/// `verifySign`'s refusals: `Invalid signature: <reason>` for a personal-sign
+/// chain, the bare `Invalid signature` and the catalyst 503 for EIP-1654.
+fn signature_refusal(e: AuthError) -> SignedFetchRefusal {
+    let message = match &e {
+        AuthError::Eip1654Rejected { .. } | AuthError::Eip1654NotImplemented => {
+            "Invalid signature".to_string()
+        }
+        AuthError::Eip1654ValidationFailed(detail) => {
+            format!("Error connecting to catalyst: {detail}")
+        }
+        other => format!("Invalid signature: {other}"),
+    };
+    SignedFetchRefusal::new(map_auth_error(e), message)
+}
+
 fn objects_to_inspect<'a>(value: &'a Value, out: &mut Vec<&'a Map<String, Value>>) {
     match value {
         Value::Array(items) => items.iter().for_each(|item| objects_to_inspect(item, out)),
@@ -57,9 +160,10 @@ fn objects_to_inspect<'a>(value: &'a Value, out: &mut Vec<&'a Map<String, Value>
     }
 }
 
-/// The first declared key whose delivered spelling differs (keys only; values
-/// such as `secret` are case-sensitive and travel verbatim).
-fn first_respelled_key<'k>(metadata: &Value, canonical_keys: &[&'k str]) -> Option<&'k str> {
+/// `assertLegacyMetadataKeys`: the message for the first declared key whose
+/// delivered spelling differs (keys only; values such as `secret` are
+/// case-sensitive and travel verbatim).
+fn first_respelled_key(metadata: &Value, canonical_keys: &[&str]) -> Option<String> {
     for declared_path in canonical_keys {
         let mut containers: Vec<&Value> = vec![metadata];
         for segment in declared_path.split('.') {
@@ -74,11 +178,23 @@ fn first_respelled_key<'k>(metadata: &Value, canonical_keys: &[&'k str]) -> Opti
                     .keys()
                     .filter(|key| key.to_lowercase() == folded)
                     .collect();
-                if delivered.is_empty() {
-                    continue;
-                }
-                if delivered.len() > 1 || delivered[0].as_str() != segment {
-                    return Some(declared_path);
+                match delivered.as_slice() {
+                    [] => continue,
+                    [one] if one.as_str() == segment => {}
+                    [one] => {
+                        return Some(format!(
+                            "Invalid chain metadata: expected \"{}\", got \"{}\"",
+                            safe(segment),
+                            safe(one)
+                        ));
+                    }
+                    many => {
+                        return Some(format!(
+                            "Invalid chain metadata: \"{}\" delivered under {} spellings",
+                            safe(segment),
+                            many.len()
+                        ));
+                    }
                 }
                 if let Some(value) = object.get(segment) {
                     next.push(value);
@@ -98,7 +214,7 @@ async fn validate_over_paths(
     payloads: &[String],
     now: i64,
     validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, SignedFetchError> {
+) -> Result<Address, SignedFetchRefusal> {
     let mut verdict = None;
     for payload in payloads {
         match crate::auth::verify_auth_chain_async(chain, payload, Some(now * 1000), validator)
@@ -106,18 +222,29 @@ async fn validate_over_paths(
         {
             Ok(()) => {
                 return Address::parse(&chain[0].payload).map_err(|e| {
-                    SignedFetchError::MalformedChain {
-                        detail: format!("signer: {e}"),
-                    }
+                    SignedFetchRefusal::new(
+                        SignedFetchError::MalformedChain {
+                            detail: format!("signer: {e}"),
+                        },
+                        "Invalid chain format: malformed auth link at position 0",
+                    )
                 });
             }
-            Err(e) => match map_auth_error(e) {
-                e @ SignedFetchError::InvalidSignature(_) => verdict = Some(e),
+            Err(e) => match signature_refusal(e) {
+                refusal @ SignedFetchRefusal {
+                    cause: SignedFetchError::InvalidSignature(_),
+                    ..
+                } => verdict = Some(refusal),
                 other => return Err(other),
             },
         }
     }
-    Err(verdict.unwrap_or_else(|| SignedFetchError::InvalidSignature("no payload".into())))
+    Err(verdict.unwrap_or_else(|| {
+        SignedFetchRefusal::new(
+            SignedFetchError::InvalidSignature("no payload".into()),
+            "Invalid signature: no payload",
+        )
+    }))
 }
 
 /// `canonical_metadata_keys` is the switch for the folded-payload fallback: a route
@@ -134,26 +261,46 @@ pub async fn require_verified(
     signed_path: &SignedPath,
     canonical_metadata_keys: &[&str],
     validator: Option<&dyn Eip1654Validator>,
-) -> Result<VerifiedAuth, SignedFetchError> {
-    let chain = extract_auth_chain(headers)?;
+) -> Result<VerifiedAuth, SignedFetchRefusal> {
+    let chain = crate::auth::signed_fetch::extract_auth_chain(headers, UnsignedLinks::Malformed)
+        .map_err(|e| chain_refusal(headers, e))?;
     let ts = header_str(headers, AUTH_TIMESTAMP_HEADER)
         .filter(|raw| !raw.is_empty())
         .unwrap_or("0")
         .to_string();
-    let now = chrono::Utc::now().timestamp();
-    check_symmetric_skew(&ts, now, SIGNED_FETCH_EXPIRATION_SECS)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now = now_ms.div_euclid(1000);
+    check_symmetric_skew(&ts, now, SIGNED_FETCH_EXPIRATION_SECS).map_err(|cause| {
+        let message = match (&cause, ts.parse::<i64>()) {
+            (SignedFetchError::Expired { .. }, Ok(signed)) if signed > now_ms => format!(
+                "Signature timestamp is too far in the future: signature timestamp: {signed}, local timestamp: {now_ms}"
+            ),
+            (SignedFetchError::Expired { .. }, Ok(signed)) => format!(
+                "Expired signature: signature timestamp: {signed}, timestamp expiration: {}, local timestamp: {now_ms}",
+                signed.saturating_add(SIGNED_FETCH_EXPIRATION_SECS * 1000)
+            ),
+            _ => format!("Invalid chain timestamp: {}", safe(&ts)),
+        };
+        SignedFetchRefusal::new(cause, message)
+    })?;
 
     let raw_metadata = header_str(headers, AUTH_METADATA_HEADER)
         .unwrap_or("{}")
         .to_string();
-    let metadata = parse_metadata(&raw_metadata)?;
+    let metadata = parse_metadata(&raw_metadata).map_err(|cause| {
+        SignedFetchRefusal::new(
+            cause,
+            format!("Invalid chain metadata: \"{}\"", safe(&raw_metadata)),
+        )
+    })?;
     if is_refused_signer(&metadata) {
-        return Err(SignedFetchError::MalformedChain {
-            detail: format!(
-                "invalid metadata content: \"{}\"",
-                truncate_detail(&raw_metadata)
-            ),
-        });
+        let content = safe(&compact_json(&raw_metadata));
+        return Err(SignedFetchRefusal::new(
+            SignedFetchError::MalformedChain {
+                detail: format!("invalid metadata content: {content}"),
+            },
+            format!("Invalid metadata content: {content}"),
+        ));
     }
 
     let paths = candidate_paths(headers, signed_path);
@@ -162,18 +309,26 @@ pub async fn require_verified(
         .map(|p| build_payload_v6(method, p, &ts, &raw_metadata))
         .collect();
     let signer = match validate_over_paths(&chain, &v6, now, validator).await {
-        Err(SignedFetchError::InvalidSignature(detail)) if !canonical_metadata_keys.is_empty() => {
-            if let Some(key) = first_respelled_key(&metadata, canonical_metadata_keys) {
-                return Err(SignedFetchError::MalformedChain {
-                    detail: format!("non-canonical metadata key: expected \"{key}\""),
-                });
+        Err(
+            refusal @ SignedFetchRefusal {
+                cause: SignedFetchError::InvalidSignature(_),
+                ..
+            },
+        ) if !canonical_metadata_keys.is_empty() => {
+            if let Some(message) = first_respelled_key(&metadata, canonical_metadata_keys) {
+                return Err(SignedFetchRefusal::new(
+                    SignedFetchError::MalformedChain {
+                        detail: message.clone(),
+                    },
+                    message,
+                ));
             }
             let legacy: Vec<String> = paths
                 .iter()
                 .map(|p| build_legacy_payload(method, p, &ts, &raw_metadata))
                 .collect();
             if legacy == v6 {
-                return Err(SignedFetchError::InvalidSignature(detail));
+                return Err(refusal);
             }
             validate_over_paths(&chain, &legacy, now, validator).await?
         }
@@ -182,9 +337,42 @@ pub async fn require_verified(
     Ok(VerifiedAuth { signer, metadata })
 }
 
-/// The old `map_auth_error`: a malformed request is a 400 with its detail,
-/// every other refusal a 401 (503 when the contract-wallet check could not run).
-pub fn map_auth_error_api(e: SignedFetchError) -> ApiError {
-    let (status, message) = e.http_status_and_message();
-    ApiError::http(status, message)
+/// Upstream's signed-fetch `onError`: the middleware's message in `error`, the
+/// ADR-44 sentence in `message`, at the middleware's status.
+pub fn map_auth_error_api(e: SignedFetchRefusal) -> ApiError {
+    ApiError::signed_fetch(e.status(), e.message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn echoed_fragments_are_cut_like_crypto_middleware() {
+        assert_eq!(safe("short"), "short");
+        let long = "x".repeat(70);
+        assert_eq!(safe(&long), format!("{}…", "x".repeat(64)));
+    }
+
+    #[test]
+    fn metadata_is_echoed_as_json_stringify_writes_it() {
+        assert_eq!(
+            compact_json("{ \"signer\" : \"a b\",\n \"Signer\": \"x\\\" y\" }"),
+            r#"{"signer":"a b","Signer":"x\" y"}"#
+        );
+    }
+
+    #[test]
+    fn the_key_guard_names_the_delivered_spelling() {
+        let metadata = serde_json::json!({ "Secret": "x" });
+        assert_eq!(
+            first_respelled_key(&metadata, EXPLORER_METADATA_KEYS).as_deref(),
+            Some(r#"Invalid chain metadata: expected "secret", got "Secret""#)
+        );
+        let metadata = serde_json::json!({ "intent": "a", "INTENT": "b" });
+        assert_eq!(
+            first_respelled_key(&metadata, EXPLORER_METADATA_KEYS).as_deref(),
+            Some(r#"Invalid chain metadata: "intent" delivered under 2 spellings"#)
+        );
+    }
 }

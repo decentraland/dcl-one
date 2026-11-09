@@ -47,6 +47,7 @@ use spin_sleep::SpinSleeper;
 use ui_core::ui_actions::{Click, On};
 use update_world::lights::LightsPlugin;
 use util::SceneUtilPlugin;
+mod debug_panel;
 
 use web_time::Instant;
 
@@ -69,7 +70,7 @@ use self::{
 };
 use dcl_component::ComponentNameRegistry;
 
-mod asset_preload;
+pub mod asset_preload;
 pub mod automatic_testing;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
@@ -81,6 +82,7 @@ pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
 pub mod scene_partition;
+mod scene_traffic;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -432,6 +434,8 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(SceneOutputPlugin);
         app.add_plugins(SceneUtilPlugin);
         if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
+            debug_panel::register(app);
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
@@ -948,6 +952,7 @@ fn send_scene_updates(
         &mut RendererSceneContext,
         &GlobalTransform,
         Has<SuperUserScene>,
+        Option<&mut scene_traffic::SceneTraffic>,
     )>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -1043,7 +1048,7 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, scene_transform, is_super) = scenes.get_mut(ent).unwrap();
+    let (_, mut context, scene_transform, is_super, traffic) = scenes.get_mut(ent).unwrap();
 
     // only live scenes are queued, so this only fails if the scene broke this frame
     let Some(sender) = context.sender().cloned() else {
@@ -1219,11 +1224,11 @@ fn send_scene_updates(
     let now = time.elapsed_secs_f64();
     let dt = dispatch_dt(context.tick_number, context.last_sent, now);
 
-    if let Err(e) = sender.send(RendererResponse::Ok(
-        context.crdt_store.take_updates(),
-        census,
-        dt,
-    )) {
+    let crdt = context.crdt_store.take_updates();
+    if let Some(mut traffic) = traffic {
+        traffic.record_sent(&crdt);
+    }
+    if let Err(e) = sender.send(RendererResponse::Ok(crdt, census, dt)) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
             context.base
@@ -1250,6 +1255,7 @@ fn receive_scene_updates(
     mut toaster: Toaster,
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
+    mut traffic: Query<&mut scene_traffic::SceneTraffic>,
 ) {
     loop {
         let maybe_completed_job = match updates.receiver().try_recv() {
@@ -1271,6 +1277,16 @@ fn receive_scene_updates(
                 }
                 SceneResponse::Stats(counters) => {
                     if let Ok(mut context) = scenes.get_mut(scene_id.0) {
+                        let now = Instant::now();
+                        context.crdt_bytes_per_second = context
+                            .counter_sample_time
+                            .zip(context.resource_counters.as_ref())
+                            .and_then(|(time, previous)| {
+                                let seconds = (now - time).as_secs_f64();
+                                let bytes = counters.crdt_bytes.checked_sub(previous.crdt_bytes)?;
+                                (seconds > 0.0).then(|| bytes as f64 / seconds)
+                            });
+                        context.counter_sample_time = Some(now);
                         context.resource_counters = Some(counters);
                     }
                     None
@@ -1334,6 +1350,9 @@ fn receive_scene_updates(
                                 context.refreeze_at_tick = None;
                             }
                             context.last_update_dt = runtime.0 - context.total_runtime;
+                            if let Ok(mut history) = traffic.get_mut(root) {
+                                history.record_received(&crdt, context.last_update_dt);
+                            }
                             context.total_runtime = runtime.0;
                             context.last_update_frame = frame.0;
                             // extend (not assign) so renderer-side births (the inspector's /new_entity

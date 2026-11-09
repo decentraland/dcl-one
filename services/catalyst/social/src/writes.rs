@@ -13,7 +13,8 @@
 //! procedures (`rpc::service`, `SocialError::WritesDisabled`).
 //!
 //! Admission and presence are not user authority: the LiveKit token mints
-//! (`/get-scene-adapter`, `/get-server-scene-adapter`), the Pulse room
+//! (`/get-scene-adapter`, `/get-server-scene-adapter`, the world comms mints
+//! and the shared-secret attempt throttle they keep), the Pulse room
 //! authority (`/internal/pulse/room-authority/v1`) and the media server's
 //! webhook stay open, as does `/translate` (a cached read of an external
 //! engine) and the two operator routes that change no durable state
@@ -21,7 +22,8 @@
 //! broadcasts a presence frame), so an operator can disconnect an abusive
 //! socket on a read-only node; `/admin/social/reset-settings` is a durable
 //! write and stays gated. Everything else that is not a `GET`/`HEAD`/`OPTIONS`
-//! is gated.
+//! is gated, as is every method of the email unsubscribe links (a `GET`
+//! that writes the subscription).
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -45,10 +47,16 @@ const OPEN_WHILE_DISABLED: &[&str] = &[
     "/admin/social/force-presence",
 ];
 
+/// Route-local prefixes whose reads write too: the notification emails' one-click unsubscribe links.
+const WRITING_READS: &[&str] = &["/unsubscribe/"];
+
 pub const DISABLED_MESSAGE: &str = "social writes are disabled on this node (SOCIAL_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
 
 /// Whether `method` on `path` is a write this gate refuses while disabled.
 pub fn is_gated(method: &Method, path: &str) -> bool {
+    if WRITING_READS.iter().any(|prefix| path.starts_with(prefix)) {
+        return true;
+    }
     if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return false;
     }
@@ -72,6 +80,9 @@ pub fn refused_response(refusal: &Refusal) -> Response {
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::RETRY_AFTER, "3600"),
+            // The gate wraps each router outside its own layers (the Social
+            // API's CORS among them), so its refusal sets this itself.
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         body.to_string(),
     )
@@ -135,6 +146,32 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
+    /// The refusal leaves before the Social API's CORS layer, and still
+    /// carries nosniff, on the root mount and under `/social-api`.
+    #[tokio::test]
+    async fn a_write_disabled_refusal_carries_nosniff() {
+        let app = app(false);
+        for path in ["/v1/communities", "/social-api/v1/communities"] {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(
+                res.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                "nosniff",
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn gated_is_every_mutating_method_but_the_admission_and_translate_paths() {
         assert!(is_gated(&Method::POST, "/v1/communities"));
@@ -157,6 +194,11 @@ mod tests {
         );
         assert!(!is_gated(&Method::POST, "/admin/social/disconnect"));
         assert!(!is_gated(&Method::POST, "/admin/social/force-presence"));
+        assert!(
+            is_gated(&Method::GET, "/unsubscribe/0xabc/item_sold"),
+            "an unsubscribe link writes even as a GET"
+        );
+        assert!(is_gated(&Method::HEAD, "/unsubscribe/0xabc"));
     }
 
     #[tokio::test]

@@ -8,13 +8,13 @@ Once you export your emote, you’ll have to upload it to the builder. This docu
 
 Remember that you need to create a collection before you can upload your file. If you don’t know how to do that, check [Creating a Collection](/docs/creator/wearables-and-emotes/manage-collections/creating-a-collection/). To upload your emote, just drag and drop the file on the _**New Item**_ window or browse your computer. It will automatically detect if the file has any animation, identifying it as an emote.
 
-![](</docs/.gitbook/assets/01_new_item (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-emotes/01_new_item.webp>)
 
 Drag and drop your animation file to upload it.
 
 You will be asked to enter a name for your emote, define its rarity, the category and the play mode. Below the thumbnail is shown the number of animation clips in your file, the length of the animation in seconds, the length in frames and the frame rate.
 
-![](/docs/.gitbook/assets/upload_emote.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/upload_emote.webp)
 
 ## **Uploading Emotes Using a .zip File**
 
@@ -74,7 +74,7 @@ For emotes, you don’t have to upload any images since the editor already has a
 
 People should be able to identify what the animation is about through the thumbnail. If a front shot isn’t good enough, try rotating the model, zoom in or out, pan up or down, pick any frame from your clip. It’s really important that you select the best shot!
 
-![](/docs/.gitbook/assets/Edit_thumbnail.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/Edit_thumbnail.webp)
 
 Rotate, zoom in or out, pan up and down. Use the tools to get the best shot of your animation!
 
@@ -82,15 +82,15 @@ Rotate, zoom in or out, pan up and down. Use the tools to get the best shot of y
 
 Once you set the thumbnail, you will have the editor open. This is where you can check if the animation is playing well since a 3D avatar will be performing it.
 
-![](/docs/.gitbook/assets/editor.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/editor.webp)
 
 By clicking on the icon at the lower left you will be able to edit the avatar. Click on the cilinder icon on the lower right to check if you animation is staying within the boundaries of height and space.
 
-![](/docs/.gitbook/assets/edit_avatar.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/edit_avatar.webp)
 
 The icon at the botton left allows you to edit the avatar.
 
-![](/docs/.gitbook/assets/boundaries.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/boundaries.webp)
 
 Cylinder icon shows the boundaries for the animation.
 
@@ -100,7 +100,7 @@ You can also edit the emote’s name, thumbnail, category, rarity and play mode,
 * **Utility** Describe the in-world utility of the Wearable or Emote.
 * **Tags:** Tags are simply descriptive words that users can use when searching or filtering for items. These are relevant to competitions or events!
 
-![](/docs/.gitbook/assets/editor2.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/editor2.webp)
 
 ## Testing in World
 
@@ -109,7 +109,7 @@ Even after testing the animation in the editor, it’s important to check how it
 \
 \\
 
-![](/docs/.gitbook/assets/getting_started.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/getting_started.webp)
 
 \
 \\
@@ -122,7 +122,7 @@ Even after testing the animation in the editor, it’s important to check how it
 \
 \\
 
-![](/docs/.gitbook/assets/choice.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/choice.webp)
 
 \
 \\
@@ -135,7 +135,7 @@ Even after testing the animation in the editor, it’s important to check how it
 \
 \\
 
-![](/docs/.gitbook/assets/custom_catalyst.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/custom_catalyst.webp)
 
 \
 \\
@@ -148,7 +148,7 @@ Even after testing the animation in the editor, it’s important to check how it
 \
 \\
 
-![](/docs/.gitbook/assets/monoco.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/monoco.webp)
 
 \
 \\
@@ -161,7 +161,7 @@ Even after testing the animation in the editor, it’s important to check how it
 \
 \\
 
-![](/docs/.gitbook/assets/testing.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/testing.webp)
 
 \
 \\
@@ -170,6 +170,6 @@ Even after testing the animation in the editor, it’s important to check how it
 
 Make sure to add a nice description and verify if all the information and settings are right. Double check the thumbnail too. If you’ve filled all the information necessary you will see Ready to Submit as the status of your item. Now your emote is ready to be published!
 
-![](/docs/.gitbook/assets/last.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/last.webp)
 
 The Ready to Submit status means that your file is ready be published!

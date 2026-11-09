@@ -96,16 +96,18 @@ def verify_tree(repository, revision, manifest):
 
 
 def validate_workflow(workflow):
-    # Fixed contract for this root workflow, alongside the existing runtime guards.
+    # Fixed contract for this root workflow, alongside the existing runtime guards. The path list is push.paths
+    # only: pull requests run the workflow unfiltered and its `changes` plan (tooling/dev-ci.py) reads that list.
     for path in ("library/**", "tooling/enet-provenance.py", "tooling/tests/**"):
-        require(workflow.count(f"      - '{path}'\n") == 2,
+        require(workflow.count(f"      - '{path}'\n") == 1,
                 f"online provenance selection missing/duplicated: {path}")
     jobs = re.findall(r"^  rust:\n(.*?)(?=^  [\w-]+:|\Z)", workflow, re.M | re.S)
     require(len(jobs) == 1, "online provenance Rust job missing/conditional")
-    # The only condition allowed keeps it running whatever happens to the jobs it needs.
+    # The only condition allowed keeps it running whatever happens to the jobs it needs, skipping it only when the
+    # plan compared the change and found none of push.paths (library/** among them) touched.
     conditions = re.findall(r"^    (?:if|continue-on-error):.*$", jobs[0], re.M)
     needs = re.search(r"^    needs:", jobs[0], re.M)
-    require(conditions == (["    if: ${{ !cancelled() }}"] if needs else []),
+    require(conditions == (["    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}"] if needs else []),
             "online provenance Rust job missing/conditional")
     matrix = re.findall(r"^        os:(.*?)(?=^ {0,8}\S|\Z)", jobs[0], re.M | re.S)
     platforms = re.findall(r"\[[^\]]*\]", matrix[0]) if len(matrix) == 1 else []
@@ -113,7 +115,7 @@ def validate_workflow(workflow):
             "online provenance Rust job can drop its Linux leg")
     steps = re.findall(r"^      - name: Verify the exact public ENet source pin\n(.*?)(?=^      - |\Z)",
                        jobs[0], re.M | re.S)
-    require(steps == ["        run: nix develop --command python3 tooling/enet-provenance.py\n"],
+    require(steps == ["        run: nix develop .#ci --command python3 tooling/enet-provenance.py\n"],
             "online provenance step missing/conditional/changed; retain explicit failure")
 
 

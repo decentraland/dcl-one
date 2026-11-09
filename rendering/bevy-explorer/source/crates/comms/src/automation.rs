@@ -14,7 +14,7 @@ use common::{
     structs::{MicState, PrimaryUser},
     util::AsH160,
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 use wallet::Wallet;
 
@@ -42,12 +42,66 @@ pub struct CommsAutomationPlugin;
 
 impl Plugin for CommsAutomationPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(not(feature = "livekit"))]
+        app.add_debug_section(DebugSection {
+            title: "Voice chat",
+            query: "/voice_state",
+            fields: &[
+                ("Microphone available", "mic.available"),
+                ("Microphone enabled", "mic.enabled"),
+                ("LiveKit available", "livekit"),
+            ],
+            actions: &[],
+            inputs: &[],
+        });
+        app.add_console_command::<TransportState, _>(transport_state)
+            .add_debug_section(DebugSection {
+                title: "Multiplayer transports",
+                query: "/transport_state",
+                fields: &[
+                    ("Active transport entities", "total"),
+                    ("Transport types and player counts (up to 32)", "transports"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
         app.init_resource::<ChatLog>()
             // after the system that spawns a foreign player, so a first message is not recorded
             // before its sender exists
             .add_systems(Update, record_chat.after(process_transport_updates))
             .add_console_command::<ChatHistoryCommand, _>(chat_history_cmd)
-            .add_console_command::<VoiceStateCommand, _>(voice_state_cmd);
+            .add_console_command::<VoiceStateCommand, _>(voice_state_cmd)
+            .add_debug_section(DebugSection {
+                title: "Chat",
+                query: "/chat_history 1",
+                fields: &[("Public messages received", "total")],
+                actions: &[("Send nearby test message", "/chat Nearby Debug-panel-test")],
+                inputs: &[],
+            });
+    }
+}
+
+/// Inspect transport entities and their known players, without exposing adapter URLs or credentials.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/transport_state")]
+struct TransportState;
+
+fn transport_state(
+    mut input: ConsoleCommand<TransportState>,
+    transports: Query<(Entity, &crate::Transport, Has<crate::SceneRoom>)>,
+    players: Query<&ForeignPlayer>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let mut counts = std::collections::HashMap::<Entity, usize>::new();
+        for player in &players {
+            for &transport in &player.transports {
+                *counts.entry(transport).or_default() += 1;
+            }
+        }
+        let rows: Vec<_> = transports.iter().take(32).map(|(id, transport, scene)| {
+            json!({"type": format!("{:?}", transport.transport_type), "scene": scene, "players": counts.get(&id).copied().unwrap_or_default()})
+        }).collect();
+        input.reply_ok(json!({"total": transports.iter().count(), "transports": rows}).to_string());
     }
 }
 
@@ -88,7 +142,8 @@ impl ChatLog {
 /// Whether a chat event is a message from a player, as the HUD's chat stream takes it: not a
 /// console or system line (no sender), the local player's own command, an emote marker, or a DM
 /// (its channel is the partner's wallet; `/dm_history` has those, and a received DM is not a chat
-/// event at all). Another player's text that starts with `/` is chat: the HUD shows it.
+/// event at all), or a community message (`community:<id>`, likewise in `/dm_history`). Another
+/// player's text that starts with `/` is chat: the HUD shows it.
 fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
     event.sender != Entity::PLACEHOLDER
         && !(Some(event.sender) == me && event.message.starts_with('/'))
@@ -96,6 +151,7 @@ fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
             .iter()
             .any(|marker| event.message.starts_with(*marker))
         && event.channel.as_h160().is_none()
+        && crate::community_chat::community_id(&event.channel).is_none()
 }
 
 /// The sender's address: the local player's own, or a foreign player's.
@@ -172,7 +228,7 @@ fn chat_history_cmd(mut input: ConsoleCommand<ChatHistoryCommand>, log: Res<Chat
 /// A voice room's connection, as the room's marker components say it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(feature = "livekit"), allow(dead_code))]
-enum RoomState {
+pub(crate) enum RoomState {
     /// not connected yet, including a room that has not started
     Connecting,
     Connected,
@@ -184,7 +240,12 @@ enum RoomState {
 
 #[cfg_attr(not(feature = "livekit"), allow(dead_code))]
 impl RoomState {
-    fn from_markers(connected: bool, reconnecting: bool, disconnected: bool, failed: bool) -> Self {
+    pub(crate) fn from_markers(
+        connected: bool,
+        reconnecting: bool,
+        disconnected: bool,
+        failed: bool,
+    ) -> Self {
         if connected {
             Self::Connected
         } else if reconnecting {
@@ -198,7 +259,7 @@ impl RoomState {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Connecting => "connecting",
             Self::Connected => "connected",
@@ -303,12 +364,8 @@ type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<Ac
 struct VoiceStateCommand;
 
 #[cfg(feature = "livekit")]
-type CallRooms<'w, 's> = Query<
-    'w,
-    's,
-    (Has<Connected>, Has<Reconnecting>),
-    With<crate::voice_chat::VoiceRoom>,
->;
+type CallRooms<'w, 's> =
+    Query<'w, 's, (Has<Connected>, Has<Reconnecting>), With<crate::voice_chat::VoiceRoom>>;
 
 fn voice_state_cmd(
     mut input: ConsoleCommand<VoiceStateCommand>,
@@ -419,6 +476,11 @@ mod tests {
         let player = Entity::from_raw(7);
         assert!(is_chat_message(&event(player, "Nearby", "hello"), me));
         assert!(is_chat_message(&event(player, "some scene", "hello"), me));
+        // a community message: in `/dm_history community:<id>`
+        assert!(!is_chat_message(
+            &event(player, "community:abc-1", "hello"),
+            me
+        ));
         // no sender: a console or system line
         assert!(!is_chat_message(
             &event(Entity::PLACEHOLDER, "Nearby", "[ok]"),

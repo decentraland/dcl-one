@@ -10,6 +10,9 @@ dcl-auth.workspace = true
 catalyst-shared = { path = "../shared" }
 catalyst-storage = { path = "../storage" }
 catalyst-content = { path = "../content" }
+catalyst-social = { path = "../social" }
+catalyst-jobs = { path = "../jobs" }
+anyhow.workspace = true
 tokio.workspace = true
 axum.workspace = true
 sqlx.workspace = true

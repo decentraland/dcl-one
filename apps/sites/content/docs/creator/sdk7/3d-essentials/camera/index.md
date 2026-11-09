@@ -97,7 +97,7 @@ In this example, the camera will always be on a fixed position in the scene, as 
 
 ### Field of view
 
-You can override the Explorer's default field of view (FOV) for a virtual camera by setting the `fov` property, in degrees. The override applies only while this virtual camera is active. Omitting `fov` uses the Explorer's default (typically 60 degrees).
+Set the field of view (FOV) for a virtual camera with the `fov` property, in degrees. It applies only while this virtual camera is active.
 
 ```ts
 const cinematicCamera = engine.addEntity()
@@ -111,14 +111,35 @@ VirtualCamera.create(cinematicCamera, {
 
 A narrower FOV (lower value) zooms in, useful for cutscenes or aiming. A wider FOV (higher value) shows more of the scene, useful for panoramic views.
 
+
+> [!WARNING]
+> **📔 Note**: Set `fov` on every virtual camera you create. Leaving it out doesn't give you a neutral 60 degrees: the client reuses pooled camera instances without resetting the lens, so a camera with no `fov` keeps whatever field of view an earlier camera left on that instance. A camera meant to show a wide aerial view can open zoomed right in.
+
+
 Your scene can include as many entities with a `VirtualCamera`component as you want, and dynamically switch between multiple virtual cameras as the player moves, or as they perform certain actions. Only one virtual camera is active at any given time, this is assigned by the `MainCamera` component on `engine.CameraEntity`.
 
 To revert back to default camera behavior, set the value to `undefined` on `MainCamera.virtualCameraEntity`. The player is then free to switch between 1st and 3rd person cameras. If you want the player to only use one of these two modes, you can use a [Camera modifier areas](#1st-and-3rd-person-camera-modes) to force one of the two.
 
 
 > [!WARNING]
+> **📔 Note**: Release the camera with `undefined`, never with `0`. Only an absent value hands control back to the player. A value of `0` is `engine.RootEntity`, which has no `VirtualCamera`, so the engine keeps whichever virtual camera was last active and the player stays stuck in that view.
+>
+> This catches code that saves and restores the camera, because `virtualCameraEntity` is optional and reads as `undefined` on a fresh `MainCamera`. A `?? 0` or `|| 0` fallback turns that into a `0` that gets written back later. Check the entity before restoring it:
+>
+> ```ts
+> function restoreCamera(previous: Entity | undefined) {
+> 	const camera = MainCamera.getMutableOrNull(engine.CameraEntity)
+> 	if (!camera) return
+> 	// Only restore a camera that really exists, otherwise release control
+> 	camera.virtualCameraEntity = previous && VirtualCamera.has(previous) ? previous : undefined
+> }
+> ```
+
+
+
+> [!WARNING]
 > **📔 Note**: Camera modifier areas only have an effect on the player if no virtual cameras are active. If the scene is currently using a virtual camera and the player steps into a camera modifier area, nothing happens.
-> 
+>
 > If a 3D model includes a `camera` node as part of its contents, this can't be used by the SDK. You must create all cameras as entities with the SDK.
 
 
@@ -186,7 +207,7 @@ function main() {
 
 ## Field of View
 
-You can set a custom field of view (FOV) on a virtual camera with the `fov` property. The value is in degrees. If omitted, it defaults to 60.
+You can set a custom field of view (FOV) on a virtual camera with the `fov` property. The value is in degrees. Always set it: there is no default to fall back on, and a camera without `fov` inherits the lens left behind by an earlier camera that used the same pooled instance.
 
 ```ts
 VirtualCamera.create(myCustomCamera, {
@@ -196,11 +217,46 @@ VirtualCamera.create(myCustomCamera, {
 
 A wider FOV (higher value) shows more of the scene at once and creates a sense of speed, which can be useful for racing games. A narrower FOV (lower value) zooms in and is useful for aiming or cinematic shots.
 
+### Change the zoom level
+
+The client reads `fov` only at the moment a camera becomes active. Changing `fov` on the camera that is already active does nothing.
+
+To zoom, create one virtual camera per zoom level and switch `MainCamera.virtualCameraEntity` between them:
+
+```ts
+import { engine, MainCamera, Transform, VirtualCamera } from '@dcl/sdk/ecs'
+import { Vector3 } from '@dcl/sdk/math'
+
+// Two cameras in the same spot, one wide and one zoomed in
+const position = Vector3.create(8, 2, 8)
+
+const wideCamera = engine.addEntity()
+Transform.create(wideCamera, { position })
+VirtualCamera.create(wideCamera, { fov: 70 })
+
+const zoomedCamera = engine.addEntity()
+Transform.create(zoomedCamera, { position })
+VirtualCamera.create(zoomedCamera, { fov: 30 })
+
+// Switch between them to zoom
+function zoomIn() {
+	MainCamera.createOrReplace(engine.CameraEntity, { virtualCameraEntity: zoomedCamera })
+}
+
+function zoomOut() {
+	MainCamera.createOrReplace(engine.CameraEntity, { virtualCameraEntity: wideCamera })
+}
+```
+
+Re-assigning the camera that is already active is also a no-op, so switch to a different entity each time.
+
 ## Camera Transitions
 
 Whenever the scene switches between virtual cameras, or between the default camera behavior and virtual cameras, players see a transition. The position, rotation and any other parameters of the virtual camera change smoothly over a period time.
 
 The transition settings on a virtual camera determine how you transition _into_ that camera, from any other camera in the scene, including the default. They don't affect how you transition _out_ of that camera.
+
+Going back to the player's own camera, when you clear the `virtualCameraEntity` of the `MainCamera`, always takes a fixed transition of 0.5 seconds that eases in and out. The `defaultTransition` of the virtual camera you leave doesn't change it.
 
 ```ts
 VirtualCamera.create(myCustomCamera1, {
@@ -471,8 +527,8 @@ function spectateMouseLook() {
   if (!delta) return
 
   yaw = (yaw + delta.x * MOUSE_SENSITIVITY) % 360
-  // Subtract delta.y so mouse-up tilts the camera up; clamp to prevent flip
-  pitch = Math.max(-25, Math.min(80, pitch - delta.y * MOUSE_SENSITIVITY))
+  // delta.y grows downwards, so mouse-up is negative: adding it tilts the camera up; clamp to prevent flip
+  pitch = Math.max(-25, Math.min(80, pitch + delta.y * MOUSE_SENSITIVITY))
 }
 ```
 

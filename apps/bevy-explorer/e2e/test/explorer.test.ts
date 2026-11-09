@@ -52,6 +52,23 @@ describe('Explorer', () => {
     await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 300 }), /timed out after 300 ms waiting for the arrival at 1,2; last: .*"inWorld":false/)
   })
 
+  test('community chat commands: the message, the channel edits, and the state', async () => {
+    const fake = new FakeConsole({
+      community_chat: (line) => `[${line.split(' ')[1]}] sent`,
+      community_channels: (line) => (line.endsWith('clear') ? 'community channels: []' : 'community channels: ["abc-1", "def-2"]'),
+      community_state: JSON.stringify({ routerIdentity: 'message-router-dev-0', routerInRoom: true, channels: ['abc-1'], channelCount: 1, roomSpawned: true, sent: 2 })
+    })
+    const explorer = new Explorer(fake)
+    await explorer.communityChat('abc-1', 'hello there everyone')
+    assert.deepEqual(fake.sent('community_chat'), ['/community_chat abc-1 hello there everyone'])
+    assert.deepEqual(await explorer.communityChannels({ action: 'add', communityId: 'def-2' }), ['abc-1', 'def-2'])
+    assert.deepEqual(await explorer.communityChannels({ action: 'clear' }), [])
+    assert.deepEqual(fake.sent('community_channels'), ['/community_channels add def-2', '/community_channels clear'])
+    const state = await explorer.communityState()
+    assert.equal(state.routerIdentity, 'message-router-dev-0')
+    assert.equal(state.sent, 2)
+  })
+
   test('a JSON reply that is text is an error naming the command', async () => {
     const fake = new FakeConsole({ world_state: 'oops' })
     await assert.rejects(new Explorer(fake).worldState(), /`\/world_state` did not reply JSON: oops/)

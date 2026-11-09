@@ -6,6 +6,7 @@ description = "Social: friends, communities, notifications, badges, profiles and
 publish = false
 
 [dependencies]
+ipnet.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "../fed" }
@@ -39,6 +40,8 @@ libc.workspace = true
 urlencoding.workspace = true
 base64.workspace = true
 sha2.workspace = true
+hmac.workspace = true
+handlebars.workspace = true
 reqwest.workspace = true
 url.workspace = true
 prost.workspace = true
@@ -56,6 +59,11 @@ ts-rs = { workspace = true, optional = true }
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts"]
 test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support", "catalyst-comms/test-support"]
 
+[build-dependencies]
+prost-build.workspace = true
+prost-types.workspace = true
+protox.workspace = true
+
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
@@ -63,7 +71,7 @@ catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-explore = { path = "../explore", features = ["test-support"] }
 catalyst-comms = { path = "../comms", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 catalyst-testing = { path = "../testing" }
 catalyst-fed = { path = "../fed", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }

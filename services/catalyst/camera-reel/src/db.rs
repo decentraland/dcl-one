@@ -30,6 +30,11 @@ use crate::shared::cache::{TtlCache, cache_get, cache_put};
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 const WORLD_PLACES_TTL: Duration = Duration::from_secs(300);
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static DISABLE_RANKING_STATEMENT_TIMEOUT: ();
+}
+
 pub const TABLE: &str = "camera_reel.images";
 
 const COLUMNS: &str =
@@ -438,8 +443,8 @@ impl Database {
             .await?;
         let count = sqlx::query_scalar::<_, i64>(
             "WITH ins AS ( \
-                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata) \
-                 SELECT $1, $2, $3, $4, $5, $6 \
+                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata, ranking_published) \
+                 SELECT $1, $2, $3, $4, $5, $6, false \
                  WHERE (SELECT COUNT(*) FROM camera_reel.images WHERE user_address = $2) < $7 \
                  RETURNING id \
              ) \
@@ -456,6 +461,62 @@ impl Database {
         .await?;
         tx.commit().await?;
         Ok(count.map(|c| c as u64))
+    }
+
+    /// Blob I/O finishes before this transaction. The marker, local receipt and
+    /// all attached communities' counters either commit together or remain due.
+    pub async fn publish_ranking(&self, id: Uuid) -> Result<(), sqlx::Error> {
+        self.publish_ranking_before(id, None).await
+    }
+
+    pub(crate) async fn publish_ranking_before(
+        &self,
+        id: Uuid,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(deadline) = deadline {
+            // Cancel the actual server statement too: dropping a SQLx future
+            // alone can leave a locked query occupying its pooled connection.
+            let milliseconds = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .as_millis()
+                .max(1);
+            #[cfg(test)]
+            let milliseconds = if DISABLE_RANKING_STATEMENT_TIMEOUT.try_with(|()| ()).is_ok() {
+                0
+            } else {
+                milliseconds
+            };
+            sqlx::query("SELECT set_config('statement_timeout',$1,true)")
+                .bind(format!("{milliseconds}ms"))
+                .execute(&mut *tx)
+                .await?;
+        }
+        let row: Option<(String, NaiveDateTime)> = sqlx::query_as(
+            "UPDATE camera_reel.images SET ranking_published=true WHERE id=$1 AND NOT ranking_published RETURNING COALESCE(place_id,''),created_at")
+            .bind(id).fetch_optional(&mut *tx).await?;
+        if let Some((place, occurred_at)) = row
+            && !place.is_empty()
+        {
+            crate::social::communities::ranking::record_photo(
+                &mut tx,
+                &id.to_string(),
+                &place,
+                occurred_at,
+            )
+            .await?;
+        }
+        tx.commit().await
+    }
+
+    pub async fn pending_rankings(
+        &self,
+        after: Uuid,
+    ) -> Result<Vec<(Uuid, String, String, NaiveDateTime)>, sqlx::Error> {
+        // Bound the pending-key read before the caller applies its frozen age cohort.
+        sqlx::query_as("SELECT id,image_hash,thumbnail_hash,created_at FROM camera_reel.images WHERE NOT ranking_published AND id>$1 ORDER BY id LIMIT 100")
+            .bind(after).fetch_all(&self.pool).await
     }
 
     pub async fn delete_image(&self, id: Uuid) -> Result<(), sqlx::Error> {

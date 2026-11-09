@@ -36,6 +36,10 @@ class InventoryTests(unittest.TestCase):
                 'include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"))); }\n',
                 encoding="utf-8",
             )
+            release_definitions = [
+                Path("schemas/releases/v3/41_social_voice_notifications.sql"),
+                Path("schemas/releases/v3/42_social_private_voice_indexes.sql"),
+            ]
             roots = []
             for marker in ("A", "B"):
                 source = probe / ("root-" + marker)
@@ -49,7 +53,21 @@ class InventoryTests(unittest.TestCase):
                     f"-- MIGRATION_CONTEXT_{marker}\nALTER TABLE context_{marker.lower()} ADD COLUMN label text;\n",
                     encoding="utf-8",
                 )
+                (source / "schemas/45_after_release.sql").write_text(
+                    f"-- AFTER_RELEASE_CONTEXT_{marker}\n", encoding="utf-8",
+                )
+                for relative in release_definitions:
+                    destination = source / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(ROOT / relative, destination)
+                    with destination.open("ab") as body:
+                        body.write(f"\n-- NESTED_CONTEXT_{marker}_{relative.stem}\n".encode())
                 roots.append((marker, source))
+            source_state = {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for directory in [fixture, *(source for _, source in roots)]
+                for path in directory.rglob("*") if path.is_file()
+            }
             target = probe / "shared-target"
             executable = target / "debug" / ("db-build-context-probe.exe" if os.name == "nt" else "db-build-context-probe")
             previous = None
@@ -70,10 +88,22 @@ class InventoryTests(unittest.TestCase):
                     self.assertEqual(paths, generated_paths, "one shared Cargo output directory is reused")
                 generated_paths = paths
                 generated = tuple(path.read_bytes() for path in paths)
+                other = "B" if marker == "A" else "A"
                 for kind, content in zip(("SCHEMA", "MIGRATION"), generated):
                     self.assertIn(f"{kind}_CONTEXT_{marker}".encode(), content)
-                    other = "B" if marker == "A" else "A"
                     self.assertNotIn(f"{kind}_CONTEXT_{other}".encode(), content)
+                for relative in release_definitions:
+                    canonical = (ROOT / relative).read_bytes().rstrip(b"\n")
+                    self.assertEqual(generated[0].count(canonical), 1, "canonical release DDL is enrolled once")
+                    self.assertIn(f"NESTED_CONTEXT_{marker}_{relative.stem}".encode(), generated[0])
+                    self.assertNotIn(f"NESTED_CONTEXT_{other}_{relative.stem}".encode(), generated[0])
+                ordered = [Path("schemas/00_context.sql"), *release_definitions, Path("schemas/45_after_release.sql")]
+                positions = [generated[0].index(f"-- ════ {path} ════".encode()) for path in ordered]
+                self.assertEqual(positions, sorted(positions), "nested release DDL follows filename order")
+                self.assertEqual(
+                    {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_state},
+                    source_state, "changing DCL_ONE_ROOT rebuilds without touching source files",
+                )
                 embedded = subprocess.run([str(executable)], capture_output=True, timeout=10, check=True).stdout
                 self.assertEqual(embedded, generated[0] + b"\n-- PROBE MIGRATIONS --\n" + generated[1])
                 if previous is not None:
@@ -100,11 +130,39 @@ class InventoryTests(unittest.TestCase):
         for invocation in [guard.BROAD.replace("--workspace", "-p catalyst-comms"),
                            guard.BROAD + " --exclude catalyst", guard.BROAD + " case_name",
                            guard.BROAD + " -- --skip required", guard.BROAD + " -- --ignored",
-                           guard.BROAD.replace("cargo test", "cargo test --test unrelated")]:
+                           guard.BROAD.replace("catalyst-test.sh", "catalyst-test.sh --test unrelated")]:
             with self.subTest(invocation=invocation), self.assertRaises(ValueError):
                 guard.validate_invocation(invocation, {})
         with self.assertRaises(ValueError):
             guard.validate_invocation(guard.BROAD, {"MAKEFLAGS": "NODE_CRATES=-p catalyst-comms"})
+
+    def test_catalyst_inventory_compiles_the_runtime_selection(self):
+        runtime = ["cargo", "test", "--locked", *guard.SELECTION.split()]
+        manifest = '{"catalyst": {"required": ["case"]}, "unix": {}}'
+        with (
+            mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
+            mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
+            mock.patch.dict(guard.os.environ, clear=True),
+            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
+            mock.patch.object(guard, "verify_resolution"),
+            mock.patch.object(guard, "validate_runtime_script"),
+            mock.patch.object(guard, "validate_test_script"),
+            self.assertRaisesRegex(ValueError, "missing required target: required"),
+        ):
+            guard.main()
+        self.assertEqual(execute.call_args_list, [
+            mock.call(["make", "--no-print-directory", "-n", "catalyst-test"]),
+            mock.call([*runtime, "--no-run", "--message-format=json-render-diagnostics"], ROOT / "services/catalyst"),
+        ])
+
+    def test_inventory_distinguishes_same_named_targets_by_kind(self):
+        import json
+        unit = {"reason": "compiler-artifact", "executable": "unit-test", "profile": {"test": True},
+                "target": {"name": "required", "kind": ["lib"]}}
+        integration = {**unit, "executable": "integration-test", "target": {"name": "required", "kind": ["test"]}}
+        output = "\n".join(map(json.dumps, [unit, integration]))
+        self.assertEqual(guard.artifact_targets(output, {"required"}, kind="test"), {"required": "integration-test"})
+        self.assertEqual(guard.artifact_targets(json.dumps(unit), {"required"}, kind="test"), {})
 
     def test_existing_bevy_artifact_inventory_requires_native_comms_target(self):
         import json
@@ -135,6 +193,23 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
 
+
+    def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        guard.validate_test_script(script)
+        guard.validate_test_script(script.replace("# Run the node", "# Runs the node"))
+        for bad in [script.replace("#!/usr/bin/env bash", "#!/usr/bin/env true"),
+                    script.replace("set -euo pipefail", "set -uo pipefail"),
+                    script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
+                    script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
+                    script.replace('run "$jobs" < "$logs/binaries"', 'run "$jobs" < <(head -n 1 "$logs/binaries")'),
+                    script.replace('< "$logs/others"', '< <(head -n 1 "$logs/others")'),
+                    script.replace('run "$socket_jobs" < "$logs/sockets"\n', ''),
+                    script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
+                    script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace("cores=", "exit 0\ncores=")]:
+            with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
+                guard.validate_test_script(bad)
 
     def test_vendor_examples_compile_gate_cannot_be_removed_filtered_or_conditional(self):
         script = (ROOT / "tooling/dev-test.sh").read_text()

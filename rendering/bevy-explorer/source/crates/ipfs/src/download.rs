@@ -48,7 +48,12 @@ impl IpfsIo {
         }
         entries.retain(|_, entry| entry.strong_count() > 0);
         let (cancel, cancelled) = oneshot::channel();
-        let (reader, attempts) = DownloadReaders::first(&self.request_slots, scene, Some(cancel));
+        let (reader, attempts) = DownloadReaders::first(
+            &self.request_slots,
+            scene,
+            Some(cancel),
+            self.preview_request_delay(),
+        );
         let (sender, result) = watch::channel(None);
         let download = Arc::new(SharedDownload {
             readers: reader.readers.clone(),
@@ -98,7 +103,12 @@ impl IpfsIo {
         cache_key: Option<CacheKey>,
         scene: Option<String>,
     ) -> Result<SharedBytes, AssetReaderError> {
-        let (_reader, attempts) = DownloadReaders::first(&self.request_slots, scene, None);
+        let (_reader, attempts) = DownloadReaders::first(
+            &self.request_slots,
+            scene,
+            None,
+            self.preview_request_delay(),
+        );
         self.request_metrics
             .measure(
                 self.clone()
@@ -116,14 +126,19 @@ impl IpfsIo {
         idle_timeout: Duration,
         owner: Option<String>,
     ) -> Result<platform::FetchedResponse, platform::FetchError<anyhow::Error>> {
-        let (_reader, attempts) = DownloadReaders::first(&self.request_slots, owner, None);
+        let (_reader, attempts) = DownloadReaders::first(
+            &self.request_slots,
+            owner,
+            None,
+            self.preview_request_delay(),
+        );
         self.request_metrics
             .measure(self.fetch_request_inner(
                 attempts,
                 request,
                 &client,
-                headers_timeout,
-                idle_timeout,
+                (headers_timeout, idle_timeout),
+                None,
                 async_std::task::sleep,
             ))
             .await
@@ -135,8 +150,8 @@ impl IpfsIo {
         mut attempts: DownloadAttempts,
         request: reqwest::Request,
         client: &reqwest::Client,
-        headers_timeout: Duration,
-        idle_timeout: Duration,
+        timeouts: (Duration, Duration),
+        mut timing: Option<&mut DownloadTiming>,
         retry_wait: impl Fn(Duration) -> F,
     ) -> Result<platform::FetchedResponse, platform::FetchError<anyhow::Error>> {
         let is_get = request.method() == reqwest::Method::GET;
@@ -153,18 +168,25 @@ impl IpfsIo {
                 .acquire()
                 .await
                 .map_err(|e| platform::FetchError::Send(anyhow!(e)))?;
+            let mut observe = timing.as_deref_mut().map(DownloadTiming::begin_attempt);
             let result = platform::http::fetch_with_permit(
                 permit,
-                || {
+                request,
+                |request| {
                     add_saturating(&self.request_metrics.attempts, 1);
                     if attempt > 1 {
                         add_saturating(&self.request_metrics.retries, 1);
                     }
                     async { client.execute(request).await.map_err(anyhow::Error::from) }
                 },
-                headers_timeout,
-                idle_timeout,
-                |bytes| add_saturating(&self.request_metrics.bytes, bytes as u64),
+                timeouts.0,
+                timeouts.1,
+                |bytes| {
+                    add_saturating(&self.request_metrics.bytes, bytes as u64);
+                    if let Some(observe) = &mut observe {
+                        observe(bytes);
+                    }
+                },
             )
             .await;
             let retry = match &result {
@@ -172,6 +194,13 @@ impl IpfsIo {
                     add_saturating(&self.request_metrics.status_failures, 1);
                     server_retry_delay(*status, headers)
                         .filter(|delay| *delay <= platform::http::MAX_RETRY_AFTER)
+                        // A host that is briefly unavailable (a gateway error, or GitHub Pages'
+                        // 503 under load) answers the same request a moment later and says
+                        // nothing usable about when: wait a little longer each time, then ask.
+                        .or_else(|| {
+                            matches!(status.as_u16(), 502..=504)
+                                .then(|| Duration::from_millis(500 * attempt))
+                        })
                 }
                 Err(platform::FetchError::Headers | platform::FetchError::Stalled) => {
                     Some(Duration::ZERO)
@@ -249,13 +278,14 @@ impl IpfsIo {
         // Headers-phase timeout + body inactivity timeout; the total transfer
         // time is unbounded, so a slow-but-progressing download is never
         // killed — only a stall (no chunk for 10s) or a dead connection trips.
+        let mut timing = DownloadTiming::default();
         let fetched = match self
             .fetch_request_inner(
                 attempts,
                 request,
                 client,
-                Duration::from_secs(30),
-                Duration::from_secs(10),
+                (Duration::from_secs(30), Duration::from_secs(10)),
+                Some(&mut timing),
                 async_std::task::sleep,
             )
             .await
@@ -267,6 +297,15 @@ impl IpfsIo {
                         ErrorKind::Interrupted,
                         GateClosed,
                     ))));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if matches!(&e, platform::FetchError::Send(e) if e.downcast_ref::<reqwest::Error>().is_some_and(reqwest::Error::is_connect))
+                {
+                    self.request_metrics
+                        .downloads
+                        .lock()
+                        .unwrap()
+                        .connect_failed += 1;
                 }
                 let detail = match e {
                     platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
@@ -305,6 +344,17 @@ impl IpfsIo {
             sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let sw_cached = false;
+        if !sw_cached {
+            if let Some(start) = timing.started {
+                self.request_metrics.downloads.lock().unwrap().download(
+                    fetched.body.len(),
+                    start.elapsed(),
+                    timing.first_byte,
+                );
+            }
+        }
         let data = SharedBytes(Arc::new(fetched.body));
 
         // A cache keyed on the hash alone answers for every server, so it only takes bytes
@@ -414,6 +464,7 @@ impl Drop for CacheTemp {
 
 #[derive(Default)]
 pub(super) struct RequestMetrics {
+    pub(super) downloads: Mutex<request_metrics::DownloadStats>,
     pub(super) attempts: AtomicU64,
     pub(super) bytes: AtomicU64,
     pub(super) duration_ms: AtomicU64,
@@ -426,6 +477,26 @@ fn add_saturating(counter: &AtomicU64, value: u64) {
     counter.update(Ordering::Relaxed, Ordering::Relaxed, |old| {
         old.saturating_add(value)
     });
+}
+
+/// The transfer starts at the first grant. First-byte latency belongs to the successful attempt.
+#[derive(Default)]
+struct DownloadTiming {
+    started: Option<Instant>,
+    first_byte: Option<Duration>,
+}
+
+impl DownloadTiming {
+    fn begin_attempt(&mut self) -> impl FnMut(usize) + '_ {
+        let now = Instant::now();
+        self.started.get_or_insert(now);
+        self.first_byte = None;
+        move |bytes| {
+            if bytes > 0 && self.first_byte.is_none() {
+                self.first_byte = Some(now.elapsed());
+            }
+        }
+    }
 }
 
 struct RequestMeasurement<'a> {

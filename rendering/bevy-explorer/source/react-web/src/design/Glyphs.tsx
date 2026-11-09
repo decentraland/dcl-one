@@ -354,6 +354,27 @@ export function BlockedUser({ size = 72, className }: GlyphProps): React.JSX.Ele
   )
 }
 
+/** Block a user: a person with a no-entry sign (menu rows, 20px). */
+export function BlockUserIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <circle cx="10" cy="8" r="3.4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M4 19c0-3.2 2.7-5 6-5 1 0 2 .2 2.8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="17.5" cy="16.5" r="4.2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M14.7 13.7l5.6 5.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Report a user: a flag (menu rows, 20px). */
+export function ReportFlag({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M5 21V4h11l-1.5 4L16 12H5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function Envelope({ size = 16, className }: GlyphProps): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true" className={className}>

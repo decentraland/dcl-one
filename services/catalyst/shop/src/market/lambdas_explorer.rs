@@ -3,13 +3,14 @@
 //! sorted (UCA order, rarest or newest first) and paged in Rust exactly as
 //! the old handler did: the base wearables (content entities), the owner's
 //! on-chain copies (the collections subgraph readers, plus the active escrow
-//! grants of `shop.usage_grants`, the item type from the `items`
+//! grants of `shop.usage_grants` unless `EXPLORER_ESCROW_GRANTS_ENABLED` is
+//! off, as under the mirror posture; the item type from the `items`
 //! mirror, the definitions from the content entities) and the third-party
 //! wearables (`third_party`). The old on-chain leg read the squid's `nft`
 //! table; without the subgraph readers this route answers the unavailable
 //! envelope, as the other ownership lambdas do.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use axum::Json;
@@ -19,11 +20,11 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::Row;
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE as SHARED_MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy,
-    parse_pagination_with, parse_query_string, qs_get_array, qs_get_string,
+    JsPagination, MAX_PAGE_SIZE as SHARED_MAX_PAGE_SIZE, parse_pagination_js, parse_query_string,
+    qs_get_array, qs_get_string,
 };
 
 use super::definitions::{
@@ -32,8 +33,9 @@ use super::definitions::{
 use super::graph;
 use super::lambdas_catalog::cached_base_wearables;
 use super::readers;
-use super::third_party::fetch_all_third_party_wearables;
-use super::{MarketplaceState, SharedState, bad_request, service_unavailable};
+use super::third_party::{FetchFailure, OnFailure, TpwElement, fetch_all_third_party_wearables};
+use super::user_items::is_third_party_name_urn;
+use super::{MarketplaceState, SharedState, bad_request};
 
 const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
 const EXPLORER_CACHE_MAX_ENTRIES: usize = 50_000;
@@ -49,8 +51,7 @@ const MAX_PAGE_SIZE: i64 = SHARED_MAX_PAGE_SIZE as i64;
 const VALID_COLLECTION_TYPES: [&str; 3] = ["base-wearable", "on-chain", "third-party"];
 
 struct ExplorerQuery {
-    page_num: i64,
-    page_size: i64,
+    pagination: JsPagination,
     name: Option<String>,
     categories: Vec<String>,
     rarity: Option<String>,
@@ -58,37 +59,37 @@ struct ExplorerQuery {
     direction: String,
     collection_types: Vec<String>,
     trimmed: bool,
+    include_amount: bool,
+    /// `isSmartWearable=true|1` (wearables only).
+    is_smart_wearable: bool,
+    /// `network=ETHEREUM|MATIC` (wearables only); any other value is ignored.
+    network: Option<&'static str>,
+    /// `thirdPartyCollectionId`, each value as given.
+    third_party_collection_ids: Vec<String>,
 }
 
+/// Validated in lamb2's order (decentraland/lamb2:src/controllers/handlers/explorer-handler.ts:174-195):
+/// `pageSize`, then `rarity` (`createFilters`), then the sort, then
+/// `collectionType`. An empty `name` or `rarity` filters nothing, as a
+/// falsy value does there.
 fn parse_query(
     query: Option<&str>,
     valid_collection_types: &[&str],
 ) -> Result<ExplorerQuery, Box<Response>> {
     let params = parse_query_string(query.unwrap_or(""));
     let get_first = |key: &str| -> Option<String> { qs_get_string(&params, key) };
-    let collection_types: Vec<String> = qs_get_array(&params, "collectionType");
-    if collection_types
-        .iter()
-        .any(|t| !valid_collection_types.contains(&t.as_str()))
-    {
-        return Err(Box::new(bad_request(&format!(
-            "Invalid collection type. Valid types are: {}.",
-            valid_collection_types.join(", ")
-        ))));
-    }
-    let pagination = parse_pagination_with(
-        &params,
-        MAX_PAGE_SIZE,
-        OversizePolicy::Reject,
-        NonPositivePolicy::PassThrough,
-    )
-    .map_err(|e| Box::new(bad_request(&e)))?;
-    let name = get_first("name").map(|n| n.to_lowercase());
+    let pagination =
+        parse_pagination_js(&params, MAX_PAGE_SIZE).map_err(|e| Box::new(bad_request(&e)))?;
+    let name = get_first("name")
+        .map(|n| n.to_lowercase())
+        .filter(|n| !n.is_empty());
     let categories: Vec<String> = qs_get_array(&params, "category")
         .iter()
         .map(|v| v.to_lowercase())
         .collect();
-    let rarity = get_first("rarity").map(|r| r.to_lowercase());
+    let rarity = get_first("rarity")
+        .map(|r| r.to_lowercase())
+        .filter(|r| !r.is_empty());
     if let Some(r) = &rarity {
         validate_rarity(r).map_err(|e| Box::new(bad_request(&e)))?;
     }
@@ -100,18 +101,55 @@ fn parse_query(
         None => default_sort_direction(&sort).to_string(),
     };
     validate_sort(&sort, &direction).map_err(|e| Box::new(bad_request(&e)))?;
-    let trimmed = matches!(get_first("trimmed").as_deref(), Some("true") | Some("1"));
+    let collection_types: Vec<String> = qs_get_array(&params, "collectionType");
+    if collection_types
+        .iter()
+        .any(|t| !valid_collection_types.contains(&t.as_str()))
+    {
+        return Err(Box::new(bad_request(&format!(
+            "Invalid collection type. Valid types are: {}.",
+            valid_collection_types.join(", ")
+        ))));
+    }
+    let third_party_collection_ids = qs_get_array(&params, "thirdPartyCollectionId");
+    let flag = |key: &str| matches!(get_first(key).as_deref(), Some("true") | Some("1"));
+    let network = match get_first("network").as_deref() {
+        Some("ETHEREUM") => Some("ETHEREUM"),
+        Some("MATIC") => Some("MATIC"),
+        _ => None,
+    };
     Ok(ExplorerQuery {
-        page_num: pagination.page_num,
-        page_size: pagination.page_size,
+        pagination,
         name,
         categories,
         rarity,
         sort,
         direction,
         collection_types,
-        trimmed,
+        trimmed: flag("trimmed"),
+        include_amount: flag("includeAmount"),
+        is_smart_wearable: flag("isSmartWearable"),
+        network,
+        third_party_collection_ids,
     })
+}
+
+impl ExplorerQuery {
+    /// The on-chain item types the wearable filters keep, as the old
+    /// lambdas asked the marketplace API or the subgraph
+    /// (`marketplace-api-fetcher.ts`, `graph-pagination.ts`); `None` keeps
+    /// every type. Either filter also drops the base and third-party legs.
+    fn item_types(&self) -> Option<&'static [&'static str]> {
+        if self.is_smart_wearable {
+            Some(&["smart_wearable_v1"])
+        } else {
+            match self.network {
+                Some("ETHEREUM") => Some(&["wearable_v1"]),
+                Some("MATIC") => Some(&["wearable_v2", "smart_wearable_v1"]),
+                _ => None,
+            }
+        }
+    }
 }
 
 struct OwnedItem {
@@ -127,11 +165,27 @@ struct OwnedItem {
     entity: Value,
     is_base: bool,
     is_third_party: bool,
-    has_date: bool,
 }
 
-/// One owned copy: `(urn, token id, transferred at (seconds), rarity, price)`.
-type CopyRow = (String, String, i64, Option<String>, Option<String>);
+impl OwnedItem {
+    /// lamb2's `hasDate`: both transfer times present and non-zero
+    /// (decentraland/lamb2:src/logic/sorting.ts:58-60).
+    fn has_date(&self) -> bool {
+        self.max_transferred_at != 0.0 && self.min_transferred_at != 0.0
+    }
+}
+
+/// One owned copy: `(urn, token id, transferred at (seconds), rarity, price,
+/// subgraph item type, subgraph category)`.
+type CopyRow = (
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// The owner's copies of `category` (the subgraph readers) and their active
 /// escrow grants, newest first, grouped by URN in first-seen order.
@@ -150,25 +204,35 @@ async fn fetch_owned_items(
                 c.transferred_at,
                 Some(c.rarity.clone()).filter(|r| !r.is_empty()),
                 Some(c.price.clone()),
+                Some(c.item_type.clone()).filter(|t| !t.is_empty()),
+                Some(c.category.clone()).filter(|t| !t.is_empty()),
             )
         })
         .collect();
-    let grants = sqlx::query(
-        "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \
-         FROM shop.usage_grants WHERE grantee_address = $1 AND status = 'active' AND category = $2 AND unlock_at > $3 \
-         ORDER BY granted_at DESC LIMIT 1000",
-    )
-    .bind(owner.to_lowercase())
-    .bind(category)
-    .bind(Utc::now().naive_utc())
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| format!("usage grants: {e}"))?;
+    // lamb2 lists chain-owned tokens only (explorer-handler.ts:74-104):
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`, off under the mirror posture.
+    let grants = if state.settings.explorer_escrow_grants {
+        sqlx::query(
+            "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \
+             FROM shop.usage_grants WHERE grantee_address = $1 AND status = 'active' AND category = $2 AND unlock_at > $3 \
+             ORDER BY granted_at DESC LIMIT 1000",
+        )
+        .bind(owner.to_lowercase())
+        .bind(category)
+        .bind(Utc::now().naive_utc())
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| format!("usage grants: {e}"))?
+    } else {
+        Vec::new()
+    };
     for g in &grants {
         rows.push((
             graph::normalize_urn(&g.get::<String, _>("urn")),
             g.get("token_id"),
             g.get("granted_at"),
+            None,
+            None,
             None,
             None,
         ));
@@ -180,7 +244,7 @@ async fn fetch_owned_items(
 
     let mut grouped: HashMap<String, OwnedItem> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
-    for (urn, token_id, transferred_at, rarity, price) in rows {
+    for (urn, token_id, transferred_at, rarity, price, item_type, category) in rows {
         let transferred_num = transferred_at as f64;
         let individual = json!({
             "id": format!("{urn}:{token_id}"),
@@ -199,6 +263,14 @@ async fn fetch_owned_items(
                 {
                     existing.rarity = r;
                 }
+                if existing.item_type.is_none() {
+                    existing.item_type = item_type;
+                }
+                if existing.category.is_empty()
+                    && let Some(c) = category
+                {
+                    existing.category = c;
+                }
             }
             None => {
                 order.push(urn.clone());
@@ -208,16 +280,15 @@ async fn fetch_owned_items(
                         urn: urn.clone(),
                         individual_data: vec![individual],
                         rarity: rarity.unwrap_or_default(),
-                        item_type: None,
+                        item_type,
                         amount: 1,
                         name: String::new(),
-                        category: String::new(),
+                        category: category.unwrap_or_default(),
                         min_transferred_at: transferred_num,
                         max_transferred_at: transferred_num,
                         entity: Value::Null,
                         is_base: false,
                         is_third_party: false,
-                        has_date: true,
                     },
                 );
             }
@@ -229,7 +300,8 @@ async fn fetch_owned_items(
         active_entity_docs_by_pointers(&state.pool, &pointers),
         item_types(state, &order)
     );
-    let docs = docs.map_err(|e| format!("entities: {e}"))?;
+    let mut docs = docs.map_err(|e| format!("entities: {e}"))?;
+    retain_non_denylisted(&mut docs, &state.denylist);
     let mut entity_by_pointer: HashMap<String, Value> = HashMap::new();
     for entity in docs.iter().filter_map(|d| d.to_value()) {
         if let Some(ptrs) = entity.get("pointers").and_then(|p| p.as_array()) {
@@ -248,11 +320,18 @@ async fn fetch_owned_items(
         let Some(entity) = entity_by_pointer.get(&urn.to_lowercase()) else {
             continue;
         };
+        // The category is the source item's, as lamb2 spreads the fetched
+        // element (a v0 emote's entity has none); the entity's when the
+        // subgraph has none (an escrow grant).
         let (name, cat) = extract_name_category(entity, category);
         item.name = name;
-        item.category = cat;
+        if item.category.is_empty() {
+            item.category = cat;
+        }
         item.entity = entity.clone();
-        item.item_type = types.get(&urn).cloned();
+        if item.item_type.is_none() {
+            item.item_type = types.get(&urn).filter(|t| !t.is_empty()).cloned();
+        }
         items.push(item);
     }
     Ok(items)
@@ -312,12 +391,13 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
     match (sort, direction) {
         ("rarity", dir) => {
             items.sort_by(|a, b| {
-                let ra = rarity_rank(&a.rarity);
-                let rb = rarity_rank(&b.rarity);
-                let has_a = !a.rarity.is_empty() && ra >= 0;
-                let has_b = !b.rarity.is_empty() && rb >= 0;
-                let cmp = match (has_a, has_b) {
-                    (true, true) => rb.cmp(&ra).then_with(|| by_urn(a, b)),
+                // lamb2's `rarestOptional`: any non-empty rarity is rated, an
+                // unknown one ranking below `common`
+                // (decentraland/lamb2:src/logic/sorting.ts:38-52).
+                let cmp = match (!a.rarity.is_empty(), !b.rarity.is_empty()) {
+                    (true, true) => rarity_rank(&b.rarity)
+                        .cmp(&rarity_rank(&a.rarity))
+                        .then_with(|| by_urn(a, b)),
                     (false, false) => by_urn(a, b),
                     (true, false) => std::cmp::Ordering::Less,
                     (false, true) => std::cmp::Ordering::Greater,
@@ -335,7 +415,7 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
             items.sort_by(|a, b| {
                 use std::cmp::Ordering;
                 if dir == "DESC" {
-                    match (a.has_date, b.has_date) {
+                    match (a.has_date(), b.has_date()) {
                         (true, true) => b
                             .max_transferred_at
                             .partial_cmp(&a.max_transferred_at)
@@ -346,7 +426,7 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
                         (false, true) => Ordering::Greater,
                     }
                 } else {
-                    match (a.has_date, b.has_date) {
+                    match (a.has_date(), b.has_date()) {
                         (true, true) => a
                             .min_transferred_at
                             .partial_cmp(&b.min_transferred_at)
@@ -419,60 +499,96 @@ fn item_to_value(item: &OwnedItem, include_item_type: bool) -> Value {
     );
     obj.insert("name".to_string(), json!(item.name));
     obj.insert("rarity".to_string(), json!(item.rarity));
-    if include_item_type {
-        obj.insert(
-            "itemType".to_string(),
-            json!(item.item_type.clone().unwrap_or_default()),
-        );
+    // Left out when neither the subgraph nor the items mirror knows it, as
+    // lamb2's `itemType: undefined` is.
+    if include_item_type && let Some(item_type) = &item.item_type {
+        obj.insert("itemType".to_string(), json!(item_type));
     }
     obj.insert("category".to_string(), json!(item.category));
     obj.insert("entity".to_string(), item.entity.clone());
     Value::Object(obj)
 }
 
-fn item_to_trimmed_value(item: &OwnedItem) -> Value {
-    let mut entity = match &item.entity {
-        Value::Object(m) => m.clone(),
-        _ => serde_json::Map::new(),
-    };
-    if !entity.contains_key("id") {
-        entity.insert("id".to_string(), json!(item.urn));
-    }
-    let thumb_file = entity
-        .get("metadata")
+/// The `trimmed=true` element (`buildTrimmedWearableEntity`/
+/// `buildTrimmedEmoteEntity` in decentraland/lamb2:src/logic/utils.ts): the
+/// entity id, the thumbnail's hash, the copies and a few metadata fields,
+/// each left out when the entity has none; `amount` only with
+/// `includeAmount`.
+fn item_to_trimmed_value(item: &OwnedItem, category: &str, include_amount: bool) -> Value {
+    let entity = &item.entity;
+    let md = entity.get("metadata");
+    let thumbnail = md
         .and_then(|m| m.get("thumbnail"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("thumbnail.png")
-        .to_string();
-    let thumb_hash = entity
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|files| {
-            files
+        .and_then(Value::as_str)
+        .and_then(|file| {
+            entity
+                .get("content")
+                .and_then(Value::as_array)?
                 .iter()
-                .find(|f| f.get("file").and_then(|x| x.as_str()) == Some(thumb_file.as_str()))
+                .find(|c| c.get("file").and_then(Value::as_str) == Some(file))?
+                .get("hash")
+                .cloned()
+        });
+    let (name, data) = if category == "emote" {
+        (
+            md.and_then(|m| m.get("name")).cloned(),
+            md.and_then(|m| m.get("emoteDataADR74")),
+        )
+    } else {
+        (Some(json!(item.name)), md.and_then(|m| m.get("data")))
+    };
+    let representations: Vec<Value> = data
+        .and_then(|d| d.get("representations"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|rep| {
+            let mut r = serde_json::Map::new();
+            if let Some(shapes) = rep.get("bodyShapes") {
+                r.insert("bodyShapes".to_string(), shapes.clone());
+            }
+            Value::Object(r)
         })
-        .and_then(|f| f.get("hash").cloned());
-    if let Some(h) = thumb_hash {
-        entity.insert("thumbnail".to_string(), h);
+        .collect();
+    let mut trimmed_data = serde_json::Map::new();
+    if let Some(c) = data.and_then(|d| d.get("category")) {
+        trimmed_data.insert("category".to_string(), c.clone());
     }
-    if let Some(Value::Object(md)) = entity.get_mut("metadata") {
-        let name_missing = md
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|n| n.is_empty())
-            .unwrap_or(true);
-        if name_missing {
-            md.insert("name".to_string(), json!(item.name));
-        }
+    trimmed_data.insert("representations".to_string(), Value::Array(representations));
+    let mut metadata = serde_json::Map::new();
+    if let Some(id) = md.and_then(|m| m.get("id")) {
+        metadata.insert("id".to_string(), id.clone());
     }
-    entity.insert(
+    if let Some(name) = name {
+        metadata.insert("name".to_string(), name);
+    }
+    if let Some(rarity) = md.and_then(|m| m.get("rarity")) {
+        metadata.insert("rarity".to_string(), rarity.clone());
+    }
+    if category != "emote" {
+        metadata.insert(
+            "isSmart".to_string(),
+            json!(item.item_type.as_deref() == Some("smart_wearable_v1")),
+        );
+    }
+    metadata.insert("data".to_string(), Value::Object(trimmed_data));
+    let mut trimmed = serde_json::Map::new();
+    if let Some(id) = entity.get("id") {
+        trimmed.insert("id".to_string(), id.clone());
+    }
+    if let Some(hash) = thumbnail {
+        trimmed.insert("thumbnail".to_string(), hash);
+    }
+    trimmed.insert(
         "individualData".to_string(),
         Value::Array(item.individual_data.clone()),
     );
+    trimmed.insert("metadata".to_string(), Value::Object(metadata));
     let mut obj = serde_json::Map::new();
-    obj.insert("entity".to_string(), Value::Object(entity));
-    obj.insert("amount".to_string(), json!(item.amount));
+    obj.insert("entity".to_string(), Value::Object(trimmed));
+    if include_amount {
+        obj.insert("amount".to_string(), json!(item.individual_data.len()));
+    }
     Value::Object(obj)
 }
 
@@ -493,31 +609,71 @@ async fn fetch_base_items(state: &MarketplaceState) -> Vec<OwnedItem> {
             entity: bw.entity.clone(),
             is_base: true,
             is_third_party: false,
-            has_date: false,
         })
         .collect()
 }
 
-async fn fetch_third_party_items(state: &MarketplaceState, owner: &str) -> Vec<OwnedItem> {
-    fetch_all_third_party_wearables(state, owner, None)
-        .await
-        .into_iter()
-        .map(|e| OwnedItem {
-            amount: e.individual_data.len() as i64,
-            individual_data: e.individual_data,
-            urn: e.urn,
-            rarity: String::new(),
-            item_type: None,
-            name: e.name,
-            category: e.category,
-            min_transferred_at: 0.0,
-            max_transferred_at: 0.0,
-            entity: e.entity,
-            is_base: false,
-            is_third_party: true,
-            has_date: false,
+fn third_party_item(e: TpwElement) -> OwnedItem {
+    OwnedItem {
+        amount: e.individual_data.len() as i64,
+        individual_data: e.individual_data,
+        urn: e.urn,
+        rarity: String::new(),
+        item_type: None,
+        name: e.name,
+        category: e.category,
+        min_transferred_at: 0.0,
+        max_transferred_at: 0.0,
+        entity: e.entity,
+        is_base: false,
+        is_third_party: true,
+    }
+}
+
+/// The provider names `thirdPartyCollectionId` selects, each once, in
+/// first-seen order. As in decentraland/lamb2's explorer handler
+/// (explorer-handler.ts:106-143), each value is cut to its first five parts
+/// and kept when it names a provider
+/// (`urn:decentraland:<network>:collections-thirdparty:<name>`). lamb2
+/// deduplicates the values as strings only, so two distinct values naming
+/// one provider list its wearables twice and the response grows with the
+/// number of values; here a provider is listed once, which keeps the
+/// uncapped value list from multiplying the answer.
+fn third_party_provider_names(collection_ids: &[String]) -> Vec<&str> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    collection_ids
+        .iter()
+        .filter_map(|id| {
+            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
+            if !is_third_party_name_urn(&cleaned) {
+                return None;
+            }
+            id.split(':').nth(4)
         })
+        .filter(|name| seen.insert(name))
         .collect()
+}
+
+/// The third-party leg: every provider's wearables, or with
+/// `thirdPartyCollectionId` only the providers it names
+/// ([`third_party_provider_names`]); a name no approved provider has is
+/// `Third Party not found`.
+async fn fetch_third_party_items(
+    state: &MarketplaceState,
+    owner: &str,
+    collection_ids: &[String],
+    on_failure: OnFailure,
+) -> Result<Vec<OwnedItem>, FetchFailure> {
+    if collection_ids.is_empty() {
+        let found = fetch_all_third_party_wearables(state, owner, None, on_failure).await?;
+        return Ok(found.into_iter().map(third_party_item).collect());
+    }
+    let mut items = Vec::new();
+    for name in third_party_provider_names(collection_ids) {
+        let found = fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
+        items.extend(found.into_iter().map(third_party_item));
+    }
+    Ok(items)
 }
 
 async fn explorer_items(
@@ -527,16 +683,20 @@ async fn explorer_items(
     category: &'static str,
     valid_collection_types: &[&'static str],
 ) -> Response {
-    if !super::is_valid_eth_address(&addr.to_lowercase()) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
     let q = match parse_query(query, valid_collection_types) {
         Ok(q) => q,
         Err(resp) => return *resp,
     };
+    // lamb2 takes any `:address`; one that is not an Ethereum address owns
+    // nothing, so the on-chain leg asks no reader and is empty (the
+    // third-party leg answers the same, `fetch_all_third_party_wearables`).
+    let owner_valid = super::is_valid_eth_address(&addr.to_lowercase());
     let on_chain_allowed =
         q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain");
-    if on_chain_allowed && let Err(envelope) = readers::require_both_collections(state) {
+    if owner_valid
+        && on_chain_allowed
+        && let Err(envelope) = readers::require_both_collections(state)
+    {
         return envelope;
     }
     let addr_lc = addr.to_lowercase();
@@ -545,11 +705,21 @@ async fn explorer_items(
     let mut cats_sorted = q.categories.clone();
     cats_sorted.sort();
     let filter_key = format!(
-        "name={}|cats={}|rarity={}|trimmed={}",
+        "name={}|cats={}|rarity={}|trimmed={}|amount={}|smart={}|network={}|tp={}",
         q.name.as_deref().unwrap_or(""),
         cats_sorted.join(","),
         q.rarity.as_deref().unwrap_or(""),
         q.trimmed,
+        q.include_amount,
+        q.is_smart_wearable,
+        q.network.unwrap_or(""),
+        if q.third_party_collection_ids.is_empty() {
+            String::new()
+        } else {
+            let mut names = third_party_provider_names(&q.third_party_collection_ids);
+            names.sort_unstable();
+            format!("[{}]", names.join(","))
+        },
     );
     let cache_key: ExplorerKey = (
         addr_lc.clone(),
@@ -559,29 +729,30 @@ async fn explorer_items(
         category,
         filter_key,
     );
-    let (page_num, page_size) = (q.page_num, q.page_size);
+    let pagination = q.pagination;
     let valid: Vec<&'static str> = valid_collection_types.to_vec();
     let result = state
         .explorer_cache
         .get_or_fetch(cache_key, || {
-            compute_explorer_items(state, &addr_lc, q, category, &valid)
+            compute_explorer_items(state, &addr_lc, owner_valid, q, category, &valid)
         })
         .await;
     match result {
         Ok(v) => {
             let total = v.get("totalAmount").cloned().unwrap_or_else(|| json!(0));
-            let offset = page_num.saturating_sub(1).saturating_mul(page_size).max(0) as usize;
-            let limit = page_size.max(0) as usize;
             let page: Vec<Value> = v
                 .get("elements")
                 .and_then(|e| e.as_array())
-                .map(|all| all.iter().skip(offset).take(limit).cloned().collect())
+                .map(|all| {
+                    let (start, end) = pagination.slice_range(all.len());
+                    all[start..end].to_vec()
+                })
                 .unwrap_or_default();
-            Json(json!({ "elements": page, "totalAmount": total, "pageNum": page_num, "pageSize": page_size })).into_response()
+            Json(json!({ "elements": page, "totalAmount": total, "pageNum": pagination.page_num, "pageSize": pagination.page_size })).into_response()
         }
         Err(e) => {
-            tracing::warn!(error = %e, address = %addr_lc, category, "explorer backpack reader failed");
-            service_unavailable("ownership readers unavailable")
+            tracing::warn!(error = ?e, address = %addr_lc, category, "explorer backpack reader failed");
+            e.response(&addr_lc)
         }
     }
 }
@@ -589,16 +760,24 @@ async fn explorer_items(
 async fn compute_explorer_items(
     state: &MarketplaceState,
     addr: &str,
+    owner_valid: bool,
     q: ExplorerQuery,
     category: &'static str,
     valid_collection_types: &[&'static str],
-) -> Result<Value, String> {
-    let base_allowed = valid_collection_types.contains(&"base-wearable")
+) -> Result<Value, FetchFailure> {
+    let item_types = if category == "wearable" {
+        q.item_types()
+    } else {
+        None
+    };
+    let base_allowed = item_types.is_none()
+        && valid_collection_types.contains(&"base-wearable")
         && (q.collection_types.is_empty()
             || q.collection_types.iter().any(|t| t == "base-wearable"));
-    let on_chain_allowed =
-        q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain");
-    let third_party_allowed = valid_collection_types.contains(&"third-party")
+    let on_chain_allowed = owner_valid
+        && (q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain"));
+    let third_party_allowed = item_types.is_none()
+        && valid_collection_types.contains(&"third-party")
         && (q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "third-party"));
     let base_leg = async {
         if base_allowed {
@@ -609,21 +788,34 @@ async fn compute_explorer_items(
     };
     let owned_leg = async {
         if on_chain_allowed {
-            fetch_owned_items(state, addr, category).await
+            let mut owned = fetch_owned_items(state, addr, category).await?;
+            if let Some(types) = item_types {
+                owned.retain(|it| it.item_type.as_deref().is_some_and(|t| types.contains(&t)));
+            }
+            Ok::<_, String>(owned)
         } else {
             Ok(Vec::new())
         }
     };
     let third_party_leg = async {
         if third_party_allowed {
-            fetch_third_party_items(state, addr).await
+            // With the NFT worker, lamb2's path, a holdings read that fails is
+            // its 502 (decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274);
+            // the chain path, which lamb2 has no twin of, leaves out the
+            // contract it could not read and serves the rest.
+            let on_failure = if state.settings.nft_worker_base_url.is_some() {
+                OnFailure::Fail
+            } else {
+                OnFailure::Skip
+            };
+            fetch_third_party_items(state, addr, &q.third_party_collection_ids, on_failure).await
         } else {
-            Vec::new()
+            Ok(Vec::new())
         }
     };
     let (mut items, owned, third_party) = tokio::join!(base_leg, owned_leg, third_party_leg);
-    items.extend(owned?);
-    items.extend(third_party);
+    items.extend(owned.map_err(FetchFailure::Fetch)?);
+    items.extend(third_party?);
     items.retain(|it| passes_filters(it, &q));
     sort_items(&mut items, &q.sort, &q.direction);
     let total = items.len() as i64;
@@ -632,7 +824,7 @@ async fn compute_explorer_items(
         .iter()
         .map(|it| {
             if q.trimmed {
-                item_to_trimmed_value(it)
+                item_to_trimmed_value(it, category, q.include_amount)
             } else {
                 item_to_value(it, include_item_type)
             }
@@ -686,7 +878,6 @@ mod tests {
             entity: Value::Null,
             is_base: !has_date,
             is_third_party: false,
-            has_date,
         }
     }
 
@@ -764,17 +955,85 @@ mod tests {
     }
 
     #[test]
-    fn a_trimmed_element_carries_the_thumbnail_hash_and_the_copies() {
+    fn a_trimmed_wearable_is_the_upstream_explorer_entity() {
         let mut item = owned("urn:x", "Hat", "rare", true, 1.0);
-        item.entity = json!({ "id": "bafyentity", "content": [{ "file": "thumbnail.png", "hash": "bafythumb" }], "metadata": { "name": "" } });
+        item.item_type = Some("smart_wearable_v1".into());
+        item.entity = json!({ "id": "bafyentity", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
+            "content": [{ "file": "thumb.png", "hash": "bafythumb" }],
+            "metadata": { "id": "urn:x", "name": "Deployed name", "rarity": "rare", "thumbnail": "thumb.png", "image": "image.png",
+                          "data": { "category": "hat", "tags": [], "representations": [{ "bodyShapes": ["BaseMale"], "mainFile": "m.glb", "contents": ["m.glb"] }] } } });
         item.individual_data = vec![json!({ "id": "urn:x:1", "tokenId": "1" })];
-        let v = item_to_trimmed_value(&item);
-        assert_eq!(v["entity"]["thumbnail"], "bafythumb");
-        assert_eq!(v["entity"]["metadata"]["name"], "Hat");
-        assert_eq!(v["entity"]["individualData"][0]["tokenId"], "1");
-        assert_eq!(v["amount"], 1);
+        assert_eq!(
+            item_to_trimmed_value(&item, "wearable", false),
+            json!({ "entity": {
+                "id": "bafyentity",
+                "thumbnail": "bafythumb",
+                "individualData": [{ "id": "urn:x:1", "tokenId": "1" }],
+                "metadata": { "id": "urn:x", "name": "Hat", "rarity": "rare", "isSmart": true,
+                              "data": { "category": "hat", "representations": [{ "bodyShapes": ["BaseMale"] }] } }
+            } })
+        );
+        assert_eq!(item_to_trimmed_value(&item, "wearable", true)["amount"], 1);
+
+        // A base wearable: no rarity, no thumbnail file, not smart.
+        let mut base = owned("urn:base", "Eyes", "", false, 0.0);
+        base.entity = json!({ "id": "bafybase", "metadata": { "id": "urn:base", "data": { "category": "eyes" } } });
+        base.individual_data = vec![json!({ "id": "urn:base" })];
+        assert_eq!(
+            item_to_trimmed_value(&base, "wearable", false),
+            json!({ "entity": { "id": "bafybase", "individualData": [{ "id": "urn:base" }],
+                "metadata": { "id": "urn:base", "name": "Eyes", "isSmart": false, "data": { "category": "eyes", "representations": [] } } } })
+        );
+
         let full = item_to_value(&item, true);
         assert_eq!(full["type"], "on-chain");
-        assert_eq!(full["itemType"], "");
+        assert_eq!(full["itemType"], "smart_wearable_v1");
+    }
+
+    #[test]
+    fn a_trimmed_emote_reads_its_adr74_data_and_has_no_smart_flag() {
+        let mut item = owned("urn:dance", "ignored", "epic", true, 1.0);
+        item.entity = json!({ "id": "bafydance", "content": [],
+            "metadata": { "id": "urn:dance", "name": "Dance", "rarity": "epic",
+                          "emoteDataADR74": { "category": "dance", "loop": true, "representations": [{ "bodyShapes": ["BaseFemale"], "mainFile": "d.glb" }] } } });
+        assert_eq!(
+            item_to_trimmed_value(&item, "emote", true),
+            json!({ "entity": { "id": "bafydance", "individualData": [],
+                "metadata": { "id": "urn:dance", "name": "Dance", "rarity": "epic",
+                              "data": { "category": "dance", "representations": [{ "bodyShapes": ["BaseFemale"] }] } } },
+                    "amount": 0 })
+        );
+    }
+
+    #[test]
+    fn the_wearable_filters_pick_the_item_types_the_old_lambdas_asked_for() {
+        let types = |qs: &str| {
+            parse_query(Some(qs), &VALID_COLLECTION_TYPES)
+                .unwrap_or_else(|_| panic!("parse"))
+                .item_types()
+        };
+        assert_eq!(types(""), None);
+        assert_eq!(
+            types("isSmartWearable=true"),
+            Some(&["smart_wearable_v1"][..])
+        );
+        assert_eq!(
+            types("isSmartWearable=1&network=ETHEREUM"),
+            Some(&["smart_wearable_v1"][..])
+        );
+        assert_eq!(types("network=ETHEREUM"), Some(&["wearable_v1"][..]));
+        assert_eq!(
+            types("network=MATIC"),
+            Some(&["wearable_v2", "smart_wearable_v1"][..])
+        );
+        assert_eq!(types("network=matic"), None, "any other value is ignored");
+        assert_eq!(types("isSmartWearable=yes"), None);
+        let q = parse_query(
+            Some("thirdPartyCollectionId=urn:a&thirdPartyCollectionId=urn:b&includeAmount=1"),
+            &VALID_COLLECTION_TYPES,
+        )
+        .unwrap_or_else(|_| panic!("parse"));
+        assert_eq!(q.third_party_collection_ids, ["urn:a", "urn:b"]);
+        assert!(q.include_amount);
     }
 }

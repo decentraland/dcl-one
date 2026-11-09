@@ -9,6 +9,7 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
 import type { ProfileName } from "@catalyst-api/market/ProfileName";
 import { shopClient, type ShopClient } from "../api/shop";
+import { parseManaInput } from "../market/lib/mana";
 
 export type { NftResult };
 
@@ -16,7 +17,12 @@ export type { NftResult };
 export async function fetchBannedNames(opts: { base?: string; fetchImpl?: typeof fetch; signal?: AbortSignal } = {}): Promise<string[]> {
   const doFetch = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const res = await doFetch(`${catalystBase(opts.base)}/dcl-lists/banned-names`, { method: "POST", headers: { accept: "application/json" }, signal: opts.signal });
-  if (!res.ok) throw new Error(`The banned-names list answered ${res.status}`);
+  if (!res.ok) {
+    // The unread body is released, not left holding the connection; a stream that already failed can't be,
+    // and that mustn't replace the status.
+    void res.body?.cancel().catch(() => {});
+    throw new Error(`The banned-names list answered ${res.status}`);
+  }
   const body = (await res.json()) as { data?: unknown };
   return Array.isArray(body.data) ? body.data.filter((n): n is string => typeof n === "string").map((n) => n.toLowerCase()) : [];
 }
@@ -30,7 +36,27 @@ export const NAME_SORT_LABEL: Record<NameSort, string> = {
   name: "Name",
 };
 
-export type NameResaleQuery = { search: string; sort: NameSort; onlyOnSale: boolean; page: number };
+/** `minPrice`/`maxPrice`: MANA as typed ("12.5"), as the marketplace keeps them in its URL; "" is no bound. */
+export type NameResaleQuery = { search: string; sort: NameSort; onlyOnSale: boolean; minPrice: string; maxPrice: string; page: number };
+
+const MAX_WEI = 2n ** 256n - 1n;
+
+/**
+ * A typed price bound: blank or zero is no bound (`wei: null`), a positive MANA amount whose wei fits a
+ * uint256 is that wei, and anything else is not a bound at all (null).
+ */
+export function parsePriceBound(text: string): { wei: bigint | null } | null {
+  const t = text.trim();
+  if (t === "" || /^0+(\.0*)?$/.test(t)) return { wei: null };
+  const wei = parseManaInput(t);
+  return wei !== null && wei <= MAX_WEI ? { wei } : null;
+}
+
+/** A price bound as the URL may carry it: kept when it bounds anything, else dropped. */
+function priceBound(raw: string | null): string {
+  const t = (raw ?? "").trim();
+  return parsePriceBound(t)?.wei ? t : "";
+}
 
 export const NAMES_PAGE_SIZE = 24;
 
@@ -42,6 +68,8 @@ export function nameResaleQueryFromSearch(search: string): NameResaleQuery {
     search: q.get("search") ?? "",
     sort: sort && sort in NAME_SORT_LABEL ? sort : "recently_listed",
     onlyOnSale: q.get("onlyOnSale") !== "false",
+    minPrice: priceBound(q.get("minPrice")),
+    maxPrice: priceBound(q.get("maxPrice")),
     page: Number.isSafeInteger(page) && page > 0 ? page : 1,
   };
 }
@@ -51,6 +79,8 @@ export function nameResaleQueryToSearch(q: NameResaleQuery): string {
   if (q.search) p.set("search", q.search);
   if (q.sort !== "recently_listed") p.set("sortBy", q.sort);
   if (!q.onlyOnSale) p.set("onlyOnSale", "false");
+  if (q.minPrice) p.set("minPrice", q.minPrice);
+  if (q.maxPrice) p.set("maxPrice", q.maxPrice);
   if (q.page > 1) p.set("page", String(q.page));
   const s = p.toString();
   return s ? `?${s}` : "";
@@ -67,6 +97,13 @@ export async function fetchNameResales(q: NameResaleQuery, opts: { client?: Shop
   };
   if (q.onlyOnSale) query.isOnSale = true;
   if (q.search.trim()) query.search = q.search.trim();
+  // The route's price bounds are MANA in wei (marketplace-server's unit) on the open listing. A range asks
+  // for live listings only: the subgraph keeps an expired order's price, the index does not.
+  const min = parsePriceBound(q.minPrice)?.wei;
+  const max = parsePriceBound(q.maxPrice)?.wei;
+  if (min) query.minPrice = min.toString();
+  if (max) query.maxPrice = max.toString();
+  if (min || max) query.isOnSale = true;
   const body = await client.market.nfts<NftsResponseBody>(query, { signal: opts.signal });
   return { results: body?.data ?? [], total: body?.total ?? 0 };
 }

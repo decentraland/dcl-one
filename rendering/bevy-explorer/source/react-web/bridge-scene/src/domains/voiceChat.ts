@@ -10,9 +10,8 @@ import { getPlayer } from '@dcl/sdk/players'
 import { getRealm } from '~system/Runtime'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
-import { signed } from '../http'
+import { serviceBase, signed } from '../http'
 import { relay } from '../system-helpers'
-import { socialApiBase } from './communities'
 import type { ActiveCommunityVoiceChat, VoiceChatState as WireVoiceChatState } from '../../../src/engine/protocol'
 
 type ActiveChatRaw = {
@@ -28,7 +27,7 @@ type ActiveChatRaw = {
 
 /** Unity `ActiveCommunityVoiceChatsResponse`: `{ data: { activeChats, total } }`. */
 async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[]> {
-  const res = await signed<{ data?: { activeChats?: ActiveChatRaw[] } }>(`${await socialApiBase()}/v1/community-voice-chats/active`).catch(
+  const res = await signed<{ data?: { activeChats?: ActiveChatRaw[] } }>(`${await serviceBase('socialApi')}/v1/community-voice-chats/active`).catch(
     (e: unknown) => {
       console.error('[voiceChat] active streams failed', e)
       return undefined

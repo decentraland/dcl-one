@@ -29,7 +29,7 @@ import {
   type CreatorSale,
 } from "./coupons";
 import { buildEntity, hashV1, signEntityId } from "./entity";
-import { DEFAULT_CAPABILITIES, myStoreAccess, setShopCapabilities, shopCapabilities } from "./featureFlags";
+import { DEFAULT_CAPABILITIES, myStoreAccess, myStoreAccessWith, parseAddressList, setShopCapabilities, shopCapabilities } from "./featureFlags";
 import { countConfirmations, fetchImportable, ImportRestrictedError, importListing, postListingWithRetry, RelistFailedError, type ImportItem } from "./import";
 import { patchManageCaches } from "./manage-cache";
 import { standardLeafHash, standardMerkleRoot } from "./merkle";
@@ -365,6 +365,37 @@ describe("creations and sale state", () => {
     expect(isPublishable(all[1]!)).toBe(false);
   });
 
+  it("reads the node's on-chain item rows, which carry the contract and index but name the date and image differently", async () => {
+    const signer = { address: BOOK.creator, sign: async () => ({}) };
+    const contract = BOOK.collection.toLowerCase();
+    const fetchImpl = (async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/collections"))
+        return Response.json({ ok: true, data: [{ id: contract, name: "Neon", contract_address: contract, is_published: true, is_approved: true }] });
+      return Response.json({
+        ok: true,
+        data: [
+          {
+            id: `${contract}-0`,
+            collection_id: contract,
+            contract_address: contract,
+            blockchain_item_id: "0",
+            name: "Jacket",
+            rarity: "common",
+            total_supply: 2,
+            is_published: true,
+            createdAt: 1_700_000_000_000,
+            image: "https://peer.test/thumbnail",
+          },
+        ],
+      });
+    }) as typeof fetch;
+    const [item, ...rest] = await fetchPublishableItems(BOOK.creator, { signer, base: "https://node.test", fetchImpl, includeSoldOut: true });
+    expect(rest).toHaveLength(0);
+    expect(item).toMatchObject({ contractAddress: contract, blockchainItemId: "0", isApproved: true, createdAt: 1_700_000_000_000, thumbnail: "https://peer.test/thumbnail" });
+    expect(isPublishable(item!)).toBe(true);
+  });
+
   it("marks USD-pegged primary listings by their exact credits and classic ones by their MANA", async () => {
     const shop = fakeShop([
       {
@@ -400,6 +431,33 @@ describe("creations and sale state", () => {
     const out = await fetchSellerSales({ seller: BOOK.creator }, { cap: 2 }, shop.client);
     expect(out).toMatchObject({ total: 10, truncated: true });
     expect(out.rows).toHaveLength(2);
+  });
+});
+
+describe("My Store's rollout", () => {
+  const A = `0x${"a".repeat(40)}`;
+  const B = `0x${"b".repeat(40)}`;
+
+  it("reads an address list as upstream: commas or whitespace, any case, well-formed addresses only, each once", () => {
+    expect(parseAddressList(` ${A.toUpperCase().replace("0X", "0x")},${B}\n${A}  0x123, not-an-address,,`)).toEqual([A, B]);
+    expect(parseAddressList("")).toEqual([]);
+  });
+
+  it("waits for the flag, opens with it, and a list narrows it once the wallet has resolved", () => {
+    const caps = DEFAULT_CAPABILITIES;
+    expect(myStoreAccessWith(null, null, caps, A, false)).toBe("pending");
+    expect(myStoreAccessWith(false, A, caps, A, false)).toBe("off");
+    expect(myStoreAccessWith(true, null, caps, null, false)).toBe("on");
+    expect(myStoreAccessWith(true, "garbage", caps, null, false)).toBe("on");
+    expect(myStoreAccessWith(true, A, caps, null, true)).toBe("pending");
+    expect(myStoreAccessWith(true, A, caps, B, false)).toBe("off");
+    expect(myStoreAccessWith(true, A, caps, null, false)).toBe("off");
+    expect(myStoreAccessWith(true, `${B}, ${A}`, caps, A.toUpperCase().replace("0X", "0x"), false)).toBe("on");
+  });
+
+  it("never opens what this node does not offer", () => {
+    expect(myStoreAccessWith(true, null, { ...DEFAULT_CAPABILITIES, myStore: false }, A, false)).toBe("off");
+    expect(myStoreAccessWith(true, A, { ...DEFAULT_CAPABILITIES, myStoreOnly: [B] }, A, false)).toBe("off");
   });
 });
 

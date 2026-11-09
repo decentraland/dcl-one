@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::SharedState;
 use super::queries::{self, WorldScene};
 use crate::content::errors::{AppError, AppResult};
+use crate::core::http::js_parse_int;
 use crate::shared::cache::TtlMap;
 
 const MAX_INDEX_LIMIT: i64 = 10_000;
@@ -45,9 +46,9 @@ fn etag_for(body: &[u8]) -> HeaderValue {
 #[derive(Debug, Deserialize)]
 pub struct IndexQuery {
     #[serde(default)]
-    pub limit: Option<i64>,
+    pub limit: Option<String>,
     #[serde(default)]
-    pub offset: Option<i64>,
+    pub offset: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,14 +56,21 @@ pub struct IndexQuery {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
 pub struct IndexSceneSummary {
     pub id: String,
-    pub title: Option<String>,
-    pub description: Option<String>,
+    /// `display.title || ''`, as upstream's indexer.
+    pub title: String,
+    pub description: String,
+    /// Absent when the scene names no thumbnail file in its content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail: Option<String>,
     pub pointers: Vec<String>,
-    #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    /// Absent when the metadata has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string"))]
     pub runtime_version: Option<Value>,
-    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
-    pub timestamp: Option<i64>,
+    /// `entity.timestamp || Date.now()`: the page's build time when missing or 0.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub timestamp: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,7 +96,11 @@ pub async fn get_index(
     Query(q): Query<IndexQuery>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    let (limit, offset) = bound_index_params(q.limit, q.offset);
+    // Unparsable values fall back to the defaults, like the old `parseInt`.
+    let (limit, offset) = bound_index_params(
+        q.limit.as_deref().and_then(js_parse_int),
+        q.offset.as_deref().and_then(js_parse_int),
+    );
     let page = match index_memo().get_fresh(&(limit, offset)) {
         Some(hit) => hit,
         None => {
@@ -127,8 +139,9 @@ pub async fn get_index(
 }
 
 async fn build_index(state: &SharedState, limit: i64, offset: i64) -> AppResult<IndexResponse> {
-    let base_url = &state.settings.public_url;
+    let base_url = state.settings.content_server_url();
     let scenes = queries::list_index_scenes(&state.pool, limit, offset).await?;
+    let now = chrono::Utc::now();
 
     let mut data: Vec<WorldIndexEntry> = Vec::new();
     let mut cur_name: Option<String> = None;
@@ -143,7 +156,7 @@ async fn build_index(state: &SharedState, limit: i64, offset: i64) -> AppResult<
             }
             cur_name = Some(world_name);
         }
-        cur_scenes.push(scene_summary(&scene, base_url));
+        cur_scenes.push(scene_summary(&scene, &base_url, now.timestamp_millis()));
     }
     if let Some(name) = cur_name.take() {
         data.push(WorldIndexEntry {
@@ -153,7 +166,7 @@ async fn build_index(state: &SharedState, limit: i64, offset: i64) -> AppResult<
     }
     Ok(IndexResponse {
         data,
-        last_updated: chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        last_updated: now.to_rfc3339_opts(SecondsFormat::Millis, true),
     })
 }
 
@@ -166,26 +179,32 @@ fn bound_index_params(limit: Option<i64>, offset: Option<i64>) -> (i64, i64) {
     (limit, offset)
 }
 
-fn scene_summary(scene: &WorldScene, base_url: &str) -> IndexSceneSummary {
+fn scene_summary(scene: &WorldScene, base_url: &str, now_ms: i64) -> IndexSceneSummary {
     let display = scene.entity.get("metadata").and_then(|m| m.get("display"));
-    let title = display
-        .and_then(|d| d.get("title"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let description = display
-        .and_then(|d| d.get("description"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let text = |key: &str| {
+        display
+            .and_then(|d| d.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let (title, description) = (text("title"), text("description"));
     let thumbnail = display
         .and_then(|d| d.get("navmapThumbnail"))
         .and_then(Value::as_str)
         .and_then(|file| resolve_content(&scene.entity, file))
         .map(|hash| format!("{base_url}/contents/{hash}"));
-    let timestamp = scene.entity.get("timestamp").and_then(Value::as_i64);
+    let timestamp = scene
+        .entity
+        .get("timestamp")
+        .and_then(Value::as_i64)
+        .filter(|&t| t != 0)
+        .unwrap_or(now_ms);
     let runtime_version = scene
         .entity
         .get("metadata")
         .and_then(|m| m.get("runtimeVersion"))
+        .filter(|v| !v.is_null())
         .cloned();
     IndexSceneSummary {
         id: scene.entity_id.clone(),
@@ -226,23 +245,50 @@ mod tests {
             deployer: "0xowner".into(),
             mirror_source: None,
         };
-        let body = serde_json::to_value(scene_summary(&scene, "https://worlds.example")).unwrap();
+        let body =
+            serde_json::to_value(scene_summary(&scene, "https://worlds.example", 5)).unwrap();
         assert_eq!(body["runtimeVersion"], json!("7"));
         assert_eq!(body["title"], json!("Hello"));
         assert_eq!(body["id"], json!("bafy-scene"));
     }
 
+    /// `worlds-indexer.ts`: `title`/`description` `''`, `thumbnail` and `runtimeVersion` left
+    /// out, `timestamp` `Date.now()` (`test/integration/index-handler.spec.ts:86`).
     #[test]
-    fn scene_summary_runtime_version_is_null_when_absent() {
+    fn scene_summary_fills_missing_fields_as_upstream() {
         let scene = WorldScene {
             entity_id: "s".into(),
-            entity: json!({ "timestamp": 1, "metadata": { "display": {} } }),
+            entity: json!({ "timestamp": 0, "metadata": { "display": {} } }),
             parcels: vec![],
             deployer: "0xowner".into(),
             mirror_source: None,
         };
-        let body = serde_json::to_value(scene_summary(&scene, "https://x")).unwrap();
-        assert!(body["runtimeVersion"].is_null());
+        let body = serde_json::to_value(scene_summary(&scene, "https://x", 1234)).unwrap();
+        assert_eq!(
+            body,
+            json!({ "id": "s", "title": "", "description": "", "pointers": [], "timestamp": 1234 })
+        );
+    }
+
+    #[test]
+    fn scene_summary_links_the_thumbnail_under_the_given_base() {
+        let scene = WorldScene {
+            entity_id: "s".into(),
+            entity: json!({
+                "timestamp": 7,
+                "content": [{ "file": "t.png", "hash": "bafkreithumb" }],
+                "metadata": { "display": { "navmapThumbnail": "t.png" } }
+            }),
+            parcels: vec![],
+            deployer: "0xowner".into(),
+            mirror_source: None,
+        };
+        let body = serde_json::to_value(scene_summary(&scene, "https://x/wcs", 1)).unwrap();
+        assert_eq!(
+            body["thumbnail"],
+            json!("https://x/wcs/contents/bafkreithumb")
+        );
+        assert_eq!(body["timestamp"], json!(7));
     }
 
     #[test]

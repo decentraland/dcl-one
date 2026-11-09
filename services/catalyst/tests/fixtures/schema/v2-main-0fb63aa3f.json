@@ -1,0 +1,143 @@
+{
+  "repository": "decentraland/dcl-one",
+  "revision": "0fb63aa3ff0bf7e7cf515dab06e00263807a7fd6",
+  "captured_at": "2026-11-03T22:03:55.601Z",
+  "scope": "Real main v2 catalyst-db apply_schema, migrate, status and bootstrap executor. Full pg_dump schema plus untouched real meta.schema and meta.schema_steps rows. No application database reset, synthetic stamp or ledger. Regeneration retains newly generated receipt timestamps; cluster collation DDL and pg_dump-only transaction_timeout are excluded.",
+  "inputs": [
+    {
+      "file": "services/catalyst/db/src/lib.rs",
+      "sha256": "e2d1f8e3f3073dffc6a12336259e4fa9ec8ce7353ff9b44f6ba8b19779e53519"
+    },
+    {
+      "file": "services/catalyst/db/src/schema_migrate.rs",
+      "sha256": "611409e027da32970e9aa7c6a564c37e184f3e2ba52bfa135dc01ff229f9bd68"
+    },
+    {
+      "file": "services/catalyst/db/build.rs",
+      "sha256": "26fff35dee43e26f111f02352800a76736aa195c79b69d278d80f141c2339a32"
+    },
+    {
+      "file": "schemas/00_content.sql",
+      "sha256": "92f678f78d6bd7883b4547fc1478f707556b618d323b3b6854ccfba90656e1ff"
+    },
+    {
+      "file": "schemas/10_explore.sql",
+      "sha256": "4e8f78f46a72fb4c97e7ba67378ff2be076f568b67c8df1c7bd04d2e90f3aa18"
+    },
+    {
+      "file": "schemas/11_explore_api.sql",
+      "sha256": "b6d96c68180a139a2cd0a2c2a9f1bd682182ec4964ee82564a549e48a8d3b470"
+    },
+    {
+      "file": "schemas/20_worlds.sql",
+      "sha256": "b39c439ed5e1981206916d719c4e7a7df1b526665dd686fd01aff7ae816ef03d"
+    },
+    {
+      "file": "schemas/21_world_scene_places.sql",
+      "sha256": "a30d7e694c127ea87694ab235afff26e949f20871b074d8bae1539bb9a8c2095"
+    },
+    {
+      "file": "schemas/30_shop.sql",
+      "sha256": "b8d9b8c16949505b3d7f3d91f9f165251279f080b24a53834aee9172185899b4"
+    },
+    {
+      "file": "schemas/31_economy.sql",
+      "sha256": "740ba2cbed6efc7433cdf2c6caa27bf10c5bf7f1122faf24763dca4ac21a5568"
+    },
+    {
+      "file": "schemas/32_signatures.sql",
+      "sha256": "24a5583d9ade64434dcce9f1a5b92f4db30959b13f460c58372924e3c1ae5c71"
+    },
+    {
+      "file": "schemas/33_land_authz.sql",
+      "sha256": "fd1d700261e39d4bf68d5d2d99c33e150e64ca00a62dd7a2db2d2c3911139f2c"
+    },
+    {
+      "file": "schemas/34_presence.sql",
+      "sha256": "cdd5f3bbab464f38483a27cf38e987230807babcfaca631e435771536d5948c3"
+    },
+    {
+      "file": "schemas/40_social.sql",
+      "sha256": "811b5a2f2a2264f2128cbf69e38c535d1a8e2dd2e94ca47ef6b727758c9445bb"
+    },
+    {
+      "file": "schemas/45_chat.sql",
+      "sha256": "141ecdaa44a93ff8821651d640dffd8b451ab02d2c195bf36a895202c0de9b41"
+    },
+    {
+      "file": "schemas/50_create.sql",
+      "sha256": "ea4af036e58ed4e7390087189f5de495cca66b40dcb1bfe262ab6c6ea0081092"
+    },
+    {
+      "file": "schemas/60_ops.sql",
+      "sha256": "bda97a099e4fd409541f7dfac16b90c2042741efb4828802c5a35ff2c2262949"
+    },
+    {
+      "file": "schemas/migrations/0001_credits_purchases_quantity_source.sql",
+      "sha256": "98f0f1da05826e9b72db918e1f3b8f00fd0ce1c5a61e5d75688b7321a0d97338"
+    },
+    {
+      "file": "schemas/migrations/0002_chain_cursor_rentals_indexer.sql",
+      "sha256": "7c626109785f1b39e2e94347efee170350380acdf215b9fa166ec5f69a507b0d"
+    },
+    {
+      "file": "schemas/migrations/0003_shop_lists_name_unique.sql",
+      "sha256": "9ed6a20beb6aa369441a787546c57f11ea5202bf47769d468fe9b344a9042625"
+    },
+    {
+      "file": "schemas/migrations/0004_credits_protocol.sql",
+      "sha256": "b70a360fa4d62b7ff5cb0c3832efc84d9ed2098f194ef3532fd17102d3e41e6b"
+    },
+    {
+      "file": "schemas/migrations/0005_broker_purchases_mode_primary.sql",
+      "sha256": "0d75b0bea8cf92951981dce52524851ba772760888a605140a8d684e85d3aac6"
+    },
+    {
+      "file": "schemas/migrations/0006_chain_cursor_mana_transfers.sql",
+      "sha256": "429e020ef0ba46179e059a84a9a129cd1f93164dd446fc6b2d34e63bf4386679"
+    },
+    {
+      "file": "schemas/migrations/0007_mirror_origin.sql",
+      "sha256": "a644df7d4a0558f88a389bae9e013b6ddc37b5992e19fe2839974526c724ce7f"
+    },
+    {
+      "file": "schemas/migrations/0008_comms_stream_cleanup.sql",
+      "sha256": "8a6f913d09d5a479c04f7e7b713659b9c7cfb76050988edd6e7ce907e17ec808"
+    },
+    {
+      "file": "schemas/migrations/0010_world_scene_storage_identity.sql",
+      "sha256": "a8f0d6a719e8d44c14920c4a9df60d8524534d387279073b9e7dc5b0b9cf0a8b"
+    },
+    {
+      "file": "schemas/migrations/0011_land_history_timestamps.sql",
+      "sha256": "9b66321fd0de2b92d380b70045ce9fe9695e3d9e15992d68186b2ddfaf0dd45f"
+    },
+    {
+      "file": "schemas/migrations/0012_land_history_published_readiness.sql",
+      "sha256": "8629204e1dd053a981d1778325a4277dee1effd556a842e8cf7148ae1f771670"
+    },
+    {
+      "file": "schemas/migrations/0013_island_receipt_retirement.sql",
+      "sha256": "819ca1841a998a90dcdb474a6b2b62f6f22a3b83db05f5601f9ed789ef4350bf"
+    },
+    {
+      "file": "schemas/migrations/0014_event_permission_grants.sql",
+      "sha256": "5f02dabf25078f5b86d3a90d0f8dfc26b75c8f0dac3adbafe0c936f619fcb52f"
+    },
+    {
+      "file": "schemas/migrations/0016_report_upload_capabilities.sql",
+      "sha256": "79776d101d77838db55c5371ea27ac7bd9b601e374a6e7a88af652b8e0340a17"
+    },
+    {
+      "file": "schemas/migrations/0017_event_notification_visibility.sql",
+      "sha256": "25515f040fb9f9768be04419dbc15d538f17e9952d52149430864beb1bf88b5d"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "v2-main-0fb63aa3f.sql",
+      "sha256": "0a7e97ef603c04b9ee0f956d8242fd301aa523f94c6b1fec335264eaa9b60be3"
+    }
+  ],
+  "postgres_dump": "pg_dump (PostgreSQL) 14.17 (Homebrew)"
+}

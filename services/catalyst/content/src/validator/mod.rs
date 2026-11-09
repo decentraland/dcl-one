@@ -24,7 +24,7 @@
 //! (its store could not be read, a source is unset or failed, a
 //! contract-wallet signature could not be asked about) and the write path
 //! answers 503 with `Retry-After`. The old validator rejected on a checker
-//! failure ("Error checking ...: ..."); the same text is now `Unavailable`.
+//! failure; it is now `Unavailable` with a fixed sentence, the cause logged.
 //!
 //! Not carried: `squid_checker.rs` (replaced as above), the squid root
 //! source of third-party wearables and its refresh job, `land_rights.rs`
@@ -69,6 +69,7 @@ use crate::storage::{Storage, StorageError};
 
 pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
+pub use metadata_schema::validate_scene_metadata;
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
 pub use synced::{SyncedContent, validate_synced};
@@ -322,6 +323,32 @@ pub async fn validate(
         access_passed: false,
     }
     .validate(&deployment)
+    .await
+    .into_result()
+}
+
+/// Validates one batch of a partial upload ([`ContentValidator::validate_staging`]):
+/// `files` holds the entity file under its id and the batch's other keys
+/// (their bytes are not read).
+pub async fn validate_staging(
+    entity: &Entity,
+    files: &HashMap<String, bytes::Bytes>,
+    ctx: &Context<'_>,
+    include_access: bool,
+) -> Result<(), Vec<ValidationError>> {
+    let deployment = Deployment {
+        entity,
+        files,
+        auth_chain: ctx.auth_chain,
+    };
+    ContentValidator {
+        external_calls: ctx.sources,
+        blockchain_checker: ctx.sources,
+        ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
+        access_passed: false,
+    }
+    .validate_staging(&deployment, include_access)
     .await
     .into_result()
 }

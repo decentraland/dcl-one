@@ -20,7 +20,8 @@ struct Projection {
 
 impl Projection {
     async fn new() -> Self {
-        let binary = gate::require_env("ARCHIPELAGO_NATS_SERVER_BIN").expect("mandatory real NATS fixture");
+        let binary =
+            gate::require_env("ARCHIPELAGO_NATS_SERVER_BIN").expect("mandatory real NATS fixture");
         let broker = Broker::start(&binary, None);
         gate::required_database_in_ci();
         let db = db::scratch_database()
@@ -442,17 +443,12 @@ async fn baseline_empty_topology_differs_from_feed_loss() {
     assert!(empty_started.elapsed() < catalyst::comms::topology::TOPOLOGY_RECEIPT_TTL);
     assert_eq!(fixture.get("/islands").await["islands"], json!([]));
     fixture.world.place(0, wallet, session);
-    tokio::time::timeout(Duration::from_secs(8), async {
-        while !fixture.social.ctx.is_online(wallet) {
-            fixture.world.pass();
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .unwrap();
+    fixture.world.pass();
+    assert!(
+        catalyst::shared::test_wait::until(async || fixture.social.ctx.is_online(wallet)).await
+    );
     // Hold the real feed alive but stop tracker passes: its independent discovery
     // timer stays healthy while no replacement topology reaches the subscriber.
-    tokio::time::sleep(Duration::from_millis(200)).await;
     let received = fixture.state.feed.topology.snapshot().received_at;
     // Subscribe after passes stop and flush before choosing a source-time floor:
     // neither the HTTP cache nor queued older discovery can satisfy this proof.
@@ -483,8 +479,9 @@ async fn baseline_empty_topology_differs_from_feed_loss() {
     let advancing_before_expiry = advancing_discovery(&mut discovery, stopped_at).await;
     assert!(fixture.social.ctx.is_online(wallet));
     assert_eq!(fixture.state.feed.topology.snapshot().received_at, received);
-    tokio::time::sleep(Duration::from_millis(5500)).await;
-    assert!(!fixture.social.ctx.is_online(wallet));
+    assert!(
+        catalyst::shared::test_wait::until(async || !fixture.social.ctx.is_online(wallet)).await
+    );
     let expired_at = chrono::Utc::now().timestamp_millis() as u64;
     let advancing_after_expiry = advancing_discovery(&mut discovery, expired_at).await;
     assert!(advancing_after_expiry > advancing_before_expiry);

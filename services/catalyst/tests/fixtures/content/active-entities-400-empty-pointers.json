@@ -1,18 +1,56 @@
 {
-  "description": "POST /content/entities/active with empty pointers array must 400 (lamb2 treats [] as 'no filter provided', NOT as 'return empty result').",
+  "description": "POST /content/entities/active with an empty pointers array fails the body schema (minItems 1) and answers the @dcl/schema-validator-component 400.",
   "request": {
     "method": "POST",
     "path": "/content/entities/active",
     "query": {},
-    "headers": {"content-type": "application/json"},
-    "body": {"pointers": []}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "pointers": []
+    }
   },
   "response": {
     "status": 400,
-    "headers": {"content-type": "application/json"},
-    "body_json": {"error": "ids or pointers must be present, but not both. They must be arrays and contain at least one element. None of the elements can be empty."}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf/0/required",
+          "keyword": "required",
+          "params": {
+            "missingProperty": "ids"
+          },
+          "message": "must have required property 'ids'"
+        },
+        {
+          "instancePath": "/pointers",
+          "schemaPath": "#/oneOf/1/properties/pointers/minItems",
+          "keyword": "minItems",
+          "params": {
+            "limit": 1
+          },
+          "message": "must NOT have fewer than 1 items"
+        },
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf",
+          "keyword": "oneOf",
+          "params": {
+            "passingSchemas": null
+          },
+          "message": "must match exactly one schema in oneOf"
+        }
+      ]
+    }
   },
-  "captured_from": "re-derived from peer.decentraland.org 2026-07-03",
-  "captured_at": "2026-05-23T20:00:00Z",
+  "captured_from": "peer.decentraland.org 2026-11-04: conformance/content-lambdas/captures/content-reads/CR-2-empty-array.json (same body; status, body and key order as captured)",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

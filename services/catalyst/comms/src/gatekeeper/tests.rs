@@ -722,6 +722,31 @@ async fn private_voice_credentials_are_refused_when_a_participant_is_platform_ba
             .unwrap()
             .is_some()
     );
+    let same_pair = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.moderator.clone(), s.clean.clone()],
+    )
+    .await
+    .expect("the room's own pair, in either order, gets credentials again");
+    assert_eq!(same_pair.len(), 2);
+    let other = Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
+    let err = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.clean.clone(), other.clone()],
+    )
+    .await
+    .expect_err("another party pair cannot take the room");
+    assert_eq!(err.code, 409);
+    let parties: Vec<String> = sqlx::query_scalar(
+        "SELECT address FROM social.private_voice_chat_participants WHERE call_id = $1",
+    )
+    .bind(call_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!parties.contains(&other.as_str().to_string()));
     let err = voice::get_private_voice_chat_room_credentials(
         &state,
         "not-a-uuid",
@@ -1135,8 +1160,17 @@ async fn undetermined_world_token_routes_request_retry() {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["retry-after"], "1");
         let (_, body) = body_json(response).await;
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], body["message"]);
+        let reason = "World access could not be decided; retry shortly.";
+        // WCS's world comms handler puts the reason in `error`; the adapter route keeps the label.
+        let error = if path.starts_with("/get-comms-adapter") {
+            "Service Unavailable"
+        } else {
+            reason
+        };
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": error, "message": reason })
+        );
     }
 }
 
@@ -1323,7 +1357,6 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
             namespace: crate::world_identity::SceneNamespace::new(&realm, parcel, None),
             local: true,
         })),
-        ..StubScenes::default()
     });
     seed_place(
         &pool,
@@ -1807,7 +1840,7 @@ async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_th
 }
 
 #[tokio::test]
-async fn a_private_call_is_exclusive_per_wallet_and_follows_the_webhook_lifecycle() {
+async fn private_media_is_retained_until_join_and_follows_the_webhook_lifecycle() {
     let Some(pool) = scratch().await else { return };
     let (settings, media) = webhook_voice_settings().await;
     let state = state_with(pool.clone(), settings);
@@ -1849,14 +1882,11 @@ async fn a_private_call_is_exclusive_per_wallet_and_follows_the_webhook_lifecycl
         .unwrap();
     assert_eq!(
         displaced,
-        vec![call],
-        "a wallet is in at most one call: the old one is torn down"
+        Vec::<Uuid>::new(),
+        "issuing a grant preserves existing media until the new room is actually joined"
     );
-    assert_eq!(
-        state.voice_db.active_call_of(&a).await.unwrap(),
-        Some(second)
-    );
-    assert_eq!(state.voice_db.active_call_of(&b).await.unwrap(), None);
+    assert_eq!(state.voice_db.active_call_of(&a).await.unwrap(), Some(call));
+    assert_eq!(state.voice_db.active_call_of(&b).await.unwrap(), Some(call));
     voice::handle_private_participant_joined(&state, a.as_str(), second)
         .await
         .unwrap();
@@ -2052,14 +2082,15 @@ async fn a_community_room_lives_while_a_moderator_is_present_and_sweeps_otherwis
             .is_empty(),
         "the last moderator leaving tears the room down"
     );
-    let events = directory.community_events.lock().unwrap();
-    assert_eq!(
-        events.len(),
-        1,
-        "the ended event crosses the social seam once"
-    );
-    assert_eq!(events[0]["subType"], "community-streaming-ended");
-    drop(events);
+    {
+        let events = directory.community_events.lock().unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "the ended event crosses the social seam once"
+        );
+        assert_eq!(events[0]["subType"], "community-streaming-ended");
+    }
 
     state
         .voice_db
@@ -2162,7 +2193,21 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         )
         .with_room_event_sink(sink.clone()),
     );
-    let app = super::router(state);
+    let app = super::router(state.clone());
+    // The worlds host's copy (`serve` nests it under `/worlds-content-server`).
+    let worlds_app =
+        axum::Router::new().nest("/worlds-content-server", super::webhook_router(state));
+    let worlds_post = |authorization: Option<String>| {
+        let mut req = Request::post("/worlds-content-server/livekit-webhook")
+            .header("content-type", "application/webhook+json");
+        if let Some(a) = authorization {
+            req = req.header("authorization", a);
+        }
+        let req = req.body(Body::from(body.clone())).unwrap();
+        let app = worlds_app.clone();
+        async move { app.oneshot(req).await.unwrap().status() }
+    };
+    assert_eq!(worlds_post(None).await, StatusCode::UNAUTHORIZED);
 
     assert_eq!(
         post_webhook(&app, None, &body).await,
@@ -2192,6 +2237,10 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
             "world-w.dcl.eth".to_string(),
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
         )]
+    );
+    assert_eq!(
+        worlds_post(Some(webhook_jwt(&body, &key, &secret))).await,
+        StatusCode::OK
     );
 
     let dev = Settings {
@@ -2490,6 +2539,13 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
 async fn world_mint_refuses_at_capacity() {
     use crate::rooms::ResolvedRoom;
     use crate::world_identity::{RealmId, WorldName};
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
     let world = WorldName::parse("alice.dcl.eth").unwrap();
     let room = crate::rooms::worlds_service_world_room(&world);
     let scenes = StubScenes {
@@ -2502,8 +2558,6 @@ async fn world_mint_refuses_at_capacity() {
         ..StubScenes::default()
     };
     let presence = Arc::new(crate::presence::Presence::new());
-    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
-        .expect("a lazy pool never connects");
     let state = Arc::new(
         CommsState::new(
             pool,
@@ -2746,12 +2800,16 @@ async fn a_connect_reaches_only_a_running_island_subscriber() {
     })
     .await
     .expect("the running subscriber asks Pulse");
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        state.island_subscriber().upgrade().unwrap().settle(),
+    )
+    .await
+    .unwrap();
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 
     jobs.shutdown(Duration::from_secs(5)).await;
     state.announce_session(WALLET, SESSION);
-    tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
     assert!(bus.published().is_empty());
 }
@@ -2868,6 +2926,83 @@ async fn the_island_feed_needs_no_switch() {
     jobs.shutdown(Duration::from_secs(5)).await;
 }
 
+/// WCS `isWorldValid`: an unknown world, or one blocked past its grace, is 404
+/// on every mint, not a retryable 503.
+#[tokio::test]
+async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
+    use crate::access::WorldAdmission;
+    use crate::rooms::ResolvedRoom;
+    use crate::world_identity::{RealmId, WorldName};
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let world = WorldName::parse("alice.dcl.eth").unwrap();
+    let handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake"}"#;
+    for (admission, expected) in [
+        (WorldAdmission::Unknown, StatusCode::NOT_FOUND),
+        (WorldAdmission::Blocked, StatusCode::NOT_FOUND),
+        (
+            WorldAdmission::Open(crate::access::AccessType::Unrestricted),
+            StatusCode::OK,
+        ),
+    ] {
+        let scenes = StubScenes {
+            room: Ok(ResolvedRoom {
+                realm: RealmId::World(world.clone()),
+                scene_id: None,
+                deployment: None,
+                room: crate::rooms::worlds_service_world_room(&world),
+            }),
+            ..Default::default()
+        };
+        let state = Arc::new(
+            CommsState::new(
+                pool.clone(),
+                Outbound::for_tests(),
+                Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy {
+                    admission: Some(admission),
+                    ..Default::default()
+                }),
+                Arc::new(scenes),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+            )
+            .with_ban_status(Arc::new(super::moderation::test_support::StubBanStatus(
+                Ok(None),
+            ))),
+        );
+        let app = super::admission::world_mint::router(state.clone());
+        for (path, metadata) in [
+            ("/worlds/alice.dcl.eth/comms", "{}"),
+            ("/get-comms-adapter/world-alice.dcl.eth", handshake),
+        ] {
+            state.presence.complete_empty_fixture();
+            let mut request = Request::post(path).body(Body::empty()).unwrap();
+            request
+                .headers_mut()
+                .extend(signed(KEY, "post", path, metadata).await);
+            let (status, body) = body_json(app.clone().oneshot(request).await.unwrap()).await;
+            assert_eq!(status, expected, "{admission:?} {path}: {body}");
+            if expected == StatusCode::NOT_FOUND {
+                // `comms-adapter-handler` words its 404 apart from the world mints'.
+                let message = if path.starts_with("/get-comms-adapter") {
+                    "World \"alice.dcl.eth\" was not found."
+                } else {
+                    "World \"alice.dcl.eth\" is invalid or blocked."
+                };
+                assert_eq!(body["message"], message, "{body}");
+            }
+        }
+    }
+}
+
 /// Signed metadata is checked after cryptographic verification.
 #[tokio::test]
 async fn world_adapter_requires_exact_signed_handshake() {
@@ -2907,6 +3042,13 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/list", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
     let world = WorldName::parse("alice.dcl.eth").unwrap();
     let scenes = StubScenes {
         room: Ok(ResolvedRoom {
@@ -2919,7 +3061,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     };
     let state = Arc::new(
         CommsState::new(
-            lazy_pool(),
+            pool.clone(),
             Outbound::for_tests().allowing_private_hosts(),
             Settings::for_tests(),
             None,

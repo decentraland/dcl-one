@@ -8,16 +8,16 @@ const UserIdentity = require("~system/UserIdentity");
 
 It contains the following methods and types:
 
-- [`function getUserData`](#getUserData)
-- [`interface UserData`](#UserData)
+- [`function getUserData`](#getuserdata)
+- [`interface UserData`](#userdata)
 
 ## Methods
 
 The two methods in this module fetch bits of information from the player's user.
 
-##### `getUserData` {#getUserData}
+### `getUserData` {#getuserdata}
 
-Returns the [`UserData`](#UserData) for the player's user.
+Returns the [`UserData`](#userdata) for the player's user.
 
 ```ts
 interface Request {}
@@ -34,7 +34,7 @@ function getUserData(Request): Promise<Response>;
 
 There's just one type in this module: `UserData`.
 
-##### `UserData` {#UserData}
+### `UserData` {#userdata}
 
 Holds (possibly partial) information about a user, their identity and avatar.
 

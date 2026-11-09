@@ -28,6 +28,7 @@ export function callGate(
     case 'disconnected':
     case 'notConnected':
     case 'otherClient':
+    case 'noRouter': // a community channel's state; never a DM partner's
       return { allowed: false, reason: 'This user is offline.' }
     case 'privateMessagesBlocked':
       return { allowed: false, reason: 'This user only accepts calls from friends.' }

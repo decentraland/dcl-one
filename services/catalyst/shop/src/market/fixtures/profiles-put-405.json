@@ -1,0 +1,19 @@
+{
+  "description": "PUT /lambdas/profiles: the router's 405 with an empty body and Allow: POST.",
+  "request": {
+    "method": "PUT",
+    "path": "/lambdas/profiles",
+    "query": {},
+    "headers": {},
+    "body": {}
+  },
+  "response": {
+    "status": 405,
+    "headers": {
+      "allow": "POST"
+    }
+  },
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-31-put-profiles.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

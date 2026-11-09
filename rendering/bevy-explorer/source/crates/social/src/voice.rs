@@ -198,8 +198,7 @@ pub(crate) mod rpc {
         get_incoming_private_voice_chat_request_response, join_community_voice_chat_response,
         kick_player_from_community_voice_chat_response,
         mute_speaker_from_community_voice_chat_response,
-        promote_speaker_in_community_voice_chat_response,
-        reject_private_voice_chat_response,
+        promote_speaker_in_community_voice_chat_response, reject_private_voice_chat_response,
         reject_speak_request_in_community_voice_chat_response,
         request_to_speak_in_community_voice_chat_response, start_community_voice_chat_response,
         start_private_voice_chat_response, AcceptPrivateVoiceChatPayload,
@@ -209,9 +208,8 @@ pub(crate) mod rpc {
         KickPlayerFromCommunityVoiceChatPayload, MuteSpeakerFromCommunityVoiceChatPayload,
         PrivateVoiceChatStatus as ProtoPrivateStatus, PrivateVoiceChatUpdate,
         PromoteSpeakerInCommunityVoiceChatPayload, RejectPrivateVoiceChatPayload,
-        RejectSpeakRequestInCommunityVoiceChatPayload,
-        RequestToSpeakInCommunityVoiceChatPayload, SocialServiceClient,
-        SocialServiceClientDefinition, StartCommunityVoiceChatPayload,
+        RejectSpeakRequestInCommunityVoiceChatPayload, RequestToSpeakInCommunityVoiceChatPayload,
+        SocialServiceClient, SocialServiceClientDefinition, StartCommunityVoiceChatPayload,
         StartPrivateVoiceChatPayload, User,
     };
     use dcl_rpc::transports::Transport;

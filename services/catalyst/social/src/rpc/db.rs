@@ -389,14 +389,14 @@ impl Db {
                 ORDER BY f.last_action_at DESC, f.id DESC
                 LIMIT $2 OFFSET $3
             )
-            SELECT f.id AS id,
+            SELECT fa.id AS id,
                    {address_select},
                    f.last_action_at AS ts,
                    fa.metadata AS metadata,
                    f.total
             FROM page f
             LEFT JOIN LATERAL (
-                SELECT metadata FROM social.friendship_actions
+                SELECT id, metadata FROM social.friendship_actions
                 WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
             ) fa ON TRUE
             ORDER BY f.last_action_at DESC, f.id DESC
@@ -521,9 +521,8 @@ impl Db {
         })
     }
 
-    /// Records the block and returns when it was first recorded (a repeat
-    /// keeps the original time) and the pair's latest friendship action, in
-    /// one statement.
+    /// Records the block and reads the previous action; the transactional
+    /// block_user_recording_action also appends the matching friendship action.
     pub async fn block_user_and_last(
         &self,
         blocker: &str,
@@ -532,8 +531,8 @@ impl Db {
         block_and_last(&self.pool, blocker, blocked).await
     }
 
-    /// Removes the block and returns the pair's latest friendship action in one
-    /// statement; `None` when there was no block to remove.
+    /// Removes a block and reads the previous action; use
+    /// unblock_user_recording_action to append its delete action atomically.
     pub async fn unblock_user_and_last(
         &self,
         blocker: &str,
@@ -603,7 +602,7 @@ impl Db {
 
     /// Upserts the friendship row and appends the action in one statement
     /// ([`record_friendship_action`] with a fresh action id); answers the
-    /// friendship id, the action's time and its id.
+    /// friendship id, its original creation time and the action id.
     pub async fn apply_friendship_action(
         &self,
         acting_user: &str,
@@ -855,15 +854,15 @@ impl Db {
     pub async fn are_users_being_called_or_calling_someone(
         &self,
         addresses: &[String],
-        expiration_ms: i64,
+        _expiration_ms: i64,
     ) -> Result<bool, DbError> {
         let normalized: Vec<String> = addresses.iter().map(|a| a.to_lowercase()).collect();
         let busy: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM social.private_voice_chats \
-             WHERE created_at >= $2 AND (caller_address = ANY($1) OR callee_address = ANY($1)))",
+             WHERE (caller_address = ANY($1) OR callee_address = ANY($1)) \
+               AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id))",
         )
         .bind(&normalized)
-        .bind(expiry_bound(now_naive(), expiration_ms))
         .fetch_one(&self.pool)
         .await?;
         Ok(busy)
@@ -887,11 +886,11 @@ impl Db {
         &self,
         caller: &str,
         callee: &str,
-        expiration_ms: i64,
+        _expiration_ms: i64,
+        presence: crate::comms::gatekeeper::voice::db::VoiceDbConfig,
     ) -> Result<PrivateVoicePreflight, DbError> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
-        let now = now_naive();
         let sql = format!(
             r#"SELECT
                  EXISTS (
@@ -903,23 +902,23 @@ impl Db {
                  (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
                  (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
                  EXISTS (
-                   SELECT 1 FROM social.private_voice_chats
-                   WHERE created_at >= $3
+                   SELECT 1 FROM social.private_voice_chats c
+                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
                      AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
                  ) AS busy,
                  EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
                  EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
-            live = presence_live_cond("$4", "$5", "$6"),
+            live =
+                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
         );
+        let (interrupted, initial) = presence.sql_cutoffs();
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&caller)
             .bind(&callee)
-            .bind(expiry_bound(now, expiration_ms))
-            .bind(now)
-            .bind(VOICE_CONNECTION_INTERRUPTED_TTL_MS)
-            .bind(VOICE_INITIAL_CONNECTION_TTL_MS)
+            .bind(interrupted)
+            .bind(initial)
             .fetch_one(&self.pool)
             .await?;
         Ok(PrivateVoicePreflight {
@@ -974,7 +973,7 @@ impl Db {
         &self,
         call_id: Uuid,
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
-        let row = sqlx::query("SELECT id, caller_address, callee_address FROM social.private_voice_chats WHERE id = $1")
+        let row = sqlx::query("SELECT id, caller_address, callee_address FROM social.private_voice_chats c WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)")
             .bind(call_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -987,7 +986,7 @@ impl Db {
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
         let row = sqlx::query(
             "SELECT id, caller_address, callee_address FROM social.private_voice_chats \
-             WHERE callee_address = $1 ORDER BY created_at DESC LIMIT 1",
+             WHERE callee_address = $1 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) ORDER BY created_at DESC LIMIT 1",
         )
         .bind(callee.to_lowercase())
         .fetch_optional(&self.pool)
@@ -1002,7 +1001,7 @@ impl Db {
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
         let row = sqlx::query(
             "SELECT id, caller_address, callee_address FROM social.private_voice_chats \
-             WHERE caller_address = $1 OR callee_address = $1 ORDER BY created_at DESC LIMIT 1",
+             WHERE (caller_address = $1 OR callee_address = $1) AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) ORDER BY created_at DESC LIMIT 1",
         )
         .bind(address.to_lowercase())
         .fetch_optional(&self.pool)
@@ -1353,11 +1352,12 @@ where
                      UPDATE social.friendships
                      SET is_active = $1, last_action = $4, last_actor = $5,
                          last_action_at = timezone('UTC', now()), updated_at = timezone('UTC', now())
-                     WHERE id = $2 RETURNING id
-                   )
+                     WHERE id = $2 RETURNING id, created_at
+                   ), recorded AS (
                    INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                    SELECT $3::uuid, f.id, $4::text, $5::text, $6::json, timezone('UTC', now()) FROM f
-                   RETURNING friendship_id, "timestamp""#,
+                   RETURNING friendship_id
+                   ) SELECT recorded.friendship_id, f.created_at FROM recorded JOIN f ON f.id=recorded.friendship_id"#,
             )
             .bind(is_active)
             .bind(id)
@@ -1379,11 +1379,12 @@ where
                      DO UPDATE SET is_active = EXCLUDED.is_active, last_action = EXCLUDED.last_action,
                                    last_actor = EXCLUDED.last_actor, last_action_at = EXCLUDED.last_action_at,
                                    updated_at = timezone('UTC', now())
-                     RETURNING id
-                   )
+                     RETURNING id, created_at
+                   ), recorded AS (
                    INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                    SELECT $5::uuid, f.id, $6::text, $7::text, $8::json, timezone('UTC', now()) FROM f
-                   RETURNING friendship_id, "timestamp""#,
+                   RETURNING friendship_id
+                   ) SELECT recorded.friendship_id, f.created_at FROM recorded JOIN f ON f.id=recorded.friendship_id"#,
             )
             .bind(Uuid::new_v4())
             .bind(&acting_user)
@@ -1399,6 +1400,151 @@ where
     };
     Ok((
         row.get::<Uuid, _>("friendship_id"),
-        row.get::<NaiveDateTime, _>("timestamp").and_utc(),
+        row.get::<NaiveDateTime, _>("created_at").and_utc(),
     ))
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct VoiceNotification {
+    pub raw_community: String,
+    pub community: Uuid,
+    pub generation: Uuid,
+    pub scope: super::fanout::Scope,
+    pub fresh: bool,
+    pub expires_at: NaiveDateTime,
+}
+
+impl Db {
+    pub(crate) async fn community_voice_scope(
+        &self,
+        community: Uuid,
+    ) -> Result<Option<super::fanout::Scope>, DbError> {
+        let all: Option<bool> = sqlx::query_scalar(
+            "SELECT NOT private AND NOT unlisted FROM social.communities WHERE id=$1 AND active",
+        )
+        .bind(community)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(all.map(|all| {
+            if all {
+                super::fanout::Scope::All
+            } else {
+                super::fanout::Scope::Members
+            }
+        }))
+    }
+
+    pub(crate) async fn record_voice_notification(
+        &self,
+        community: Uuid,
+        raw: &str,
+        scope: super::fanout::Scope,
+    ) -> Result<Uuid, DbError> {
+        let generation = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_voice_notifications(raw_community_id,community_id,notification_scope,generation,expires_at) VALUES($1,$2,$3,$4,timezone('UTC',now())+interval '24 hours') ON CONFLICT(raw_community_id) DO UPDATE SET notification_scope=EXCLUDED.notification_scope,generation=EXCLUDED.generation,expires_at=EXCLUDED.expires_at")
+            .bind(raw).bind(community).bind(if scope == super::fanout::Scope::All { "all" } else { "members" }).bind(generation).execute(&self.pool).await?;
+        Ok(generation)
+    }
+    pub(crate) async fn voice_notification(
+        &self,
+        raw: &str,
+    ) -> Result<Option<VoiceNotification>, DbError> {
+        let row: Option<(Uuid, Uuid, String, bool, NaiveDateTime)> = sqlx::query_as("SELECT community_id,generation,notification_scope,expires_at>timezone('UTC',now()),expires_at FROM social.community_voice_notifications WHERE raw_community_id=$1")
+            .bind(raw).fetch_optional(&self.pool).await?;
+        Ok(row.map(
+            |(community, generation, scope, fresh, expires_at)| VoiceNotification {
+                raw_community: raw.to_string(),
+                community,
+                generation,
+                fresh,
+                expires_at,
+                scope: if scope == "all" {
+                    super::fanout::Scope::All
+                } else {
+                    super::fanout::Scope::Members
+                },
+            },
+        ))
+    }
+    pub(crate) async fn voice_notifications_page(
+        &self,
+        after: &str,
+    ) -> Result<Vec<VoiceNotification>, DbError> {
+        let rows: Vec<(String, Uuid, Uuid, String, bool, NaiveDateTime)> = sqlx::query_as("SELECT raw_community_id,community_id,generation,notification_scope,expires_at>timezone('UTC',now()),expires_at FROM social.community_voice_notifications WHERE raw_community_id>$1 ORDER BY raw_community_id LIMIT 64")
+            .bind(after).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(raw_community, community, generation, scope, fresh, expires_at)| {
+                    VoiceNotification {
+                        raw_community,
+                        community,
+                        generation,
+                        fresh,
+                        expires_at,
+                        scope: if scope == "all" {
+                            super::fanout::Scope::All
+                        } else {
+                            super::fanout::Scope::Members
+                        },
+                    }
+                },
+            )
+            .collect())
+    }
+    pub(crate) async fn refresh_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<bool, DbError> {
+        Ok(sqlx::query("UPDATE social.community_voice_notifications SET expires_at=timezone('UTC',now())+interval '24 hours' WHERE raw_community_id=$1 AND generation=$2")
+            .bind(&entry.raw_community).bind(entry.generation).execute(&self.pool).await?.rows_affected() == 1)
+    }
+    pub(crate) async fn restore_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<(), DbError> {
+        sqlx::query("INSERT INTO social.community_voice_notifications(raw_community_id,community_id,notification_scope,generation,expires_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(raw_community_id) DO NOTHING")
+            .bind(&entry.raw_community).bind(entry.community).bind(if entry.scope == super::fanout::Scope::All { "all" } else { "members" }).bind(entry.generation).bind(entry.expires_at).execute(&self.pool).await?;
+        Ok(())
+    }
+    pub(crate) async fn clear_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<bool, DbError> {
+        Ok(sqlx::query("DELETE FROM social.community_voice_notifications WHERE raw_community_id=$1 AND generation=$2")
+            .bind(&entry.raw_community).bind(entry.generation).execute(&self.pool).await?.rows_affected() == 1)
+    }
+    pub(crate) async fn voice_generation_is(
+        &self,
+        raw: &str,
+        generation: Option<Uuid>,
+    ) -> Result<bool, DbError> {
+        let current: Option<Uuid> = sqlx::query_scalar(
+            "SELECT generation FROM social.community_voice_notifications WHERE raw_community_id=$1",
+        )
+        .bind(raw)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(current == generation)
+    }
+}
+
+impl Db {
+    pub(crate) async fn store_social_event_payload(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<Uuid, DbError> {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.event_payloads (id,payload,expires_at) VALUES ($1,$2,timezone('UTC',now())+interval '24 hours')")
+            .bind(id).bind(payload).execute(&self.pool).await?;
+        Ok(id)
+    }
+    pub(crate) async fn social_event_payload(&self, id: Uuid) -> Result<Option<Vec<u8>>, DbError> {
+        Ok(sqlx::query_scalar("SELECT payload FROM social.event_payloads WHERE id=$1 AND expires_at>timezone('UTC',now())")
+            .bind(id).fetch_optional(&self.pool).await?)
+    }
+    pub(crate) async fn expire_social_event_payloads(&self) -> Result<u64, DbError> {
+        Ok(sqlx::query("DELETE FROM social.event_payloads WHERE id IN (SELECT id FROM social.event_payloads WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at,id LIMIT 64 FOR UPDATE SKIP LOCKED)")
+            .execute(&self.pool).await?.rows_affected())
+    }
 }

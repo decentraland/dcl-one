@@ -23,7 +23,8 @@ fn fields_parse_leniently_and_the_first_occurrence_wins() {
         fields_of("fields=POINTERS,%20metadata,bogus"),
         Some(vec![Pointers, Metadata])
     );
-    assert_eq!(fields_of("fields="), Some(vec![]));
+    // CR-9: an empty `fields` is no mask, as upstream's `if (fields)`.
+    assert_eq!(fields_of("fields="), None);
     assert_eq!(fields_of("fields=bogus"), Some(vec![]));
     assert_eq!(
         fields_of("fields=pointers&fields=content"),
@@ -206,12 +207,12 @@ async fn post(node: &TestNode, uri: &str, body: &Value) -> (StatusCode, Option<S
 }
 
 fn masked_bytes(full: &[EntityDoc], fields: &[EntityField]) -> Vec<u8> {
-    let masked: Vec<Value> = full
+    let masked: Vec<_> = full
         .iter()
         .filter_map(EntityDoc::to_value)
         .map(|e| mask_entity(&e, Some(fields)))
         .collect();
-    serde_json::to_vec(&Value::Array(masked)).unwrap()
+    serde_json::to_vec(&masked).unwrap()
 }
 
 const FIELD_QUERIES: &[&str] = &[
@@ -221,7 +222,6 @@ const FIELD_QUERIES: &[&str] = &[
     "fields=content",
     "fields=content,pointers",
     "fields=CONTENT,pointers,metadata",
-    "fields=",
     "fields=bogus",
     "fields=pointers&fields=content",
 ];
@@ -252,6 +252,7 @@ async fn post_without_fields_is_unchanged_and_with_fields_equals_the_full_docume
         "/content/entities/active",
         "/content/entities/active?",
         "/content/entities/active?unrelated=1&field=pointers",
+        "/content/entities/active?fields=",
     ] {
         let (status, content_type, bytes) = post(&node, uri, &body).await;
         assert_eq!(status, StatusCode::OK, "{uri}");

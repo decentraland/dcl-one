@@ -537,7 +537,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "a replayed nonce: {body}");
-        assert!(body["message"].as_str().unwrap().starts_with("replay:"));
+        assert!(body["error"].as_str().unwrap().starts_with("replay:"));
 
         let vote = sign(
             &key,
@@ -576,7 +576,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            (status, body["message"].clone()),
+            (status, body["error"].clone()),
             (
                 StatusCode::BAD_REQUEST,
                 json!("domain mismatch: expected DecentralandPlaces")
@@ -620,7 +620,7 @@ mod tests {
         .await;
         assert_eq!(
             (status, body["data"]["place_id"].clone()),
-            (StatusCode::OK, json!(place)),
+            (StatusCode::CREATED, json!(place)),
             "{body}"
         );
 
@@ -652,7 +652,7 @@ mod tests {
                 name: "MVMF".into(),
                 description: None,
                 image: None,
-                theme: Some("pride".into()),
+                theme: Some("pride_2023".into()),
                 background: vec!["#fff".into()],
                 active_since: now(),
                 active_until: now() + 86_400,
@@ -682,7 +682,7 @@ mod tests {
                 name: "MVMF".into(),
                 description: None,
                 image: None,
-                theme: Some("pride".into()),
+                theme: Some("pride_2023".into()),
                 background: vec!["#fff".into()],
                 active_since: now(),
                 active_until: now() + 86_400,
@@ -698,27 +698,29 @@ mod tests {
             Some(serde_json::to_value(&schedule).unwrap()),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         assert_eq!(
             body["data"]["id"],
             json!(schedule_id(&wallet, "MVMF", &schedule.nonce))
         );
-        let (status, _) = call(
+        // Plain schedule bodies use the legacy signed-fetch path, which
+        // authenticates before parsing authoring fields.
+        let (status, body) = call(
             &app,
             "POST",
             "/api/schedules",
             Some(json!({ "name": "unsigned" })),
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        let (status, _) = call(
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        let (status, body) = call(
             &app,
             "POST",
             "/api/schedules",
-            Some(json!({"domain": {}, "message": {}, "signature": "0x"})),
+            Some(json!({ "domain": {}, "message": {}, "signature": "invalid" })),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
         let mine = sign(
             &key,
@@ -742,7 +744,7 @@ mod tests {
             Some(serde_json::to_value(&mine).unwrap()),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         assert_eq!(
             (
                 body["data"]["email"].clone(),
@@ -830,7 +832,7 @@ mod tests {
                 Some(serde_json::to_value(request).unwrap()),
             )
             .await;
-            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(status, StatusCode::CREATED, "{body}");
             assert_eq!(body["data"]["email_verified"], expected, "{body}");
         }
     }
@@ -870,7 +872,7 @@ mod tests {
                     name: "Gates".into(),
                     description: None,
                     image: None,
-                    theme: Some("pride".into()),
+                    theme: Some("pride_2023".into()),
                     background: vec!["#fff".into()],
                     active_since: now(),
                     active_until: now() + 86_400,
@@ -910,7 +912,7 @@ mod tests {
             let (status, body) = call(&data_only, method, path, Some(body)).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {body}");
             assert!(
-                body["message"]
+                body["error"]
                     .as_str()
                     .unwrap()
                     .contains("OPS_WRITES_ENABLED"),
@@ -924,13 +926,13 @@ mod tests {
             Some(settings_of(&wallet)),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
 
         let ops_only = app(false, true);
         let (status, body) = call(&ops_only, "POST", "/api/schedules", Some(schedule())).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         let (status, body) = call(&ops_only, "PATCH", &other_path, Some(settings_of(other))).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         let (status, body) = call(
             &ops_only,
             "PATCH",
@@ -940,7 +942,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
         assert!(
-            body["message"]
+            body["error"]
                 .as_str()
                 .unwrap()
                 .contains("DATA_WRITES_ENABLED"),

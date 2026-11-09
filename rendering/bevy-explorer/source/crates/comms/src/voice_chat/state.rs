@@ -161,19 +161,52 @@ impl Participant {
 /// A procedure the engine must run against the social service.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rpc {
-    StartPrivate { callee: Address },
-    AcceptPrivate { call_id: String },
-    RejectPrivate { call_id: String },
-    EndPrivate { call_id: String },
-    StartCommunity { community_id: String },
-    JoinCommunity { community_id: String },
-    EndCommunity { community_id: String },
-    RequestToSpeak { community_id: String, raise: bool },
-    PromoteSpeaker { community_id: String, address: Address },
-    DemoteSpeaker { community_id: String, address: Address },
-    KickPlayer { community_id: String, address: Address },
-    RejectSpeakRequest { community_id: String, address: Address },
-    MuteSpeaker { community_id: String, address: Address, muted: bool },
+    StartPrivate {
+        callee: Address,
+    },
+    AcceptPrivate {
+        call_id: String,
+    },
+    RejectPrivate {
+        call_id: String,
+    },
+    EndPrivate {
+        call_id: String,
+    },
+    StartCommunity {
+        community_id: String,
+    },
+    JoinCommunity {
+        community_id: String,
+    },
+    EndCommunity {
+        community_id: String,
+    },
+    RequestToSpeak {
+        community_id: String,
+        raise: bool,
+    },
+    PromoteSpeaker {
+        community_id: String,
+        address: Address,
+    },
+    DemoteSpeaker {
+        community_id: String,
+        address: Address,
+    },
+    KickPlayer {
+        community_id: String,
+        address: Address,
+    },
+    RejectSpeakRequest {
+        community_id: String,
+        address: Address,
+    },
+    MuteSpeaker {
+        community_id: String,
+        address: Address,
+        muted: bool,
+    },
 }
 
 /// Unity's call sounds (`PrivateVoiceChatView`, `CommunityVoiceChatInCallView`).
@@ -246,11 +279,23 @@ pub enum Input {
     RoomConnected,
     /// The room dropped; `terminal` when it will not come back (kicked, deleted, duplicate
     /// identity, …) or the reconnection budget is spent.
-    RoomDisconnected { terminal: bool, reason: String },
-    ParticipantJoined { address: Address, metadata: Metadata },
+    RoomDisconnected {
+        terminal: bool,
+        reason: String,
+    },
+    ParticipantJoined {
+        address: Address,
+        metadata: Metadata,
+    },
     ParticipantLeft(Address),
-    ParticipantMetadata { address: Address, metadata: Metadata },
-    Speaking { address: Address, active: bool },
+    ParticipantMetadata {
+        address: Address,
+        metadata: Metadata,
+    },
+    Speaking {
+        address: Address,
+        active: bool,
+    },
     /// The call microphone publishes (or stopped); mirrors the mic plugin.
     CallMicChanged(bool),
 }
@@ -566,7 +611,9 @@ impl CallState {
                 let participant = self.participants.entry(address).or_default();
                 let was_requesting = participant.is_requesting_to_speak;
                 participant.apply(&metadata);
-                if !was_requesting && metadata.is_requesting_to_speak && self.local_role.is_moderator()
+                if !was_requesting
+                    && metadata.is_requesting_to_speak
+                    && self.local_role.is_moderator()
                 {
                     effects.push(Effect::Sound(Sound::RaiseHand));
                 }
@@ -1322,7 +1369,13 @@ mod tests {
         assert!(md.is_speaker && md.is_requesting_to_speak && md.has_claimed_name);
         assert_eq!(md.name, "Foo");
         let md = Metadata::parse(r#"{"role":"none"}"#);
-        assert_eq!(md, Metadata { role: "none".to_owned(), ..Default::default() });
+        assert_eq!(
+            md,
+            Metadata {
+                role: "none".to_owned(),
+                ..Default::default()
+            }
+        );
         assert_eq!(Metadata::parse("not json"), Metadata::default());
         assert_eq!(Metadata::parse(""), Metadata::default());
     }

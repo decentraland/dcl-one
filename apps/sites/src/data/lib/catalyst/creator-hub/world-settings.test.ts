@@ -18,6 +18,12 @@ describe("live World settings", () => {
     expect(value).toMatchObject({ title: "My World", categories: ["art"], thumbnailUrl: "https://worlds.test/contents/image-hash", skyboxTime: null, showInPlaces: true });
   });
 
+  it("reads unset fields the server leaves out", async () => {
+    vi.mocked(getJSON).mockResolvedValue({ skybox_time: null, single_player: false, show_in_places: true, access_type: "unrestricted", settings_version: 0 });
+    const value = await loadWorldSettings("mock.dcl.eth", { base: "https://worlds.test" });
+    expect(value).toMatchObject({ title: "", description: "", categories: [], spawnCoordinates: "0,0", thumbnailUrl: null });
+  });
+
   it("signs multipart changes and uses the stored response rather than optimistic values", async () => {
     vi.mocked(signedFetch).mockResolvedValue(Response.json({ settings: { ...wire, title: "Stored title", categories: [], single_player: true } }));
     const thumbnail = new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" });
@@ -36,8 +42,10 @@ describe("live World settings", () => {
   });
 
   it("preserves server authorization and validation errors", async () => {
-    vi.mocked(signedFetch).mockResolvedValue(Response.json({ message: "Not the owner" }, { status: 403 }));
-    await expect(saveWorldSettings("mock.dcl.eth", { title: "My World" }, { identity })).rejects.toThrow("Not the owner");
+    vi.mocked(signedFetch).mockResolvedValue(Response.json({ error: "Unauthorized. You do not have permission to update settings for this world." }, { status: 403 }));
+    await expect(saveWorldSettings("mock.dcl.eth", { title: "My World" }, { identity })).rejects.toThrow("You do not have permission");
+    vi.mocked(signedFetch).mockResolvedValue(Response.json({ error: "Invalid title: ab. Expected between 3 and 100 characters." }, { status: 400 }));
+    await expect(saveWorldSettings("mock.dcl.eth", { title: "My World" }, { identity })).rejects.toThrow("Invalid title");
   });
 
   it.each([{ title: "" }, { description: "no" }, { spawnCoordinates: "0," }, { spawnCoordinates: "151,0" }, { skyboxTime: NaN }, { skyboxTime: 86400 }])("rejects invalid form data before requesting a save: %j", (changes) => {

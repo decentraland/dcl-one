@@ -5,9 +5,9 @@
 //! assignments do not cross it: they are calls inside the process.
 //!
 //! Every consumer sees only "the callback fires or it does not". Connection state, reconnection
-//! and backoff live in `broker` and nowhere else, so nothing downstream ever branches on the link
-//! being up. A publish reports its outcome as a value rather than an error, because "there was no
-//! connection to hand this to" is a routine state of a fire-and-forget feed, not a fault.
+//! and backoff live in `broker`. Social gates its initial socket admission on the existing
+//! subscription readiness fence; after that, live delivery remains transient. A publish reports
+//! its outcome as a value rather than an error, because "there was no connection to hand this to" is a routine state of a fire-and-forget feed, not a fault.
 //!
 //! Handlers are invoked from the subscription's own task: one that panics is contained so the
 //! remaining subjects keep delivering, mirroring upstream's never-throws contract.

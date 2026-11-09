@@ -3,8 +3,9 @@
 The Decentraland protocol: the `.proto` contract between scenes, the SDK, the explorers and
 the services. `proto/` is the **only** `.proto` source in this repository
 (`tooling/proto-source-check.py` fails the build on another copy). The Explorer
-(`rendering/bevy-explorer/source/crates/dcl_component/build.rs`) compiles from it through
-`DCL_ONE_ROOT`; the SDK and the backend services follow in their own changes.
+(`rendering/bevy-explorer/source/crates/dcl_component/build.rs`), the comms and social
+services and the scene crates compile from it through `DCL_ONE_ROOT`; the SDK
+(`library/js-sdk-toolchain`) links it as `@dcl/protocol` (`file:../protocol`).
 
 The tree was imported from [decentraland/protocol](https://github.com/decentraland/protocol)
 `main` at `70f2654` with `experimental-bevy` (`329ba0e`) merged in and the fields the Explorer's
@@ -12,7 +13,9 @@ own copy had added beyond that branch (its `feat/bevy-protocol-reconciliation` p
 its `.github`, `.devcontainer` and agent files were left behind. The Rust comms server
 (`services/catalyst/comms`) uses the legacy Pulse player/listener handshakes and Archipelago
 signed challenges. Application-relay message types support a dormant internal implementation;
-public admission cannot negotiate that capability. The package is marked
+public admission cannot negotiate that capability. `WsPeerUpdate.recipients` (rfc5) is the
+scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update-recipients`
+(decentraland/protocol #505). The package is marked
 `private` until `@dcl/protocol` publishes from here; until then that repository publishes it.
 
 Checks: `make install` (dependencies and the `google/` well-known types), `make buf-lint`,

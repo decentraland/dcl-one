@@ -223,35 +223,53 @@ pub struct CommunityVoiceUpdate {
 pub enum VoiceChatAction {
     /// Ring a user (opens a private call).
     #[serde(rename_all = "camelCase")]
-    StartPrivateCall { address: String },
+    StartPrivateCall {
+        address: String,
+    },
     AcceptCall,
     RejectCall,
     /// Hang up a private call, at any stage.
     EndCall,
     /// Open a community's stream (owner or moderator).
     #[serde(rename_all = "camelCase")]
-    StartCommunityCall { community_id: String },
+    StartCommunityCall {
+        community_id: String,
+    },
     #[serde(rename_all = "camelCase")]
-    JoinCommunityCall { community_id: String },
+    JoinCommunityCall {
+        community_id: String,
+    },
     /// Leave the community stream (no server call).
     LeaveCall,
     /// Close the community's stream for everyone (owner or moderator).
     EndCommunityCall,
     /// Raise (`true`) or lower the hand in a community stream.
     #[serde(rename_all = "camelCase")]
-    RequestToSpeak { raise: bool },
+    RequestToSpeak {
+        raise: bool,
+    },
     #[serde(rename_all = "camelCase")]
-    PromoteSpeaker { address: String },
+    PromoteSpeaker {
+        address: String,
+    },
     /// Demote a speaker; the local user's own address leaves the stage.
     #[serde(rename_all = "camelCase")]
-    DemoteSpeaker { address: String },
+    DemoteSpeaker {
+        address: String,
+    },
     #[serde(rename_all = "camelCase")]
-    KickPlayer { address: String },
+    KickPlayer {
+        address: String,
+    },
     #[serde(rename_all = "camelCase")]
-    RejectSpeakRequest { address: String },
+    RejectSpeakRequest {
+        address: String,
+    },
     /// Publish or stop publishing the call microphone.
     #[serde(rename_all = "camelCase")]
-    SetMic { enabled: bool },
+    SetMic {
+        enabled: bool,
+    },
     /// Clear a busy / error status.
     DismissError,
 }
@@ -511,6 +529,20 @@ pub struct DmReactionData {
     pub from: Vec<String>,
 }
 
+/// A community member came online or went offline (the social service's
+/// `SubscribeToCommunityMemberConnectivityUpdates`; `away` is never relayed). The local user's own
+/// updates tell which communities they are in.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct CommunityMemberConnectivityData {
+    pub community_id: String,
+    pub address: String,
+    /// "online" or "offline"
+    pub status: String,
+}
+
 /// Whether the local user can DM `address`, and why not; emitted for the watched recipient.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -520,7 +552,8 @@ pub struct DmUserStateData {
     pub address: String,
     /// "notConnected" (the local user is not in the private chat room), "connected",
     /// "blockedByOwnUser", "privateMessagesBlockedByOwnUser", "privateMessagesBlocked",
-    /// "disconnected" or "otherClient"
+    /// "disconnected" or "otherClient"; for a community channel (`community:<id>`),
+    /// "notConnected", "noRouter" (no message router in the room) or "connected"
     pub state: String,
     /// In the private chat room and not blocked by the local user.
     pub online: bool,

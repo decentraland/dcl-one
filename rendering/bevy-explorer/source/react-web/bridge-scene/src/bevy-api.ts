@@ -11,6 +11,7 @@ import type {
   BlockingStatusData,
   ChatMessage,
   ChatReactionData,
+  CommunityMemberConnectivityData,
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
@@ -66,8 +67,14 @@ export type SocialApi = {
   unblockUser: (address: string) => Promise<void>
   /** One stream per address; `close()` ends it. */
   getDmUserStateStream: (address: string) => AsyncIterable<DmUserStateData> & { close: () => void }
+  /** The stored lines of a conversation: a partner's wallet or `community:<id>`. */
   getDmHistory: (address: string) => Promise<DmHistoryEntryData[]>
   deleteDmHistory: (address: string) => void
+  /** Community members coming online or going offline (never away); the local user's own
+   *  updates say which communities they are in. */
+  getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
+  /** The community channels the local user listens to, as community ids; replaces the set. */
+  setCommunityChannels: (ids: string[]) => void
 }
 
 /** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
@@ -204,6 +211,9 @@ export type BevyApiInterface = {
    *  engine has concluded the address can't be resolved. */
   getUserProfile: (address: string) => Promise<SerializedProfile>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
+  /** Each service's base url by its web param, as the engine resolves it: the service's
+   *  override, else its composition from the base domain. */
+  getServiceUrls: () => Promise<Record<string, string>>
   getRealmProvider: () => Promise<string>
   getPreviousLogin: () => Promise<{ userId: string | null }>
   loginPrevious: () => Promise<{ success: boolean; error: string }>

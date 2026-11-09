@@ -44,6 +44,9 @@ use dcl_component::{
 use system_bridge::{ProfileChangedEvent, SystemApi};
 use wallet::Wallet;
 
+use bevy_console::ConsoleCommand;
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
+
 pub struct UserProfilePlugin;
 
 impl Plugin for UserProfilePlugin {
@@ -67,6 +70,23 @@ impl Plugin for UserProfilePlugin {
             );
         }
 
+        app.add_console_command::<ProfileRequestsCommand, _>(profile_requests)
+            .add_debug_section(DebugSection {
+                title: "Entity requests / profiles",
+                query: "/profile_requests",
+                fields: &[
+                    ("Registry POSTs", "posts"),
+                    ("Single-profile POSTs", "single"),
+                    ("Aggregated POSTs", "aggregated"),
+                    ("Last batch size", "lastBatch"),
+                    ("Mean batch size", "meanBatch"),
+                    ("Registry batches in flight", "inFlight"),
+                    ("Catalyst fallbacks in flight", "fallbacks"),
+                    ("Unresolved cached profiles", "unresolved"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
         app.insert_resource(CurrentUserProfile::default());
         app.init_resource::<ProfileCache>()
             .init_resource::<ProfileMetaCache>()
@@ -224,8 +244,34 @@ type RegistryBatch = Task<Vec<(Address, Result<Option<UserProfile>, anyhow::Erro
 #[derive(Resource, Default)]
 pub struct ProfileCache {
     entries: HashMap<Address, ProfileEntry>,
+    requests: ProfileRequestCounts,
     registry_batches: Vec<RegistryBatch>,
     catalyst_fetches: HashMap<Address, CatalystFetch>,
+}
+
+#[derive(Default)]
+struct ProfileRequestCounts {
+    single: u64,
+    aggregated: u64,
+    addresses: u64,
+    last_batch: usize,
+}
+
+/// Read profile registry batching and outstanding fetches.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/profile_requests")]
+struct ProfileRequestsCommand;
+
+fn profile_requests(mut input: ConsoleCommand<ProfileRequestsCommand>, cache: Res<ProfileCache>) {
+    if let Some(Ok(_)) = input.take() {
+        let counts = &cache.requests;
+        let posts = counts.single + counts.aggregated;
+        input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
+            "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
+            "unavailable": {"meanBatch": "No profile registry requests yet"},
+            "inFlight": cache.registry_batches.len(), "fallbacks": cache.catalyst_fetches.len(),
+            "unresolved": cache.entries.values().filter(|entry| entry.data.is_none()).count()}).to_string());
+    }
 }
 
 impl ProfileCache {
@@ -301,8 +347,8 @@ impl ProfileManager<'_, '_> {
                 if snapshots.face256.is_empty() {
                     None
                 } else {
-                    // let url = format!("{}{}", profile.base_url, snapshots.face256);
-                    let ipfs_path = IpfsPath::new_from_url(&snapshots.face256, "png");
+                    let url = common::base_domain::profile_image(&snapshots.face256);
+                    let ipfs_path = IpfsPath::new_from_url(&url, "png");
                     Some(PathBuf::from(&ipfs_path))
                 }
             })
@@ -540,6 +586,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         entries,
         registry_batches,
         catalyst_fetches,
+        requests,
     } = &mut **cache;
     let own_endpoint = ipfs.ipfs().lambda_endpoint();
 
@@ -648,6 +695,13 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
     });
     for (url, addresses) in wants {
         for chunk in addresses.chunks(PROFILE_REQUEST_BATCH) {
+            requests.last_batch = chunk.len();
+            requests.addresses += chunk.len() as u64;
+            if chunk.len() == 1 {
+                requests.single += 1;
+            } else {
+                requests.aggregated += 1;
+            }
             registry_batches.push(IoTaskPool::get().spawn_compat(fetch_registry_profiles(
                 url.clone(),
                 chunk.to_vec(),
@@ -1083,10 +1137,18 @@ fn registry_url(endpoint: Option<&str>) -> String {
             return common::base_domain::url(registry, "/profiles");
         }
         if host.rsplit('.').next() == Some("zone") {
-            return REGISTRY_ZONE.to_owned();
+            return if base == "decentraland.zone" {
+                common::base_domain::url(registry, "/profiles")
+            } else {
+                REGISTRY_ZONE.to_owned()
+            };
         }
     }
-    REGISTRY_ORG.to_owned()
+    if common::base_domain::get() == "decentraland.org" {
+        common::base_domain::url(registry, "/profiles")
+    } else {
+        REGISTRY_ORG.to_owned()
+    }
 }
 
 /// One registry POST for a chunk of ids, reported per item: Ok(Some) found, Ok(None)
@@ -1106,18 +1168,18 @@ async fn fetch_registry_profiles(
     debug!("requesting {} profiles from {registry_url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
-        let response = ipfs
-            .client()
-            .post(&registry_url)
-            .timeout(std::time::Duration::from_secs(10))
-            .body(serde_json::json!({ "ids": ids }).to_string())
-            .header("content-type", "application/json")
-            .send()
-            .await?;
+        let response = platform::TracedJsonResponse::send(
+            ipfs.client()
+                .post(&registry_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .body(serde_json::json!({ "ids": ids }).to_string())
+                .header("content-type", "application/json"),
+        )
+        .await?;
         if response.status() != StatusCode::OK {
-            anyhow::bail!("bad response: {}", response.status());
+            anyhow::bail!("bad response: {}", response.discard());
         }
-        Ok(response.json::<Vec<LambdaProfiles>>().await?)
+        response.json::<Vec<LambdaProfiles>>().await
     }
     .await;
 

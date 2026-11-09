@@ -13,6 +13,11 @@ export type ShopWalletHost = {
   onConnectWallet?(): void;
   onSwitchAccount?(): void;
   resolving?: boolean;
+  /**
+   * Whether a web3 `walletKind` may use the Marketplace (market/access.tsx): it is how the account signed in (recorded
+   * at sign-in, not guessed from what this browser has installed) and a wallet here can sign as it. Unset means it may.
+   */
+  web3Usable?: boolean;
 };
 
 export function isExpiredIdentity(identity: AuthIdentity, now: number = Date.now()): boolean {

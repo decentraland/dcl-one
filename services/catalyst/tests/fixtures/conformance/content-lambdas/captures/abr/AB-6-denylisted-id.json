@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/entities/status/bafkreid44mgpv2yb5uhrk5f2f7disnocovyfoc6tlxv5q4rzhmnisvahba",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "214"
+    },
+    "body": {
+      "entityId": "bafkreid44mgpv2yb5uhrk5f2f7disnocovyfoc6tlxv5q4rzhmnisvahba",
+      "catalyst": "complete",
+      "complete": true,
+      "assetBundles": {
+        "mac": "complete",
+        "windows": "complete"
+      },
+      "lods": {
+        "mac": "complete",
+        "windows": "complete"
+      }
+    }
+  },
+  "note": "The first entry of AB-9-denylist.json: status answers for a denylisted entity."
+}

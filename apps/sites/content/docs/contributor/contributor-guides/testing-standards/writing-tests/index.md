@@ -228,7 +228,7 @@ The description of the expectations written in the **it**s MUST be as descriptiv
 
 > [!CAUTION]
 > **The developer MUST NOT use phrases like:**
-> 
+>
 > * "should work as expected" ⇒ What is to work as expected?
 > * "should return the correct value" ⇒ What is the correct value?
 > * "should resolve/return/work correctly" ⇒ How does something work correctly?

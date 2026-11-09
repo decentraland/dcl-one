@@ -4,11 +4,11 @@
 //         body snapshots, name, links, about-me) and ~system/Players getPlayerData (display
 //         identity for a list)
 //       + catalyst lambda  GET /lambdas/users/:id/names  (owned NFT names)
-//       + badges service   GET badges.decentraland.org/users/:id/badges
-//       + camera-reel       GET camera-reel-service.decentraland.org/api/users/:id/images
+//       + badges service   GET <badges>/users/:id/badges
+//       + camera-reel       GET <cameraReel>/api/users/:id/images
 import { getPlayer } from '@dcl/sdk/players'
 import { getPlayerData } from '~system/Players'
-import { catalystBase, getJson } from '../http'
+import { catalystBase, getJson, serviceBase } from '../http'
 import type { UserData } from '~system/Players'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { equippedSlots, resolveEquippedEmotes } from './emotes'
@@ -232,7 +232,9 @@ const tierCache = new Map<string, Promise<ApiTier[] | undefined>>()
 async function fetchTiers(badgeId: string): Promise<ApiTier[] | undefined> {
   let tiers = tierCache.get(badgeId)
   if (tiers == null) {
-    tiers = getJson<TiersResponse>(`https://badges.decentraland.org/badges/${badgeId}/tiers`).then((r) => r?.data?.tiers)
+    tiers = serviceBase('badges')
+      .then(async (badges) => await getJson<TiersResponse>(`${badges}/badges/${badgeId}/tiers`))
+      .then((r) => r?.data?.tiers)
     tiers.catch(() => tierCache.delete(badgeId))
     tierCache.set(badgeId, tiers)
   }
@@ -290,9 +292,9 @@ type BadgesFetch = {
 // `includeLocked` (your own passport) adds the badges not earned yet; the service only lists them
 // on request, and unity-explorer only asks for its own user.
 async function fetchBadges(address: string, includeLocked: boolean): Promise<BadgesFetch | undefined> {
-  const r = await getJson<BadgesResponse>(`https://badges.decentraland.org/users/${address}/badges?includeNotAchieved=${includeLocked}`).catch(
-    () => undefined
-  )
+  const r = await serviceBase('badges')
+    .then(async (badges) => await getJson<BadgesResponse>(`${badges}/users/${address}/badges?includeNotAchieved=${includeLocked}`))
+    .catch(() => undefined)
   const achieved = r?.data?.achieved
   if (achieved == null) return undefined
   // Newest first: the service's order is its badge catalogue, which means nothing to a reader.
@@ -310,9 +312,9 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
 // --- camera-reel photos --------------------------------------------------------
 type ReelResponse = { images?: Array<{ url?: string; thumbnailUrl?: string }> }
 async function fetchPhotos(address: string): Promise<string[] | undefined> {
-  const r = await getJson<ReelResponse>(
-    `https://camera-reel-service.decentraland.org/api/users/${address}/images?limit=12&offset=0&compact=true`
-  ).catch(() => undefined)
+  const r = await serviceBase('cameraReel')
+    .then(async (reel) => await getJson<ReelResponse>(`${reel}/api/users/${address}/images?limit=12&offset=0&compact=true`))
+    .catch(() => undefined)
   const imgs = r?.images
   if (imgs == null) return undefined
   return imgs.map((i) => i.thumbnailUrl ?? i.url).filter((u): u is string => typeof u === 'string')
@@ -396,7 +398,8 @@ export function registerProfile(ctx: Ctx): void {
     }
     const extras = toProfileExtras(msg)
     if (Object.keys(extras).length > 0) data.profileExtras = extras
-    if (data.base == null && data.profileExtras == null) {
+    if (msg.nameColor !== undefined) data.nameColor = { ...msg.nameColor, clear: false }
+    if (data.base == null && data.profileExtras == null && data.nameColor == null) {
       ctx.send({ kind: 'profileSaved', ok: true })
       return
     }

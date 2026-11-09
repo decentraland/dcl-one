@@ -11,6 +11,8 @@ on:
       - library/vendor/rusty_enet/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
+      - tooling/bevy-mtimes.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
   workflow_dispatch:
@@ -60,7 +62,7 @@ jobs:
           BASE_SHA: ${{ github.event.before }}
         run: python3 tooling/bevy-ci.py scenes-plan
   hardcore-test:
-    name: Test Scenes (${{ inputs.suite || 'full' }})
+    name: Test Scenes
     needs:
       - changes
     if: ${{ needs.changes.outputs.scenes == 'true' && github.actor != 'dependabot[bot]' }}
@@ -82,11 +84,13 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           # A graphical assertion must not force the next run to rebuild every dependency.
           cache-on-failure: true
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
@@ -97,7 +101,7 @@ jobs:
             libssl-dev libx11-dev libgl1-mesa-dev libxext-dev pulseaudio libasound2-plugins alsa-utils \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Export CEF distribution
         run: |
           cargo install export-cef-dir --version "139.8.0+139.0.40"
@@ -109,10 +113,12 @@ jobs:
           sudo add-apt-repository ppa:kisak/kisak-mesa -y
           sudo apt-get update
           sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
-      - name: Build the scene runtime sidecar
-        run: cargo build --release --locked --timings -p dcl_deno_ipc
-      - name: Build the graphical test engine
-        run: cargo build --release --locked --timings --bin decentra-bevy
+      - name: Build the graphical test engine and scene runtime sidecar
+        # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
+        # Desktop and Headless packaging build their sidecars in separate invocations.
+        run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Configure virtual audio for graphical tests
         run: |
           pulseaudio --start --exit-idle-time=-1
@@ -127,7 +133,7 @@ jobs:
       - name: Prepare screenshot output directory
         # References are embedded; the upstream comparator writes captures relative to cwd.
         run: mkdir -p assets/images/screenshots
-      - name: Test Scenes
+      - name: Test Scenes (${{ inputs.suite || 'full' }})
         id: scenes
         # Leave time to preserve diagnostics if scene execution stalls.
         timeout-minutes: 20

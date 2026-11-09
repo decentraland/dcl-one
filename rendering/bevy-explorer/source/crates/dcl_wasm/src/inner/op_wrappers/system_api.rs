@@ -175,6 +175,11 @@ pub async fn op_get_home_scene(state: &WorkerContext) -> Result<JsValue, WasmErr
 }
 
 #[wasm_bindgen]
+pub async fn op_get_service_urls(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_service_urls(state.rc()).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_welcome(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_welcome(state.rc()).await)
 }
@@ -690,9 +695,7 @@ pub async fn op_read_community_voice_update_stream(
     state: &WorkerContext,
     rid: u32,
 ) -> Result<JsValue, WasmError> {
-    serde_result!(
-        dcl_js::system_api::op_read_community_voice_update_stream(state.rc(), rid).await
-    )
+    serde_result!(dcl_js::system_api::op_read_community_voice_update_stream(state.rc(), rid).await)
 }
 
 #[wasm_bindgen]
@@ -717,6 +720,24 @@ pub async fn op_get_dm_history(
 #[wasm_bindgen]
 pub fn op_delete_dm_history(state: &WorkerContext, address: String) {
     dcl_js::system_api::op_delete_dm_history(state.rc(), address)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_community_connectivity_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_community_connectivity_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_community_connectivity_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_community_connectivity_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_community_channels(state: &WorkerContext, ids: Vec<String>) {
+    dcl_js::system_api::op_set_community_channels(state.rc(), ids)
 }
 
 #[wasm_bindgen]

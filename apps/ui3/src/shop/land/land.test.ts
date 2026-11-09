@@ -14,7 +14,7 @@ import {
   landParcels,
   landSortsFor,
 } from "./api";
-import { landCategoryOf, landNetwork, LAND_NETWORKS } from "./contracts";
+import { landCategoryOf, landChainId, landNetwork, LAND_NETWORKS } from "./contracts";
 import { computeEstateFingerprint, isEstateListingAffectedByUpgrade, ESTATE_V2_FINGERPRINT_LISTING_CUTOFF } from "./estate";
 import { distanceText, estateProximity, parcelProximity, proximityIndex } from "./proximity";
 import { stubClient } from "./testkit";
@@ -131,6 +131,20 @@ describe("contracts and estates", () => {
     expect(landCategoryOf(LAND_NETWORKS[CHAIN.SEPOLIA]!.land)?.network.chainId).toBe(CHAIN.SEPOLIA);
     expect(landCategoryOf("0x0000000000000000000000000000000000000001")).toBeNull();
     expect(() => landNetwork(CHAIN.POLYGON)).toThrow(RangeError);
+  });
+
+  it("runs on the Shop's Ethereum network: Sepolia when it settles on Amoy, mainnet otherwise, the host's choice first", () => {
+    const w = window as unknown as { __SHOP_CHAIN__?: { settlementChainId?: number }; __SHOP_ETHEREUM_CHAIN_ID__?: number };
+    try {
+      expect(landChainId()).toBe(CHAIN.ETHEREUM);
+      w.__SHOP_CHAIN__ = { settlementChainId: CHAIN.AMOY };
+      expect(landChainId()).toBe(CHAIN.SEPOLIA);
+      w.__SHOP_ETHEREUM_CHAIN_ID__ = CHAIN.ETHEREUM;
+      expect(landChainId()).toBe(CHAIN.ETHEREUM);
+    } finally {
+      delete w.__SHOP_CHAIN__;
+      delete w.__SHOP_ETHEREUM_CHAIN_ID__;
+    }
   });
 
   it("computes getFingerprintV2 off-chain and flags only pre-upgrade listings on large estates", () => {

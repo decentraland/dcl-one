@@ -32,18 +32,9 @@ use {
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::global_crdt::{LocalAudioFrame, LocalAudioSource};
-use crate::{
-    livekit::{
-        participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
-        LivekitRuntimeRes,
-    },
-    private_chat::PrivateChatRoom,
-    voice_chat::{CallMic, VoiceRoom},
-};
-use bevy::ecs::relationship::Relationship;
 #[cfg(target_arch = "wasm32")]
 use crate::{
-    global_crdt::{ForeignAudioSource, ForeignPlayer},
+    global_crdt::{ForeignAudioSource, ForeignPlayer, NearbyPanning, VoicePan},
     livekit::{
         track::{Audio, LivekitTrack, Publishing, Subscribed},
         web::{
@@ -53,6 +44,18 @@ use crate::{
         },
     },
 };
+use crate::{
+    livekit::{
+        participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
+        LivekitRuntimeRes,
+    },
+    private_chat::PrivateChatRoom,
+    voice_chat::{CallMic, VoiceRoom},
+};
+use bevy::ecs::relationship::Relationship;
+
+#[path = "mic_debug.rs"]
+mod debug;
 
 pub struct MicPlugin;
 
@@ -61,6 +64,7 @@ impl Plugin for MicPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.init_non_send_resource::<MicStream>();
 
+        debug::register(app);
         app.init_state::<MicrophoneAvailability>();
         app.init_state::<MicrophonePermission>();
         app.init_state::<MicrophoneState>();
@@ -171,6 +175,13 @@ struct MicrophoneLocalTrack(LocalAudioTrack);
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default, Deref, DerefMut)]
 struct MicStream(Option<cpal::Stream>);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource)]
+struct CaptureFormat {
+    sample_rate: u32,
+    channels: u32,
+}
 
 fn add_ping_systems(world: &mut World) {
     // This stops the ping being played during startup
@@ -369,12 +380,17 @@ fn build_cpal_stream(
         debug!("Cpal stream built.");
         commands.set_state(MicrophoneState::Enabled);
         **mic_stream = Some(new_stream);
+        commands.insert_resource(CaptureFormat {
+            sample_rate,
+            channels: num_channels,
+        });
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream>) {
     **mic_stream = None;
+    commands.remove_resource::<CaptureFormat>();
     commands.set_state(MicrophoneState::Disabled);
 }
 
@@ -607,14 +623,17 @@ fn locate_foreign_streams(
         Option<&RenderLayers>,
         &ForeignAudioSource,
         &ForeignPlayer,
+        &mut VoicePan,
     )>,
     participants: Query<(&LivekitParticipant, &Publishing, &HostedBy)>,
     voice_rooms: Query<(), With<VoiceRoom>>,
     tracks: Query<&LivekitTrack, (With<Subscribed>, With<Audio>)>,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
+    panning_settings: Res<NearbyPanning>,
+    time: Res<Time>,
 ) {
-    for (emitter_transform, render_layers, source, player) in streams.iter_mut() {
+    for (emitter_transform, render_layers, source, player, mut voice_pan) in streams.iter_mut() {
         if source.current_transport.is_some() {
             let Some(publishing) = participants
                 .iter()
@@ -642,11 +661,11 @@ fn locate_foreign_streams(
                 continue;
             };
 
+            let (volume, panning) =
+                pan.volume_and_panning(emitter_transform.translation(), render_layers);
+            let volume = volume * settings.voice();
+            let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
             for livekit_track in tracks.iter_many(publishing) {
-                let (volume, panning) =
-                    pan.volume_and_panning(emitter_transform.translation(), render_layers);
-                let volume = volume * settings.voice();
-
                 if let Some(track) = livekit_track.track() {
                     track.pan_and_volume(panning, volume);
                 }

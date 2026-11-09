@@ -6,7 +6,8 @@
 // recreated in CSS), then name (ellipsized) + rarity tag below on the dark body. When the item
 // has a marketplace listing, hovering pops the card with an animated gradient border ring +
 // glow (Unity's hover frame) and extends it downward to reveal a SHOP button inside; base/
-// off-chain items (no listing) get neither. Distinct from WearableCard (the Backpack's
+// off-chain items (no listing) get neither. With `pinShop` the button sits inside the card at all
+// times instead, and hovering only frames and lifts it (the passport's Creations grid). Distinct from WearableCard (the Backpack's
 // clickable, equip-focused grid tile, which has no caption) — this one is purely for display.
 
 import { useState } from 'react'
@@ -24,12 +25,17 @@ export interface EquippedItemCardProps {
   price?: string
   /** Body-part / item-kind glyph shown in the top-left rarity-colored corner flap. */
   categoryIcon?: React.ReactNode
+  /** Keep the shop link inside the card at all times instead of revealing it below the card on
+   *  hover, so a hovered card never covers the row beneath (the passport's Creations grid, like
+   *  unity-explorer's creation tiles). */
+  pinShop?: boolean
 }
 
-export function EquippedItemCard({ thumbnail, name, rarity, shopUrl, shopLabel = 'Shop', price, categoryIcon }: EquippedItemCardProps): React.JSX.Element {
+export function EquippedItemCard({ thumbnail, name, rarity, shopUrl, shopLabel = 'Shop', price, categoryIcon, pinShop = false }: EquippedItemCardProps): React.JSX.Element {
   const [failed, setFailed] = useState(false)
+  const shopClass = shopUrl == null ? '' : pinShop ? styles.pinnedShop : styles.hasShop
   return (
-    <div className={`${styles.card} ${shopUrl != null ? styles.hasShop : ''}`.trim()} data-rarity={rarity ?? 'base'}>
+    <div className={`${styles.card} ${shopClass}`.trim()} data-rarity={rarity ?? 'base'}>
       <div className={styles.thumbWrap}>
         {thumbnail && !failed ? (
           <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />

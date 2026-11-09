@@ -15,12 +15,13 @@ use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync
 use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    CommunityVoiceUpdate, SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
+    SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -363,6 +364,20 @@ pub async fn op_get_home_scene(state: Rc<RefCell<impl State>>) -> Result<HomeSce
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::GetHomeScene(sx))
+        .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_service_urls(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetServiceUrls(sx))
         .unwrap();
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
@@ -1366,6 +1381,34 @@ pub fn op_delete_dm_history(state: Rc<RefCell<impl State>>, address: String) {
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::DeleteDmHistory(address))
+        .unwrap();
+}
+
+pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityConnectivityStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityMemberConnectivityData>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetCommunityChannels(ids))
         .unwrap();
 }
 

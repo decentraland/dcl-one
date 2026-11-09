@@ -1290,8 +1290,17 @@ fn load_active_entities(
                         *teleport_target = RealmInitialLocation::None;
                     }
                 }
+            } else if let Some(parcel) = current_realm.spawn_parcel {
+                // the world's manifest says where to land, as it does for unity-explorer
+                if let Ok((player_entity, _)) = player.single() {
+                    if let Ok(mut commands) = commands.get_entity(player_entity) {
+                        commands.try_insert(teleport_components(parcel));
+                        debug!("change to world with spawn parcel -> none ({parcel})");
+                        *teleport_target = RealmInitialLocation::None;
+                    }
+                }
             } else {
-                // we will take first given scene when it is resolved
+                // no manifest: we will take first given scene when it is resolved
                 debug!("set to base, with scenes -> pending");
                 *pending_teleport = true;
             }
@@ -1441,6 +1450,7 @@ fn load_active_entities(
 
         let retrieved_parcels = match task_result {
             Ok(res) => {
+                ipfas.ipfs().record_scene_batch(res.len());
                 *consecutive_fetch_fail_count = 0;
                 *fetch_count = (*fetch_count * 2).min(1000);
                 res

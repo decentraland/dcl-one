@@ -36,9 +36,11 @@ use comms::{
 };
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
-use scene_runner::{permissions::Permission, update_world::animation::Clips};
+use scene_runner::{
+    asset_preload::plugin::PreloadedGltf, permissions::Permission, update_world::animation::Clips,
+};
 
-use crate::{process_avatar, AvatarDefinition};
+use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
 
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
@@ -971,6 +973,9 @@ struct PlayParams<'w, 's> {
     sounds: Res<'w, Assets<bevy_kira_audio::AudioSource>>,
     emitters: Query<'w, 's, &'static mut AudioEmitter>,
     prop_details: Query<'w, 's, (Option<&'static Name>, &'static Transform, &'static ChildOf)>,
+    prop_meshes: Query<'w, 's, &'static Mesh3d>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
     cached_gltf_handles: Local<'s, HashSet<Handle<Gltf>>>,
     time: Res<'w, Time>,
@@ -986,10 +991,15 @@ fn resolve_playback<'a>(
     bodyshape: &str,
     emote_loader: &'a mut CollectibleManager<Emote>,
     gltfs: &mut Assets<Gltf>,
-    ipfas: &IpfsAssetServer,
-    cached_gltf_handles: &mut HashSet<Handle<Gltf>>,
-    anim_clips: &Assets<AnimationClip>,
+    params: &mut PlayParams,
 ) -> Result<(&'a Emote, Handle<AnimationClip>, f32), Hold> {
+    let PlayParams {
+        ipfas,
+        preloaded_gltfs,
+        cached_gltf_handles,
+        anim_clips,
+        ..
+    } = params;
     let urn = &playback.urn;
     if let Some(scene_emote) = urn.scene_emote() {
         debug!("got {scene_emote:?}");
@@ -1017,10 +1027,22 @@ fn resolve_playback<'a>(
         };
 
         if emote_loader.get_representation(urn, bodyshape).is_err() {
-            // load the gltf through the scene's modifier context so b64
-            // hashes (local preview / portable) resolve to the scene's
-            // origin rather than the realm content URL.
-            let handle = ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash);
+            // play the scene's preloaded copy (`AssetLoad`) if it has one. Otherwise load the
+            // gltf through the scene's modifier context so b64 hashes (local preview /
+            // portable) resolve to the scene's origin rather than the realm content URL.
+            // A by-hash load started before the preload showed up is dropped.
+            let preloaded = preloaded_gltfs
+                .iter()
+                .find(|p| p.scene_hash == scene_hash && p.content_hash == hash);
+            let handle = match preloaded {
+                Some(preloaded) => {
+                    let by_hash =
+                        IpfsAssetServer::scene_content_hash_path::<Gltf>(&scene_hash, &hash);
+                    cached_gltf_handles.retain(|h| h.path() != Some(&by_hash));
+                    preloaded.handle.clone()
+                }
+                None => ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash),
+            };
             let gltf = match gltfs.get_mut(handle.id()) {
                 Some(gltf) => {
                     cached_gltf_handles.remove(&handle);
@@ -1147,6 +1169,10 @@ fn ensure_prop(
     let fresh = !spawned.scene_initialized;
     if fresh {
         for spawned_ent in params.scene_spawner.iter_instance_entities(instance) {
+            // a scene's preloaded glb keeps its meshes cpu-side for GltfContainer to upload
+            if let Ok(mesh) = params.prop_meshes.get(spawned_ent) {
+                upload_cpu_mesh(&mut params.meshes, mesh);
+            }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
                 // hide stuff like unity
                 // what a mess
@@ -1414,6 +1440,31 @@ fn clip_node(
     Some(ix)
 }
 
+/// Retire the extras of a clip that stopped: its audio stops now; its prop stays up until the
+/// next clip's is visible (or that clip has none), to avoid a one-frame gap while it loads. An
+/// already-retiring prop goes first, so a rapid run of switches can't pile them up.
+fn retire_extras(
+    commands: &mut Commands,
+    scene_spawner: &mut SceneSpawner,
+    retiring_extras: &mut HashMap<Entity, (Entity, InstanceId)>,
+    avatar: Entity,
+    extras: SpawnedExtras,
+) {
+    if let Some((wrapper, scene)) = extras.scene {
+        if let Some((old_wrapper, old_scene)) = retiring_extras.insert(avatar, (wrapper, scene)) {
+            scene_spawner.despawn_instance(old_scene);
+            if let Ok(mut commands) = commands.get_entity(old_wrapper) {
+                commands.despawn();
+            }
+        }
+    }
+    if let Some((audio_ent, _)) = extras.audio.as_ref() {
+        if let Ok(mut commands) = commands.get_entity(*audio_ent) {
+            commands.despawn();
+        }
+    }
+}
+
 /// Why a slot didn't play this frame.
 enum Hold {
     /// Clip, prop or sound still loading.
@@ -1457,15 +1508,8 @@ fn play_slot(
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
 ) -> Result<Played, Hold> {
-    let (emote, clip, clip_duration) = resolve_playback(
-        playback,
-        bodyshape,
-        emote_loader,
-        gltfs,
-        &params.ipfas,
-        &mut params.cached_gltf_handles,
-        &params.anim_clips,
-    )?;
+    let (emote, clip, clip_duration) =
+        resolve_playback(playback, bodyshape, emote_loader, gltfs, params)?;
 
     // extract props and prop anim
     let (prop_fresh, prop_player_and_clip) = match ensure_prop(
@@ -1713,31 +1757,26 @@ fn play_current_emote(
             continue;
         };
 
-        // clean up old extras
+        // clean up old extras. Last frame's stand-in (below) waits aside until we know whether
+        // it plays again.
+        let mut stand_in_extras = None;
         if let Some(extras) = prev_spawned_extras.remove(&entity) {
-            if extras.urn != active_emote.urn {
-                // Defer despawning the old prop scene until its replacement is visible
-                // (or we learn the new clip has no prop) to avoid a one-frame gap while
-                // the new scene loads. Despawn any already-retiring prop first, so a
-                // rapid run of switches can't accumulate more than one.
-                if let Some((wrapper, scene)) = extras.scene {
-                    if let Some((old_wrapper, old_scene)) =
-                        retiring_extras.insert(entity, (wrapper, scene))
-                    {
-                        params.scene_spawner.despawn_instance(old_scene);
-                        if let Ok(mut commands) = commands.get_entity(old_wrapper) {
-                            commands.despawn();
-                        }
-                    }
-                }
-
-                if let Some((audio_ent, _)) = extras.audio.as_ref() {
-                    if let Ok(mut commands) = commands.get_entity(*audio_ent) {
-                        commands.despawn();
-                    }
-                }
-            } else {
+            if extras.urn == active_emote.urn {
                 spawned_extras.insert(entity, extras);
+            } else if active_emote
+                .fallback
+                .as_ref()
+                .is_some_and(|fb| fb.urn == extras.urn)
+            {
+                stand_in_extras = Some(extras);
+            } else {
+                retire_extras(
+                    &mut commands,
+                    &mut params.scene_spawner,
+                    &mut retiring_extras,
+                    entity,
+                    extras,
+                );
             }
         }
 
@@ -1771,19 +1810,68 @@ fn play_current_emote(
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
                         *active_emote = *fb;
+                        // last frame's stand-in is this fallback: it keeps its extras
+                        if let Some(extras) = stand_in_extras.take() {
+                            spawned_extras.insert(entity, extras);
+                        }
                         continue;
                     }
                     active_emote.finished = true;
-                    break None;
+                    break Ok(None);
                 }
                 Err(Hold::NoPlayer) => {
                     debug!("no player");
                     active_emote.finished = true;
-                    break None;
+                    break Ok(None);
                 }
-                Err(_) => break None,
-                Ok(played) => break Some(played),
+                Err(Hold::Loading) => break Err(Hold::Loading),
+                Err(_) => break Ok(None),
+                Ok(played) => break Ok(Some(played)),
             }
+        };
+        // While a scene's clip loads, play the velocity choice rather than gliding in the last
+        // pose. The scene's request stays active and starts once loaded; no feedback meanwhile.
+        // A clip already under way (its prop or sound loading) holds as before.
+        let stand_in = played.is_err()
+            && active_emote.fallback.is_some()
+            && !spawned_extras.contains_key(&entity);
+        if let Some(extras) = stand_in_extras {
+            if stand_in {
+                spawned_extras.insert(entity, extras);
+            } else {
+                retire_extras(
+                    &mut commands,
+                    &mut params.scene_spawner,
+                    &mut retiring_extras,
+                    entity,
+                    extras,
+                );
+            }
+        }
+        let played = match played {
+            Ok(played) => played,
+            Err(_) if !stand_in => None,
+            Err(_) => active_emote.fallback.as_deref_mut().and_then(|fb| {
+                play_slot(
+                    &mut commands,
+                    &mut params,
+                    &mut emote_loader,
+                    &mut gltfs,
+                    &mut players,
+                    &mut spawned_extras,
+                    entity,
+                    ent,
+                    bodyshape,
+                    &mut fb.playback,
+                    Slot::FullBody {
+                        transition_seconds: fb.transition_seconds,
+                    },
+                    fb.speed,
+                    &mut fb.pending_seek,
+                    fb.initial_audio_mark,
+                )
+                .ok()
+            }),
         };
         let Some(played) = played else {
             continue;
@@ -1802,7 +1890,7 @@ fn play_current_emote(
             }
         }
 
-        if maybe_primary.is_some() {
+        if maybe_primary.is_some() && !stand_in {
             let Played {
                 clip_duration,
                 elapsed,

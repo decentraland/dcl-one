@@ -1,11 +1,13 @@
 # The bevy fork
 
-bevy-explorer builds against [`robtfm/bevy`, branch `release-0.16-dcl`](https://github.com/robtfm/bevy/tree/release-0.16-dcl): upstream bevy 0.16.1 plus
-our changes. Bugfix-only forks of other crates exist too (see the workspace `Cargo.toml`); this
-page is only about bevy, because that is where behaviour differs from stock and where a reader
-who knows bevy will otherwise be wrong.
+bevy-explorer builds bevy from `rendering/bevy-explorer/bevy`: upstream bevy 0.16.1 plus our
+changes, vendored from [`robtfm/bevy`, branch `release-0.16-dcl`](https://github.com/robtfm/bevy/tree/release-0.16-dcl)
+at `dac1ac9` (102 commits on top of `v0.16.1`; see the
+[ADR](../../../../docs/adr/2026-11-05-explorer-vendored-bevy.md)). Bugfix-only forks of other
+crates exist too (see the workspace `Cargo.toml`); this page is only about bevy, because that is
+where behaviour differs from stock and where a reader who knows bevy will otherwise be wrong.
 
-If a change belongs in bevy, make it in the fork. Commits marked **throwaway** are 0.16
+If a change belongs in bevy, make it in the vendored tree. Changes marked **throwaway** are 0.16
 adaptations of work that is already upstream in a later bevy and are dropped, not ported,
 on any migration.
 
@@ -34,7 +36,10 @@ across workers:
 - `bevy_tasks`: the multi-threaded `TaskPool` on the web. Workers join through `run_worker`;
   `Task::split` separates handle from future. `TaskPool::spawn` keeps the single-threaded
   contract (static, non-`Send`, driven by the JS event loop). `AsyncComputeTaskPool::spawn`
-  requires `Send` on the web and runs on the async-compute workers.
+  requires `Send` on the web and runs on the async-compute workers. With WASM atomics,
+  `wasm-bindgen-futures` can re-poll a self-waking task inline. A CPU loop that awaits
+  `yield_now()` can therefore occupy the engine worker for the whole loop. Run CPU-heavy
+  work on an async-compute worker or in the scene worker that owns the input.
 - `bevy_ecs`: parallel iteration and the multi-threaded executor on the web under the feature.
   The render world's Extract and Render schedules stay single-threaded, since WebGPU objects
   are thread-bound.
@@ -150,15 +155,33 @@ across workers:
 - Fixes with no API surface: unicode asset paths, skin buffer growth, missing cascades panic,
   bad vertices for a frame on second mesh load, sparse index warning.
 
-## Working on the fork locally
+## Changing bevy
 
-- Point the workspace at a checkout with the commented-out path patches at the bottom of
-  `Cargo.toml`. You need **both** blocks, `[patch.crates-io]` and
-  `[patch."https://github.com/robtfm/bevy"]`, or half the graph resolves to the git copy and
-  types don't unify. Every bevy subcrate is listed because ecosystem crates reference them
-  directly.
-- Never share a `target/` directory between two checkouts that patch differently.
+- Edit `rendering/bevy-explorer/bevy` in place, in an ordinary PR, and update this page in the
+  same PR. This repository is the source of truth; the fork branch stays frozen at `dac1ac9`.
+- The import left out `assets/` (example assets), the symlink `examples/wasm/assets` into it, and
+  the fork's `.gitattributes`. The root `.gitattributes` sets `-text` for the tree, so its bytes
+  stay exact on every platform.
+- `source/Cargo.toml` points both patch tables at the tree. `[patch.crates-io]` lists each bevy
+  subcrate an ecosystem crate names by crates.io version (18 today);
+  `[patch."https://github.com/robtfm/bevy"]` catches `bevy_dui`, `bevy_ecss` and `boimp`, which
+  name the former fork by git. With `Cargo.lock` nothing fetches the fork. A resolve without it
+  reads the branch once, so the branch has to stay fetchable while those crates name it.
+- The tree is not a workspace member, so the explorer's Clippy and Rustfmt gates never reach it.
+  Cargo doesn't cap a path dependency's rustc warnings as it did the git dependency's: the
+  vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
+  `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16); other warnings stay visible.
+  Don't run Clippy inside bevy's own workspace: its code predates this toolchain's lints.
+- Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
+  `git format-patch -1 --stdout <sha> | git apply -3 --directory=rendering/bevy-explorer/bevy`.
+  Name the upstream PR on this page, as the entries above do.
+- Our delta over upstream, for a migration: `git fetch https://github.com/bevyengine/bevy tag v0.16.1`,
+  then `git diff v0.16.1^{tree} HEAD:rendering/bevy-explorer/bevy` (the import's omissions show
+  as deletions).
+- CI reuses a cached bevy build until its files change: Cargo would otherwise rebuild a path
+  dependency after every checkout, since a checkout makes every file new.
+  `tooling/bevy-mtimes.py` records the files' blob ids and times with the cache and gives
+  unchanged files their times back; every job that caches the explorer's target runs it.
+- Never share a `target/` directory with a checkout that builds a different bevy.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).
-- A fork change ships as a push to the fork branch plus a lockfile bump PR here. The PR
-  description names the fork commit and what it carries.

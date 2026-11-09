@@ -729,11 +729,17 @@ fn subscribe_voice_room_tracks(
 fn apply_voice_room_volume(
     newly_subscribed: Query<
         &crate::livekit::track::LivekitTrack,
-        (With<VoiceRoomTrack>, Added<crate::livekit::track::Subscribed>),
+        (
+            With<VoiceRoomTrack>,
+            Added<crate::livekit::track::Subscribed>,
+        ),
     >,
     all: Query<
         &crate::livekit::track::LivekitTrack,
-        (With<VoiceRoomTrack>, With<crate::livekit::track::Subscribed>),
+        (
+            With<VoiceRoomTrack>,
+            With<crate::livekit::track::Subscribed>,
+        ),
     >,
     settings: Res<AudioSettings>,
 ) {
@@ -931,7 +937,11 @@ fn voice_community(
             return;
         }
     };
-    input.reply_ok(format!("{} {}", command.action, command.community_id.unwrap_or_default()));
+    input.reply_ok(format!(
+        "{} {}",
+        command.action,
+        command.community_id.unwrap_or_default()
+    ));
     inputs.0.push_back(action);
 }
 

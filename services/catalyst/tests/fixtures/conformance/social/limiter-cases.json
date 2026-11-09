@@ -1,0 +1,372 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "redis": "Redis server v=8.4.0 sha=00000000:1 malloc=libc bits=64 build=971513cac427afef"
+  },
+  "scope": "Real upstream Redis adapter Lua and friends limiter, real isolated Redis, two independent friends components. Domain writes/publications are injected; elapsed milliseconds are actual waits. These are block-directional cases; symmetric friendship keys have separate local tests.",
+  "cases": [
+    {
+      "id": "fixed-window-shared-instances",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS": 1,
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 30,
+        "FRIENDSHIP_RATE_LIMIT_PER_PAIR": 2
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 2,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 2,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 3,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 3,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 600,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 4,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 4,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 1100,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "denied-actor-does-not-touch-pair",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "other",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 2,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "denied-pair-still-consumes-actor",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_PER_PAIR": 1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 2,
+              "expiry": "expiring"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 2,
+              "expiry": "expiring"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "actor-limit-0",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 0
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "actor-limit--1",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": -1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "expiring"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "window-0",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS": 0,
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 1,
+        "FRIENDSHIP_RATE_LIMIT_PER_PAIR": 1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": []
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": []
+        }
+      ]
+    },
+    {
+      "id": "window--1",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS": -1,
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 1,
+        "FRIENDSHIP_RATE_LIMIT_PER_PAIR": 1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": []
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": []
+        }
+      ]
+    },
+    {
+      "id": "fractional-expire-leaves-persistent-increment",
+      "configuration": {
+        "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS": 1.5,
+        "FRIENDSHIP_RATE_LIMIT_PER_ACTOR": 1,
+        "FRIENDSHIP_RATE_LIMIT_PER_PAIR": 1
+      },
+      "attempts": [
+        {
+          "instance": 0,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": true,
+          "error": "",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 1,
+              "expiry": "persistent"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "persistent"
+            }
+          ]
+        },
+        {
+          "instance": 1,
+          "actor": "actor",
+          "target": "target",
+          "after_ms": 0,
+          "allowed": false,
+          "error": "Too many friendship or block actions. Please try again later",
+          "counters": [
+            {
+              "key": "friends:rate:actor:actor",
+              "attempts": 2,
+              "expiry": "persistent"
+            },
+            {
+              "key": "friends:rate:pair:dir:actor:target",
+              "attempts": 1,
+              "expiry": "persistent"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

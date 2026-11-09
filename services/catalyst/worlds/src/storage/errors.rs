@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::shared::identity::AuthorityNotEstablished;
 
-pub const SIGNED_FETCH_MESSAGE: &str = "This endpoint requires a signed fetch request. See ADR-44.";
+pub use crate::comms::worlds_envelope::SIGNED_FETCH_MESSAGE;
 
 #[derive(Debug, serde::Serialize)]
 struct ErrorBody {

@@ -1,21 +1,61 @@
 {
-  "description": "POST /content/entities/active with BOTH ids and pointers populated must 400 - they are mutually exclusive in lamb2.",
+  "description": "POST /content/entities/active with both ids and pointers fails both oneOf branches (additionalProperties: false) and answers the @dcl/schema-validator-component 400.",
   "request": {
     "method": "POST",
     "path": "/content/entities/active",
     "query": {},
-    "headers": {"content-type": "application/json"},
+    "headers": {
+      "content-type": "application/json"
+    },
     "body": {
-      "ids": ["bafkreieexampleexampleexample0000000000000000000000"],
-      "pointers": ["0,0"]
+      "ids": [
+        "bafkreieexampleexampleexample0000000000000000000000"
+      ],
+      "pointers": [
+        "0,0"
+      ]
     }
   },
   "response": {
     "status": 400,
-    "headers": {"content-type": "application/json"},
-    "body_json": {"error": "ids or pointers must be present, but not both. They must be arrays and contain at least one element. None of the elements can be empty."}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf/0/additionalProperties",
+          "keyword": "additionalProperties",
+          "params": {
+            "additionalProperty": "pointers"
+          },
+          "message": "must NOT have additional properties"
+        },
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf/1/additionalProperties",
+          "keyword": "additionalProperties",
+          "params": {
+            "additionalProperty": "ids"
+          },
+          "message": "must NOT have additional properties"
+        },
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf",
+          "keyword": "oneOf",
+          "params": {
+            "passingSchemas": null
+          },
+          "message": "must match exactly one schema in oneOf"
+        }
+      ]
+    }
   },
-  "captured_from": "re-derived from peer.decentraland.org 2026-07-03",
-  "captured_at": "2026-05-23T20:00:00Z",
+  "captured_from": "peer.decentraland.org 2026-11-04: conformance/content-lambdas/captures/content-reads/CR-2-both-keys.json (the same keys with other values; the answer does not depend on them)",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

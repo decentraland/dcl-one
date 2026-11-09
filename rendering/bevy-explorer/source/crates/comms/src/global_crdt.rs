@@ -535,7 +535,45 @@ pub enum ForeignAudioData {
     TransportUnavailable(Entity),
 }
 
+#[derive(Resource)]
+pub struct NearbyPanning {
+    pub spatialize: bool,
+    pub smooth: bool,
+    pub strength: f32,
+}
+
+impl Default for NearbyPanning {
+    fn default() -> Self {
+        Self {
+            spatialize: true,
+            smooth: false,
+            strength: 1.0,
+        }
+    }
+}
+
+#[derive(Component, Default)]
+pub struct VoicePan(Option<f32>);
+
+impl VoicePan {
+    pub fn update(&mut self, pan: f32, settings: &NearbyPanning, dt: f32) -> f32 {
+        let target = if settings.spatialize {
+            0.5 + (pan - 0.5) * settings.strength
+        } else {
+            0.5
+        };
+        let value = if settings.smooth {
+            target + (self.0.unwrap_or(target) - target) * (-dt * 12.0).exp()
+        } else {
+            target
+        };
+        self.0 = Some(value);
+        value
+    }
+}
+
 #[derive(Component)]
+#[require(VoicePan)]
 pub struct ForeignAudioSource {
     audio_available_receiver: mpsc::Receiver<ForeignAudioData>,
     available_transports: HashSet<Entity>,

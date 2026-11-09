@@ -1,3 +1,4 @@
+use super::control::RoomPaused;
 use alloy_core::primitives::Address;
 use bevy::{
     platform::{collections::HashMap, sync::Arc},
@@ -5,16 +6,13 @@ use bevy::{
 };
 use common::{debug_panic, structs::AudioDecoderError, util::AsH160};
 use http::Uri;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, oneshot};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     kira::sound::streaming::StreamingSoundData,
     livekit::{
         id::ParticipantIdentity, participant::Participant, ConnectionState, DataPacket,
-        DisconnectReason, Room, RoomError, RoomEvent, RoomOptions, RoomResult,
+        DisconnectReason, Room, RoomEvent, RoomOptions, RoomResult,
     },
 };
 
@@ -41,7 +39,7 @@ use crate::{
     global_crdt::StreamingSoundData,
     livekit::web::{
         ConnectionState, DataPacket, DisconnectReason, Participant, ParticipantIdentity, Room,
-        RoomError, RoomEvent, RoomOptions, RoomResult,
+        RoomEvent, RoomOptions, RoomResult,
     },
 };
 
@@ -49,6 +47,7 @@ pub struct LivekitRoomPlugin;
 
 impl Plugin for LivekitRoomPlugin {
     fn build(&self, app: &mut App) {
+        super::control::register(app);
         app.add_observer(livekit_transport_added);
         app.add_observer(initiate_room_connection);
         app.add_observer(create_local_participant);
@@ -72,12 +71,6 @@ impl Plugin for LivekitRoomPlugin {
     }
 }
 
-#[derive(Default, Component, Deref, DerefMut)]
-struct RoomTasks(Vec<RoomTask>);
-
-#[derive(Deref, DerefMut)]
-struct RoomTask(JoinHandle<Result<(), RoomError>>);
-
 fn livekit_transport_added(trigger: Trigger<OnAdd, LivekitTransport>, mut commands: Commands) {
     let entity = trigger.target();
     commands.entity(entity).try_insert(Connecting);
@@ -86,23 +79,26 @@ fn livekit_transport_added(trigger: Trigger<OnAdd, LivekitTransport>, mut comman
 fn initiate_room_connection(
     trigger: Trigger<OnAdd, Connecting>,
     mut commands: Commands,
-    livekit_transports: Query<&LivekitTransport>,
+    mut livekit_transports: Query<&mut LivekitTransport>,
+    paused: Query<(), With<RoomPaused>>,
     livekit_runtime: LivekitRuntimeRes,
     connection_availability: Res<State<ConnectionAvailability>>,
 ) {
-    if *connection_availability.get() == ConnectionAvailability::Unavailable {
+    if paused.contains(trigger.target())
+        || *connection_availability.get() == ConnectionAvailability::Unavailable
+    {
         debug!("Can't connect because new connections are disabled.");
         return;
     }
 
     let entity = trigger.target();
-    let Ok(livekit_transport) = livekit_transports.get(entity) else {
+    let Ok(mut livekit_transport) = livekit_transports.get_mut(entity) else {
         error!("{entity} does not have a LivekitRuntime.");
         return;
     };
 
+    livekit_transport.retries += 1;
     let remote_address = &livekit_transport.address;
-    debug!(">> lk connect async : {remote_address}");
 
     let url = Uri::try_from(remote_address).unwrap();
     let address = format!(
@@ -117,7 +113,6 @@ fn initiate_room_connection(
             par.split_once('=')
                 .map(|(a, b)| (a.to_owned(), b.to_owned()))
         }));
-    debug!("{params:?}");
     let token = params.get("access_token").cloned().unwrap_or_default();
 
     commands
@@ -150,6 +145,8 @@ fn poll_connecting_rooms(
                             room: Arc::new(room),
                             room_event_receiver,
                             closed: false,
+                            traffic: Default::default(),
+                            publishes: Vec::new(),
                         })
                         .remove::<ConnectingLivekitRoom>();
                 }
@@ -264,6 +261,7 @@ fn process_room_events(
                     participant_identity,
                     ..
                 } => {
+                    livekit_room.traffic.record_received(payload.len());
                     let identity = participant_identity
                         .filter(|identity| !identity.as_str().is_empty())
                         .or_else(|| participant.as_ref().map(|p| p.identity()));
@@ -337,7 +335,7 @@ fn process_room_events(
                     ));
                 }
                 RoomEvent::ActiveSpeakersChanged { speakers } => {
-                    commands.trigger(ActiveSpeakersChanged { speakers });
+                    commands.trigger_targets(ActiveSpeakersChanged { speakers }, entity);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 _ => {
@@ -382,20 +380,13 @@ fn process_channel_control(
 /// the transport's bounded channel and go out once it is (again).
 #[allow(clippy::type_complexity)]
 fn process_network_message(
-    mut commands: Commands,
     rooms: Query<
-        (
-            Entity,
-            &LivekitRoom,
-            &mut LivekitNetworkMessage,
-            Option<&mut RoomTasks>,
-        ),
-        With<Connected>,
+        (&mut LivekitRoom, &mut LivekitNetworkMessage),
+        (With<Connected>, Without<RoomPaused>),
     >,
     livekit_runtime: LivekitRuntimeRes,
 ) {
-    let mut new_room_tasks = vec![];
-    for (entity, room, mut network_message, maybe_room_tasks) in rooms {
+    for (mut room, mut network_message) in rooms {
         loop {
             match network_message.try_recv() {
                 Ok(outgoing) => {
@@ -410,8 +401,14 @@ fn process_network_message(
                         NetworkMessageRecipient::AuthServer => {
                             vec![ParticipantIdentity("authoritative-server".to_string())]
                         }
+                        NetworkMessageRecipient::MessageRouter => {
+                            vec![ParticipantIdentity(
+                                crate::community_chat::message_router_identity(),
+                            )]
+                        }
                     };
 
+                    let size = payload.len();
                     let packet = DataPacket {
                         payload,
                         topic: outgoing.topic,
@@ -420,26 +417,15 @@ fn process_network_message(
                     };
 
                     let local_participant = room.local_participant();
-                    let task = livekit_runtime
-                        .spawn(async move { local_participant.publish_data(packet).await });
-                    new_room_tasks.push(RoomTask(task));
+                    room.publishes.push(livekit_runtime.spawn(async move {
+                        local_participant.publish_data(packet).await.map(|()| size)
+                    }));
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     debug_panic!("Network message of {} was closed.", room.name());
                 }
             }
-        }
-        if let Some(mut room_tasks) = maybe_room_tasks {
-            room_tasks.extend(&mut new_room_tasks.drain(..));
-        } else {
-            #[expect(
-                clippy::drain_collect,
-                reason = "This does not reset the capacity of `new_room_tasks`."
-            )]
-            commands
-                .entity(entity)
-                .try_insert(RoomTasks(new_room_tasks.drain(..).collect()));
         }
     }
 }
@@ -601,19 +587,16 @@ fn unsubscribe_to_voice(
     }
 }
 
-fn verify_room_tasks(
-    rooms: Query<&mut RoomTasks, With<LivekitRoom>>,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    for mut room_tasks in rooms {
+fn verify_room_tasks(rooms: Query<&mut LivekitRoom>, livekit_runtime: LivekitRuntimeRes) {
+    for mut room in rooms {
         let mut i = 0;
-        while i < room_tasks.len() {
-            if room_tasks[i].is_finished() {
-                let RoomTask(task) = room_tasks.swap_remove(i);
+        while i < room.publishes.len() {
+            if room.publishes[i].is_finished() {
+                let task = room.publishes.swap_remove(i);
 
                 let res = livekit_runtime.block_on(task);
                 match res {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(size)) => room.traffic.record_sent(size),
                     Ok(Err(err)) => {
                         error!("Failed to complete room task due to {err}.");
                     }
@@ -639,11 +622,12 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
-/// Re-dials every dropped room but the voice room, whose re-dial budget the voice module keeps
-/// (a call's token stays valid after the server deleted the room; re-dialling would recreate it).
+/// Re-dials every dropped room but a paused one and the voice room, whose re-dial budget the
+/// voice module keeps (a call's token stays valid after the server deleted the room; re-dialling
+/// would recreate it).
 fn try_reconnect(
     mut commands: Commands,
-    rooms: Populated<Entity, (With<Disconnected>, Without<VoiceRoom>)>,
+    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>, Without<VoiceRoom>)>,
 ) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints

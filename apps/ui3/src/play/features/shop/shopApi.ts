@@ -1,10 +1,10 @@
-// Client for the public marketplace catalog (marketplace-api.<base domain>/v1/catalog). Buying is a
+// Client for the public marketplace catalog (<marketplace api>/v1/catalog). Buying is a
 // wallet transaction, so purchases finish on the web marketplace (as in Unity).
 
-import { BASE_DOMAIN, ONE_GATEWAY_HOST, hostUrl, siteUrl } from '../../lib/baseDomain'
+import { BASE_DOMAIN, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'
 
-const CATALOG_API = hostUrl('marketplace-api', '/v1/catalog')
+const CATALOG_API = `${serviceUrl('marketplaceApi')}/v1/catalog`
 const MARKETPLACE = siteUrl('/marketplace')
 export const SHOP_PAGE_SIZE = 24
 
@@ -33,10 +33,52 @@ export async function fetchShop(
   const params = new URLSearchParams({ first: String(SHOP_PAGE_SIZE), skip: String(q.skip), category: q.category, sortBy: q.sortBy, isOnSale: 'true' })
   if (q.search.trim() !== '') params.set('search', q.search.trim())
   const res = await fetch(`${CATALOG_API}?${params}`, { signal })
-  if (!res.ok) throw new Error(`Marketplace returned ${res.status}`)
+  if (!res.ok) {
+    // Release the unread error body rather than leave the connection holding it.
+    await res.body?.cancel()
+    throw new Error(`Marketplace returned ${res.status}`)
+  }
   const body = (await res.json()) as { data?: ShopItem[]; total?: number }
   if (!Array.isArray(body.data)) throw new Error('Marketplace returned an unexpected response')
   return { items: body.data, total: body.total ?? body.data.length }
+}
+
+/** A catalog item from /v3/catalog/items: the /v1/catalog shape, plus its urn, its wearable
+ *  category and its price in Credits. */
+export interface CreationItem extends ShopItem {
+  urn: string
+  priceCredits?: number
+  data?: { wearable?: { category?: string } }
+}
+
+/** What a player has published, as the passport's Creations tab lists it. */
+export interface Creations {
+  wearables: CreationItem[]
+  emotes: CreationItem[]
+}
+
+const CREATIONS_API = `${serviceUrl('marketplaceApi')}/v3/catalog/items`
+/** unity-explorer's passport asks for the first 100 of each category and stops there. */
+const CREATIONS_PER_CATEGORY = 100
+
+async function fetchCreationsOf(creator: string, category: ShopCategory, signal?: AbortSignal): Promise<CreationItem[]> {
+  const params = new URLSearchParams({ category, creator, includeSocialEmotes: 'false', first: String(CREATIONS_PER_CATEGORY) })
+  const res = await fetch(`${CREATIONS_API}?${params}`, { signal })
+  if (!res.ok) {
+    // Release the unread error body rather than leave the connection holding it.
+    await res.body?.cancel()
+    throw new Error(`Marketplace returned ${res.status}`)
+  }
+  const body = (await res.json()) as { data?: CreationItem[] }
+  if (!Array.isArray(body.data)) throw new Error('Marketplace returned an unexpected response')
+  return body.data
+}
+
+/** The wearables and emotes a player created (unity-explorer's passport Creations section). */
+export async function fetchCreations(creator: string, signal?: AbortSignal): Promise<Creations> {
+  const address = creator.toLowerCase()
+  const [wearables, emotes] = await Promise.all([fetchCreationsOf(address, 'wearable', signal), fetchCreationsOf(address, 'emote', signal)])
+  return { wearables, emotes }
 }
 
 /** Wei (18 decimals) → MANA with up to 2 decimals. */

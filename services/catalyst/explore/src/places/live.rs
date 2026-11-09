@@ -38,11 +38,32 @@ pub struct LiveUserCounts {
     /// Whether a presence snapshot exists: without one (the collector off)
     /// the rows keep the mirrored `user_count` rather than reading 0.
     pub snapshot: bool,
+    /// `places` by pointer and `worlds` by lowercase name, built once per
+    /// snapshot read for `fill_user_counts`.
+    by_place: HashMap<String, i32>,
+    by_world_lower: HashMap<String, i32>,
+}
+
+impl LiveUserCounts {
+    pub fn new(places: Vec<(String, i32)>, worlds: Vec<(String, i32)>, snapshot: bool) -> Self {
+        let by_place = places.iter().cloned().collect();
+        let by_world_lower = worlds
+            .iter()
+            .map(|(name, n)| (name.to_lowercase(), *n))
+            .collect();
+        Self {
+            places,
+            worlds,
+            snapshot,
+            by_place,
+            by_world_lower,
+        }
+    }
 }
 
 pub struct Live {
     pool: PgPool,
-    counts: TtlMap<(), LiveUserCounts>,
+    counts: TtlMap<(), Arc<LiveUserCounts>>,
     participants: OnceLock<Arc<dyn Participants>>,
     known: TtlMap<(bool, String), Option<Vec<String>>>,
     unknown: TtlMap<(bool, String), Option<Vec<String>>>,
@@ -66,15 +87,15 @@ impl Live {
 
     /// The latest presence snapshot's headcounts; empty when no snapshot
     /// exists or the read fails (the old client's empty answer).
-    pub async fn live_user_counts(&self) -> LiveUserCounts {
+    pub async fn live_user_counts(&self) -> Arc<LiveUserCounts> {
         if let Some(v) = self.counts.get_fresh(&()) {
             return v;
         }
-        let counts = read_counts(&self.pool).await.unwrap_or_else(|e| {
+        let counts = Arc::new(read_counts(&self.pool).await.unwrap_or_else(|e| {
             tracing::debug!(error = %e, "presence headcounts read failed");
             LiveUserCounts::default()
-        });
-        self.counts.insert((), counts.clone());
+        }));
+        self.counts.insert((), Arc::clone(&counts));
         counts
     }
 
@@ -143,11 +164,7 @@ async fn read_counts(pool: &PgPool) -> Result<LiveUserCounts, sqlx::Error> {
     )
     .fetch_all(pool)
     .await?;
-    Ok(LiveUserCounts {
-        places,
-        worlds,
-        snapshot: true,
-    })
+    Ok(LiveUserCounts::new(places, worlds, true))
 }
 
 /// `most_active` orders by the live headcounts (the old
@@ -155,7 +172,7 @@ async fn read_counts(pool: &PgPool) -> Result<LiveUserCounts, sqlx::Error> {
 pub async fn inject_live_user_counts(
     live: &Live,
     filters: &mut PlaceListFilters,
-) -> Option<LiveUserCounts> {
+) -> Option<Arc<LiveUserCounts>> {
     if !matches!(filters.order_by, super::rows::PlaceOrderBy::MostActive) {
         return None;
     }
@@ -165,12 +182,17 @@ pub async fn inject_live_user_counts(
 }
 
 /// Apply the same live ordering to legacy lists, maps and destinations.
+/// Without a presence snapshot the mirrored headcount leads the destinations
+/// (`Destination/model.ts:214-220`), as it does `GET /api/places`.
 pub fn apply_count_order(filters: &mut PlaceListFilters, counts: &LiveUserCounts) {
     if !matches!(filters.order_by, super::rows::PlaceOrderBy::MostActive) {
         return;
     }
     filters.place_user_counts = counts.places.clone();
     filters.world_user_counts = counts.worlds.clone();
+    if !counts.snapshot && filters.destinations_mode {
+        filters.active = super::rows::ActiveRows::Mirrored;
+    }
 }
 
 /// Every row's `user_count` from the headcounts (a world by its lowercase
@@ -183,22 +205,15 @@ pub fn fill_user_counts(rows: &mut [PlaceRow], counts: &LiveUserCounts) {
         }
         return;
     }
-    let places: HashMap<&str, i32> = counts
-        .places
-        .iter()
-        .map(|(pointer, n)| (pointer.as_str(), *n))
-        .collect();
-    let worlds: HashMap<String, i32> = counts
-        .worlds
-        .iter()
-        .map(|(name, n)| (name.to_lowercase(), *n))
-        .collect();
+    let mut lower = String::new();
     for row in rows.iter_mut() {
         let count = if row.world {
             let name = row.world_name.as_deref().unwrap_or(&row.id);
-            worlds.get(&name.to_lowercase())
+            lower.clear();
+            lower.extend(name.chars().flat_map(char::to_lowercase));
+            counts.by_world_lower.get(lower.as_str())
         } else {
-            places.get(row.base_position.as_str())
+            counts.by_place.get(row.base_position.as_str())
         };
         row.user_count = Some(count.copied().unwrap_or(0));
     }
@@ -265,11 +280,11 @@ mod tests {
 
     #[test]
     fn counts_fill_by_position_or_lowercase_world_name() {
-        let counts = LiveUserCounts {
-            places: vec![("1,2".into(), 7)],
-            worlds: vec![("MyWorld.dcl.eth".into(), 3)],
-            snapshot: true,
-        };
+        let counts = LiveUserCounts::new(
+            vec![("1,2".into(), 7)],
+            vec![("MyWorld.dcl.eth".into(), 3)],
+            true,
+        );
         let mut rows = vec![
             row(false, "p", "1,2", None, None),
             row(true, "w", "0,0", Some("myworld.DCL.eth"), None),
@@ -290,6 +305,28 @@ mod tests {
             [Some(40), Some(0)],
             "no snapshot: the mirrored figure"
         );
+    }
+
+    #[test]
+    fn without_a_snapshot_the_mirrored_headcount_leads_the_destinations() {
+        use super::super::rows::{ActiveRows, PlaceListFilters, PlaceOrderBy};
+        let filters = |destinations_mode| PlaceListFilters {
+            order_by: PlaceOrderBy::MostActive,
+            destinations_mode,
+            ..Default::default()
+        };
+        let mut f = filters(true);
+        apply_count_order(&mut f, &LiveUserCounts::default());
+        assert_eq!(f.active, ActiveRows::Mirrored);
+        let mut f = filters(true);
+        apply_count_order(
+            &mut f,
+            &LiveUserCounts::new(vec![("1,2".into(), 7)], vec![], true),
+        );
+        assert_eq!((f.active, f.place_user_counts.len()), (ActiveRows::All, 1));
+        let mut f = filters(false);
+        apply_count_order(&mut f, &LiveUserCounts::default());
+        assert_eq!(f.active, ActiveRows::All, "the map keeps its order");
     }
 
     /// The old `destinations_connected_tests`: omitted unless asked (the
