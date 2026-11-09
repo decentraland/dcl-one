@@ -54,7 +54,9 @@ next frame, and a model stays hidden until both steps are done.
 - **Hidden until revealed.** `spawn_as_child_hidden` keeps an instance hidden after it has
   spawned, until `reveal_instance_sync`. The Explorer spawns glTF containers that way and reveals
   them when processing is done, so Bevy's own materials and a model's collider meshes never show,
-  even while processing waits for textures or for later frames.
+  even while processing waits for textures or for later frames. Hiding covers rendering only:
+  processing adds colliders and triggers node by node, so for those frames a hidden model already
+  blocks the player and takes pointer events where its processed nodes are.
 - **Resumable processing.** `update_ready_gltfs` processes a model's nodes until the same
   deadline (`SceneSpawnerPlus::spawn_deadline`) and keeps its progress on the container
   (`GltfProcessing`: the node list and a cursor, the collider counter, the animation flag and the
