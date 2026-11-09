@@ -321,7 +321,7 @@ pub struct ProfileCache {
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
     /// the catalyst answered a compact POST as an unknown route: compact readers are served
-    /// from full profiles for the rest of the session, as Unity does on a catalyst
+    /// from full profiles for the rest of the session
     compact_unsupported: bool,
 }
 
@@ -560,7 +560,7 @@ pub fn setup_primary_profile(
     transports: Query<&Transport>,
     mut senders: Local<Vec<RpcEventSender>>,
     mut subscribe_events: EventReader<RpcCallEvent>,
-    mut deploy_task: Local<Option<(u32, Option<Address>, Task<Result<(), anyhow::Error>>)>>,
+    mut deploys: Local<Vec<PendingDeploy>>,
     wallet: Res<Wallet>,
     ipfas: IpfsAssetServer,
     mut contexts: Query<&mut GlobalCrdtState>,
@@ -657,11 +657,16 @@ pub fn setup_primary_profile(
                 let ipfs = ipfas.ipfs().clone();
                 let profile = profile.clone();
                 let wallet = wallet.clone();
-                *deploy_task = Some((
-                    profile.version,
-                    profile.content.eth_address.as_h160(),
-                    IoTaskPool::get().spawn_compat(deploy_profile(ipfs, wallet, profile)),
-                ));
+                // a deploy still running is not dropped: it may land, and its result decides
+                // what a failure of this one puts back
+                deploys.push(PendingDeploy {
+                    task: IoTaskPool::get().spawn_compat(deploy_profile(
+                        ipfs,
+                        wallet,
+                        profile.clone(),
+                    )),
+                    profile,
+                });
                 current_profile.is_deployed = true;
             }
         } else if let Some(peer) = current_profile.peer_profile() {
@@ -692,42 +697,49 @@ pub fn setup_primary_profile(
         }
     }
 
-    if let Some((version, address, mut task)) = deploy_task.take() {
-        match task.complete() {
-            Some(Ok(())) => {
-                info!("deployed profile ok");
+    // settle every deploy that finished, oldest first
+    let mut index = 0;
+    while index < deploys.len() {
+        let Some(result) = deploys[index].task.complete() else {
+            index += 1;
+            continue;
+        };
+        let deployed = deploys.remove(index).profile;
+        let address = deployed.content.eth_address.as_h160();
+        let version = deployed.version;
+        let success = match result {
+            Ok(()) => {
+                info!("deployed profile v{version}");
                 if let Some(address) = address {
                     cache.refetch_deployed(address, version);
                 }
-                // the profile itself is unchanged: only what peers may be told moves on
-                current_profile
-                    .bypass_change_detection()
-                    .deploy_finished(address, true);
-                commands.send_event(ProfileDeployedEvent {
-                    address,
-                    version,
-                    success: true,
-                });
+                true
             }
-            Some(Err(e)) => {
-                error!("failed to deploy profile: {e}");
-                // only a profile actually put back is a change the avatar and scenes must see
-                if current_profile
-                    .bypass_change_detection()
-                    .deploy_finished(address, false)
-                {
-                    current_profile.set_changed();
-                }
-                commands.send_event(ProfileDeployedEvent {
-                    address,
-                    version,
-                    success: false,
-                });
-                // todo toast
+            Err(e) => {
+                error!("failed to deploy profile v{version}: {e}");
+                false
             }
-            None => *deploy_task = Some((version, address, task)),
+        };
+        // only a profile that changed is a change the avatar and scenes must see; otherwise
+        // just what peers may be told moves on
+        if current_profile
+            .bypass_change_detection()
+            .deploy_finished(&deployed, success)
+        {
+            current_profile.set_changed();
         }
+        commands.send_event(ProfileDeployedEvent {
+            address,
+            version,
+            success,
+        });
     }
+}
+
+/// A deploy of the local player's profile still running, and the profile it carries.
+pub struct PendingDeploy {
+    profile: UserProfile,
+    task: Task<Result<(), anyhow::Error>>,
 }
 
 /// What peers are owed about the profile they may know (`peer_version`, see `peer_profile`).
@@ -776,13 +788,14 @@ pub struct CurrentUserProfile {
     /// A new profile made while the world is held: the host's welcome page deploys it, with its
     /// save after the terms are accepted.
     pub deploy_held: bool,
-    /// The profile from before the first edit still deploying: what other players are told
-    /// about meanwhile, and what a failed deploy puts back (Unity's `SelfProfile` revert).
+    /// While an edit deploys, the newest profile the server is known to hold: the one from
+    /// before the first edit still deploying, or a later edit whose deploy landed since. Other
+    /// players are told about it meanwhile, and a failed deploy puts it back.
     pub revert_to: Option<UserProfile>,
     /// The highest version this session gave an edit of an account's profile. A deploy that
-    /// failed here may still have reached the server (an error after the catalyst took it, or on
-    /// the web a replaced deploy that kept running), and a peer that read it skips any other
-    /// profile announced under the same number, so the next edit never reuses it.
+    /// failed here may still have reached the server (an error after the catalyst took it),
+    /// and a peer that read it skips any other profile announced under the same number, so the
+    /// next edit never reuses it.
     pub last_version: Option<(Address, u32)>,
 }
 
@@ -811,23 +824,57 @@ impl CurrentUserProfile {
         }
     }
 
-    /// The deploy of `address`' profile has finished: a success keeps the edit, a failure puts the
-    /// snapshot back without deploying it again. A result for another account changes nothing.
-    /// Returns whether the profile was put back.
-    pub fn deploy_finished(&mut self, address: Option<Address>, success: bool) -> bool {
-        let current = self
-            .profile
-            .as_ref()
-            .and_then(|profile| profile.content.eth_address.as_h160());
-        if address.is_none() || address != current {
+    /// The deploy of `deployed` has finished; a result for another account changes nothing.
+    /// Every edit deploys, and a newer one does not cancel an older one still running.
+    /// - The newest edit landing keeps it; failing puts `revert_to` back without deploying it
+    ///   again.
+    /// - An older edit landing while a newer one still deploys becomes `revert_to`: the server
+    ///   holds it, so that is what peers hear and what a failure of the newer one puts back.
+    /// - An older edit landing after a newer one failed and put an older profile back is taken:
+    ///   the server holds it.
+    /// - Anything else (an older edit failing, or landing after a newer one landed) changes
+    ///   nothing.
+    ///
+    /// Returns whether the profile changed.
+    pub fn deploy_finished(&mut self, deployed: &UserProfile, success: bool) -> bool {
+        let Some(current) = self.profile.as_ref() else {
+            return false;
+        };
+        let address = deployed.content.eth_address.as_h160();
+        if address.is_none() || address != current.content.eth_address.as_h160() {
             return false;
         }
-        match self.revert_to.take() {
-            Some(snapshot) if !success => {
-                self.profile = Some(snapshot);
+        let (shown, landed) = (current.version, deployed.version);
+        if !success {
+            if landed != shown {
+                return false;
+            }
+            return match self.revert_to.take() {
+                Some(snapshot) => {
+                    self.profile = Some(snapshot);
+                    true
+                }
+                None => false,
+            };
+        }
+        match landed.cmp(&shown) {
+            std::cmp::Ordering::Equal => {
+                self.revert_to = None;
+                false
+            }
+            std::cmp::Ordering::Less => {
+                if let Some(snapshot) = self.revert_to.as_mut() {
+                    if snapshot.version < landed {
+                        *snapshot = deployed.clone();
+                    }
+                }
+                false
+            }
+            std::cmp::Ordering::Greater => {
+                self.profile = Some(deployed.clone());
+                self.revert_to = None;
                 true
             }
-            _ => false,
         }
     }
 
@@ -1425,8 +1472,7 @@ async fn deploy_profile(
     }
 }
 
-/// The centralized catalyst's lambdas, the one source of profiles: no registry, and no
-/// catalyst named by a peer.
+/// The lambdas of the base domain's catalyst, where every profile is read.
 fn lambdas_url() -> String {
     common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas")
 }
@@ -1555,9 +1601,9 @@ async fn fetch_compact_profiles(
     Ok(compact_profiles_for(found, addresses))
 }
 
-/// What a compact POST's status says: 404 or 405 is a catalyst without the route (lamb2 has none;
-/// a node whose `/lambdas/profiles/{id}` takes the path refuses the method), any other status but
-/// 200 a failure of this request alone.
+/// What a compact POST's status says: 404 or 405 is a catalyst without the route (405 where its
+/// `/lambdas/profiles/{id}` takes the path), any other status but 200 a failure of this request
+/// alone.
 fn compact_status(url: &str, status: StatusCode) -> Result<(), CompactFetchError> {
     match status {
         StatusCode::OK => Ok(()),
@@ -2124,11 +2170,12 @@ mod tests {
         Some(Address::repeat_byte(7))
     }
 
-    /// as `process_profile` amends a profile that will deploy
-    fn edit(current: &mut CurrentUserProfile, name: &str) {
+    /// as `process_profile` amends a profile that will deploy; returns what its deploy carries
+    fn edit(current: &mut CurrentUserProfile, name: &str) -> UserProfile {
         current.snapshot_for_revert();
         current.bump_version();
         current.profile.as_mut().unwrap().content.name = name.to_owned();
+        current.profile.clone().unwrap()
     }
 
     fn deployed(profile: UserProfile) -> CurrentUserProfile {
@@ -2147,8 +2194,8 @@ mod tests {
     #[test]
     fn failed_deploy_restores_the_pre_edit_profile() {
         let mut current = deployed(own(5, "before"));
-        edit(&mut current, "rejected");
-        assert!(current.deploy_finished(own_address(), false));
+        let rejected = edit(&mut current, "rejected");
+        assert!(current.deploy_finished(&rejected, false));
         assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
         assert!(current.revert_to.is_none());
         assert!(
@@ -2161,17 +2208,58 @@ mod tests {
     fn overlapping_edits_revert_to_the_oldest_snapshot() {
         let mut current = deployed(own(5, "before"));
         edit(&mut current, "first");
-        edit(&mut current, "second");
+        let second = edit(&mut current, "second");
         assert_eq!(version_and_name(current.profile.as_ref()), (7, "second"));
-        current.deploy_finished(own_address(), false);
+        current.deploy_finished(&second, false);
         assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
+    }
+
+    #[test]
+    fn a_replaced_deploy_that_lands_is_what_a_failure_puts_back() {
+        let mut current = deployed(own(5, "before"));
+        let first = edit(&mut current, "first");
+        let second = edit(&mut current, "second");
+
+        // the first edit lands while the second still deploys: peers may hear it now
+        assert!(!current.deploy_finished(&first, true));
+        assert_eq!(version_and_name(current.peer_profile()), (6, "first"));
+
+        // the second fails: back to the first, which the server holds, not to before both
+        assert!(current.deploy_finished(&second, false));
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "first"));
+        assert!(current.revert_to.is_none());
+    }
+
+    #[test]
+    fn a_replaced_deploy_landing_after_the_newer_one_failed_is_taken() {
+        let mut current = deployed(own(5, "before"));
+        let first = edit(&mut current, "first");
+        let second = edit(&mut current, "second");
+
+        assert!(current.deploy_finished(&second, false));
+        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
+        assert!(current.deploy_finished(&first, true));
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "first"));
+    }
+
+    #[test]
+    fn a_replaced_deploy_settling_after_the_newer_one_landed_changes_nothing() {
+        let mut current = deployed(own(5, "before"));
+        let first = edit(&mut current, "first");
+        let second = edit(&mut current, "second");
+
+        assert!(!current.deploy_finished(&second, true));
+        assert!(!current.deploy_finished(&first, true));
+        assert!(!current.deploy_finished(&first, false));
+        assert_eq!(version_and_name(current.profile.as_ref()), (7, "second"));
+        assert!(current.revert_to.is_none());
     }
 
     #[test]
     fn successful_deploy_clears_the_snapshot() {
         let mut current = deployed(own(5, "before"));
-        edit(&mut current, "after");
-        assert!(!current.deploy_finished(own_address(), true));
+        let after = edit(&mut current, "after");
+        assert!(!current.deploy_finished(&after, true));
         assert_eq!(version_and_name(current.profile.as_ref()), (6, "after"));
         assert!(current.revert_to.is_none());
         assert_eq!(version_and_name(current.peer_profile()), (6, "after"));
@@ -2189,25 +2277,25 @@ mod tests {
     #[test]
     fn a_result_for_another_account_changes_nothing() {
         let mut current = deployed(own(5, "before"));
-        edit(&mut current, "rejected");
+        let rejected = edit(&mut current, "rejected");
         let mut other = profile(2, "other");
         other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
         current.profile = Some(other.clone());
 
-        assert!(!current.deploy_finished(own_address(), false));
+        assert!(!current.deploy_finished(&rejected, false));
         assert_eq!(current.profile, Some(other));
     }
 
     #[test]
     fn a_realm_refresh_keeps_an_edit_still_deploying() {
         let mut current = deployed(own(5, "before"));
-        edit(&mut current, "pending");
+        let pending = edit(&mut current, "pending");
         current.adopt_server_profile(own(5, "server"));
         assert_eq!(version_and_name(current.profile.as_ref()), (6, "pending"));
         assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
 
         // once nothing is deploying, the server's profile is taken
-        current.deploy_finished(own_address(), true);
+        current.deploy_finished(&pending, true);
         current.adopt_server_profile(own(6, "server"));
         assert_eq!(version_and_name(current.profile.as_ref()), (6, "server"));
     }
@@ -2215,8 +2303,8 @@ mod tests {
     #[test]
     fn a_failed_version_is_not_reused() {
         let mut current = deployed(own(5, "before"));
-        edit(&mut current, "rejected");
-        current.deploy_finished(own_address(), false);
+        let rejected = edit(&mut current, "rejected");
+        current.deploy_finished(&rejected, false);
         assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
 
         // the rejected v6 may still have reached the server: the next edit goes above it
@@ -2244,7 +2332,7 @@ mod tests {
     fn peers_hear_the_new_version_once_its_deploy_lands() {
         let mut current = deployed(own(5, "before"));
         let announced = Some(5);
-        edit(&mut current, "pending");
+        let pending = edit(&mut current, "pending");
 
         // pending: peers keep the version from before the edit, repeated by the keepalive
         let peer = current.peer_profile().unwrap().version;
@@ -2256,7 +2344,7 @@ mod tests {
         );
 
         // landed: the edit's version goes out once
-        current.deploy_finished(own_address(), true);
+        current.deploy_finished(&pending, true);
         let peer = current.peer_profile().unwrap().version;
         assert_eq!(peer, 6);
         assert_eq!(
@@ -2339,7 +2427,8 @@ mod tests {
 
         // the first deploy fails (the engine puts v5 back) in the frame a second edit arrives:
         // the first edit hears its own result, and the second edit becomes v7, not v6 again
-        saves.current().deploy_finished(own_address(), false);
+        let first_edit = saves.current().profile.clone().unwrap();
+        saves.current().deploy_finished(&first_edit, false);
         saves.settle(6, false);
         let mut second = saves.edit();
         saves.0.update();

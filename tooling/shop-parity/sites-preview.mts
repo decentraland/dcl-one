@@ -8,10 +8,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { foreignRequest, guardLoopback } from "./lib/guard.mts";
 import { SITES } from "./lib/paths.mts";
-
-// Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
-// miss when the recording lacks it) instead of rendering the app's 404 page.
-const MOUNTS = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
+import { relaysToNode } from "./lib/services.mts";
 
 const arg = (name: string): string => {
   const i = process.argv.indexOf(name);
@@ -85,7 +82,7 @@ app.get("/__shop-parity/blocked", (_incoming: unknown, outgoing: any) => {
   void rendering.then(() => outgoing.json(blocked.splice(0)));
 });
 app.use((incoming: any, outgoing: any, next: () => void) => {
-  if (!MOUNTS.some((m) => incoming.path === `/${m}` || incoming.path.startsWith(`/${m}/`))) return next();
+  if (!relaysToNode(incoming.path)) return next();
   // From the path only: an absolute-form request line must not make the preview relay to another host.
   const target = new URL(incoming.originalUrl.startsWith("/") ? incoming.originalUrl : "/", upstream);
   // The replay answers no browser (lib/servers.mts fromBrowser): what names the page's site stays here.

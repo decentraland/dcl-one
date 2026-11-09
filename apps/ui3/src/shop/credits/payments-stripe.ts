@@ -45,7 +45,8 @@ const delay = (ms: number, signal?: AbortSignal) =>
 
 /**
  * The node's error for an order it has no record of for this signer: `ORDER_NOT_FOUND` in
- * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins its body.
+ * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins its body. This
+ * side's string is pinned in credits.test.ts.
  */
 export const ORDER_NOT_FOUND = "order not found";
 
