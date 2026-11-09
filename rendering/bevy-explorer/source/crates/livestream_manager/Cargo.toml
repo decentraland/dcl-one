@@ -11,4 +11,5 @@ bevy = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+common = { workspace = true, features = ["test-support"] }
 wasm-bindgen-test = { workspace = true }

@@ -31,8 +31,5 @@ fn test_ffmpeg() {
 #[cfg(all(feature = "ffmpeg", not(target_arch = "wasm32")))]
 #[test]
 fn av_threads_leave_once_their_app_is_gone() {
-    ffmpeg_or_html::test_source_change();
-    assert!(crate::video_stream::join_av_threads(
-        std::time::Duration::from_secs(10)
-    ));
+    ffmpeg_or_html::test_stalled_source_shutdown();
 }

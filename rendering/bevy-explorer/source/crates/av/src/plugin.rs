@@ -41,57 +41,60 @@ pub struct AVPlayerPlugin;
 
 impl Plugin for AVPlayerPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        app.add_plugins(VideoPlayerPlugin);
+        add_av_players(app);
         #[cfg(all(not(test), feature = "ffmpeg"))]
         app.add_plugins(AudioSinkPlugin);
-        crate::debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
-
-        app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
-            SceneComponentId::AUDIO_STREAM,
-            ComponentPosition::EntityOnly,
-        );
-        app.add_crdt_lww_component::<PbVideoPlayer, VideoPlayer>(
-            SceneComponentId::VIDEO_PLAYER,
-            ComponentPosition::EntityOnly,
-        );
-
-        app.add_systems(
-            Update,
-            (
-                av_player_is_in_scene,
-                (
-                    audio_stream_should_be_playing,
-                    video_player_should_be_playing,
-                ),
-            )
-                .chain(),
-        );
-
-        app.add_observer(av_player_on_insert::<AudioStream>);
-        app.add_observer(av_player_on_insert::<VideoPlayer>);
-        app.add_observer(av_player_on_remove::<AudioStream>);
-        app.add_observer(av_player_on_remove::<VideoPlayer>);
-        app.add_observer(stream_on_add::<VideoPlayer>);
-        app.add_observer(stream_on_remove);
-        app.add_observer(video_texture_output_inserted);
-        app.add_observer(video_texture_output_replaced);
-        app.add_observer(should_be_playing_on_add::<VideoPlayer>);
-        app.add_observer(should_be_playing_on_remove::<VideoPlayer>);
-
-        app.add_observer(receiver_image_added);
-        app.add_observer(receiver_image_removed);
-
-        app.add_systems(
-            Update,
-            receiver_image_updated.run_if(on_event::<TransmissionImageResized>),
-        );
-
-        #[cfg(feature = "av_player_debug")]
-        app.add_plugins(crate::av_player_debug::AvPlayerDebugPlugin);
     }
+}
+
+pub(crate) fn add_av_players(app: &mut App) {
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    app.add_plugins(VideoPlayerPlugin);
+    crate::debug_panel::register(app);
+    app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
+        SceneComponentId::AUDIO_STREAM,
+        ComponentPosition::EntityOnly,
+    );
+    app.add_crdt_lww_component::<PbVideoPlayer, VideoPlayer>(
+        SceneComponentId::VIDEO_PLAYER,
+        ComponentPosition::EntityOnly,
+    );
+
+    app.add_systems(
+        Update,
+        (
+            av_player_is_in_scene,
+            (
+                audio_stream_should_be_playing,
+                video_player_should_be_playing,
+            ),
+        )
+            .chain(),
+    );
+
+    app.add_observer(av_player_on_insert::<AudioStream>);
+    app.add_observer(av_player_on_insert::<VideoPlayer>);
+    app.add_observer(av_player_on_remove::<AudioStream>);
+    app.add_observer(av_player_on_remove::<VideoPlayer>);
+    app.add_observer(stream_on_add::<VideoPlayer>);
+    app.add_observer(stream_on_remove);
+    app.add_observer(video_texture_output_inserted);
+    app.add_observer(video_texture_output_replaced);
+    app.add_observer(should_be_playing_on_add::<VideoPlayer>);
+    app.add_observer(should_be_playing_on_remove::<VideoPlayer>);
+
+    app.add_observer(receiver_image_added);
+    app.add_observer(receiver_image_removed);
+
+    app.add_systems(
+        Update,
+        receiver_image_updated.run_if(on_event::<TransmissionImageResized>),
+    );
+
+    #[cfg(feature = "av_player_debug")]
+    app.add_plugins(crate::av_player_debug::AvPlayerDebugPlugin);
 }
 
 #[expect(clippy::type_complexity)]

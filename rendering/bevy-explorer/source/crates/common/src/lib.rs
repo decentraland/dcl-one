@@ -15,6 +15,8 @@ pub mod rpc;
 pub mod sets;
 pub mod structs;
 pub mod terrain;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 pub mod util;
 
 /// Panics on debug builds but only logs an error on release builds

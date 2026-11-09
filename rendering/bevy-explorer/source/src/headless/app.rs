@@ -1,6 +1,5 @@
-//! The render-free app: the plugin set proven by `scene_runner`'s integration tests
-//! (`TestPlugins` + `init_test_app`), plus the realm/preview loading and comms the real
-//! explorer uses. Each entry adds its own log, task pool and runner first.
+//! The render-free app with scene execution, realm/preview loading and comms.
+//! Each entry adds its own log, task pool and runner first.
 
 use avatar::AvatarCorePlugin;
 use bevy::{
@@ -109,7 +108,7 @@ pub fn assemble(
     // plugins: the gates are read at plugin-build time.
     app.insert_resource(NoRenderApp);
 
-    // ---- render-free plugin set (mirrors scene_runner TestPlugins) ----
+    // ---- render-free plugin set ----
     app.add_plugins(FrameCountPlugin)
         .add_plugins(TimePlugin)
         .add_plugins((
@@ -151,7 +150,7 @@ pub fn assemble(
         .add_plugins(DuiPlugin)
         .add_plugins(SystemBridgePlugin { bare: true });
 
-    // manual asset inits the scene runtime needs (from init_test_app). The text stack
+    // manual asset inits the scene runtime needs. The text stack
     // (Font/TextPipeline/CosmicFontSystem) and StretchUvMaterial went with the scene-UI
     // and TextShape plugins below.
     app.init_asset::<Shader>()
