@@ -172,7 +172,6 @@ pub(crate) fn load_scene_entity(
         };
 
         let h_scene = match &event.location {
-            SceneIpfsLocation::Asset(handle) => handle.clone(),
             SceneIpfsLocation::Hash(hash) => ipfas.load_hash::<EntityDefinition>(hash),
             SceneIpfsLocation::Urn(urn) => match ipfas.load_urn::<EntityDefinition>(urn) {
                 Ok(h_scene) => h_scene,
@@ -182,6 +181,16 @@ pub(crate) fn load_scene_entity(
                     continue;
                 }
             },
+            SceneIpfsLocation::ContentFile { hash, file } => {
+                match ipfas.load_content_file::<EntityDefinition>(file, hash) {
+                    Ok(h_scene) => h_scene,
+                    Err(e) => {
+                        warn!("failed to load {file} of {hash}: {e}");
+                        commands.try_insert(SceneLoading::Failed);
+                        continue;
+                    }
+                }
+            }
         };
 
         commands.try_insert((
@@ -210,17 +219,13 @@ pub(crate) fn load_scene_json(
             commands.entity(entity).try_insert(SceneLoading::Failed);
         };
 
-        // a definition added in-process (`SceneIpfsLocation::Asset`) is present without ever
-        // having a load state
-        if scene_definitions.get(h_scene.0.id()).is_none() {
-            match ipfas.load_state(h_scene.0.id()) {
-                bevy::asset::LoadState::Loaded => (),
-                bevy::asset::LoadState::Failed(_) => {
-                    fail("Scene entity could not be loaded");
-                    continue;
-                }
-                _ => continue,
+        match ipfas.load_state(h_scene.0.id()) {
+            bevy::asset::LoadState::Loaded => (),
+            bevy::asset::LoadState::Failed(_) => {
+                fail("Scene entity could not be loaded");
+                continue;
             }
+            _ => continue,
         }
         let Some(definition) = scene_definitions.get(h_scene.0.id()) else {
             fail("Scene entity did not resolve to a valid asset");
@@ -444,16 +449,6 @@ pub(crate) fn load_scene_javascript(
             meta.authoritative_multiplayer.unwrap_or_default(),
         );
         renderer_context.portable_experiences = portable_experiences;
-        if portable.is_some_and(PortableSource::is_smart_wearable) {
-            // a smart wearable may use only what its scene.json declares
-            renderer_context.restricted_permissions = Some(
-                meta.required_permissions
-                    .iter()
-                    .flatten()
-                    .filter_map(|name| common::structs::smart_wearable_permission(name))
-                    .collect(),
-            );
-        }
 
         // start from this scene's crdt context (its own room's on a multi-tenant server,
         // the shared context otherwise), with position data localized for this scene.
@@ -810,13 +805,12 @@ pub enum PortableKind {
     /// A launch-time (`--portables`), console or server-hosted portable: never killable by a
     /// scene and hidden from `getPortableExperiencesLoaded`.
     Startup,
-    /// The scene of an equipped (or previewed) smart wearable. `pid` is the wearable urn, the
-    /// scene hash is synthetic (`{entity hash}-sw-{shape}`), and `definition` is the entity
-    /// assembled from the wearable's content, loaded through [`SceneIpfsLocation::Asset`].
+    /// The scene of an equipped (or previewed, or console-run) smart wearable. `pid` is the
+    /// wearable urn and the scene hash is `{wearable collection}-sw-{shape}`; `location` is the
+    /// wearable content file the scene's definition loads from.
     SmartWearable {
-        urn: String,
         name: String,
-        definition: Handle<EntityDefinition>,
+        location: SceneIpfsLocation,
     },
 }
 
@@ -1885,9 +1879,7 @@ pub fn process_scene_lifecycle(
             .get(required_scene_hash)
             .map(|source| &source.kind)
         {
-            Some(PortableKind::SmartWearable { definition, .. }) => {
-                SceneIpfsLocation::Asset(definition.clone())
-            }
+            Some(PortableKind::SmartWearable { location, .. }) => location.clone(),
             _ => match maybe_urn {
                 Some(urn) => SceneIpfsLocation::Urn(urn.to_owned()),
                 None => SceneIpfsLocation::Hash(required_scene_hash.to_owned()),

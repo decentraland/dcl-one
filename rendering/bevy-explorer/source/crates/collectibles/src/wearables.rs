@@ -31,6 +31,11 @@ impl Plugin for WearablePlugin {
         app.add_systems(Update, (load_collections, retain_wearables));
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
+
+    fn finish(&self, app: &mut App) {
+        // reads the ipfs resource, which exists once every plugin is built
+        app.init_asset_loader::<crate::smart_wearables::SmartWearableSceneLoader>();
+    }
 }
 
 #[derive(Resource, Default)]
@@ -331,6 +336,10 @@ impl CollectibleType for Wearable {
 
     fn data_extension() -> &'static str {
         "wearable_data"
+    }
+
+    fn with_content_aliases(content: ipfs::ContentMap) -> ipfs::ContentMap {
+        crate::smart_wearables::with_scene_aliases(content)
     }
 }
 

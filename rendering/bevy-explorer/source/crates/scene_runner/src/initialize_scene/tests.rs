@@ -48,7 +48,7 @@ fn spawned_hashes(world: &World) -> Vec<String> {
         .map(|ev| match &ev.location {
             SceneIpfsLocation::Hash(hash) => hash.clone(),
             SceneIpfsLocation::Urn(urn) => urn.clone(),
-            SceneIpfsLocation::Asset(_) => "asset".to_owned(),
+            SceneIpfsLocation::ContentFile { hash, file } => format!("{hash}/{file}"),
         })
         .collect()
 }
@@ -95,15 +95,13 @@ fn loading_current_scene_defers_other_scenes() {
 }
 
 #[test]
-fn a_smart_wearable_loads_its_in_process_definition_while_the_current_scene_loads() {
+fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() {
     let mut world = lifecycle_world();
     spawn_current_scene(&mut world, SceneLoading::SceneEntity);
-    let definition = world
-        .get_resource_or_init::<Assets<EntityDefinition>>()
-        .add(EntityDefinition {
-            id: "wearable-sw-male".to_owned(),
-            ..Default::default()
-        });
+    let location = SceneIpfsLocation::ContentFile {
+        hash: "wearable".to_owned(),
+        file: "male.smart_wearable".to_owned(),
+    };
     world.resource_mut::<PortableScenes>().insert(
         "wearable-sw-male".to_owned(),
         PortableSource {
@@ -112,9 +110,8 @@ fn a_smart_wearable_loads_its_in_process_definition_while_the_current_scene_load
             ens: None,
             super_user: false,
             kind: PortableKind::SmartWearable {
-                urn: "urn:decentraland:matic:collections-v2:0xabc:0".to_owned(),
                 name: "wearable".to_owned(),
-                definition: definition.clone(),
+                location: location.clone(),
             },
         },
     );
@@ -128,10 +125,7 @@ fn a_smart_wearable_loads_its_in_process_definition_while_the_current_scene_load
         .iter_current_update_events()
         .map(|ev| &ev.location)
         .collect::<Vec<_>>();
-    assert!(
-        matches!(locations.as_slice(), [SceneIpfsLocation::Asset(handle)] if *handle == definition),
-        "{locations:?}"
-    );
+    assert_eq!(locations, [&location]);
     assert!(world
         .resource::<LiveScenes>()
         .scenes

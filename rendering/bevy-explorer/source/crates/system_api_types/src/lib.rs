@@ -82,64 +82,46 @@ pub struct LiveSceneInfo {
     pub sdk_version: String,
 }
 
-/// A smart wearable asks the player to allow the gated permissions its scene.json declares.
-#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+/// A portable the player can see and stop: every portable but startup ones and the HUD's own
+/// scene, and the smart wearables stopped while still equipped.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct SmartWearableAuthRequest {
-    pub id: u32,
-    pub urn: String,
+pub struct PortableInfo {
+    /// The live scene hash, which `/stop_portable` takes. `None` for a smart wearable that is not
+    /// loaded (stopped, or waiting for its wearable data).
+    pub hash: Option<String>,
+    /// A smart wearable's urn; a scene portable's urn or ens.
+    pub pid: String,
+    /// The wearable's name; a scene portable's title, else its ens or pid.
     pub name: String,
-    /// declared scene.json names, e.g. ["USE_FETCH", "USE_WEB3_API"]
-    pub permissions: Vec<String>,
-    pub reason: SmartWearableAuthReason,
-}
-
-/// Why a smart wearable authorization is asked: equipped before this login, or equipped now.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
-#[serde(rename_all = "lowercase")]
-#[ts(export)]
-pub enum SmartWearableAuthReason {
-    Login,
-    Equip,
-}
-
-/// The smart wearables the engine knows about and whether the current parcel lets them run.
-#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct SmartWearableStateInfo {
-    pub entries: Vec<SmartWearableEntryInfo>,
-    /// the parcel scene the player stands in does not set featureToggles.portableExperiences = "disabled"
-    pub current_scene_allows: bool,
-    /// it sets "hideUi"
-    pub current_scene_hides_ui: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct SmartWearableEntryInfo {
-    pub urn: String,
-    pub name: String,
-    pub state: SmartWearableState,
+    pub kind: PortableInfoKind,
+    pub state: PortableState,
+    /// Why a portable failed, when known.
     pub reason: Option<String>,
-    pub scene_hash: Option<String>,
-    pub source: SmartWearableSource,
+    /// Smart wearables only: why the engine holds it.
+    pub source: Option<SmartWearableSource>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub enum SmartWearableState {
+pub enum PortableInfoKind {
+    Scene,
+    SmartWearable,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PortableState {
     Loading,
-    AwaitingAuthorization,
     Running,
-    Blocked,
-    Killed,
-    Denied,
-    NotSmart,
     Failed,
+    /// Paused while the player stands in a scene with `portableExperiences: disabled`.
+    Blocked,
+    /// A smart wearable stopped while still equipped; it can be restarted.
+    Stopped,
 }
 
 /// Why the engine holds a smart wearable: the profile equips it, a console `run`, or the realm's

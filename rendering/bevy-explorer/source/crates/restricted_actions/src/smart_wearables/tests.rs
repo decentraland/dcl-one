@@ -3,196 +3,164 @@ use super::*;
 const HAT: &str = "urn:decentraland:matic:collections-v2:0xabc:1";
 const CAPE: &str = "urn:decentraland:matic:collections-v2:0xabc:2";
 
-fn equipped(urns: &[&str], prefix: &str) -> Option<EquippedSet> {
+fn equipped(urns: &[&str], shape: &'static str) -> Option<EquippedSet> {
     Some(EquippedSet {
         urns: urns.iter().map(|u| normalize_urn(u)).collect(),
-        body_shape_prefix: prefix.to_owned(),
+        shape,
     })
 }
 
-fn ready(urn: &str, declared: &[&str]) -> Phase {
-    let declared: Vec<String> = declared.iter().map(|d| d.to_string()).collect();
-    Phase::Ready(ReadyScene {
-        scene_id: format!("{urn}-sw-male"),
-        name: urn.to_owned(),
-        gated: declared
-            .iter()
-            .filter_map(|d| smart_wearable_permission(d))
-            .collect(),
-        declared,
-    })
+fn ready(collection: &str) -> Phase {
+    Phase::Ready {
+        collection: collection.to_owned(),
+    }
 }
 
-fn state(model: &Model, urn: &str, allows: bool) -> SmartWearableState {
-    model.state_of(&normalize_urn(urn), allows).0
+/// An entry's state with every scene that should run reported running.
+fn state(model: &Model, urn: &str) -> Option<PortableState> {
+    model
+        .state_of(&normalize_urn(urn), |_| (PortableState::Running, None))
+        .map(|(state, _)| state)
 }
 
-/// A model logged in with nothing equipped, so later equips are not login equips.
 fn logged_in() -> Model {
     let mut model = Model::default();
-    model.observe_profile(equipped(&[], MALE_PREFIX));
+    model.observe_profile(equipped(&[], MALE));
     model
 }
 
 fn equip(model: &mut Model, urns: &[&str]) {
-    let prefix = model.body_shape_prefix().to_owned();
-    model.observe_profile(equipped(urns, &prefix));
+    let shape = model.shape();
+    model.observe_profile(equipped(urns, shape));
 }
 
 #[test]
-fn an_equipped_smart_wearable_without_gated_permissions_runs() {
+fn an_equipped_smart_wearable_runs_from_its_wearables_content() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let urn = normalize_urn(HAT);
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Loading);
-    model.set_phase(&urn, ready(&urn, &["ALLOW_TO_TRIGGER_AVATAR_EMOTE"]));
-    assert!(model.next_auth_request(true).is_none());
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
+    assert_eq!(state(&model, HAT), Some(PortableState::Loading));
+    assert!(model.effective().is_empty());
+
+    model.set_phase(&urn, ready("bafyhat"));
+    assert_eq!(state(&model, HAT), Some(PortableState::Running));
     assert_eq!(
-        model.effective(true).into_iter().collect::<Vec<_>>(),
-        vec![(format!("{urn}-sw-male"), urn)]
+        model.effective().into_iter().collect::<Vec<_>>(),
+        vec![("bafyhat-sw-male".to_owned(), urn.clone())]
+    );
+
+    let (scene_id, source) = model.portable(&urn).unwrap();
+    assert_eq!(scene_id, "bafyhat-sw-male");
+    assert_eq!(source.pid, urn);
+    assert!(source.is_smart_wearable() && !source.is_startup());
+    let PortableKind::SmartWearable { location, .. } = source.kind else {
+        panic!("not a smart wearable");
+    };
+    assert_eq!(
+        location,
+        SceneIpfsLocation::ContentFile {
+            hash: "bafyhat".to_owned(),
+            file: "male.smart_wearable".to_owned(),
+        }
     );
 }
 
 #[test]
-fn unequipping_removes_the_scene_and_forgets_the_kill() {
+fn a_wearable_without_a_scene_is_not_listed() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
-    let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &[]));
-    assert!(model.kill(&urn));
-    assert!(model.effective(true).is_empty());
-
-    equip(&mut model, &[]);
-    assert!(model.entries.is_empty());
-    assert!(model.effective(true).is_empty());
-    assert!(!model.killed.contains(&urn));
-
-    // re-equipping starts over
-    equip(&mut model, &[HAT]);
-    model.set_phase(&urn, ready(&urn, &[]));
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
+    model.set_phase(&normalize_urn(HAT), Phase::NotSmart);
+    assert_eq!(state(&model, HAT), None);
+    assert!(model.effective().is_empty());
 }
 
 #[test]
-fn a_killed_wearable_stays_off_until_restarted() {
+fn the_scene_state_comes_from_the_running_scene() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &[]));
-    assert!(model.kill(&urn));
-    assert!(!model.kill(&urn), "a second kill has nothing to stop");
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Killed);
+    model.set_phase(&urn, ready("bafyhat"));
+    let blocked = model.state_of(&urn, |id| {
+        assert_eq!(id, "bafyhat-sw-male");
+        (PortableState::Blocked, None)
+    });
+    assert_eq!(blocked, Some((PortableState::Blocked, None)));
+    // blocking leaves the scene in place
+    assert_eq!(model.effective().len(), 1);
+}
+
+#[test]
+fn unequipping_removes_the_scene_and_forgets_the_stop() {
+    let mut model = logged_in();
+    equip(&mut model, &[HAT]);
+    let urn = normalize_urn(HAT);
+    model.set_phase(&urn, ready("bafyhat"));
+    assert!(model.stop(&urn));
+    assert!(model.effective().is_empty());
+
+    equip(&mut model, &[]);
+    assert!(model.entries.is_empty());
+    assert!(!model.stopped.contains(&urn));
+
+    // re-equipping starts over
+    equip(&mut model, &[HAT]);
+    model.set_phase(&urn, ready("bafyhat"));
+    assert_eq!(state(&model, HAT), Some(PortableState::Running));
+}
+
+#[test]
+fn a_stopped_wearable_stays_off_until_restarted() {
+    let mut model = logged_in();
+    equip(&mut model, &[HAT]);
+    let urn = normalize_urn(HAT);
+    model.set_phase(&urn, ready("bafyhat"));
+    assert!(model.stop(&urn));
+    assert!(!model.stop(&urn), "a second stop has nothing to stop");
+    assert_eq!(state(&model, HAT), Some(PortableState::Stopped));
     // a profile re-sent with the same wearables does not revive it
     equip(&mut model, &[HAT, CAPE]);
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Killed);
-    assert!(model.effective(true).is_empty());
+    assert_eq!(state(&model, HAT), Some(PortableState::Stopped));
+    assert!(model.effective().is_empty());
 
     assert!(model.restart(&urn));
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
+    assert_eq!(state(&model, HAT), Some(PortableState::Running));
     assert!(!model.restart("urn:unknown"));
 }
 
 #[test]
-fn a_disabled_parcel_blocks_and_leaving_it_resumes() {
+fn a_failure_is_retried_on_restart() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &[]));
-    assert_eq!(model.effective(true).len(), 1);
-
-    assert!(model.effective(false).is_empty());
-    assert_eq!(state(&model, HAT, false), SmartWearableState::Blocked);
-    let info = model.info(PortableExperiencesToggle::Disabled);
-    assert!(!info.current_scene_allows);
-    assert_eq!(info.entries[0].state, SmartWearableState::Blocked);
-
-    assert_eq!(model.effective(true).len(), 1);
-    let info = model.info(PortableExperiencesToggle::HideUi);
-    assert!(info.current_scene_allows && info.current_scene_hides_ui);
-    assert_eq!(info.entries[0].state, SmartWearableState::Running);
+    model.set_phase(&urn, Phase::Failed("wearable Missing".to_owned()));
+    assert!(!model.stop(&urn), "nothing to stop");
+    assert_eq!(
+        model.state_of(&urn, |_| (PortableState::Running, None)),
+        Some((PortableState::Failed, Some("wearable Missing".to_owned())))
+    );
+    assert!(model.restart(&urn));
+    assert_eq!(model.entries[&urn].phase, Phase::Loading);
 }
 
 #[test]
-fn a_body_shape_change_re_resolves_and_keeps_the_kill() {
+fn a_body_shape_change_re_resolves_and_keeps_the_stop() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &[]));
-    assert!(model.kill(&urn));
+    model.set_phase(&urn, ready("bafyhat"));
+    assert!(model.stop(&urn));
 
-    model.observe_profile(equipped(&[HAT], FEMALE_PREFIX));
+    model.observe_profile(equipped(&[HAT], FEMALE));
     let entry = &model.entries[&urn];
     assert_eq!(entry.phase, Phase::Loading);
-    assert_eq!(entry.body_shape_prefix, FEMALE_PREFIX);
-    assert!(model.is_loading(&urn, FEMALE_PREFIX));
-    assert!(!model.is_loading(&urn, MALE_PREFIX));
-    assert!(model.killed.contains(&urn));
-}
-
-#[test]
-fn login_asks_only_for_web3() {
-    let mut model = Model::default();
-    // the first profile carries both
-    model.observe_profile(equipped(&[HAT, CAPE], MALE_PREFIX));
-    let (hat, cape) = (normalize_urn(HAT), normalize_urn(CAPE));
-    assert!(model.login_pending());
-    model.set_phase(&hat, ready(&hat, &["USE_FETCH", "USE_WEBSOCKET"]));
-    assert!(model.login_pending(), "the cape is still loading");
-    model.set_phase(&cape, ready(&cape, &["USE_WEB3_API"]));
-    assert!(!model.login_pending());
-
-    let request = model.next_auth_request(true).expect("web3 is asked");
-    assert_eq!(request.urn, cape);
-    assert_eq!(request.reason, SmartWearableAuthReason::Login);
-    assert_eq!(request.permissions, vec!["USE_WEB3_API".to_owned()]);
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
-    assert_eq!(
-        state(&model, CAPE, true),
-        SmartWearableState::AwaitingAuthorization
-    );
-    // one question at a time, repeated to a late subscriber
-    assert!(model.next_auth_request(true).is_none());
-    assert_eq!(model.pending_request().map(|r| r.id), Some(request.id));
-
-    assert!(!model.answer(request.id + 1, true));
-    assert!(model.answer(request.id, true));
-    assert_eq!(state(&model, CAPE, true), SmartWearableState::Running);
-    assert!(model.pending_request().is_none());
-}
-
-#[test]
-fn equipping_later_asks_for_any_gated_permission() {
-    let mut model = logged_in();
-    equip(&mut model, &[HAT]);
-    let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &["USE_FETCH", "ALLOW_MEDIA_HOSTNAMES"]));
-
-    // no HUD listening: it waits, it is not allowed
-    assert!(model.next_auth_request(false).is_none());
-    assert_eq!(
-        state(&model, HAT, true),
-        SmartWearableState::AwaitingAuthorization
-    );
-    assert!(model.effective(true).is_empty());
-
-    let request = model.next_auth_request(true).expect("fetch is asked");
-    assert_eq!(request.reason, SmartWearableAuthReason::Equip);
-    assert_eq!(
-        request.permissions,
-        vec!["USE_FETCH".to_owned(), "ALLOW_MEDIA_HOSTNAMES".to_owned()]
-    );
-    assert!(model.answer(request.id, false));
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Denied);
-    assert!(model.effective(true).is_empty());
-    assert!(model.next_auth_request(true).is_none());
-
-    // restart asks again
+    assert_eq!(entry.shape, FEMALE);
+    assert!(model.stopped.contains(&urn));
+    model.set_phase(&urn, ready("bafyhat"));
     assert!(model.restart(&urn));
-    let again = model.next_auth_request(true).expect("asked again");
-    assert_ne!(again.id, request.id);
-    assert!(model.answer(again.id, true));
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
+    assert_eq!(
+        model.effective().into_keys().collect::<Vec<_>>(),
+        vec!["bafyhat-sw-female".to_owned()]
+    );
 }
 
 #[test]
@@ -200,27 +168,21 @@ fn logout_forgets_the_session_but_keeps_console_runs() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let hat = normalize_urn(HAT);
-    model.set_phase(&hat, ready(&hat, &["USE_FETCH"]));
-    let request = model.next_auth_request(true).unwrap();
-    model.answer(request.id, true);
-    model.run(normalize_urn(CAPE));
+    model.set_phase(&hat, ready("bafyhat"));
+    assert!(model.stop(&hat));
     let cape = normalize_urn(CAPE);
-    model.set_phase(&cape, ready(&cape, &[]));
-    assert!(model.kill(&cape));
+    model.run(cape.clone());
+    model.set_phase(&cape, ready("bafycape"));
 
     model.observe_profile(None);
     assert!(!model.entries.contains_key(&hat));
-    assert!(model.authorized.is_empty() && model.killed.is_empty());
+    assert!(model.stopped.is_empty());
     assert_eq!(
         model.entries[&cape].source,
         SmartWearableSource::Console,
         "a console run survives logout"
     );
-    assert_eq!(state(&model, CAPE, true), SmartWearableState::Running);
-
-    // the next profile is a new login
-    model.observe_profile(equipped(&[HAT], MALE_PREFIX));
-    assert!(model.login_set.contains(&hat));
+    assert_eq!(state(&model, CAPE), Some(PortableState::Running));
 }
 
 #[test]
@@ -228,12 +190,12 @@ fn a_console_run_of_an_equipped_wearable_survives_unequipping() {
     let mut model = logged_in();
     equip(&mut model, &[HAT]);
     let urn = normalize_urn(HAT);
-    model.set_phase(&urn, ready(&urn, &[]));
+    model.set_phase(&urn, ready("bafyhat"));
     model.run(urn.clone());
     assert_eq!(model.entries[&urn].source, SmartWearableSource::Equipped);
     equip(&mut model, &[]);
     assert_eq!(model.entries[&urn].source, SmartWearableSource::Console);
-    assert_eq!(state(&model, HAT, true), SmartWearableState::Running);
+    assert_eq!(state(&model, HAT), Some(PortableState::Running));
 }
 
 #[test]
@@ -336,170 +298,25 @@ fn previews_replace_the_previous_realms() {
     );
 }
 
-const SCENE_JSON: &str = r#"{
-    "main": "bin/index.js",
-    "runtimeVersion": "7",
-    "isPortableExperience": true,
-    "requiredPermissions": ["USE_FETCH", "ALLOW_TO_TRIGGER_AVATAR_EMOTE"],
-    "scene": { "base": "0,0", "parcels": ["0,0"] }
-}"#;
-
-fn packed_content() -> ContentMap {
-    ContentMap::from_content(
-        [
-            ("male/scene.json", "hm"),
-            ("male/bin/index.js", "im"),
-            ("male/bin/scene.js", "sm"),
-            ("female/scene.json", "hf"),
-            ("female/bin/index.js", "if"),
-            ("model.glb", "glb"),
-        ]
-        .map(|(k, v)| (k.to_owned(), v.to_owned())),
-    )
-}
-
-#[test]
-fn the_scene_json_of_the_body_shape_wins_over_a_bare_one() {
-    let files = vec![
-        "female/scene.json".to_owned(),
-        "male/scene.json".to_owned(),
-        "scene.json".to_owned(),
-    ];
-    assert_eq!(
-        scene_json_key(&files, FEMALE_PREFIX).as_deref(),
-        Some("female/scene.json")
-    );
-    assert_eq!(
-        scene_json_key(&files[2..], MALE_PREFIX).as_deref(),
-        Some("scene.json")
-    );
-    assert_eq!(scene_json_key(&files[..1], MALE_PREFIX), None);
-}
-
-#[test]
-fn a_scene_json_resolves_to_the_body_shapes_scene() {
-    let resolved = build_resolved(
-        "bafywearable",
-        MALE_PREFIX,
-        "Hat".to_owned(),
-        SCENE_JSON.as_bytes(),
-        &packed_content(),
-        "http://cat/contents/".to_owned(),
-    )
-    .unwrap();
-    assert_eq!(resolved.scene_id, "bafywearable-sw-male");
-    assert_eq!(resolved.ready.scene_id, resolved.scene_id);
-    // every file of the shape, unprefixed, plus the shared ones; nothing of the other shape
-    assert_eq!(
-        resolved.stripped.hash("bin/index.js").as_deref(),
-        Some("im")
-    );
-    assert_eq!(
-        resolved.stripped.hash("bin/scene.js").as_deref(),
-        Some("sm")
-    );
-    assert_eq!(resolved.stripped.hash("model.glb").as_deref(), Some("glb"));
-    assert!(resolved.stripped.hash("female/bin/index.js").is_none());
-    assert_eq!(
-        resolved.ready.declared,
-        vec![
-            "USE_FETCH".to_owned(),
-            "ALLOW_TO_TRIGGER_AVATAR_EMOTE".to_owned()
-        ]
-    );
-    assert_eq!(
-        resolved.ready.gated,
-        [PermissionType::Fetch].into_iter().collect()
-    );
-    assert_eq!(resolved.meta_value["main"], "bin/index.js");
-
-    let female = build_resolved(
-        "bafywearable",
-        FEMALE_PREFIX,
-        "Hat".to_owned(),
-        SCENE_JSON.as_bytes(),
-        &packed_content(),
-        String::new(),
-    )
-    .unwrap();
-    assert_eq!(female.scene_id, "bafywearable-sw-female");
-    assert_eq!(female.stripped.hash("bin/index.js").as_deref(), Some("if"));
-}
-
-#[test]
-fn an_unprefixed_wearable_resolves_as_is() {
-    let content = ContentMap::from_content(
-        [
-            ("scene.json", "s"),
-            ("bin/index.js", "i"),
-            ("bin/sdk-runtime.js", "r"),
-        ]
-        .map(|(k, v)| (k.to_owned(), v.to_owned())),
-    );
-    let resolved = build_resolved(
-        "p",
-        FEMALE_PREFIX,
-        String::new(),
-        SCENE_JSON.as_bytes(),
-        &content,
-        String::new(),
-    )
-    .unwrap();
-    assert_eq!(resolved.stripped.0.len(), 3);
-}
-
-#[test]
-fn a_scene_json_must_be_sdk7_with_its_main() {
-    let sdk6 = SCENE_JSON.replace(r#""runtimeVersion": "7","#, "");
-    let err = build_resolved(
-        "h",
-        MALE_PREFIX,
-        String::new(),
-        sdk6.as_bytes(),
-        &packed_content(),
-        String::new(),
-    )
-    .unwrap_err();
-    assert!(err.contains("runtimeVersion"), "{err}");
-
-    let no_main = SCENE_JSON.replace("bin/index.js", "bin/missing.js");
-    let err = build_resolved(
-        "h",
-        MALE_PREFIX,
-        String::new(),
-        no_main.as_bytes(),
-        &packed_content(),
-        String::new(),
-    )
-    .unwrap_err();
-    assert!(err.contains("bin/missing.js"), "{err}");
-
-    assert!(build_resolved(
-        "h",
-        MALE_PREFIX,
-        String::new(),
-        b"{",
-        &packed_content(),
-        String::new()
-    )
-    .is_err());
-}
-
 #[test]
 fn the_listing_has_a_header_and_one_line_per_entry() {
     let mut model = logged_in();
     equip(&mut model, &[HAT, CAPE]);
     let hat = normalize_urn(HAT);
     let cape = normalize_urn(CAPE);
-    model.set_phase(&hat, ready(&hat, &[]));
+    model.set_phase(&hat, ready("bafyhat"));
     model.set_phase(&cape, Phase::Failed("wearable Missing".to_owned()));
-    let listing = diagnostics::format_listing(&model.info(PortableExperiencesToggle::Enabled));
+    let entries = diagnostics::entries(&model, |_| (PortableState::Blocked, None));
     assert_eq!(
-        listing,
-        format!("current scene allows: true\n{hat} running\n{cape} failed wearable Missing")
+        diagnostics::format_listing(false, &entries),
+        format!("current scene allows: false\n{hat} blocked\n{cape} failed wearable Missing")
     );
+    model.set_phase(&cape, Phase::NotSmart);
+    assert!(model.stop(&hat));
+    let entries = diagnostics::entries(&model, |_| (PortableState::Running, None));
     assert_eq!(
-        diagnostics::format_listing(&Model::default().info(PortableExperiencesToggle::Enabled)),
-        "no smart wearables"
+        diagnostics::format_listing(true, &entries),
+        format!("current scene allows: true\n{hat} stopped\n{cape} notSmart")
     );
+    assert_eq!(diagnostics::format_listing(true, &[]), "no smart wearables");
 }

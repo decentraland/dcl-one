@@ -18,9 +18,10 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SmartWearableAuthRequest, SmartWearableStateInfo, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -784,48 +785,24 @@ pub fn op_set_single_permission(state: Rc<RefCell<impl State>>, id: usize, allow
         .unwrap();
 }
 
-pub async fn op_get_smart_wearable_auth_stream(state: Rc<RefCell<impl State>>) -> u32 {
-    debug!("op_get_smart_wearable_auth_stream");
+pub async fn op_get_portables_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetSmartWearableAuthorizationStream(sx))
+        .send(SystemApi::GetPortablesStream(sx))
         .unwrap();
 
     rid
 }
 
-pub async fn op_read_smart_wearable_auth_stream(
+pub async fn op_read_portables_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
-) -> Result<Option<SmartWearableAuthRequest>, anyhow::Error> {
-    debug!("op_read_smart_wearable_auth_stream");
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
-}
-
-pub fn op_answer_smart_wearable_auth(state: Rc<RefCell<impl State>>, id: u32, allow: bool) {
-    state
-        .borrow_mut()
-        .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::AnswerSmartWearableAuthorization { id, allow })
-        .unwrap();
-}
-
-pub async fn op_smart_wearable_state(
-    state: Rc<RefCell<impl State>>,
-) -> Result<SmartWearableStateInfo, anyhow::Error> {
-    let (sx, rx) = RpcResultSender::channel();
-
-    state
-        .borrow_mut()
-        .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SmartWearableState(sx))
-        .unwrap();
-
-    rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub async fn op_get_world_access_stream(state: Rc<RefCell<impl State>>) -> u32 {

@@ -316,13 +316,16 @@ impl ContentMap {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum SceneIpfsLocation {
     Hash(String),
     Urn(String),
-    /// A definition built in-process (a smart wearable's scene, assembled from the wearable's
-    /// content) and already added to `Assets<EntityDefinition>`.
-    Asset(Handle<EntityDefinition>),
+    /// A content file of a registered collection whose loader produces the definition (a smart
+    /// wearable's scene, `{shape}.smart_wearable` in the wearable's collection).
+    ContentFile {
+        hash: String,
+        file: String,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -1390,18 +1393,49 @@ impl IpfsIo {
         modifier: Option<IpfsModifier>,
         metadata: Option<String>,
     ) {
-        let mut write = self.context.blocking_write();
+        Self::insert_collection(
+            &mut self.context.blocking_write(),
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
 
+    /// [`Self::add_collection`] for async code (an asset loader), which must not block.
+    pub async fn add_collection_async(
+        &self,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
+        Self::insert_collection(
+            &mut *self.context.write().await,
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
+
+    fn insert_collection(
+        context: &mut IpfsContext,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
         let entity = IpfsEntity {
             collection,
             metadata,
         };
 
         if let Some(modifier) = modifier {
-            write.modifiers.insert(hash.clone(), modifier);
+            context.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        context.entities.insert(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),

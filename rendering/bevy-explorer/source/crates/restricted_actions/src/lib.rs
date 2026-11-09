@@ -1,5 +1,6 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;
 
@@ -126,6 +127,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
+        app.add_plugins(portables::PortablesPlugin);
     }
 }
 
@@ -1085,8 +1087,8 @@ fn portable_matches_location(
         PortableLocation::Urn(urn) => {
             if let Some(wearable) = smart_wearable_urn(urn) {
                 return match &source.kind {
-                    PortableKind::SmartWearable { urn, .. } => {
-                        WearableUrn::new(urn).is_ok_and(|urn| urn == wearable)
+                    PortableKind::SmartWearable { .. } => {
+                        WearableUrn::new(&source.pid).is_ok_and(|urn| urn == wearable)
                     }
                     _ => false,
                 };
@@ -1109,10 +1111,9 @@ fn killed_smart_wearables<'a>(
 ) -> HashSet<String> {
     killed
         .into_iter()
-        .filter_map(|hash| match &portables.get(hash)?.kind {
-            PortableKind::SmartWearable { urn, .. } => Some(urn.clone()),
-            _ => None,
-        })
+        .filter_map(|hash| portables.get(hash))
+        .filter(|source| source.is_smart_wearable())
+        .map(|source| source.pid.clone())
         .collect()
 }
 
@@ -1229,7 +1230,8 @@ fn kill_portable(
     }
 }
 
-/// `PortableExperiences.exit`: the calling scene unloads itself if it is a portable.
+/// `PortableExperiences.exit`: the calling scene unloads itself if it is a portable. Refused in
+/// server mode, where every hosted scene is a portable the server re-inserts.
 fn exit_portable(
     mut commands: Commands,
     portables: Res<PortableScenes>,
@@ -1242,6 +1244,10 @@ fn exit_portable(
         }
         _ => None,
     }) {
+        if server_mode() {
+            response.send(false);
+            continue;
+        }
         let is_portable = portables.contains_key(hash);
         if is_portable {
             exiting.insert(hash.to_string());

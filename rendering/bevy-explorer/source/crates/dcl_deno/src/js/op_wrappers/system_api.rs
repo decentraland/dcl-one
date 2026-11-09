@@ -12,9 +12,9 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SmartWearableAuthRequest, SmartWearableStateInfo, VoiceMessage, WelcomeState,
-    WorldAccessEvent,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -83,10 +83,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_world_access_stream(),
             op_read_world_access_stream(),
             op_set_world_password(),
-            op_get_smart_wearable_auth_stream(),
-            op_read_smart_wearable_auth_stream(),
-            op_answer_smart_wearable_auth(),
-            op_smart_wearable_state(),
+            op_get_portables_stream(),
+            op_read_portables_stream(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
             op_get_scene_loading_ui_stream(),
@@ -852,28 +850,15 @@ pub async fn op_read_block_update_stream(
 }
 
 #[op2(async)]
-pub async fn op_get_smart_wearable_auth_stream(state: Rc<RefCell<OpState>>) -> u32 {
-    dcl_js::system_api::op_get_smart_wearable_auth_stream(state).await
+pub async fn op_get_portables_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_portables_stream(state).await
 }
 
 #[op2(async)]
 #[serde]
-pub async fn op_read_smart_wearable_auth_stream(
+pub async fn op_read_portables_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<SmartWearableAuthRequest>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_smart_wearable_auth_stream(state, rid).await
-}
-
-#[op2(fast)]
-pub fn op_answer_smart_wearable_auth(state: Rc<RefCell<OpState>>, id: u32, allow: bool) {
-    dcl_js::system_api::op_answer_smart_wearable_auth(state, id, allow);
-}
-
-#[op2(async)]
-#[serde]
-pub async fn op_smart_wearable_state(
-    state: Rc<RefCell<OpState>>,
-) -> Result<SmartWearableStateInfo, anyhow::Error> {
-    dcl_js::system_api::op_smart_wearable_state(state).await
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    dcl_js::system_api::op_read_portables_stream(state, rid).await
 }

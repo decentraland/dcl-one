@@ -28,7 +28,8 @@ use ui_pointer::set_ui_pointer_events;
 use ui_text::{check_text_links, retry_ui_text_fonts, set_ui_text, UiText};
 
 use crate::{
-    initialize_scene::{LiveScenes, SuperUserScene},
+    initialize_scene::{LiveScenes, PortableScenes, SuperUserScene},
+    portables::{current_toggle, is_listed},
     renderer_context::RendererSceneContext,
     update_world::scene_ui::ui_pointer::manage_scene_ui_interact,
     ContainerEntity, ContainingScene, InteractableArea, MobileUiEmulation, SceneEntity, SceneSets,
@@ -631,26 +632,28 @@ pub struct SceneUiRoot {
     canvas: Entity,
 }
 
-/// The scenes whose UI shows: those the player is in, less any portable (other than a super-user
-/// one) while the parcel scene the player stands in sets `portableExperiences: hideUi`.
+/// The scenes whose UI shows: those the player is in, less every listed portable while the
+/// parcel scene the player stands in sets `portableExperiences` to `hideUi` or `disabled`.
 fn ui_scenes(
     player: Option<Entity>,
     containing_scene: &ContainingScene,
     contexts: &Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: &PortableScenes,
 ) -> HashSet<Entity> {
     let Some(player) = player else {
         return HashSet::default();
     };
     let mut scenes = containing_scene.get(player);
-    let hide_portables = containing_scene
-        .get_parcel(player)
-        .and_then(|parcel| contexts.get(parcel).ok())
-        .is_some_and(|(ctx, _)| ctx.portable_experiences == PortableExperiencesToggle::HideUi);
-    if hide_portables {
+    let toggle = current_toggle(Some(player), containing_scene, |scene| {
+        contexts.get(scene).ok().map(|(ctx, _)| ctx)
+    });
+    if toggle != PortableExperiencesToggle::Enabled {
         scenes.retain(|scene| {
-            contexts
-                .get(*scene)
-                .is_ok_and(|(ctx, is_super)| !ctx.is_portable || is_super)
+            contexts.get(*scene).is_ok_and(|(ctx, is_super)| {
+                portables
+                    .get(&ctx.hash)
+                    .is_none_or(|source| !is_listed(source, is_super))
+            })
         });
     }
     scenes
@@ -668,6 +671,7 @@ fn create_ui_roots(
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: Res<PortableScenes>,
     current_uis: Query<(Entity, &SceneUiRoot)>,
     config: Res<AppConfig>,
     canvas_infos: Query<(Entity, &ContainerEntity, Ref<UiCanvas>, Option<&UiLink>)>,
@@ -696,7 +700,12 @@ fn create_ui_roots(
         ..Default::default()
     };
 
-    let current_scenes = ui_scenes(player.single().ok(), &containing_scene, &contexts);
+    let current_scenes = ui_scenes(
+        player.single().ok(),
+        &containing_scene,
+        &contexts,
+        &portables,
+    );
 
     // remove any non-current uis
     for (ent, ui_root) in &current_uis {
@@ -1041,12 +1050,18 @@ fn layout_scene_ui(
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: Res<PortableScenes>,
     ui_nodes: Query<(&SceneEntity, Ref<UiTransform>, &ChildOf)>,
     mut removed_transforms: RemovedComponents<UiTransform>,
     ui_links: Query<&UiLink>,
     dui: Res<DuiRegistry>,
 ) {
-    let current_scenes = ui_scenes(player.single().ok(), &containing_scene, &contexts);
+    let current_scenes = ui_scenes(
+        player.single().ok(),
+        &containing_scene,
+        &contexts,
+        &portables,
+    );
 
     let removed_transforms = removed_transforms.read().collect::<Vec<_>>();
 
@@ -1688,8 +1703,8 @@ mod tests {
     }
 
     /// The scenes showing UI with the player standing in a parcel scene with `toggle`, beside
-    /// a portable and a super-user portable.
-    fn shown(toggle: PortableExperiencesToggle) -> (HashSet<Entity>, [Entity; 3]) {
+    /// a scene-spawned portable, a super-user portable and a startup portable.
+    fn shown(toggle: PortableExperiencesToggle) -> (HashSet<Entity>, [Entity; 4]) {
         let mut world = World::new();
         world.init_resource::<LiveScenes>();
         world.init_resource::<PortableScenes>();
@@ -1710,10 +1725,14 @@ mod tests {
         let system = world
             .spawn((context("system", true, Default::default()), SuperUserScene))
             .id();
+        let startup = world
+            .spawn(context("startup", true, Default::default()))
+            .id();
         for (hash, entity) in [
             ("parcel", parcel),
             ("portable", portable),
             ("system", system),
+            ("startup", startup),
         ] {
             world
                 .resource_mut::<LiveScenes>()
@@ -1734,6 +1753,10 @@ mod tests {
             "system".to_owned(),
             PortableSource::new("system".to_owned(), None, None, true),
         );
+        portables.insert(
+            "startup".to_owned(),
+            PortableSource::new("startup".to_owned(), None, None, false),
+        );
 
         // stand in the middle of parcel (0,0)
         world.spawn((
@@ -1745,32 +1768,39 @@ mod tests {
             .run_system_once(
                 |player: Query<Entity, With<PrimaryUser>>,
                  containing_scene: ContainingScene,
-                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>| {
-                    ui_scenes(player.single().ok(), &containing_scene, &contexts)
+                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+                 portables: Res<PortableScenes>| {
+                    ui_scenes(
+                        player.single().ok(),
+                        &containing_scene,
+                        &contexts,
+                        &portables,
+                    )
                 },
             )
             .unwrap();
-        (scenes, [parcel, portable, system])
+        (scenes, [parcel, portable, system, startup])
     }
 
     #[test]
-    fn a_hide_ui_scene_hides_the_ui_of_portables_but_not_of_system_scenes() {
-        let (scenes, [parcel, portable, system]) = shown(PortableExperiencesToggle::HideUi);
-        assert!(scenes.contains(&parcel));
-        assert!(!scenes.contains(&portable));
-        assert!(scenes.contains(&system));
-    }
-
-    #[test]
-    fn portables_show_their_ui_under_any_other_toggle() {
+    fn hide_ui_and_disabled_hide_the_ui_of_listed_portables_only() {
         for toggle in [
-            PortableExperiencesToggle::Enabled,
+            PortableExperiencesToggle::HideUi,
             PortableExperiencesToggle::Disabled,
         ] {
-            let (scenes, entities) = shown(toggle);
-            for entity in entities {
-                assert!(scenes.contains(&entity), "{toggle:?}");
-            }
+            let (scenes, [parcel, portable, system, startup]) = shown(toggle);
+            assert!(scenes.contains(&parcel), "{toggle:?}");
+            assert!(!scenes.contains(&portable), "{toggle:?}");
+            assert!(scenes.contains(&system), "{toggle:?}");
+            assert!(scenes.contains(&startup), "{toggle:?}");
+        }
+    }
+
+    #[test]
+    fn portables_show_their_ui_while_enabled() {
+        let (scenes, entities) = shown(PortableExperiencesToggle::Enabled);
+        for entity in entities {
+            assert!(scenes.contains(&entity));
         }
     }
 }

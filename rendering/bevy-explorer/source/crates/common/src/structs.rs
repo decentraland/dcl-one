@@ -1192,14 +1192,10 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
-    /// `true` for a scene meant to run as a portable experience (a smart wearable's scene.json).
-    pub is_portable_experience: Option<bool>,
-    /// The permissions a portable experience declares (`USE_FETCH`, `USE_WEB3_API`, ...). Only
-    /// enforced for smart wearables: see [`smart_wearable_permission`].
-    pub required_permissions: Option<Vec<String>>,
     /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
-    /// ([`PortableExperiencesToggle`]).
-    pub feature_toggles: Option<std::collections::HashMap<String, String>>,
+    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// fails the scene.json.
+    pub feature_toggles: Option<serde_json::Value>,
 }
 
 impl SceneMeta {
@@ -1208,14 +1204,14 @@ impl SceneMeta {
         self.feature_toggles
             .as_ref()
             .and_then(|toggles| toggles.get("portableExperiences"))
+            .and_then(serde_json::Value::as_str)
             .map(|value| value.parse().unwrap_or_default())
             .unwrap_or_default()
     }
 }
 
-/// A host scene's `featureToggles.portableExperiences`: whether smart wearables and other
-/// portable experiences run (and show their UI) while the player is inside the scene. Anything
-/// but `disabled` lets them run, as the stock explorer does.
+/// A host scene's `featureToggles.portableExperiences`: whether portable experiences run (and
+/// show their UI) while the player is inside the scene. Anything but `disabled` lets them run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PortableExperiencesToggle {
     #[default]
@@ -1236,29 +1232,6 @@ impl std::str::FromStr for PortableExperiencesToggle {
         }
     }
 }
-
-/// The permission a smart wearable's `requiredPermissions` entry names, for the four the stock
-/// explorer gates (`RestrictedJsApiPermissionsProvider`). The avatar-related names
-/// (`ALLOW_TO_TRIGGER_AVATAR_EMOTE`, `ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE`) and the legacy
-/// `ALLOW_MEDIA_HOSTNAMES` are not gated by any explorer, so they map to nothing.
-pub fn smart_wearable_permission(declared: &str) -> Option<PermissionType> {
-    match declared.trim() {
-        "USE_WEB3_API" => Some(PermissionType::Web3),
-        "USE_FETCH" => Some(PermissionType::Fetch),
-        "USE_WEBSOCKET" => Some(PermissionType::Websocket),
-        "OPEN_EXTERNAL_LINK" => Some(PermissionType::OpenUrl),
-        _ => None,
-    }
-}
-
-/// The permission types a smart wearable must declare to use: for these, an undeclared request
-/// is refused without asking.
-pub const SMART_WEARABLE_GATED_PERMISSIONS: [PermissionType; 4] = [
-    PermissionType::Web3,
-    PermissionType::Fetch,
-    PermissionType::Websocket,
-    PermissionType::OpenUrl,
-];
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -2102,6 +2075,42 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+
+    #[test]
+    fn feature_toggles_parse_leniently() {
+        let meta = |toggles: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            meta("").portable_experiences_toggle(),
+            PortableExperiencesToggle::Enabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"disabled","voiceChat":false}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::Disabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"hideUi"}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::HideUi
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for toggles in [
+            r#","featureToggles":{"portableExperiences":1}"#,
+            r#","featureToggles":["disabled"]"#,
+            r#","featureToggles":{"portableExperiences":"unknown"}"#,
+        ] {
+            assert_eq!(
+                meta(toggles).portable_experiences_toggle(),
+                PortableExperiencesToggle::Enabled,
+                "{toggles}"
+            );
+        }
     }
 }
 

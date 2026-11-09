@@ -379,30 +379,22 @@ module.exports.getPermissionRequestStream = async function() {
   return streamGenerator();
 }
 
-// stream of { id, urn, name, permissions: string[], reason: 'login' | 'equip' }: a smart
-// wearable asks to use the gated permissions its scene.json declares
-module.exports.getSmartWearableAuthorizationStream = async function() {
-  const rid = await Deno.core.ops.op_get_smart_wearable_auth_stream();
+// stream of the portables the player can see and stop, as a whole list on subscribe and on every
+// change: [{ hash?, pid, name, kind: 'scene' | 'smartWearable',
+//   state: 'loading' | 'running' | 'failed' | 'blocked' | 'stopped', reason?,
+//   source?: 'equipped' | 'console' | 'preview' }]
+module.exports.getPortablesStream = async function() {
+  const rid = await Deno.core.ops.op_get_portables_stream();
 
   async function* streamGenerator() {
     while (true) {
-      const next = await Deno.core.ops.op_read_smart_wearable_auth_stream(rid);
+      const next = await Deno.core.ops.op_read_portables_stream(rid);
       if (next === null) break;
       yield next;
     }
   }
 
   return streamGenerator();
-}
-
-// answer a smart wearable authorization request by its id
-module.exports.answerSmartWearableAuthorization = function(id, allow) {
-  Deno.core.ops.op_answer_smart_wearable_auth(id, allow);
-}
-
-// { entries: [{ urn, name, state, reason, sceneHash, source }], currentSceneAllows, currentSceneHidesUi }
-module.exports.smartWearableState = async function() {
-  return await Deno.core.ops.op_smart_wearable_state()
 }
 
 module.exports.getPermissionUsedStream = async function() {
