@@ -1,6 +1,5 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use bevy::log::{debug, error, info_span};
 use common::structs::GlobalCrdtStateUpdate;
 use dcl_js::{
@@ -18,8 +17,6 @@ use deno_core::{
     include_js_files, op2, v8, Extension, JsRuntime, OpDecl, OpState, PollEventLoopOptions,
     RuntimeOptions,
 };
-use multihash_codetable::MultihashDigest;
-use platform::project_directories;
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc::UnboundedReceiver, time::timeout};
 
@@ -41,14 +38,12 @@ use self::{
 pub mod fetch;
 #[cfg(feature = "inspect")]
 pub mod inspector;
-pub mod local_storage;
 pub mod op_wrappers;
 pub mod websocket;
 
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
-    storage_root: &str,
     preview: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
@@ -67,15 +62,6 @@ pub fn create_runtime(
         None,
         None,
     );
-
-    let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
-    let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
-    let storage_folder = project_directories()
-        .unwrap()
-        .data_local_dir()
-        .join("LocalStorage")
-        .join(storage_hash);
-    let webstorage = deno_webstorage::deno_webstorage::init_ops_and_esm(Some(storage_folder));
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
@@ -106,11 +92,8 @@ pub fn create_runtime(
         ops.extend(set);
     }
 
-    let override_sets: [Vec<deno_core::OpDecl>; 3] = [
-        fetch::override_ops(),
-        websocket::override_ops(),
-        local_storage::override_ops(),
-    ];
+    let override_sets: [Vec<deno_core::OpDecl>; 2] =
+        [fetch::override_ops(), websocket::override_ops()];
 
     for set in override_sets {
         for op in set {
@@ -157,9 +140,7 @@ pub fn create_runtime(
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![
-            webidl, url, console, web, net, fetch, websocket, webstorage, ext,
-        ],
+        extensions: vec![webidl, url, console, web, net, fetch, websocket, ext],
         inspector: inspect,
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
@@ -252,13 +233,8 @@ pub(crate) fn scene_thread(
     let scene_id = scene_context.scene_id;
     let preview = scene_context.preview;
     let kill_flag = KillFlag::default();
-    let (mut runtime, inspector) = create_runtime(
-        inspect,
-        super_user.is_some(),
-        &storage_root,
-        preview,
-        kill_flag.clone(),
-    );
+    let (mut runtime, inspector) =
+        create_runtime(inspect, super_user.is_some(), preview, kill_flag.clone());
 
     // store handle
     let vm_handle = runtime.v8_isolate().thread_safe_handle();
@@ -688,8 +664,7 @@ mod tests {
     /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-scene-realm", false, Default::default());
+        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
@@ -704,8 +679,7 @@ mod tests {
 
     #[test]
     fn signed_fetch_scene_module_queues_only_rust_computed_body_hashes() {
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-signed-fetch", false, Default::default());
+        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
         let op_state = runtime.op_state();
         op_state.borrow_mut().put(context(false));
         op_state.borrow_mut().put(dcl_types::RpcCalls::default());
@@ -840,6 +814,25 @@ mod tests {
         .unwrap();
     }
 
+    /// Scenes get no persistent browser storage, on the client or the server.
+    #[test]
+    fn scene_has_no_persistent_storage() {
+        for is_server in [false, true] {
+            run_scene(
+                is_server,
+                r#"
+                for (const name of ["localStorage", "sessionStorage", "indexedDB", "caches"]) {
+                    if (typeof globalThis[name] !== "undefined") { throw new Error(`${name} is reachable`); }
+                }
+                if (typeof navigator !== "undefined" && typeof navigator.storage !== "undefined") {
+                    throw new Error("navigator.storage is reachable");
+                }
+                "#,
+            )
+            .unwrap();
+        }
+    }
+
     /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at
     /// the ops table. They used to `panic!()` in the permission check -- across the V8
     /// boundary that is `panic_cannot_unwind`, i.e. SIGABRT, and on the client one sidecar
@@ -859,13 +852,7 @@ mod tests {
     /// authoritative server the option must be refused outright.
     #[test]
     fn server_refuses_a_scene_supplied_proxy() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
         runtime.op_state().borrow_mut().put(context(true));
         let err = runtime
             .execute_script(
@@ -883,13 +870,7 @@ mod tests {
     /// own outbound TLS.
     #[test]
     fn server_refuses_scene_supplied_ca_certs() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client-ca",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
         runtime.op_state().borrow_mut().put(context(true));
         let err = runtime
             .execute_script(
@@ -907,13 +888,7 @@ mod tests {
     /// this restriction is server-only.
     #[test]
     fn client_still_allows_custom_clients() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client-clientmode",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
         runtime.op_state().borrow_mut().put(context(false));
         runtime
             .execute_script(
@@ -962,13 +937,7 @@ mod tests {
             });
         }
 
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-fetch-redirect",
-            true,
-            Default::default(),
-        );
+        let (mut runtime, _) = create_runtime(false, false, true, Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();

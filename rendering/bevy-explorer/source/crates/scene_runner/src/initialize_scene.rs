@@ -772,7 +772,6 @@ pub(crate) fn initialize_scene(
 #[derive(Resource, Default)]
 pub struct LiveScenes {
     pub scenes: HashMap<String, Entity>,
-    pub block_new_scenes: bool,
 }
 
 pub struct PortableSource {
@@ -1786,10 +1785,6 @@ pub fn process_scene_lifecycle(
     // publish for imposter loading: defer while the current scene is loading
     // (same condition the lifecycle uses above) or while the startup set is
     current_scene_loading_res.0 = defer_to_current_scene || startup_loading;
-
-    if live_scenes.block_new_scenes {
-        return;
-    }
 
     // spawn any newly required scenes
     for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids

@@ -18,7 +18,6 @@ fn run_scene(
     let (mut runtime, _) = create_runtime(
         false,
         super_user,
-        "system-scene-network-test",
         false,
         Default::default(),
     );
