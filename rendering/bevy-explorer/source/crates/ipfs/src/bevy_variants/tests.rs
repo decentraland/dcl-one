@@ -113,10 +113,18 @@ fn selects_the_first_variant_this_client_takes() {
     )
     .is_some());
 
-    // model variants embed KTX2 under KHR_texture_basisu, which the glTF loader rejects
-    let models = [variant(VARIANT_CID, "model", "glb")];
-    assert!(select_variant(&models, "models/a.glb", true, none_bad).is_none());
-    assert!(select_variant(&models, "models/a.gltf", true, none_bad).is_none());
+    // model variants have no row yet: `glb` embeds KTX2 under KHR_texture_basisu, which the glTF
+    // loader rejects, and `glb-meshopt` waits for the loader's meshopt decoder
+    for format in ["glb", "glb-meshopt"] {
+        let models = [variant(VARIANT_CID, "model", format)];
+        assert!(supported_format(&models[0]).is_none());
+        assert!(select_variant(&models, "models/a.glb", true, none_bad).is_none());
+        assert!(select_variant(&models, "models/a.gltf", true, none_bad).is_none());
+    }
+    assert_eq!(
+        taken_formats(),
+        "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb, glb-meshopt"
+    );
     // a kind/format pair the schema does not have
     assert!(select_variant(
         &[variant(VARIANT_CID, "model", "ktx2-bc7")],
