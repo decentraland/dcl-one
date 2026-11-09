@@ -712,6 +712,8 @@ const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
 export const GALLERY_CALL_TIMEOUT_MS = 30_000
+// camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
+export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
 export type LoginStatus =
   | 'loading'
@@ -2522,8 +2524,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
   // A reply that never comes (the bridge scene reloaded mid-request) fails the call after
-  // GALLERY_CALL_TIMEOUT_MS, so a page never spins for good.
-  const galleryCall = useCallback(<M extends GalleryMessage | GalleryWriteMessage>(build: (requestId: number) => PageToScene): Promise<M | null> => {
+  // `timeoutMs`, so a page never spins for good.
+  const galleryCall = useCallback(<M extends GalleryMessage | GalleryWriteMessage>(build: (requestId: number) => PageToScene, timeoutMs = GALLERY_CALL_TIMEOUT_MS): Promise<M | null> => {
     const driver = driverRef.current
     if (driver == null) return Promise.resolve(null)
     const requestId = ++galleryRequestRef.current
@@ -2531,7 +2533,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       const timer = setTimeout(() => {
         galleryPendingRef.current.delete(requestId)
         resolve(null)
-      }, GALLERY_CALL_TIMEOUT_MS)
+      }, timeoutMs)
       galleryPendingRef.current.set(requestId, (msg) => {
         clearTimeout(timer)
         resolve(msg as M)
@@ -2560,7 +2562,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   )
   const removeGalleryPhoto = useCallback(
     async (id: string): Promise<ReelWrite> =>
-      (await galleryCall<GalleryWriteMessage>((requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }))) ?? { ok: false },
+      (await galleryCall<GalleryWriteMessage>((requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
     [galleryCall]
   )
   const teleport = useCallback((x: number, y: number) => {

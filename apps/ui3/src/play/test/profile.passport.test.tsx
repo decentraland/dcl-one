@@ -1,10 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfilePassport } from '../features/profile/ProfilePassport'
 import type { Emote, GalleryPhoto, Profile, Wearable } from '../engine/protocol'
 import { setPublicReelFetcher } from '../features/gallery/publicReels'
 import type { PassportPhotoActions } from '../features/gallery/PassportPhotos'
+
+afterEach(() => setPublicReelFetcher(null))
 
 const profile: Profile = {
   address: '0xkurd000000000000000000000000000000006b635',

@@ -45,7 +45,7 @@ export function fetchPublicReelPage(address: string, offset: number, limit: numb
   return fetcher(address, offset, limit)
 }
 
-/** Swap the source (the ?mock=1 HUD has no service to read). */
-export function setPublicReelFetcher(next: PublicReelFetcher): void {
-  fetcher = next
+/** Swap the source (the ?mock=1 HUD has no service to read); null restores the service. */
+export function setPublicReelFetcher(next: PublicReelFetcher | null): void {
+  fetcher = next ?? fetchFromService
 }
