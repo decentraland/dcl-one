@@ -47,7 +47,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   requests whose hash no scene root or avatar holds, then scenes that have left. Within the avatar
   and scene bands the partition decides, and in the others the oldest request goes first; parcel
   distance comes before facing only so that "in front before behind" can still decide between
-  scenes at the same parcel ring, since raw squared distance alone never ties. The tick key uses
+  scenes at the same parcel ring, since a raw-distance key gives facing no say between unequal
+  distances. The tick key uses
   raw squared distance. No distance bucket thresholds or tick-rate table are used.
 - **The nearest point of the parcel rectangle, not its corner.** The distance is 0 when the
   player stands within a scene's parcels, and it is the measure `parcels_in_range` already uses.
@@ -118,10 +119,14 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 ## Rejected
 
 - **Distance buckets and a bucket-indexed tick-rate table.** Excluded by the constraint in
-  Context: the aging scheduler already shares ticks by distance. A separate table would add
-  another tuning policy. No bucket field in `LoadPriority`, no rate table in the scene loop.
-- **Raw squared distance first, facing second.** A float distance rarely ties, so facing
-  rarely decides; the integer parcel ring in front of it is what keeps facing alive.
+  Context: the aging scheduler already shares ticks by distance. The evaluated alternative
+  uses 16 m steps up to 160 m, then 320, 640 and 1,280 m, measured from the nearest parcel corner,
+  and a tick-rate table of 40, 30, 15, 10, 5 and 0 frames a second. That table freezes scenes
+  from 80 m on and adds a second tuning policy. No bucket field in `LoadPriority`, no rate
+  table in the scene loop.
+- **Raw squared distance first, facing second.** Facing could then break only exact-distance
+  ties: it could never put a slightly farther scene in front ahead of a nearer scene behind.
+  An integer parcel ring groups those scenes so facing can decide within the ring.
 - **Parcel distance as `floor(distance / 16)`.** The ring is the Chebyshev ring index,
   which measures square parcel rings rather than rounding the metric distance.
 - **The nearest parcel corner as the distance.** It reads 11.3 m from a point over the
@@ -155,10 +160,11 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   until it had a context, and it let every new scene's entity definition and `main.crdt`,
   avatars' emotes and backpack thumbnails tie with the player's scene. Registering `SceneHash`
   at spawn and keying the player's scene before its context removes the need.
-- **Per-entity partition of scene content and an admission stage in front of each loader.**
-  The Explorer's loaders have no admission stage to feed, and one request-slot gate covers
-  every asset kind. Avatars are the one per-entity partition kept, because their downloads carry
-  their own hashes, not a scene's.
+- **Per-entity partition of scene content within 48 m, and an admission stage in front of each
+  loader.** The evaluated alternative re-partitions every loadable entity within 48 m of the
+  camera. The Explorer's loaders have no admission stage to feed, and one request-slot gate
+  covers every asset kind. Avatars are the one per-entity partition kept, because their
+  downloads carry their own hashes, not a scene's.
 - **Requests without a hash at the top.** The first-come behaviour before this change let an NFT
   frame or an imposter archive queue ahead of the active scene's files; they rank after every
   live scene instead.
@@ -174,9 +180,11 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   are refreshed (`overhead_of_publishing_at_a_busy_plaza`).
 - **Keeping the first-come semaphore for download slots.** The first scene to ask fills the queue
   whatever its distance; the gate decides using current priorities at every grant instead.
-- **A camera sampling tolerance.** Tens of scenes times their parcels, plus tens of avatars,
-  is a few thousand operations a frame. Skipping updates after small movements would leave
-  priorities stale without a measured need.
+- **A camera sampling tolerance** (re-measure only after the camera moves 0.1 m or turns 3°).
+  Tens of scenes times their parcels, plus tens of avatars, is a few thousand operations a
+  frame. The evaluated tolerance amortizes a global partition-and-sort pipeline; this engine
+  updates per-entity partition values without a full-world re-sort, so it recomputes them every
+  frame.
 - **Facing without a rendering camera.** Neither the headless stand-in `PrimaryCamera`, which
   never turns, nor the player's own forward stands for a viewer: a behind flag from either would
   count a server's scenes on one side (south, for the stand-in) four times farther in the tick
@@ -192,8 +200,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - **Per-scene priority in a resource map.** A fact about a scene is a component on its root; the
   gate's keys inside `IpfsIo` are the one exception, because `ipfs` cannot depend on
   `scene_runner`, and the hooks keep them in step with the components.
-- **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves
-  and the unload margin belong to card W1; frame-time,
+- **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves (six
+  scenes a wave) and the unload margin belong to card W1; frame-time,
   loading-slot and memory budgets to card E2, which builds on the memory status provider
   (W6.provider); scene LOD and the visual-state resolver to W4.
 

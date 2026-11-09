@@ -23,7 +23,7 @@ const MyUI = () => (
     }}
   >
     {/* Labels always declare an explicit box — an unset text dimension is
-        measured on Bevy but contributes 0 to layout on Unity. */}
+        measured on Bevy but contributes 0 to layout on the production desktop client. */}
     <Label value="Hello Decentraland!" fontSize={24} uiTransform={{ width: 400, height: 40 }} />
   </UiEntity>
 )
@@ -478,7 +478,7 @@ const Announcement = () => {
     >
       {/* Dark backing panel keeps white text legible over any background.
           Explicit sizes, not auto-sizing from the text: an unset text dimension
-          contributes 0 to layout on the Unity explorer and the panel collapses. */}
+          contributes 0 to layout on the production desktop client and the panel collapses. */}
       <UiEntity
         uiTransform={{ width: 900, height: 64, padding: { top: 8, bottom: 8, left: 24, right: 24 } }}
         uiBackground={{ color: Color4.create(0, 0, 0, 0.6) }}

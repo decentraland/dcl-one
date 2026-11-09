@@ -483,7 +483,7 @@ flowchart TB
 
 1. **Catalyst** - Stores raw entity data
 2. **Deployment Queue** - Triggers async processing
-3. **Asset Bundle Converter** - Builds optimized Unity bundles
+3. **Asset Bundle Converter** - Builds optimized asset bundles
 4. **Profile Image Generator** - Renders avatar thumbnails (for profile entities)
 5. **Events Notifier** - Publishes deployment event
 6. **Badges Processor** - Checks for deployment achievement badges

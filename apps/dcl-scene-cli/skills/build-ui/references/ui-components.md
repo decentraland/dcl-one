@@ -95,9 +95,9 @@ The options arg is `{ virtualWidth?, virtualHeight?, screenInset? }` — every f
 
 **font values:** `sans-serif` (default), `serif`, `monospace`
 
-⚠️ **Always give a `Label` an explicit `width` and `height` in `uiTransform`** (as above). Text intrinsic sizing is engine-dependent: the Bevy explorer measures the rendered text and feeds its height into flex layout, the Unity explorer gives an unset dimension ~0 while still drawing the glyphs. So on Unity, labels stacked in a column overlap and any parent auto-sizing from text children collapses to its padding — while the same code looks correct on Bevy. Wrapped text needs a height for its line count (two lines at `fontSize: 20` → 60); a label filling a fixed-size parent can use `width: '100%', height: '100%'`. Containers that stack labels need explicit heights too. Verified in-world with side-by-side screenshots.
+⚠️ **Always give a `Label` an explicit `width` and `height` in `uiTransform`** (as above). Text intrinsic sizing is engine-dependent: the Bevy explorer measures the rendered text and feeds its height into flex layout, the production desktop client gives an unset dimension ~0 while still drawing the glyphs. So on the production desktop client, labels stacked in a column overlap and any parent auto-sizing from text children collapses to its padding — while the same code looks correct on Bevy. Wrapped text needs a height for its line count (two lines at `fontSize: 20` → 60); a label filling a fixed-size parent can use `width: '100%', height: '100%'`. Containers that stack labels need explicit heights too. Verified in-world with side-by-side screenshots.
 
-⚠️ **Never put emoji in a `value` string.** Emoji glyph coverage is not part of the SDK — it depends on the fonts the explorer bundles, and the Unity explorer has no emoji glyphs, so an emoji renders as a missing-glyph box or as nothing at all. Verified in-world: `value="✨ Particles"` showed no sparkle on the Unity explorer. Use plain text, and put pictorial affordances in a `uiBackground.texture` on a `UiEntity` beside the label.
+⚠️ **Never put emoji in a `value` string.** Emoji glyph coverage is not part of the SDK — it depends on the fonts the explorer bundles, and the production desktop client has no emoji glyphs, so an emoji renders as a missing-glyph box or as nothing at all. Verified in-world: `value="✨ Particles"` showed no sparkle on the production desktop client. Use plain text, and put pictorial affordances in a `uiBackground.texture` on a `UiEntity` beside the label.
 
 ## Button
 
@@ -259,7 +259,7 @@ export function setupUi() {
 
 - Types: `function InteractableArea(props: UiInteractableAreaProps)`; `UiInteractableAreaProps = Omit<EntityPropTypes, 'uiTransform'> & { uiTransform?: Omit<NonNullable<EntityPropTypes['uiTransform']>, 'positionType' | 'position'> }`. Import from `@dcl/sdk/react-ecs`.
 - The component owns `positionType: 'absolute'` and `position` (set from the reported insets) — any values you pass for those in `uiTransform` are **ignored**. All other `uiTransform`, `uiBackground`, and event props forward normally.
-- On the **Unity desktop client** the left ~25% of the screen is reserved for client UI, so children are placed within the remaining ~75%.
+- On the **production desktop client** the left ~25% of the screen is reserved for client UI, so children are placed within the remaining ~75%.
 - Falls back to zero insets (no-op) when `UiCanvasInformation` is unavailable.
 - **Distinct from `ScreenInsetArea`:** `InteractableArea` avoids the *client's* UI (minimap/chat/overlays); `ScreenInsetArea` avoids the *device's* hardware margins (notch/status bar). They read different sources and can be nested to apply both (the renderer's `screenInset` picks only one).
 

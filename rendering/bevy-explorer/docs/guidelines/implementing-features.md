@@ -14,9 +14,10 @@ override its defaults. Check the license before importing an external asset.
    settings, loading, cleanup and consumers. Inspect static versus skinned geometry, material
    assignments, shader passes, visibility and nametags. Keep source inventories and comparison
    evidence in the ignored task report.
-3. **Make constants explicit.** Durations, offsets, thresholds and colors are behavior. Check
-   material values as well as shader defaults, and explain a changed value through the current
-   requirements rather than adjusting it in passing.
+3. **Preserve the required constants.** Durations, offsets, thresholds and colors are behavior;
+   keep their specified values and names unless the task authorizes a change. Check material
+   values as well as shader defaults. Record each intentional difference and its reason in the
+   task report rather than adjusting a value in passing.
 4. **Use the owning crate's integration points** (below). Entity state belongs on its entity;
    reuse the existing schedules and lifecycle. A feature that hides or clips spawned content
    runs after its producer with deferred commands applied before rendering.
@@ -64,7 +65,7 @@ through `embedded://shaders/<file>.wgsl`.
 | Time | `globals.time` from `bevy_pbr::mesh_view_bindings` |
 | Camera position | `view.world_position` |
 | Alpha cutoff | `if x < 0.0 { discard; }` |
-| Arithmetic | `fract`, `mix`, `f32`, `saturate`, `step`, `smoothstep` and `pow` |
+| Arithmetic | Translate HLSL `frac`, `lerp` and `half` to `fract`, `mix` and `f32`; `saturate`, `step`, `smoothstep` and `pow` keep their names |
 | Instance and world transform | `vertex.instance_index` and `mesh_functions::get_world_from_local(instance_index)`; carry the instance index under `#ifdef VERTEX_OUTPUT_INSTANCE_INDEX` |
 | World-to-clip position | `view_transformations::position_world_to_clip` |
 | Skinning | Under `#ifdef SKINNED`, call `skinning::skin_model(joint_indices, joint_weights, instance_index)` and `skin_normals`, as `bevy_pbr`'s `mesh.wgsl` does. Without it, a custom vertex stage renders the bind pose |

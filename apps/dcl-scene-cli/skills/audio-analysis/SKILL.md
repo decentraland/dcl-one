@@ -15,9 +15,9 @@ Real-time audio signal analysis attached to any entity that already has an `Audi
 
 Values are derived from live audio frames. If the source is paused, muted, or not yet loaded, `amplitude` and all `bands[]` stay at `0`. There is no "ready" event — start your reactive systems unconditionally, they will simply animate toward `0` while silent.
 
-## RULE: Only the Unity explorer implements this
+## RULE: Check client support and provide a fallback
 
-Bevy and the mobile Godot explorer ignore the component (no analysis written). Treat `AudioAnalysis` as a Unity-explorer-only enhancement and design fallbacks (e.g. a base scale that doesn't depend on `amplitude`) so the scene still looks reasonable elsewhere.
+Bevy and the mobile Godot explorer ignore the component (no analysis written). Treat `AudioAnalysis` as an enhancement available only in the production desktop client and design fallbacks (e.g. a base scale that doesn't depend on `amplitude`) so the scene still looks reasonable elsewhere.
 
 ## RULE: Read via `readIntoView` into a pre-allocated view
 
@@ -160,5 +160,5 @@ No special scene permission is needed beyond what the underlying `AudioSource` /
 ## Resources
 
 - `{baseDir}/references/audio-analysis-example.md` — full music visualizer scene from the SDK examples (audio source + amplitude pulse + 8-bar equalizer).
-- Source PRs: protocol [#328](https://github.com/decentraland/protocol/pull/328), js-sdk-toolchain [#1256](https://github.com/decentraland/js-sdk-toolchain/pull/1256), unity-explorer [#6361](https://github.com/decentraland/unity-explorer/pull/6361).
+- Source PRs: protocol [#328](https://github.com/decentraland/protocol/pull/328), js-sdk-toolchain [#1256](https://github.com/decentraland/js-sdk-toolchain/pull/1256).
 - Reference scene: [`sdk7-goerli-plaza/audio-visualization`](https://github.com/decentraland/sdk7-goerli-plaza/tree/main/audio-visualization).

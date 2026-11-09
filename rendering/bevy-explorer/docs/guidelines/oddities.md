@@ -72,5 +72,3 @@ than once. Check here before correcting something surprising.
 
 - MASK wearables use binary alpha, as glTF specifies. See decisions.
 - `KHR_materials_emissive_strength` is honored; high authored values can produce strong glow.
-- Removing an `AvatarModifierArea` must release its visibility effect. Diagnose a persistently
-  hidden avatar through the remaining modifier owners and their cleanup.

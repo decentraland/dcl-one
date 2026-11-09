@@ -7,7 +7,9 @@ the standalone, by `node --test`, with no browser-automation framework
 The sign-in flows
 (explorer-automation's Auth and CrossVerify fixtures) are left aside.
 
-Every visual reference is recorded by dcl-one's CI against this client's rendering behavior.
+The scenario inventory is pinned to `decentraland/explorer-automation@955b338` (2026-10-22),
+with scenarios implemented through this repository's console driver. Every visual reference
+is recorded anew by dcl-one's CI against this client's rendering behavior.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
 have not yet run against the engine: that needs the Windows GPU runner and the zone accounts

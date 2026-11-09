@@ -195,10 +195,11 @@ exception:
 
 ## Callers
 
-The supported caller contract resolves `/api/places`, `/api/worlds`, `/api/destinations`,
+The contract covers production desktop and site callers; the site request shapes are pinned
+to `decentraland/sites@17b3535`. Both resolve `/api/places`, `/api/worlds`, `/api/destinations`,
 `/api/map` and `/api/events` on the places and events hosts, or `/places/api/…` and
-`/events/api/…` through the gateway; it does not use `/v1`.
-Explorer requests use integers, `true` flags, repeated `categories`, `positions` and `names`,
+`/events/api/…` through the gateway; neither requests `/v1`.
+Desktop requests use integers, `true` flags, repeated `categories`, `positions` and `names`,
 `order_by` with `order`, `owner`, `only_sdk7`, `with_live_events`, `with_connected_users`,
 and on events `list=live` or `highlight`, `positions[]`, `places_ids[]`, `community_id`,
 `from` and `to`, and `POST /api/events/search`. The sites send `only_highlighted=true`,

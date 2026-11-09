@@ -61,9 +61,9 @@ protoc \
 
 Many repositories depend on this protocol definition and that sometimes implies some merge order. We don't have to worry much about compatibility because the checks are running with each PR, if you break something, the CI will warn you. But, in some cases, it's desirable to merge the implementation in a specific order to avoid unexpected behavior in the corner cases (multiple repositories are waiting for the build at the same time).
 
-> **Coordinate protocol changes with their consuming application**
+> **Do not merge protocol changes before the production-client implementation is complete**
 >
-> Complete and verify the corresponding application implementation before merging a protocol change that requires it. This keeps the protocol and its consumer compatible.
+> Do not merge a protocol PR into `main` until its corresponding production-client implementation is complete. In-repository Explorer checks alone do not establish that external production consumers are ready; coordinate their implementation PRs to avoid runtime or build failures.
 >
 > The ideal order for introducing breaking changes in the protocol is as follows:
 >
@@ -89,6 +89,20 @@ Before merging, verify wire compatibility, component serialization/deserializati
 engine behavior through a scene that exercises the component. Use the engine's documented
 native and web checks when both platforms are affected. External package consumers still
 need the coordinated package update described above.
+
+For external package consumers, keep the protocol, renderer and SDK changes synchronized:
+
+- A protocol PR's package is uploaded to S3; use its CI-provided installation link in the
+  consuming development branches instead of waiting for a published version.
+- The SDK's CI must include the component test. Updating it to a protocol definition before
+  the corresponding SDK implementation lands can fail that CI.
+- Test the renderer and SDK branches together in the playground:
+  `https://playground.decentraland.org/?renderer-branch=feat/my-new-component&sdk-branch=feat/new-component-approach`.
+- For a local scene, install the `@dcl/sdk` S3 package linked in the SDK PR's CI comment.
+- When testing an external renderer through its editor's WebSocket bridge, pass the `ws`
+  query parameter in the local or playground test.
+- Begin merging only when all three PRs are ready: merge the protocol first, update the
+  renderer and SDK PRs to `@dcl/protocol@next`, then merge those two together.
 
 ## SDK: New APIs or APIs modifications
 
@@ -197,7 +211,7 @@ protoc \
 > `plugin.js` carries a `#!/usr/bin/env node` shebang. On Windows, protoc
 > cannot exec a `.js` directly, so point `--plugin` at a small `.cmd` wrapper
 > that runs `node plugin.js`; on unix an equivalent shell script is used. The
-> consumer build scripts can generate this wrapper automatically.
+> Pulse and the external renderer's consumer build scripts generate this wrapper automatically.
 
 The plugin emits one `*.Bitwise.cs` file (PascalCase, flat in the output
 directory) for each `.proto` file that contains at least one `[(quantized)]`

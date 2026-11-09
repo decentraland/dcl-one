@@ -66,7 +66,7 @@ For more information check all the scene limitations [here.](/docs/creator/sdk7/
 
 When creating meshes, we should keep in mind these 2 best practices:
 
-- **Modularity:** Break down large meshes into smaller, modular parts. For example, instead of having a single mesh for an entire building, the building could be divided into separate meshes for each wall, floor, and section of the building. This allows Unity's frustum culling to work more effectively, as only the visible parts need to be considered for rendering. It will also improve memory foot-print, because one mesh can be re-used several time for same object in different locations (to achieve this you will need to reference same mesh in your SDK7 scene definition or use instances instead of duplicated objects when exporting the scene from Blender).
+- **Modularity:** Break down large meshes into smaller, modular parts. For example, instead of having a single mesh for an entire building, the building could be divided into separate meshes for each wall, floor, and section of the building. This allows the renderer's frustum culling to work more effectively, as only the visible parts need to be considered for rendering. It will also improve memory foot-print, because one mesh can be re-used several time for same object in different locations (to achieve this you will need to reference same mesh in your SDK7 scene definition or use instances instead of duplicated objects when exporting the scene from Blender).
 - **Bounding Volume**: Ensure that the bounding volume of each object fits as tightly as possible. Extraneous space in the bounding volume can cause objects to be rendered when they're not visible.
 
 ![](/docs/creator/images/3d-models-and-animations/3d-essentials/40-modularity.webp)

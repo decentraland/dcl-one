@@ -79,18 +79,31 @@ understand the change in one sitting.
 
 ## Public prose
 
-Document the Explorer's current behavior, ownership, constraints and reasons directly. Keep
-Unity names, repository or file references, source revisions, copied-constant provenance and
-comparison language out of code comments, tracked documentation (including ADRs), and PR titles
-and descriptions. This rule supersedes older instructions to put that material in PRs. Keep
-source inventories and compatibility evidence in ignored task/review reports instead; retain
-required legal attribution in licenses and dependency manifests.
+Document current behavior, ownership, constraints and reasons directly. Throughout this
+repository, keep Unity names, repository or file references, source revisions, copied-constant
+provenance and comparison language out of prose in code comments, tracked documentation
+(including ADRs and agent instructions), and PR titles and descriptions. This rule supersedes
+older instructions to put that material in PRs. Keep source inventories and compatibility
+evidence in ignored task/review reports instead; retain required legal attribution in licenses
+and dependency manifests.
+
+Preserve exact operational literals when renaming them would break instructions or contracts:
+tool and skill identifiers, endpoint paths, process names, wire values, and external repository
+or download URLs needed to perform the documented task. Format those as code or link targets,
+use neutral prose around them, and record each remaining match and its purpose in the review
+report. This exception does not cover implementation provenance or incidental source citations.
+
+Removing provenance is a documentation edit, not a behavior or process change. Preserve
+technical values, rejected alternatives and their reasons, verification requirements, merge
+gates and useful source pins outside this prohibition. Do not turn a report about another
+implementation into a requirement or claimed behavior of this engine; retain such evidence
+in the ignored review report when it cannot stand alone here.
 
 Before committing or updating a PR, search every changed documentation file and the complete
 PR text with `rg -ni '\bunity(?:\b|[-_])'` and check the diff for indirect provenance wording.
-Remove matches outside this prohibition and explain each behavior using this implementation's
-requirements and tests. A source comparison is evidence for a decision, not public design
-rationale.
+Remove matches outside this prohibition and the operational literals above; explain each
+behavior using this implementation's requirements and tests. A source comparison is evidence
+for a decision, not public design rationale.
 
 ## Before pushing
 

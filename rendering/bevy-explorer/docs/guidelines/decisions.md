@@ -102,7 +102,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a feature flag.
 - **A photo's `screenRect` is sent and dropped.** Each visible person carries the rectangle they
   cover in the saved image. The catalyst's camera-reel service parses the metadata into a
-  struct without that field, so it is not stored.
+  struct without that field, so it is not stored. The client still sends it to preserve the
+  camera-reel metadata contract with deployed consumers.
 - **The photo camera stops at scene geometry instead of sliding.** A move is swept and
   refused whole when the camera's sphere would cross a scene collider. A collider the camera
   starts inside (the player
@@ -110,10 +111,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No camera-to-player dither in photo mode.** The fade would appear in photos, so the dither
   depth is zero while the mode is on and the player camera's depth comes back when it closes.
 - **The photo camera looks through the player camera's input path.** The pointer delta uses
-  the player camera's sensitivity and smoothing settings, scaled by 0.17.
+  the player camera's sensitivity and smoothing settings, scaled by 0.17. The scale preserves
+  the selected camera response at the 60 fps calibration point while keeping sensitivity and
+  smoothing in the shared input path; it is not a frame-time multiplier.
 - **The photo camera's wheel zoom is per line, and a held zoom button zooms per second.**
-  A wheel line is 16 pixels of trackpad scroll on every platform, including web. A held bumper
-  zooms per second, so neither action depends on the frame rate.
+  A wheel line is 16 pixels of trackpad scroll on every platform, including web. One line
+  applies `fov_change_speed * 50 / 60` degrees of FOV change: one 60 fps frame's zoom. A held
+  bumper applies `fov_change_speed * 50` degrees per second. The 60 fps calibration fixes the
+  wheel step without making either input depend on the actual frame rate.
 
 ## Deliberate choices that look like mistakes
 

@@ -82,7 +82,7 @@ If no explicit `height` or `width` is set on the `uiTransform` of the container,
 
 
 > [!WARNING]
-> **📔 Note**: Don't rely on that auto-fit for text. How much space a `Label` takes up when you leave its size unset differs between explorers. The Bevy-based explorer measures the rendered text and lays it out accordingly. The Unity explorer gives it almost no height, but still draws the letters, so stacked labels land on top of each other and a parent sized from its text collapses to nothing.
+> **📔 Note**: Don't rely on that auto-fit for text. How much space a `Label` takes up when you leave its size unset differs between explorers. The Bevy-based explorer measures the rendered text and lays it out accordingly. The production desktop client gives it almost no height, but still draws the letters, so stacked labels land on top of each other and a parent sized from its text collapses to nothing.
 >
 > Give every `Label` an explicit `width` **and** `height` in its `uiTransform`, and give an explicit height to any container that stacks labels. For wrapped text, size the height for the number of lines: two lines at `fontSize: 20` needs about `height: 60`.
 >
@@ -126,7 +126,7 @@ For the full list of limits, like the maximum file size, see [Custom fonts](/doc
 
 Leave emoji out of any `Label` or `Button` `value`, `uiText.value`, `Input` `placeholder`, and `Dropdown` option.
 
-The SDK doesn't ship emoji glyphs. Whether an emoji shows up depends on the fonts each explorer bundles, and the Unity explorer has none, so the character comes out as an empty box or disappears entirely. The same caution applies to other decorative Unicode such as arrows and box-drawing characters.
+The SDK doesn't ship emoji glyphs. Whether an emoji shows up depends on the fonts each explorer bundles, and the production desktop client has none, so the character comes out as an empty box or disappears entirely. The same caution applies to other decorative Unicode such as arrows and box-drawing characters.
 
 For a pictorial label, ship the art instead: put an image on a small `UiEntity` next to the text, using a `uiBackground` with a `texture`. See [UI Backgrounds](/docs/creator/sdk7/2d-ui/ui_background/).
 

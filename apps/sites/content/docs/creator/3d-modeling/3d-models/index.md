@@ -74,11 +74,9 @@ Maya doesn't support exporting to glTF by default, but you can install a plugin 
 > **📔 Note**: As an alternative, you can try [this other plugin](https://github.com/WonderMediaProductions/Maya2glTF) too.
 
 
-### **Export To glTF From Unity**
+### **Export With An Editor Plugin**
 
-Unity doesn't support exporting to glTF by default, but you can install a plugin to enable it.
-
-Download the plugin from [this link](https://github.com/sketchfab/Unity-glTF-Exporter).
+For editor projects that lack a built-in glTF exporter, check the editor and version requirements of the [Sketchfab exporter](https://github.com/sketchfab/Unity-glTF-Exporter) before installing it.
 
 
 > [!WARNING]

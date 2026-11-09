@@ -261,7 +261,7 @@ Constraints:
 
 ## Platform Support
 
-- **Desktop (Unity explorer):** Full support (point lights, spot lights, shadows).
+- **Production desktop client:** Full support (point lights, spot lights, shadows).
 - **Mobile (Godot explorer):** `LightSource` (scene dynamic lights) ships in **v1.13.0 (September 2026)**. Until then the mobile renderer ignores the component.
 - **Bevy explorer:** Full support (point lights, spot lights, shadows).
 

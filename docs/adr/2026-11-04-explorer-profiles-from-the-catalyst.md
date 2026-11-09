@@ -5,8 +5,9 @@
 
 ## Context
 
-Avatar rendering needs full profiles, while friends, chat, communities, notifications and
-creator lists need only names, claimed-name flags, name colors and face thumbnails. One cache
+Avatar rendering needs full profiles, while friends, chat, communities, notifications,
+creator lists and avatar face textures need only names, claimed-name flags, name colors and
+face thumbnails. One cache
 must satisfy both sets of readers without letting fetch policy vary by caller.
 
 Every backend area in dcl-one is served by one catalyst. The asset-bundle registry routes are
@@ -61,7 +62,9 @@ old content again or reusing a version that another peer may already have observ
 ## Rejected
 
 - **Batching through `asset-bundle-registry.<domain>`.** On dcl-one it serves Decentraland's
-  registry, not the node's deployments, and nothing on an `island` node.
+  registry, not the node's deployments, and nothing on an `island` node. In that fetch cascade,
+  a node-deployed profile misses the batch, falls back to a single-address GET, and remains
+  non-final, so it is asked of the registry again every 30 s.
 - **Serving the node's own data from the registry routes instead of a lambdas route.**
   Registry routes serve Decentraland's registry; the node's deployed profiles already live
   at `/lambdas/profiles`. The compact projection belongs beside them at
@@ -83,7 +86,7 @@ old content again or reusing a version that another peer may already have observ
 - On a catalyst without the compact route (`decentraland.org`, the default base domain) the first
   compact read costs a 405, then compact reads cost full profiles.
 - `asset-bundle-registry.<domain>/profiles*` keeps serving Decentraland's registry.
-- Deploys have no coalescing window or identical-profile suppression.
+- A four-second deploy-coalescing window and identical-profile suppression remain unimplemented.
 
 ## Follow-ups
 

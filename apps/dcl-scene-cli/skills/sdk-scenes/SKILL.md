@@ -126,7 +126,7 @@ Implementation guidance lives in individual topic skills, each installable separ
 
 ### Audio Analysis (Reactive Visualizers)
 
-**Skill: `audio-analysis`** — `AudioAnalysis` component for real-time amplitude + 8-band frequency data from any `AudioSource`/`AudioStream`/`VideoPlayer`. Drive scale, color, lights, and particles from music. Unity-explorer only.
+**Skill: `audio-analysis`** — `AudioAnalysis` component for real-time amplitude + 8-band frequency data from any `AudioSource`/`AudioStream`/`VideoPlayer`. Drive scale, color, lights, and particles from music. Production desktop client only; unsupported in Bevy and the mobile Godot client.
 
 ### Blockchain & NFTs
 

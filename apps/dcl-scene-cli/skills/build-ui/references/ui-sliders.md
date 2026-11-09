@@ -1,6 +1,6 @@
 # Drag sliders in React-ECS UI
 
-**Short answer: drag sliders ARE supported.** Build them with `PrimaryPointerInfo.screenDelta`, not with the UI event handlers alone. Confirmed working in-world in both the Unity and the Bevy explorers.
+**Short answer: drag sliders ARE supported.** Build them with `PrimaryPointerInfo.screenDelta`, not with the UI event handlers alone. Confirmed working in-world in both the production desktop client and the Bevy Explorer.
 
 ## Why you need `screenDelta`
 
