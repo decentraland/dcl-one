@@ -243,17 +243,19 @@ pub(crate) fn register(app: &mut App) {
         .add_systems(Update, check_platform_ban);
 }
 
-struct Check {
+/// One ban-status request on its way, for the address it was sent for.
+struct InFlightBanCheck {
     address: Address,
     task: Task<Result<Option<PlatformBanInfo>, String>>,
 }
 
+/// When the platform ban was last checked and when it may be checked next, for one address.
 #[derive(Default)]
-struct CheckState {
+struct BanCheckSchedule {
     address: Option<Address>,
     last_checked: Option<f64>,
     retry_after: Option<f64>,
-    in_flight: Option<Check>,
+    in_flight: Option<InFlightBanCheck>,
 }
 
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
@@ -264,17 +266,17 @@ fn check_platform_ban(
     realm: Option<Res<CurrentRealm>>,
     time: Res<Time>,
     mut refresh: ResMut<RefreshRequested>,
-    mut check: Local<CheckState>,
+    mut schedule: Local<BanCheckSchedule>,
     mut events: EventWriter<BanBlockEvent>,
 ) {
     let now = time.elapsed_secs_f64();
     let address = wallet.address();
 
-    if address != check.address {
-        check.address = address;
-        check.last_checked = None;
-        check.retry_after = None;
-        check.in_flight = None;
+    if address != schedule.address {
+        schedule.address = address;
+        schedule.last_checked = None;
+        schedule.retry_after = None;
+        schedule.in_flight = None;
         for event in status.reset_platform_ban() {
             events.write(event);
         }
@@ -283,12 +285,12 @@ fn check_platform_ban(
         return;
     };
 
-    if let Some(in_flight) = check.in_flight.as_mut() {
+    if let Some(in_flight) = schedule.in_flight.as_mut() {
         let Some(result) = in_flight.task.complete() else {
             return;
         };
         let for_address = in_flight.address;
-        check.in_flight = None;
+        schedule.in_flight = None;
         if for_address != address {
             return;
         }
@@ -305,7 +307,7 @@ fn check_platform_ban(
                 status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now)
             }
             Err(error) => {
-                check.retry_after = retry_after_secs(&error);
+                schedule.retry_after = retry_after_secs(&error);
                 warn!("[ban_block] platform ban check failed: {error}");
                 status.platform_ban_check_failed(error, now)
             }
@@ -318,11 +320,11 @@ fn check_platform_ban(
 
     let realm_changed = realm.is_some_and(|realm| realm.is_changed() && realm.connected);
     let requested = std::mem::take(&mut refresh.0);
-    if !(requested || realm_changed || due(now, check.last_checked, check.retry_after)) {
+    if !(requested || realm_changed || due(now, schedule.last_checked, schedule.retry_after)) {
         return;
     }
-    check.last_checked = Some(now);
-    check.retry_after = None;
+    schedule.last_checked = Some(now);
+    schedule.retry_after = None;
     let url = base_domain::url(
         Service::CommsGatekeeper,
         &format!("/users/{address:#x}/bans"),
@@ -331,7 +333,7 @@ fn check_platform_ban(
         .http
         .get(url)
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS));
-    check.in_flight = Some(Check {
+    schedule.in_flight = Some(InFlightBanCheck {
         address,
         task: IoTaskPool::get().spawn_compat(fetch_ban_status(request)),
     });
