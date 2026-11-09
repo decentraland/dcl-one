@@ -49,6 +49,24 @@ function card(it: CatalogItem, session: SessionKind = "signedOut", props: Partia
 /** Lets the batched profile read land inside act. */
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 120)));
 
+/**
+ * VIEW and the round arrow, as upstream's ViewCtaLink and ViewRoundLink: links to the detail page (so VIEW
+ * takes the cart button's hover), hidden from assistive tech and out of the tab order, which the card's
+ * overlay link already covers.
+ */
+function expectViewLinks() {
+  const detail = screen.getByTestId("card-link").getAttribute("href");
+  expect(detail).toBeTruthy();
+  expect(screen.getByTestId("card-view")).toHaveTextContent("View");
+  for (const id of ["card-view", "card-view-round"]) {
+    const el = screen.getByTestId(id);
+    expect(el.tagName).toBe("A");
+    expect(el).toHaveAttribute("href", detail);
+    expect(el).toHaveAttribute("aria-hidden", "true");
+    expect(el).toHaveAttribute("tabindex", "-1");
+  }
+}
+
 describe("rarityCardPalette", () => {
   it("gives a rarity its tile, flap and label colours, and anything else the neutral tile", () => {
     const epic = rarityCardPalette("Epic");
@@ -144,14 +162,7 @@ describe("the card's price row", () => {
     await settle();
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expect(screen.queryByTestId("card-add-round")).toBeNull();
-    expect(screen.getByTestId("card-link")).toHaveAttribute("href");
-    expect(screen.getByTestId("card-view")).toHaveTextContent("View");
-    // Drawings only: the overlay link beneath is the one navigation a click or a screen reader reaches.
-    for (const id of ["card-view", "card-view-round"]) {
-      const el = screen.getByTestId(id);
-      expect(el.closest("a, button")).toBeNull();
-      expect(el).toHaveAttribute("aria-hidden", "true");
-    }
+    expectViewLinks();
     expect(screen.getByTestId("card-nfs").closest("[data-chips]")).not.toBeNull();
   });
 
@@ -168,8 +179,19 @@ describe("the card's price row", () => {
     expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
     expect(screen.queryByTestId("card-sold-out")).toBeNull();
     expect(screen.queryByTestId("card-cart")).toBeNull();
-    expect(screen.getByTestId("card-view")).toHaveTextContent("View");
-    expect(screen.getByTestId("card-view-round")).toBeTruthy();
+    expectViewLinks();
+  });
+
+  it("a priced item with no listing to buy keeps its price and shows VIEW, never an Add to cart it could not honour", async () => {
+    const unlisted = item({ priceCredits: 14, available: 5 });
+    delete unlisted.tradeId;
+    delete unlisted.acquisition;
+    card(unlisted);
+    await settle();
+    expect(screen.getByTestId("card-price")).toHaveTextContent("14");
+    expect(screen.queryByTestId("card-cart")).toBeNull();
+    expect(screen.queryByTestId("card-add-round")).toBeNull();
+    expectViewLinks();
   });
 
   it("Add to cart puts the item in the cart and opens the drawer over the page, as upstream's card", async () => {

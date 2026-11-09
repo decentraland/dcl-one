@@ -389,10 +389,10 @@
   cursor: default;
 }
 .shop-card__addround { display: none; }
-/* VIEW and the round arrow on a card with nothing to buy (AssetCard's viewable) only draw: the click falls
-   through to the card's overlay link beneath them. */
+/* VIEW and the round arrow are links on a card with nothing to buy (AssetCard's viewable), VIEW with the cart
+   button's hover as upstream's ViewCtaLink. */
 .shop-card__cart[data-variant="view"],
-.shop-card__addround[data-variant="view"] { pointer-events: none; }
+.shop-card__addround[data-variant="view"] { text-decoration: none; }
 .shop-card__addround[data-variant="view"] { background: #242129; }
 .shop-card__units {
   margin: 0;
