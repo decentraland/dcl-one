@@ -98,6 +98,43 @@ CREATE TABLE IF NOT EXISTS dcl_migration.unconfirmed_email_loaded (
     address text PRIMARY KEY,
     code text NOT NULL
 );
+-- What the world-storage-service loads wrote: per upstream key, the target row and the updated_at
+-- it got. Its reconcile steps delete only those rows, and only while that updated_at still holds.
+CREATE TABLE IF NOT EXISTS dcl_migration.wss_world_storage_loaded (
+    world_name text NOT NULL,
+    place_id uuid NOT NULL,
+    key text NOT NULL,
+    realm text NOT NULL,
+    scene_namespace text NOT NULL,
+    updated_at timestamp NOT NULL,
+    PRIMARY KEY (world_name, place_id, key)
+);
+CREATE INDEX IF NOT EXISTS wss_world_storage_loaded_target
+    ON dcl_migration.wss_world_storage_loaded (realm, scene_namespace, key);
+CREATE TABLE IF NOT EXISTS dcl_migration.wss_player_storage_loaded (
+    world_name text NOT NULL,
+    place_id uuid NOT NULL,
+    player_address text NOT NULL,
+    key text NOT NULL,
+    realm text NOT NULL,
+    scene_namespace text NOT NULL,
+    player text NOT NULL,
+    updated_at timestamp NOT NULL,
+    PRIMARY KEY (world_name, place_id, player_address, key)
+);
+CREATE INDEX IF NOT EXISTS wss_player_storage_loaded_target
+    ON dcl_migration.wss_player_storage_loaded (realm, scene_namespace, player, key);
+CREATE TABLE IF NOT EXISTS dcl_migration.wss_env_variable_loaded (
+    world_name text NOT NULL,
+    place_id uuid NOT NULL,
+    key text NOT NULL,
+    realm text NOT NULL,
+    scene_namespace text NOT NULL,
+    updated_at timestamp NOT NULL,
+    PRIMARY KEY (world_name, place_id, key)
+);
+CREATE INDEX IF NOT EXISTS wss_env_variable_loaded_target
+    ON dcl_migration.wss_env_variable_loaded (realm, scene_namespace, key);
 RESET client_min_messages;
 """
 

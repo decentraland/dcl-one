@@ -15,8 +15,14 @@ node must run with the upstream ENCRYPTION_KEY. No key or plaintext passes
 through this tool or its files.
 
 Not migrated: scene_collaborators (a projection the node derives at read time
-from logsPermissions) and pgmigrations. Deleted upstream values are not
-detected. A target row newer than the source row is kept.
+from logsPermissions) and pgmigrations. A target row newer than the source
+row is kept.
+
+Each load records, in dcl_migration.wss_*_loaded, the upstream keys whose
+target row it wrote and the updated_at that row got. The *_reconcile steps
+read upstream's whole key set and delete the recorded rows whose key is gone
+upstream, unless the node wrote the row since (updated_at moved) or another
+upstream key still lands on it. Rows never recorded are never deleted.
 """
 
 [[step]]
@@ -34,6 +40,20 @@ columns = [
   { name = "value_size", type = "integer" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+# The whole upstream key set in one batch: imported rows whose key it lacks are deleted.
+[[step]]
+name = "world_storage_reconcile"
+targets = ["worlds.world_storage"]
+extract = "world_storage_reconcile.extract.sql"
+load = "world_storage_reconcile.load.sql"
+key = ["world_name", "place_id", "key"]
+whole = true
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "key", type = "text" },
 ]
 
 [[step]]
@@ -54,6 +74,21 @@ columns = [
   { name = "updated_at", type = "timestamptz" },
 ]
 
+# The whole upstream key set in one batch: imported rows whose key it lacks are deleted.
+[[step]]
+name = "player_storage_reconcile"
+targets = ["worlds.player_storage"]
+extract = "player_storage_reconcile.extract.sql"
+load = "player_storage_reconcile.load.sql"
+key = ["world_name", "place_id", "player_address", "key"]
+whole = true
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "player_address", type = "text" },
+  { name = "key", type = "text" },
+]
+
 [[step]]
 name = "env_variable"
 targets = ["worlds.env_variables"]
@@ -69,4 +104,18 @@ columns = [
   { name = "value_size", type = "integer" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+# The whole upstream key set in one batch: imported rows whose key it lacks are deleted.
+[[step]]
+name = "env_variable_reconcile"
+targets = ["worlds.env_variables"]
+extract = "env_variable_reconcile.extract.sql"
+load = "env_variable_reconcile.load.sql"
+key = ["world_name", "place_id", "key"]
+whole = true
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "key", type = "text" },
 ]

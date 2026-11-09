@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -140,6 +141,15 @@ class Manifests(unittest.TestCase):
                                                                          'database_env = "TOY_URL"\nafter = ["toy"]')})
         with self.assertRaisesRegex(migrate.MigrationError, 'cycle'):
             migrate.ordered(migrate.discover(self.tmp), ['all'])
+
+
+class WorldStorageScope(unittest.TestCase):
+    def test_every_world_storage_load_should_scope_rows_the_same_way(self):
+        folder = migrate.SOURCES / 'world-storage-service'
+        blocks = {f.name: re.search(r'-- ── scope .*?-- ── end scope ──', f.read_text(), re.S)
+                  for f in sorted(folder.glob('*_storage.load.sql')) + [folder / 'env_variable.load.sql']}
+        self.assertTrue(all(blocks.values()), blocks)
+        self.assertEqual(len({b.group(0) for b in blocks.values()}), 1)
 
 
 class Connections(unittest.TestCase):
@@ -1269,6 +1279,116 @@ class AgainstPostgres(unittest.TestCase):
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
         self.assertEqual(self.count(tgt, 'social.subscription_opt_outs'), 2)
+
+
+    # ── world-storage-service: Genesis scopes, deletions ──
+
+    WSS_SCHEMA = textwrap.dedent("""
+        CREATE TABLE world_storage (world_name text NOT NULL, place_id uuid NOT NULL, key text NOT NULL,
+          value jsonb NOT NULL, value_size integer, created_at timestamp NOT NULL, updated_at timestamp NOT NULL,
+          PRIMARY KEY (world_name, place_id, key));
+        CREATE TABLE player_storage (world_name text NOT NULL, place_id uuid NOT NULL, player_address text NOT NULL,
+          key text NOT NULL, value jsonb NOT NULL, value_size integer, created_at timestamp NOT NULL,
+          updated_at timestamp NOT NULL, PRIMARY KEY (world_name, place_id, player_address, key));
+        CREATE TABLE env_variables (world_name text NOT NULL, place_id uuid NOT NULL, key text NOT NULL,
+          value_enc bytea NOT NULL, value_size integer, created_at timestamp NOT NULL, updated_at timestamp NOT NULL,
+          PRIMARY KEY (world_name, place_id, key));
+    """)
+    # Genesis places: base outside its footprint, base in it (non-canonical), stale positions, disabled.
+    OUTSIDE = '00000000-0000-4000-8000-00000000000a'
+    INSIDE = '00000000-0000-4000-8000-00000000000b'
+    STALE = '00000000-0000-4000-8000-00000000000c'
+    DISABLED = '00000000-0000-4000-8000-00000000000d'
+    WORLD_PLACE = '00000000-0000-4000-8000-00000000000e'
+
+    def wss_dbs(self):
+        src, tgt = self.fresh_db('wss_src'), self.catalyst_db('wss_tgt')
+        self.sql(src, self.WSS_SCHEMA)
+        t = "timestamp '2026-01-01'"
+        rows = [('main', self.OUTSIDE, 'a'), ('main', self.OUTSIDE, 'gone'), ('main', self.INSIDE, 'b'),
+                ('main', self.STALE, 'c'), ('main', self.DISABLED, 'd'), ('w.dcl.eth', self.WORLD_PLACE, 'e'),
+                ('w.dcl.eth', self.WORLD_PLACE, 'edited')]
+        values = ', '.join(f"('{w}', '{p}', '{k}', '\"{k}\"', 3, {t}, {t})" for w, p, k in rows)
+        self.sql(src, f"INSERT INTO world_storage VALUES {values};\n"
+                      f"INSERT INTO player_storage VALUES ('main', '{self.OUTSIDE}', '0x{'A' * 40}', 'p', '1', 1, {t}, {t}),"
+                      f" ('main', '{self.OUTSIDE}', '0x{'b' * 40}', 'p', '1', 1, {t}, {t});\n"
+                      f"INSERT INTO env_variables VALUES ('main', '{self.INSIDE}', 'K', '\\x01', 1, {t}, {t}),"
+                      f" ('main', '{self.INSIDE}', 'GONE', '\\x01', 1, {t}, {t});\n")
+        place = ("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES "
+                 "('{0}', '5,5', false, '{{\"positions\": [\"1,2\", \"0,7\", \"0,3\"]}}'),"
+                 "('{1}', ' 01 , 2', false, '{{\"positions\": [\"0,0\", \"1,2\"]}}'),"
+                 "('{2}', '30,30', false, '{{\"positions\": [\"20,20\", \"21,20\"]}}'),"
+                 "('{3}', '9,9', true, '{{\"positions\": [\"9,9\"]}}');\n")
+        # The stale place's active scene moved west; it declares the same (outside) base.
+        content = ("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata,"
+                   " entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ('0x0', 'v3', 'scene', 'bafy1',"
+                   " '{\"scene\": {\"base\": \"30,30\"}}', now(), ARRAY['19,20', '20,20'], now(), '[]');\n"
+                   "INSERT INTO content.active_pointers (pointer, entity_id) VALUES ('19,20', 'bafy1'), ('20,20', 'bafy1');\n")
+        self.sql(tgt, place.format(self.OUTSIDE, self.INSIDE, self.STALE, self.DISABLED) + content)
+        env = {'WORLD_STORAGE_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
+        patcher = unittest.mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return src, tgt
+
+    def world_rows(self, tgt):
+        return self.sql(tgt, "SELECT realm, scene_namespace, key FROM worlds.world_storage ORDER BY 1, 2, 3;\n").splitlines()
+
+    def test_when_importing_genesis_storage_it_should_scope_it_by_the_effective_base(self):
+        _, tgt = self.wss_dbs()
+        code, out = self.migrate('run', 'world-storage-service', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.world_rows(tgt), [
+            'main\t0,3\ta', 'main\t0,3\tgone', 'main\t1,2\tb', 'main\t19,20\tc',
+            f'main\tlegacy:{self.DISABLED}\td',
+            f'w.dcl.eth\t{self.WORLD_PLACE}\te', f'w.dcl.eth\t{self.WORLD_PLACE}\tedited'])
+        self.assertEqual(self.sql(tgt, 'SELECT scene_namespace, player_address FROM worlds.player_storage ORDER BY 2;\n')
+                         .splitlines(), [f'0,3\t0x{"a" * 40}', f'0,3\t0x{"b" * 40}'])
+        self.assertEqual(self.sql(tgt, 'SELECT scene_namespace, key FROM worlds.env_variables ORDER BY 2;\n')
+                         .splitlines(), ['1,2\tGONE', '1,2\tK'])
+
+    def test_when_upstream_deletes_storage_it_should_delete_only_unchanged_imported_rows(self):
+        src, tgt = self.wss_dbs()
+        self.assertEqual(self.migrate('run', 'world-storage-service', sources_dir=migrate.SOURCES)[0], 0)
+        # The node's own key, and a node write to an imported one.
+        self.sql(tgt, "INSERT INTO worlds.world_storage (realm, scene_namespace, key, value, value_size) "
+                      "VALUES ('main', '0,3', 'native', '1', 1);\n"
+                      f"UPDATE worlds.world_storage SET value = '\"node\"', updated_at = timezone('UTC', now()) "
+                      f"WHERE key = 'edited';\n")
+        self.sql(src, "DELETE FROM world_storage WHERE key IN ('gone', 'edited', 'd');\n"
+                      f"DELETE FROM player_storage WHERE player_address = '0x{'A' * 40}';\n"
+                      "DELETE FROM env_variables WHERE key = 'GONE';\n")
+        code, out = self.migrate('run', 'world-storage-service', '--since', 'last', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.world_rows(tgt), [
+            'main\t0,3\ta', 'main\t0,3\tnative', 'main\t1,2\tb', 'main\t19,20\tc',
+            f'w.dcl.eth\t{self.WORLD_PLACE}\te', f'w.dcl.eth\t{self.WORLD_PLACE}\tedited'])
+        self.assertEqual(self.sql(tgt, 'SELECT player_address FROM worlds.player_storage;\n').split(), [f'0x{"b" * 40}'])
+        self.assertEqual(self.sql(tgt, 'SELECT key FROM worlds.env_variables;\n').split(), ['K'])
+        self.assertEqual(self.count(tgt, 'dcl_migration.wss_world_storage_loaded'), 4)
+
+    def test_when_one_of_two_collapsed_keys_is_deleted_upstream_it_should_keep_the_row(self):
+        src, tgt = self.wss_dbs()
+        # A second place on the same effective base: both upstream keys land on main/0,3/a.
+        other = '00000000-0000-4000-8000-0000000000aa'
+        self.sql(tgt, f"INSERT INTO explore.place (id, base_position, raw) VALUES ('{other}', '0,3', "
+                      "'{\"positions\": [\"0,3\"]}');\n")
+        self.sql(src, f"INSERT INTO world_storage VALUES ('main', '{other}', 'a', '\"old\"', 5, "
+                      "timestamp '2025-01-01', timestamp '2025-01-01');\n")
+        self.assertEqual(self.migrate('run', 'world-storage-service', sources_dir=migrate.SOURCES)[0], 0)
+        self.sql(src, f"DELETE FROM world_storage WHERE place_id = '{self.OUTSIDE}' AND key = 'a';\n")
+        self.assertEqual(self.migrate('run', 'world-storage-service', '--since', 'last',
+                                      sources_dir=migrate.SOURCES)[0], 0)
+        self.assertIn('main\t0,3\ta', self.world_rows(tgt))
+
+    def test_when_upstream_lists_no_storage_it_should_refuse_to_delete_the_imported_rows(self):
+        src, tgt = self.wss_dbs()
+        self.assertEqual(self.migrate('run', 'world-storage-service', sources_dir=migrate.SOURCES)[0], 0)
+        self.sql(src, 'DELETE FROM world_storage;\n')
+        code, out = self.migrate('run', 'world-storage-service', '--step', 'world_storage_reconcile',
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.count(tgt, 'worlds.world_storage'), 7)
 
 
     # ── badges: catalog, presence configuration, progress ──

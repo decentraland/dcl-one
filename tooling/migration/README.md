@@ -144,7 +144,7 @@ machine running the tool.
 
 The engine creates the `dcl_migration` schema (`checkpoint`, `blob_inventory`,
 `blob_missing`, `world_limit_seeded`, and the `*_loaded` records of the
-notifications-workers reconcile steps) in the target on the first real run. It is outside the
+notifications-workers and world-storage-service reconcile steps) in the target on the first real run. It is outside the
 catalyst schema, which only checks for missing objects; drop it when the
 migration is over.
 
