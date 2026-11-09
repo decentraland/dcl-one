@@ -150,7 +150,8 @@ jobs:
         run: |
           set -euo pipefail
           for name in ecs js-runtime react-ecs sdk-commands sdk playground-assets; do
-            tgz=$(ls dist/dcl-"$name"-[0-9]*.tgz)
+            # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
+            tgz=$(ls ./dist/dcl-"$name"-[0-9]*.tgz)
             spec=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version')
             if npm view "$spec" version > /dev/null 2>&1; then
               echo "$spec is already on npm; skipping"

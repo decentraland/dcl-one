@@ -156,7 +156,8 @@ jobs:
         run: |
           set -euo pipefail
           for name in $SDK_PACKAGES; do
-            npm publish "dist/dcl-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
+            # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
+            npm publish "./dist/dcl-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
           done
       - name: Create the tag and the release
         env:
