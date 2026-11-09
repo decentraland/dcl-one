@@ -310,9 +310,11 @@ def affected(version, advisory):
 
 
 def advisory_files(tree):
-    """Advisory files per crate ({crate: [(file name, blob sha)]}) from the recursive git tree of
-    rustsec/advisory-db. The contents API lists at most 1000 entries of a directory and ignores
+    """Advisory blob shas per crate ({crate: [sha]}, in file-name order) from the recursive git tree
+    of rustsec/advisory-db. The contents API lists at most 1000 entries of a directory and ignores
     paging, so it cannot list crates/; the tree lists every path unless GitHub truncates it."""
+    if not tree:
+        raise RuntimeError('rustsec/advisory-db tree could not be fetched')
     if tree.get('truncated'):
         raise RuntimeError('rustsec/advisory-db tree is truncated: advisories would be missed')
     files = {}
@@ -320,7 +322,7 @@ def advisory_files(tree):
         parts = entry['path'].split('/')
         if entry['type'] == 'blob' and len(parts) == 3 and parts[0] == 'crates' and parts[2].endswith('.md'):
             files.setdefault(parts[1], []).append((parts[2], entry['sha']))
-    return files
+    return {crate: [sha for _name, sha in sorted(entries)] for crate, entries in files.items()}
 
 
 def collect_advisories(lock_pkgs):
@@ -331,7 +333,7 @@ def collect_advisories(lock_pkgs):
     hits = sorted(set(files_by_crate) & set(by_name))
     findings = []
     for name in hits:
-        for _file, sha in sorted(files_by_crate[name]):
+        for sha in files_by_crate[name]:
             blob = gh(f'repos/rustsec/advisory-db/git/blobs/{sha}')
             if not blob:
                 continue

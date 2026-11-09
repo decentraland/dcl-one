@@ -61,20 +61,24 @@ class VersionLogicTests(unittest.TestCase):
             {'path': 'crates', 'type': 'tree', 'sha': 't0'},
             {'path': 'crates/zvariant_derive', 'type': 'tree', 'sha': 't1'},
             {'path': 'crates/zvariant_derive/RUSTSEC-2026-0002.md', 'type': 'blob', 'sha': 'b1'},
-            {'path': 'crates/rustls/RUSTSEC-2026-0003.md', 'type': 'blob', 'sha': 'b2'},
             {'path': 'crates/rustls/RUSTSEC-2026-0004.md', 'type': 'blob', 'sha': 'b3'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0003.md', 'type': 'blob', 'sha': 'b2'},
             {'path': 'crates/rustls/notes.txt', 'type': 'blob', 'sha': 'b4'},
             {'path': 'rust/std/RUSTSEC-2026-0005.md', 'type': 'blob', 'sha': 'b5'},
             {'path': 'README.md', 'type': 'blob', 'sha': 'b6'},
         ]}
         self.assertEqual(drift.advisory_files(tree), {
-            'zvariant_derive': [('RUSTSEC-2026-0002.md', 'b1')],
-            'rustls': [('RUSTSEC-2026-0003.md', 'b2'), ('RUSTSEC-2026-0004.md', 'b3')],
+            'zvariant_derive': ['b1'],
+            'rustls': ['b2', 'b3'],
         })
 
     def test_advisory_files_refuses_a_truncated_tree(self):
         with self.assertRaises(RuntimeError):
             drift.advisory_files({'truncated': True, 'tree': []})
+
+    def test_advisory_files_refuses_a_missing_tree(self):
+        with self.assertRaisesRegex(RuntimeError, 'could not be fetched'):
+            drift.advisory_files(None)
 
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
