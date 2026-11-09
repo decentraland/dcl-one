@@ -7,9 +7,9 @@ the standalone, by `node --test`, with no browser-automation framework
 The sign-in flows
 (explorer-automation's Auth and CrossVerify fixtures) are left aside.
 
-The scenarios were copied once from `decentraland/explorer-automation` at `955b338` (2026-10-22)
-and rewritten; no Unity code moved. Nothing here compares the two clients: every visual reference
-is recorded anew in dcl-one.
+The scenario inventory is pinned to `decentraland/explorer-automation@955b338` (2026-10-22),
+with scenarios implemented through this repository's console driver. Every visual reference
+is recorded anew by dcl-one's CI against this client's rendering behavior.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
 run on the Windows GPU runner with the zone accounts ([CI](#ci)), and on a workstation with a GPU
@@ -95,10 +95,10 @@ as it happens.
 
 ## How a spec is written
 
-One file per explorer-automation fixture under `specs/`, headed by a table of its Unity tests
+One file per explorer-automation fixture under `specs/`, headed by a table of its test cases
 with the class of each: **Port** (the same scenario), **Partial** (an assertion changed, said
 in the header), **Gap** (the Bevy HUD has no such feature or control) or **Drop** (a Unity
-harness self-test). Each Unity test is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
+harness self-test). Each implemented case is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
 `todo` with its reason, counted apart in the report and never a pass.
 
 A scenario reaches the client only through `Explorer` (`driver/explorer.ts`): console commands
@@ -166,7 +166,7 @@ Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash key
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
 test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 
-| Unity fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
+| Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
 | Shortcuts (7) | `shortcuts` | 5 | 1 | 1 | | Gallery is `G`, not `K`; no key opens Events |
