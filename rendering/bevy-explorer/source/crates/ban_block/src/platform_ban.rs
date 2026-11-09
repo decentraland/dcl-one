@@ -30,8 +30,7 @@ use crate::BanBlockEvent;
 
 /// Seconds between two checks of a wallet that has not changed.
 pub const RECHECK_SECS: f64 = 300.0;
-/// The least a server's `Retry-After` is honoured as, so a zero or past value never re-requests
-/// every frame.
+/// The least a server's `Retry-After` is honoured as.
 pub const MIN_RETRY_SECS: f64 = 5.0;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
@@ -82,7 +81,6 @@ pub enum PlatformBanSource {
 }
 
 /// `GET /users/{address}/bans`: `{"data":{"isBanned":bool,"ban":{..}?,"matchedOn":"device"?}}`.
-/// The record is withheld when the ban matched the device rather than the address.
 #[derive(Deserialize)]
 struct BanStatusEnvelope {
     data: BanStatusBody,
@@ -116,7 +114,7 @@ impl PlatformBanInfo {
         }))
     }
 
-    /// A ban whose record the gatekeeper withheld; `matched_on` says what the ban matched.
+    /// A ban with no record; `matched_on` is what it matched.
     pub fn withheld(matched_on: &str) -> Self {
         Self {
             id: String::new(),
@@ -255,7 +253,6 @@ pub(crate) fn register(app: &mut App) {
     app.insert_resource(PlatformBanStatus::new())
         .init_resource::<RefreshRequested>()
         .add_console_command::<BanBlockRefreshCommand, _>(ban_block_refresh)
-        // an authoritative server's identity has no ban to show anyone
         .add_systems(
             Update,
             check_platform_ban.run_if(|| !common::structs::server_mode()),
@@ -312,7 +309,7 @@ impl BanCheckSchedule {
         start
     }
 
-    /// Records a failed check's delay, floored so a zero never re-requests every frame.
+    /// Records a failed check's delay, floored at `MIN_RETRY_SECS`.
     fn delay(&mut self, retry_after_secs: Option<f64>) {
         self.retry_after = retry_after_secs.map(|secs| secs.max(MIN_RETRY_SECS));
     }

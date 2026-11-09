@@ -51,8 +51,7 @@ pub enum BanScope {
     Scene,
 }
 
-/// The refusal bodies the comms gatekeeper and the worlds server send, upstream
-/// (`comms-gatekeeper`, `worlds-content-server`) and in `services/catalyst` alike.
+/// The refusal bodies of the comms gatekeeper and the worlds server.
 const PLATFORM_BANNED: &str = "Access denied, platform-banned user";
 const SCENE_BANNED: &str = "User is banned from this scene";
 const WORLD_BANNED_PREFIX: &str = "You are banned from world";

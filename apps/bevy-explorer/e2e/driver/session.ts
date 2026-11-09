@@ -195,7 +195,6 @@ async function nativeConsole(target: Target, realm: string, position: string, ex
     return new NativeConsole({ port, token })
   }
   if (!bin) throw new Error('set DCL_E2E_NATIVE_BIN (an automation build to start) or DCL_E2E_NATIVE_PORT and DCL_E2E_NATIVE_TOKEN (a running one)')
-  // an extra client runs beside the default one, so its console takes a port of its own
   const automationPort = extra.length > 0 ? await freePort() : port
   return spawnNative({ bin, port: automationPort, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
 }

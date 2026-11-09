@@ -62,8 +62,7 @@ function send(response: ServerResponse, reply: StubReply): void {
 
 const shared = new Map<number, Promise<GatekeeperStub>>()
 
-/** The one stub on `port`, started on first use; every spec file shares it, since the runner keeps
- *  them in one process. */
+/** The one stub on `port`, started on first use. */
 export function sharedGatekeeperStub(port: number): Promise<GatekeeperStub> {
   let stub = shared.get(port)
   if (!stub) {

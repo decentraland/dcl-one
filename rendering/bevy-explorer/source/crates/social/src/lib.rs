@@ -520,7 +520,7 @@ fn init_social_client(
         // Drop the old handler (and its event channels) before opening a new
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
-        // the same account's blocks stand until the new connection's snapshot replaces them
+        // the same account keeps its blocks across the rebuild
         let carried = social
             .0
             .take()

@@ -25,7 +25,6 @@ const SCENE_PARCEL: [number, number] = [0, 0]
 /** An empty parcel far from any scene room. */
 const EMPTY_PARCEL: [number, number] = [-130, 130]
 
-// The stub is shared with platform-ban.test.ts (one process for every spec) and closed by the harness.
 let stub: GatekeeperStub | undefined
 before(async () => {
   if (native) stub = await sharedGatekeeperStub(STUB_PORT)

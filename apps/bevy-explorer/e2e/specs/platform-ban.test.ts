@@ -24,7 +24,6 @@ const native = readTarget().transport === 'native'
 const webOnly = { todo: 'web: a loopback service override stops at the launch gate' }
 const stubSession = { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } }
 
-// The stub is shared with scene-ban.test.ts (one process for every spec) and closed by the harness.
 let stub: GatekeeperStub | undefined
 before(async () => {
   if (native) stub = await sharedGatekeeperStub(STUB_PORT)
@@ -36,13 +35,12 @@ scenario('the platform ban is checked after sign-in', async ({ explorer }) => {
     what: 'the platform ban to be checked'
   })
   assert.equal(state.platformBan.isBanned, false)
-  // the source names where a ban came from; a clean check has none
   assert.equal(state.platformBan.source, null)
   assert.ok(state.platformBan.checkedAgoSecs !== null && state.platformBan.checkedAgoSecs < CHECK_TIMEOUT_MS / 1000)
 })
 
 scenario('a refresh re-checks', async ({ explorer }) => {
-  // let the last check age first, so a fresh one is told apart from it
+  // the last check ages first, so the re-check is told apart from it
   const aged = await until(() => explorer.banBlockState(), (s) => s.platformBan.state === 'checked' && (s.platformBan.checkedAgoSecs ?? 0) >= 4, {
     timeoutMs: CHECK_TIMEOUT_MS,
     what: 'the platform ban check to be a few seconds old'
