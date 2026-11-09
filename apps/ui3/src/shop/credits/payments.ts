@@ -98,7 +98,7 @@ export type CheckoutSession = {
 };
 
 /** The server's order vocabulary plus 'pending': the poll gave up with money in and the grant not written. */
-/** `missing`: the server never knew the order (a made-up or mistyped `?order=`), so nothing is on its way. */
+/** `missing`: the node has no such order for this signer (a made-up or mistyped `?order=`, or another account's order). */
 export type OrderStatus = { status: PackOrderStatus["status"] | "initiated" | "crediting" | "abandoned" | "pending" | "missing"; creditsGranted?: number; newBalance?: number; error?: string };
 
 export const MOCK_ORDER_PREFIX = "mock_cs_";

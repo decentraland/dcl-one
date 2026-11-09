@@ -339,9 +339,10 @@ function CreditsScreen() {
           setError("We couldn't add your Credits. If you were charged, the payment is refunded.");
           setPhase("error");
         } else if (result.status === "missing") {
-          // Never a "your payment went through" for an order nobody made.
+          // Never a "your payment went through" for an order this account has no record of. The node answers so for an
+          // order another account paid for too, so the copy speaks for this account and points to the other.
           clearTopUpHandoffs();
-          setError("We couldn't find that Credits purchase, so no Credits were added for it.");
+          setError("We couldn't find that Credits purchase for this account. If you paid with another account, sign in with it to see your Credits.");
           setPhase("error");
         } else {
           clearTopUpHandoffs();

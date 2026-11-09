@@ -23,6 +23,9 @@ import { bindBuyNowTopUp, bindTopUpReturn, clearTopUpHandoffs, dropBuyNowTopUp, 
 
 afterEach(() => vi.unstubAllGlobals());
 
+/** The node's answer for an order it has no record of for this signer (credits/errors.rs envelope). */
+const ORDER_NOT_FOUND = { status: 404, body: { ok: false, error: "order not found", message: "order not found" } };
+
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
     expect(decodeUsdBalance({ balanceCents: 107, credits: 11 })).toEqual({ balanceCents: 107, credits: 10 });
@@ -137,7 +140,7 @@ describe("packs", () => {
     const lagging = createFakeShop({
       packOrder: () => {
         calls += 1;
-        return calls < 3 ? { status: 404, body: { error: "not found" } } : { status: "credited", creditsGranted: 100, newBalance: 100 };
+        return calls < 3 ? ORDER_NOT_FOUND : { status: "credited", creditsGranted: 100, newBalance: 100 };
       },
     });
     expect(await pollCreditGrantReal("o", { intervalMs: 1 }, lagging.client)).toMatchObject({ status: "credited", creditsGranted: 100 });
@@ -151,7 +154,7 @@ describe("packs", () => {
   });
 
   it("a mock order id is granted only with mock payments on; otherwise the server is asked, so a link shows no Credits never bought", async () => {
-    const shop = createFakeShop({ packOrder: () => ({ status: 404, body: { error: "not found" } }) });
+    const shop = createFakeShop({ packOrder: () => ORDER_NOT_FOUND });
     let t = 0;
     const now = () => (t += 1000);
     // The server does not know it: past the grace it is no order at all.
@@ -167,13 +170,20 @@ describe("packs", () => {
   it("an order the server never finds is missing past the grace a lagging replica needs; one it saw stays pending at the deadline", async () => {
     let t = 0;
     const now = () => (t += 1000);
-    const unknown = createFakeShop({ packOrder: () => ({ status: 404, body: { error: "not found" } }) });
+    const unknown = createFakeShop({ packOrder: () => ORDER_NOT_FOUND });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
     expect(unknown.log.filter((r) => r.name === "packOrder").length).toBeLessThan(8);
+    // A deadline shorter than the grace still never says "on the way" for an order never found.
+    t = 0;
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 2000, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
+    // A 404 that is not the node's own (a gateway's route during a deploy) says nothing about the order: it waits on.
+    t = 0;
+    const gateway = createFakeShop({ packOrder: () => ({ status: 404, body: "Not Found" }) });
+    expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, gateway.client)).toEqual({ status: "pending" });
     // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
     t = 0;
     let calls = 0;
-    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : { status: 404, body: { error: "not found" } }) });
+    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : ORDER_NOT_FOUND) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, flaky.client)).toEqual({ status: "pending" });
   });
 });

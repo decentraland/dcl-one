@@ -151,12 +151,15 @@ describe("the credits page", () => {
   it("an order nobody made ends on 'we couldn't find it', never on 'your payment went through'", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      renderCredits({ path: "/shop/credits?order=made-up", handlers: { packOrder: () => ({ status: 404, body: { error: "not found" } }) } });
+      renderCredits({ path: "/shop/credits?order=made-up", handlers: { packOrder: () => ({ status: 404, body: { ok: false, error: "order not found", message: "order not found" } }) } });
       // Past the grace a lagging replica needs, while the poll would still be waiting for a payment.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(20_000);
       });
-      expect((await screen.findByTestId("credits-error")).textContent).toContain("We couldn't find that Credits purchase");
+      // For this account: the node answers the same for an order another account paid for.
+      expect((await screen.findByTestId("credits-error")).textContent).toContain(
+        "We couldn't find that Credits purchase for this account. If you paid with another account, sign in with it to see your Credits.",
+      );
       expect(screen.queryByTestId("credits-pending")).toBeNull();
     } finally {
       vi.useRealTimers();

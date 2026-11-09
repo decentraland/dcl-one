@@ -43,13 +43,20 @@ const delay = (ms: number, signal?: AbortSignal) =>
     );
   });
 
+/** The node's answer for an order it has no record of for this signer (credits/handlers/orders.rs, `order not found`). */
+function isOrderNotFound(body: unknown): boolean {
+  const b = body as { error?: unknown; message?: unknown } | null;
+  return !!b && (b.error === "order not found" || b.message === "order not found");
+}
+
 async function fetchOrderStatus(orderId: string, client: ShopClient, signal?: AbortSignal): Promise<OrderStatus> {
   try {
     const answer = (await client.packs.orderStatus(orderId, { signal })) as OrderStatus | null;
     return answer && typeof answer.status === "string" ? answer : { status: "processing" };
   } catch (e) {
-    // Not known (yet): a replica behind the write, or no such order. The poll tells the two apart by how long it lasts.
-    if (isShopApiError(e) && e.status === 404) return { status: "missing" };
+    // The node's own "order not found": no order by that id for this signer. Any other 404 (a gateway's route during a
+    // deploy) says nothing about the order, so the poll keeps waiting on it as before.
+    if (isShopApiError(e) && e.status === 404) return isOrderNotFound(e.body) ? { status: "missing" } : { status: "processing" };
     throw e;
   }
 }
@@ -69,9 +76,11 @@ export async function pollCreditGrantReal(
     const status = await fetchOrderStatus(orderId, client, signal);
     if (status.status !== "missing") seen = true;
     if (!stillWaiting(status.status)) return status;
-    // Never found past the moments a lagging replica needs: there is no such order, and nothing is on its way.
+    // The node writes the order before its checkout opens, so a return normally finds it at once; the grace is a margin,
+    // not a wait. Never found past it: no such order for this signer, and nothing is on its way.
     if (!seen && now() - started > missingGraceMs) return { status: "missing" };
     if (now() > deadline) {
+      if (!seen) return { status: "missing" };
       // Still 'initiated': nobody paid, so nothing is on its way. Anything else is money in.
       if (status.status === "initiated") return status;
       return { status: "pending" };
