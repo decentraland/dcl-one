@@ -384,11 +384,13 @@ a turn. Consumers retain strong asset handles on their entities. Cleanup drops
 cache handles and does not force-remove assets from `Assets`.
 
 Collectible pins share content-hash identity across aliases. Permanent engine
-builtins remain pinned; synthesized scene emotes use idle pins and graph-node
-ownership. Avatar definitions retain body and rendered wearable aggregates until
+builtins remain pinned; synthesized scene emotes use idle pins and ownership on
+playing, paused and fading graph nodes. Stopped cached nodes keep only animation
+clips. Avatar definitions retain body and rendered wearable aggregates until
 despawn, including during outfit replacement. Profiles have a five-second pressure
 grace and retain local, live-peer, and in-flight data. Unresolved entries keep their
-fetch-retry deadline so pressure cleanup cannot accelerate retries. When due, idle
+fetch-retry deadline within the normal 300-second idle lifetime so pressure cleanup
+cannot accelerate retries. When due, idle
 entries yield to bounded cleanup instead of starting another fetch; recently
 accessed entries still fetch. Entity routing contexts and scene limits are unaffected.
 

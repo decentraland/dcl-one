@@ -246,7 +246,9 @@ impl ProfileEntry {
     }
 
     fn evictable_under_pressure(&self, now: web_time::Instant) -> bool {
-        self.evictable_after(now, PROFILE_PRESSURE_GRACE) && (self.satisfied() || self.due(now))
+        self.evictable(now)
+            || (self.evictable_after(now, PROFILE_PRESSURE_GRACE)
+                && (self.satisfied() || self.due(now)))
     }
 
     /// accept a newer version from anywhere, and an equal version only from a more
@@ -2219,6 +2221,7 @@ mod tests {
             let idle = Address::repeat_byte(0xd1);
             let active = Address::repeat_byte(0xd2);
             let cooling = Address::repeat_byte(0xd3);
+            let expired = Address::repeat_byte(0xd4);
             let mut cache = ProfileCache::default();
             for address in [idle, active, cooling] {
                 let entry = cache.touch(address, ProfileTier::Compact);
@@ -2227,6 +2230,9 @@ mod tests {
             }
             cache.touch(active, ProfileTier::Compact);
             cache.entries.get_mut(&cooling).unwrap().next_fetch = Some(now + PROFILE_FETCH_RETRY);
+            let expired_entry = cache.touch(expired, ProfileTier::Compact);
+            expired_entry.apply_compact(None, now);
+            expired_entry.last_access = Some(now - PROFILE_EVICT_AFTER);
 
             let mut app = App::new();
             app.add_plugins((MinimalPlugins, AssetPlugin::default(), MemoryReclaimPlugin))
@@ -2265,6 +2271,10 @@ mod tests {
             );
             assert_eq!(cache.entries[&active].fetching, Some(ProfileTier::Compact));
             assert!(cache.entries[&cooling].fetching.is_none());
+            assert!(
+                !cache.entries.contains_key(&expired),
+                "pressure must preserve the normal maximum idle age even during retry cooldown"
+            );
             let expected = if simulation == ReclaimSimulation::Ram {
                 vec![active]
             } else {

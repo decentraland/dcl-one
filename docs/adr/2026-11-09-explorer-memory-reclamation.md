@@ -15,10 +15,10 @@ Cache cleanup releases idle strong-handle pins. Consumers retain strong handles
 on the entities or values that use the asset. Each avatar definition retains its
 body and rendered wearable aggregates until that definition is despawned, including
 while a replacement outfit loads. Wearables discarded by category selection or hide
-filtering gain no definition handle.
-Emote aggregate ownership follows
-animation graph nodes on the avatar root; pending loads have per-avatar, per-slot
-ownership. Never force-remove a live Bevy asset or infer global ownership from an
+filtering gain no definition handle. Emote aggregate ownership follows playing,
+paused and fading animation nodes on the avatar root; stopped cached nodes keep only
+their animation clips. Pending loads have per-avatar, per-slot ownership. Never
+force-remove a live Bevy asset or infer global ownership from an
 individual handle's Arc count. Permanent embedded assets remain pinned.
 
 The initial shared allowance is 1 ms per frame, with at most 10 releases and 64
@@ -41,8 +41,9 @@ flowchart LR
 ## Consequences
 
 Inactive profiles become eligible after five seconds; unresolved profiles retain
-their fetch-retry deadline so cleanup cannot accelerate retries. Once that deadline
-expires, the fetch driver leaves idle entries for bounded cleanup; recently accessed
+their fetch-retry deadline within the normal 300-second idle lifetime so cleanup cannot
+accelerate retries. Once that deadline expires, the fetch driver leaves idle entries
+for bounded cleanup; recently accessed
 entries still fetch. Collectibles retain a
 three-frame grace. Active consumers and pending loads keep their own strong
 handles, so releasing a cache pin cannot invalidate their assets.

@@ -15,7 +15,10 @@ use bevy::ecs::system::RunSystemOnce;
 use collectibles::{
     base_bodyshapes,
     wearables::{Wearable, WearableCategory},
-    Collectibles,
+    Collectibles, CollectiblesTypePlugin,
+};
+use common::memory_reclaim::{
+    MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimBudget, ReclaimSimulation,
 };
 use common::structs::SceneDrivenAnimationRequest;
 use ipfs::{IpfsIo, IpfsResource};
@@ -135,7 +138,10 @@ fn ownership_system_preserves_the_same_graph_and_clears_removed_graphs_and_aband
     let weak = std::sync::Arc::downgrade(strong);
     let graph = Handle::<AnimationGraph>::default();
     let mut owner = EmoteGraphAssets::default();
-    owner.bind(graph.id(), AnimationNodeIndex::new(1), handle);
+    let node = AnimationNodeIndex::new(1);
+    owner.bind(graph.id(), node, handle);
+    let mut player = AnimationPlayer::default();
+    player.start(node);
     let gltfs = Assets::<Gltf>::default();
     let mut pending = PendingEmoteGltf::default();
     pending.load(&EmoteUrn::new("wave").unwrap(), || gltfs.reserve_handle());
@@ -144,6 +150,7 @@ fn ownership_system_preserves_the_same_graph_and_clears_removed_graphs_and_aband
         .spawn((
             owner,
             AnimationGraphHandle(graph),
+            player,
             PendingEmoteLoads {
                 full: pending,
                 masked: Default::default(),
@@ -167,8 +174,12 @@ fn ownership_system_preserves_the_same_graph_and_clears_removed_graphs_and_aband
 }
 
 type GltfGates = Arc<Mutex<HashMap<String, (oneshot::Sender<()>, oneshot::Receiver<bool>)>>>;
+type GltfLoads = Arc<Mutex<HashMap<String, usize>>>;
 
-struct ControlledGltfLoader(GltfGates);
+struct ControlledGltfLoader {
+    gates: GltfGates,
+    loads: GltfLoads,
+}
 
 impl AssetLoader for ControlledGltfLoader {
     type Asset = Gltf;
@@ -182,8 +193,14 @@ impl AssetLoader for ControlledGltfLoader {
         context: &mut LoadContext<'_>,
     ) -> Result<Gltf, Self::Error> {
         let content = context.path().file_stem().unwrap().to_str().unwrap();
+        *self
+            .loads
+            .lock()
+            .unwrap()
+            .entry(content.to_owned())
+            .or_default() += 1;
         let (started, result) = self
-            .0
+            .gates
             .lock()
             .unwrap()
             .remove(content)
@@ -246,14 +263,31 @@ struct PlaybackFixture {
     app: App,
     dir: Dir,
     gates: GltfGates,
+    loads: GltfLoads,
     avatar: Entity,
+}
+
+#[derive(Resource, Default)]
+struct PausePlaybackResolution(bool);
+
+fn resolve_this_frame(paused: Res<PausePlaybackResolution>) -> bool {
+    !paused.0
 }
 
 impl PlaybackFixture {
     fn new() -> Self {
+        Self::build(false)
+    }
+
+    fn with_pressure() -> Self {
+        Self::build(true)
+    }
+
+    fn build(pressure: bool) -> Self {
         let mut app = App::new();
         let dir = Dir::default();
         let gates = GltfGates::default();
+        let loads = GltfLoads::default();
         let source = dir.clone();
         app.register_asset_source(
             AssetSourceId::Default,
@@ -263,41 +297,56 @@ impl PlaybackFixture {
                 })
             }),
         )
-        .add_plugins((MinimalPlugins, AssetPlugin::default()))
-        .init_asset::<Collectible<Emote>>()
-        .init_asset::<CollectibleData<Emote>>()
-        .init_asset::<Gltf>()
-        .init_asset::<AnimationGraph>()
-        .init_asset::<AnimationClip>()
-        .init_asset::<bevy_kira_audio::AudioSource>()
-        .init_asset::<Mesh>()
-        .register_asset_loader(ControlledGltfLoader(gates.clone()))
-        .init_resource::<Collectibles<Emote>>()
-        .init_resource::<SceneSpawner>()
-        .init_resource::<SceneDrivenAnimationFeedback>()
-        .insert_resource(IpfsResource {
-            inner: Arc::new(IpfsIo::new(
-                false,
-                Box::new(MemoryAssetReader {
-                    root: Dir::default(),
-                }),
-                None,
-                Default::default(),
-                1,
-                tokio::sync::mpsc::unbounded_channel().0,
-            )),
-        })
-        .add_event::<EmoteLifecycleEvent>()
-        .add_systems(
-            Update,
-            (
-                animate,
-                synchronize_emote_ownership,
-                play_current_emote,
-                play_masked_emote,
-            )
-                .chain(),
-        );
+        .add_plugins((MinimalPlugins, AssetPlugin::default()));
+        if pressure {
+            app.add_plugins((
+                MemoryReclaimPlugin,
+                CollectiblesTypePlugin::<Emote>::default(),
+            ))
+            .insert_resource(MemoryReclaimSettings {
+                frame_budget: Duration::from_secs(1),
+                simulation: ReclaimSimulation::Ram,
+            });
+        } else {
+            app.init_asset::<Collectible<Emote>>()
+                .init_asset::<CollectibleData<Emote>>()
+                .init_resource::<Collectibles<Emote>>();
+        }
+        app.init_asset::<Gltf>()
+            .init_asset::<AnimationGraph>()
+            .init_asset::<AnimationClip>()
+            .init_asset::<bevy_kira_audio::AudioSource>()
+            .init_asset::<Mesh>()
+            .register_asset_loader(ControlledGltfLoader {
+                gates: gates.clone(),
+                loads: loads.clone(),
+            })
+            .init_resource::<PausePlaybackResolution>()
+            .init_resource::<SceneSpawner>()
+            .init_resource::<SceneDrivenAnimationFeedback>()
+            .insert_resource(IpfsResource {
+                inner: Arc::new(IpfsIo::new(
+                    false,
+                    Box::new(MemoryAssetReader {
+                        root: Dir::default(),
+                    }),
+                    None,
+                    Default::default(),
+                    1,
+                    tokio::sync::mpsc::unbounded_channel().0,
+                )),
+            })
+            .add_event::<EmoteLifecycleEvent>()
+            .add_systems(
+                Update,
+                (
+                    animate.run_if(resolve_this_frame),
+                    synchronize_emote_ownership,
+                    play_current_emote.run_if(resolve_this_frame),
+                    play_masked_emote.run_if(resolve_this_frame),
+                )
+                    .chain(),
+            );
         app.finish();
         app.cleanup();
 
@@ -342,12 +391,17 @@ impl PlaybackFixture {
             },
             ChildOf(avatar),
         ));
-        Self {
+        let mut fixture = Self {
             app,
             dir,
             gates,
+            loads,
             avatar,
+        };
+        if pressure {
+            fixture.install_idle();
         }
+        fixture
     }
 
     fn gate(&self, content: &str) -> GltfGate {
@@ -399,6 +453,322 @@ impl PlaybackFixture {
             }
         });
     }
+
+    fn install_idle(&mut self) {
+        let world = self.app.world_mut();
+        let idle_clip = world.resource_mut::<Assets<AnimationClip>>().add(clip(2.0));
+        let mut idle_gltf = gltf(idle_clip.clone());
+        idle_gltf
+            .named_animations
+            .insert("_Avatar".into(), idle_clip);
+        let idle_gltf = world.resource_mut::<Assets<Gltf>>().add(idle_gltf);
+        world
+            .run_system_once(move |mut emotes: CollectibleManager<Emote>| {
+                emotes.add_builtin(
+                    URN_IDLE.clone(),
+                    Collectible {
+                        representations: HashMap::from_iter([(
+                            base_bodyshapes().remove(0),
+                            Emote {
+                                gltf: idle_gltf.clone(),
+                                default_repeat: true,
+                                sound: Vec::new(),
+                            },
+                        )]),
+                        data: CollectibleData {
+                            hash: String::new(),
+                            urn: URN_IDLE.to_string(),
+                            thumbnail: String::new(),
+                            available_representations: Default::default(),
+                            name: String::new(),
+                            description: String::new(),
+                            extra_data: EmoteExtraData::default(),
+                        },
+                    },
+                );
+            })
+            .unwrap();
+    }
+
+    fn wait_for_playback(&mut self, content: &str, mask: EmoteMask) {
+        let avatar = self.avatar;
+        let urn = scene_emote(content);
+        self.update_until("requested scene emote never played", |world| {
+            let Some(player) = world.get::<AnimationPlayer>(avatar) else {
+                return false;
+            };
+            match mask {
+                EmoteMask::FullBody => {
+                    world
+                        .get::<ActiveEmote>(avatar)
+                        .is_some_and(|active| active.urn == urn && active.duration_ms == Some(1000))
+                        && world
+                            .get::<Clips>(avatar)
+                            .and_then(|clips| clips.named.get(urn.as_str()))
+                            .is_some_and(|(node, _)| {
+                                player.is_playing_animation(*node)
+                                    && world.get::<AnimationTransitions>(avatar).is_some_and(
+                                        |transitions| {
+                                            transitions.get_main_animation() == Some(*node)
+                                        },
+                                    )
+                            })
+                }
+                EmoteMask::UpperBody => world.get::<MaskedEmote>(avatar).is_some_and(|masked| {
+                    masked
+                        .active_request()
+                        .is_some_and(|active| active.urn == urn && active.duration_ms == Some(1000))
+                        && masked.playing.is_some_and(|(node, _)| {
+                            masked
+                                .clips
+                                .get(urn.as_str())
+                                .is_some_and(|(requested, _)| *requested == node)
+                                && player.is_playing_animation(node)
+                        })
+                }),
+            }
+        });
+    }
+
+    fn aggregate_id(&self, content: &str) -> Option<AssetId<Collectible<Emote>>> {
+        let urn = scene_emote(content);
+        self.app
+            .world()
+            .resource::<Assets<Collectible<Emote>>>()
+            .iter()
+            .find_map(|(id, asset)| (asset.data.urn == urn.as_str()).then_some(id))
+    }
+
+    fn gltf_id(&self, content: &str) -> Option<AssetId<Gltf>> {
+        self.app
+            .world()
+            .resource::<AssetServer>()
+            .get_handle::<Gltf>(path(content))
+            .map(|handle| handle.id())
+    }
+
+    fn expire_without_resolution(&mut self) {
+        // Cache age and asset tracking advance while the installed animation keeps its state.
+        // Ownership synchronization still runs; only repeated resolver touches are withheld.
+        self.app
+            .world_mut()
+            .resource_mut::<PausePlaybackResolution>()
+            .0 = true;
+        for _ in 0..8 {
+            self.app.update();
+        }
+        let cache = self
+            .app
+            .world()
+            .resource::<ReclaimBudget>()
+            .caches()
+            .iter()
+            .find(|cache| cache.spec.name == "emote")
+            .unwrap();
+        assert!(
+            cache.released > 0,
+            "real pressure cleanup must release the cache pin"
+        );
+        assert_eq!(
+            cache.entries, 0,
+            "the cache must not mask missing playback ownership"
+        );
+    }
+}
+
+#[test]
+fn actual_playback_owns_full_and_masked_aggregates_after_pressure_releases_cache_pins() {
+    for mask in [EmoteMask::FullBody, EmoteMask::UpperBody] {
+        let mut fixture = PlaybackFixture::with_pressure();
+        let mut gate = fixture.gate("wave");
+        fixture.request("wave", 1, mask);
+        fixture.wait_for_load(&mut gate);
+        gate.result.send(true).unwrap();
+        fixture.wait_for_playback("wave", mask);
+        let aggregate = fixture.aggregate_id("wave").unwrap();
+        let gltf = fixture.gltf_id("wave").unwrap();
+        fixture.expire_without_resolution();
+        assert_eq!(
+            fixture.aggregate_id("wave"),
+            Some(aggregate),
+            "play_slot must retain its active aggregate"
+        );
+        assert_eq!(
+            fixture.gltf_id("wave"),
+            Some(gltf),
+            "the managed GLTF belongs to the active aggregate"
+        );
+
+        fixture
+            .app
+            .world_mut()
+            .resource_mut::<PausePlaybackResolution>()
+            .0 = false;
+        fixture.request("wave", 2, mask);
+        fixture.app.update();
+        fixture.wait_for_playback("wave", mask);
+        assert_eq!(fixture.aggregate_id("wave"), Some(aggregate));
+        assert_eq!(
+            fixture.loads.lock().unwrap()["wave"],
+            1,
+            "active replay must not load again"
+        );
+        fixture.app.world_mut().despawn(fixture.avatar);
+        fixture.expire_without_resolution();
+        assert_eq!(fixture.aggregate_id("wave"), None);
+        assert_eq!(fixture.gltf_id("wave"), None);
+    }
+}
+
+#[test]
+fn stopped_cached_clip_releases_its_aggregate_and_replays_after_pressure_unloads_it() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    let mut gate = fixture.gate("wave");
+    fixture.request("wave", 1, EmoteMask::FullBody);
+    fixture.wait_for_load(&mut gate);
+    gate.result.send(true).unwrap();
+    fixture.wait_for_playback("wave", EmoteMask::FullBody);
+    let aggregate = fixture.aggregate_id("wave").unwrap();
+    let gltf = fixture.gltf_id("wave").unwrap();
+    let node = fixture
+        .app
+        .world()
+        .get::<Clips>(fixture.avatar)
+        .unwrap()
+        .named[scene_emote("wave").as_str()]
+    .0;
+    let mut next = fixture.gate("dance");
+    fixture.request("dance", 2, EmoteMask::FullBody);
+    fixture.wait_for_load(&mut next);
+    next.result.send(true).unwrap();
+    fixture.wait_for_playback("dance", EmoteMask::FullBody);
+    {
+        let mut player = fixture
+            .app
+            .world_mut()
+            .get_mut::<AnimationPlayer>(fixture.avatar)
+            .unwrap();
+        let outgoing = player
+            .animation_mut(node)
+            .expect("crossfade must keep the outgoing node");
+        outgoing.pause().set_repeat(RepeatAnimation::Count(0));
+        assert!(outgoing.is_paused() && outgoing.is_finished());
+    }
+    fixture.expire_without_resolution();
+    assert_eq!(
+        fixture.aggregate_id("wave"),
+        Some(aggregate),
+        "fading, paused and finished nodes remain owned while registered on the player"
+    );
+    assert_eq!(fixture.gltf_id("wave"), Some(gltf));
+    fixture
+        .app
+        .world_mut()
+        .get_mut::<AnimationPlayer>(fixture.avatar)
+        .unwrap()
+        .stop_all();
+    fixture.expire_without_resolution();
+    assert_eq!(
+        fixture.aggregate_id("wave"),
+        None,
+        "a stopped cached node must not pin the aggregate"
+    );
+    assert_eq!(
+        fixture.gltf_id("wave"),
+        None,
+        "a cached clip must not pin the managed GLTF"
+    );
+    assert_eq!(
+        fixture
+            .app
+            .world()
+            .get::<Clips>(fixture.avatar)
+            .unwrap()
+            .named[scene_emote("wave").as_str()]
+        .0,
+        node
+    );
+
+    let mut replay = fixture.gate("wave");
+    fixture
+        .app
+        .world_mut()
+        .resource_mut::<PausePlaybackResolution>()
+        .0 = false;
+    fixture.request("wave", 3, EmoteMask::FullBody);
+    fixture.wait_for_load(&mut replay);
+    replay.result.send(true).unwrap();
+    fixture.wait_for_playback("wave", EmoteMask::FullBody);
+    assert_ne!(fixture.aggregate_id("wave").unwrap(), aggregate);
+    assert_ne!(fixture.gltf_id("wave").unwrap(), gltf);
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 2);
+    assert!(fixture
+        .app
+        .world()
+        .get::<AnimationPlayer>(fixture.avatar)
+        .unwrap()
+        .is_playing_animation(node));
+    fixture.expire_without_resolution();
+    assert!(
+        fixture.aggregate_id("wave").is_some(),
+        "replayed animation owns the rebuilt aggregate"
+    );
+}
+
+#[test]
+fn suspended_loop_releases_its_aggregate_after_fading_and_reloads_when_resumed() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    fixture
+        .app
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    let mut overlay = fixture.gate("wave");
+    fixture.request("wave", 1, EmoteMask::UpperBody);
+    fixture.wait_for_load(&mut overlay);
+    overlay.result.send(true).unwrap();
+    fixture.wait_for_playback("wave", EmoteMask::UpperBody);
+    fixture.app.update();
+    let aggregate = fixture.aggregate_id("wave").unwrap();
+    let mut full = fixture.gate("dance");
+    fixture.request("dance", 2, EmoteMask::FullBody);
+    fixture.wait_for_load(&mut full);
+    full.result.send(true).unwrap();
+    fixture.wait_for_playback("dance", EmoteMask::FullBody);
+    for _ in 0..8 {
+        fixture.app.update();
+    }
+    let masked = fixture
+        .app
+        .world()
+        .get::<MaskedEmote>(fixture.avatar)
+        .unwrap();
+    assert!(!masked.is_playing());
+    assert_eq!(masked.request.as_ref().unwrap().urn, scene_emote("wave"));
+    assert_eq!(
+        fixture.aggregate_id("wave"),
+        None,
+        "suspended loop must not pin an inactive aggregate"
+    );
+    assert_eq!(fixture.gltf_id("wave"), None);
+
+    let mut resumed = fixture.gate("wave");
+    // Removing the full-body command leaves the suspended looping request intact.
+    fixture
+        .app
+        .world_mut()
+        .entity_mut(fixture.avatar)
+        .remove::<EmoteCommand>();
+    fixture.wait_for_load(&mut resumed);
+    resumed.result.send(true).unwrap();
+    fixture.wait_for_playback("wave", EmoteMask::UpperBody);
+    assert_ne!(fixture.aggregate_id("wave").unwrap(), aggregate);
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 2);
+    fixture.expire_without_resolution();
+    assert!(
+        fixture.aggregate_id("wave").is_some(),
+        "resumed slot must retain the new aggregate"
+    );
 }
 
 #[test]
@@ -559,39 +929,8 @@ fn locomotion_fallback_does_not_discard_the_scene_movement_load() {
     let mut gate = fixture.gate("stride");
     // Install playback components before making either clip available.
     fixture.app.update();
+    fixture.install_idle();
     let world = fixture.app.world_mut();
-    let idle_clip = world.resource_mut::<Assets<AnimationClip>>().add(clip(2.0));
-    let mut idle_gltf = gltf(idle_clip.clone());
-    idle_gltf
-        .named_animations
-        .insert("_Avatar".into(), idle_clip);
-    let idle_gltf = world.resource_mut::<Assets<Gltf>>().add(idle_gltf);
-    world
-        .run_system_once(move |mut emotes: CollectibleManager<Emote>| {
-            emotes.add_builtin(
-                URN_IDLE.clone(),
-                Collectible {
-                    representations: HashMap::from_iter([(
-                        base_bodyshapes().remove(0),
-                        Emote {
-                            gltf: idle_gltf.clone(),
-                            default_repeat: true,
-                            sound: Vec::new(),
-                        },
-                    )]),
-                    data: CollectibleData {
-                        hash: String::new(),
-                        urn: URN_IDLE.to_string(),
-                        thumbnail: String::new(),
-                        available_representations: Default::default(),
-                        name: String::new(),
-                        description: String::new(),
-                        extra_data: EmoteExtraData::default(),
-                    },
-                },
-            );
-        })
-        .unwrap();
     world.entity_mut(fixture.avatar).insert(SceneDrivenAnim {
         active: Some(SceneDrivenAnimationRequest {
             src: "stride.glb".to_owned(),
