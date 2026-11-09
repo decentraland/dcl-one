@@ -32,6 +32,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
+      - name: Validate publication protections before approval
+        if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && steps.source.outputs.publish == 'true' && steps.source.outputs.reviewer == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tooling/web-preview.py check-environment
   pending:
     name: Report pending publication approval
     needs: source
