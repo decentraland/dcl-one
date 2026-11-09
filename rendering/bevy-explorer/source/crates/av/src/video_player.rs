@@ -68,21 +68,16 @@ impl Plugin for VideoPlayerPlugin {
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn new_audio_stream_source(
     trigger: Trigger<OnInsert, <AudioStream as AVPlayer>::Source>,
     mut commands: Commands,
-    av_players: Query<(
-        &<AudioStream as AVPlayer>::Source,
-        &ContainerEntity,
-        Option<&AVSinks<AudioStream>>,
-    )>,
+    av_players: Query<(&<AudioStream as AVPlayer>::Source, &ContainerEntity)>,
     scenes: Query<&RendererSceneContext>,
     ipfs: Res<IpfsResource>,
 ) {
     let entity = trigger.target();
 
-    let (source, container_entity, maybe_sinks) = av_players
+    let (source, container_entity) = av_players
         .get(entity)
         .unwrap_or_else(|e| panic!("new_audio_stream_source query failed: {e}"));
     let Ok(context) = scenes.get(container_entity.root) else {
@@ -91,10 +86,6 @@ fn new_audio_stream_source(
             disqualified::ShortName::of::<<AudioStream as AVPlayer>::Source>()
         );
     };
-
-    if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
-    }
 
     let sinks = match &(**source) {
         "" => noop_sinks::<AudioStream>((**source).to_owned(), None),
@@ -124,7 +115,6 @@ fn new_video_player_source(
         &<VideoPlayer as AVPlayer>::Source,
         &ContainerEntity,
         Option<&VideoTextureOutput>,
-        Option<&AVSinks<VideoPlayer>>,
         Has<Stream>,
     )>,
     scenes: Query<&RendererSceneContext>,
@@ -133,20 +123,15 @@ fn new_video_player_source(
 ) {
     let entity = trigger.target();
 
-    let (source, container_entity, mut maybe_video_texture_output, maybe_sinks, has_stream) =
-        av_players
-            .get(entity)
-            .unwrap_or_else(|e| panic!("new_video_player_source query failed: {e}"));
+    let (source, container_entity, mut maybe_video_texture_output, has_stream) = av_players
+        .get(entity)
+        .unwrap_or_else(|e| panic!("new_video_player_source query failed: {e}"));
     let Ok(context) = scenes.get(container_entity.root) else {
         debug_panic!(
             "{} has an invalid link to RendererSceneContext",
             disqualified::ShortName::of::<<VideoPlayer as AVPlayer>::Source>()
         );
     };
-
-    if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
-    }
 
     let livestream = &**source == LIVEKIT_VIDEO_STREAM;
     if livestream != has_stream {
@@ -232,7 +217,7 @@ fn player_source_replaced<T: AVPlayer>(
     commands.entity(entity).try_remove::<AVSinks<T>>();
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.send_command(AVCommand::Dispose).report();
     }
 }
 
@@ -269,15 +254,13 @@ fn player_config_added<T: AVPlayer>(
         return;
     };
 
-    let command_sender = &sinks.command_sender;
-
     if config.playing() && has_should_be_playing {
-        command_sender.send(AVCommand::Play).report();
+        sinks.send_command(AVCommand::Play).report();
     } else {
-        command_sender.send(AVCommand::Pause).report();
+        sinks.send_command(AVCommand::Pause).report();
     }
-    command_sender
-        .send(AVCommand::Repeat(config.r#loop()))
+    sinks
+        .send_command(AVCommand::Repeat(config.r#loop()))
         .report();
 }
 
@@ -296,27 +279,14 @@ fn update_av_volume<T: AVPlayer>(
         .unwrap_or_default();
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
-        let AVSinks {
-            #[cfg(feature = "ffmpeg")]
-                audio: _,
-            video: _,
-            command_sender,
-            rate: _,
-            state: _,
-            sent_event: _,
-            sent_volume,
-            sent_state: _,
-            _phantom,
-        } = sinks.as_mut();
-
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
         } else {
             0.0
         };
-        if sent_volume != &Some(volume) {
-            *sent_volume = Some(volume);
-            command_sender.send(AVCommand::Volume(volume)).report();
+        if sinks.sent_volume != Some(volume) {
+            sinks.sent_volume = Some(volume);
+            sinks.send_command(AVCommand::Volume(volume)).report();
         }
     }
 }
@@ -349,8 +319,7 @@ fn player_position_added<T: AVPlayer>(
         (**position)
     );
     sinks
-        .command_sender
-        .send(AVCommand::Seek((**position) as f64))
+        .send_command(AVCommand::Seek((**position) as f64))
         .report();
 }
 
@@ -368,7 +337,7 @@ fn av_player_should_be_playing_on_add<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Play).report();
+    sinks.send_command(AVCommand::Play).report();
 }
 
 /// Sends [`AVCommand::Pause`] to [`AVPlayer`]
@@ -382,7 +351,7 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Pause).report();
+    sinks.send_command(AVCommand::Pause).report();
 }
 
 fn play_videos(
@@ -602,7 +571,7 @@ mod snapshot_tests {
                     length: None,
                     resized: false,
                 }),
-                command_sender: commands,
+                command_sender: Some(commands),
                 rate: None,
                 state: state_receiver,
                 sent_event: 0.,

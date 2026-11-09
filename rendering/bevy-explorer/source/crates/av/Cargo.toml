@@ -63,6 +63,7 @@ wasm-bindgen-futures = { workspace = true }
 ffmpeg-next = "6.0.0"
 
 [dev-dependencies]
+common = { workspace = true, features = ["test-support"] }
 wasm-bindgen-test = { workspace = true }
 js-sys = { workspace = true }
 

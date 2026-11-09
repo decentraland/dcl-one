@@ -342,6 +342,16 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
+- ECS fixtures should construct the resources and entities their systems use; a hierarchy test
+  does not need to start scene sandboxes, comms or rendering. Enable `common/test-support`
+  in dev-dependencies and call `common::test_support::init_logging()` for process-wide,
+  idempotent logging captured by the test harness. `RUST_LOG` and `--nocapture` still expose
+  diagnostics when investigating a test.
+- AV component tests use a stalled loopback HTTP source. The shutdown test waits for FFmpeg's
+  request before dropping the app and requires its threads to finish. `av::test::test_ffmpeg`
+  separately fetches an HTTPS video to check the decoder in the binary that also links
+  libwebrtc; it needs network access. The benchmark output test captures a child process's
+  intentional errors and caught panic, checks the generated files, and prints its output on failure.
 - `react-web`: `npm test` runs the checked-in Vitest suite. The Playwright visual/engine
   gate specs and configs are absent from this public checkout; the corresponding package
   scripts do not establish suite availability. See `react-web/review.md` for the optional

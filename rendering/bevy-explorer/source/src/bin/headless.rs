@@ -1,9 +1,7 @@
 //! Headless authoritative-server scene runner.
 //!
-//! Runs Decentraland SDK7 scenes with no window / render / GPU — the render-free
-//! plugin set proven by `scene_runner`'s integration tests (`TestPlugins` +
-//! `init_test_app`), plus the realm/preview loading and comms the real explorer
-//! uses. `--server-mode` makes `isServer()` return true to scene JS, so a scene's
+//! Runs Decentraland SDK7 scenes with no window / render / GPU, using the
+//! explorer's scene execution, realm/preview loading and comms. `--server-mode` makes `isServer()` return true to scene JS, so a scene's
 //! authoritative-server branch runs. Intended to replace hammurabi-headless.
 
 use std::{str::FromStr, sync::OnceLock, time::Duration};

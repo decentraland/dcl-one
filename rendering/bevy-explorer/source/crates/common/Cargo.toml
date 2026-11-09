@@ -7,6 +7,7 @@ edition = "2021"
 
 [features]
 dcl-assert = []
+test-support = []
 
 [dependencies]
 platform = { workspace = true }

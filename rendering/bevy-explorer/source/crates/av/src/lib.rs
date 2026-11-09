@@ -85,7 +85,7 @@ pub struct AVSinks<T: AVPlayer> {
     #[cfg(feature = "ffmpeg")]
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
-    pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
+    pub command_sender: Option<tokio::sync::mpsc::UnboundedSender<AVCommand>>,
     /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,
     pub state: watch::Receiver<VideoState>,
@@ -94,6 +94,22 @@ pub struct AVSinks<T: AVPlayer> {
     pub sent_volume: Option<f32>,
     pub sent_state: VideoState,
     pub _phantom: PhantomData<T>,
+}
+
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
+impl<T: AVPlayer> AVSinks<T> {
+    fn send_command(
+        &self,
+        command: AVCommand,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<AVCommand>> {
+        match &self.command_sender {
+            Some(sender) => match sender.send(command) {
+                Err(tokio::sync::mpsc::error::SendError(AVCommand::Dispose)) => Ok(()),
+                result => result,
+            },
+            None => Ok(()),
+        }
+    }
 }
 
 #[cfg(any(feature = "ffmpeg", feature = "html"))]

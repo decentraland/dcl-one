@@ -54,6 +54,25 @@ fn drive(mut phase: ResMut<AutopilotPhase>, frame: Res<FrameCount>) {
 
 #[test]
 fn a_seeded_run_leaves_the_files_the_harness_reads() {
+    if std::env::var_os("DCL_PERF_OUTPUT_TEST_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_seeded_run_leaves_the_files_the_harness_reads",
+                "--nocapture",
+            ])
+            .env("DCL_PERF_OUTPUT_TEST_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
     let (dir, keep) = match std::env::var_os("PERF_OUTPUT_DIR") {
         Some(dir) => (PathBuf::from(dir), true),
         None => (

@@ -1,10 +1,6 @@
 use bevy::{
-    diagnostic::FrameCountPlugin,
-    log::{Level, LogPlugin},
-    platform::collections::HashSet,
-    prelude::*,
-    state::app::StatesPlugin,
-    time::TimePlugin,
+    diagnostic::FrameCountPlugin, platform::collections::HashSet, prelude::*,
+    state::app::StatesPlugin, time::TimePlugin,
 };
 use common::structs::{AudioSettings, PrimaryCameraRes};
 use dcl_component::{
@@ -22,14 +18,23 @@ use scene_runner::{
 use wasm_bindgen_test::*;
 
 use crate::{
-    plugin::AVPlayerPlugin, AVPlayer, AVSinks, AudioStream, InScene, ShouldBePlaying, Stream,
-    VideoPlayer, LIVEKIT_VIDEO_STREAM,
+    AVPlayer, AVSinks, AudioStream, InScene, ShouldBePlaying, Stream, VideoPlayer,
+    LIVEKIT_VIDEO_STREAM,
 };
 
 #[cfg(target_arch = "wasm32")]
 wasm_bindgen_test_configure!(run_in_browser);
 
-const EXAMPLE_VIDEO: &str = "https://example.com/video.mp4";
+fn stalled_media_url() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static SERVER: std::sync::OnceLock<std::net::TcpListener> = std::sync::OnceLock::new();
+        let server = SERVER.get_or_init(|| std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+        format!("http://{}/video.mp4", server.local_addr().unwrap())
+    }
+    #[cfg(target_arch = "wasm32")]
+    "https://example.com/video.mp4".to_owned()
+}
 
 macro_rules! test_component {
     ($app:expr, $entity:expr, $component:ty, $expected:expr) => {
@@ -69,14 +74,34 @@ fn test_components<T: AVPlayer>(
     test_component!(app, entity, AVSinks<T>, media);
 }
 
+fn record_commands<T: AVPlayer>(
+    app: &mut App,
+    entity: Entity,
+) -> tokio::sync::mpsc::UnboundedReceiver<media::AVCommand> {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    app.world_mut()
+        .get_mut::<AVSinks<T>>(entity)
+        .unwrap()
+        .command_sender = Some(sender);
+    receiver
+}
+
+fn assert_disposed_once(mut commands: tokio::sync::mpsc::UnboundedReceiver<media::AVCommand>) {
+    assert!(matches!(
+        commands.try_recv().unwrap(),
+        media::AVCommand::Dispose
+    ));
+    assert!(matches!(
+        commands.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    ));
+}
+
 fn min_test_app() -> App {
+    common::test_support::init_logging();
     let mut app = App::new();
 
     app.add_plugins((
-        LogPlugin {
-            level: Level::DEBUG,
-            ..Default::default()
-        },
         IpfsIoPlugin {
             preview: false,
             starting_realm: None,
@@ -97,9 +122,10 @@ fn min_test_app() -> App {
     app.add_plugins((
         SceneRunnerPlugin,
         LivestreamManagerPlugin,
-        AVPlayerPlugin,
         bevy_console::ConsolePlugin,
     ));
+
+    crate::plugin::add_av_players(&mut app);
 
     app.insert_resource(PrimaryCameraRes(Entity::PLACEHOLDER));
     app.init_resource::<AudioSettings>();
@@ -162,7 +188,7 @@ fn test_insert_audio_stream() {
         .world_mut()
         .spawn((
             AudioStream(PbAudioStream {
-                url: EXAMPLE_VIDEO.to_owned(),
+                url: stalled_media_url(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -188,6 +214,11 @@ fn test_insert_audio_stream() {
         false,
         true,
     );
+    let commands = record_commands::<AudioStream>(&mut app, audio_stream);
+    app.world_mut()
+        .entity_mut(audio_stream)
+        .insert(AudioStream(PbAudioStream::default()));
+    assert_disposed_once(commands);
 }
 
 #[test]
@@ -252,7 +283,7 @@ fn test_insert_empty_audio_stream() {
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_livekit_audio_stream() {
+fn livekit_audio_stream_is_not_a_livestream_receiver() {
     let mut app = min_test_app();
 
     let renderer_context = app
@@ -308,6 +339,30 @@ fn test_insert_livekit_audio_stream() {
         false,
         true,
     );
+    #[cfg(feature = "ffmpeg")]
+    {
+        use dcl_component::proto_components::sdk::components::VideoState;
+        let mut state = app
+            .world()
+            .get::<AVSinks<AudioStream>>(audio_stream)
+            .unwrap()
+            .state
+            .clone();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    state.wait_for(|state| *state == VideoState::VsError),
+                )
+                .await
+                .expect("unsupported LiveKit audio URL must fail promptly")
+                .expect("the worker must publish its error state");
+            });
+    }
+    app.world_mut().entity_mut(audio_stream).despawn();
 }
 
 #[test]
@@ -342,7 +397,7 @@ fn test_insert_video_player() {
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: EXAMPLE_VIDEO.to_owned(),
+                src: stalled_media_url(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -522,7 +577,7 @@ fn test_removing_video_player() {
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: EXAMPLE_VIDEO.to_owned(),
+                src: stalled_media_url(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -855,12 +910,14 @@ pub(super) fn test_source_change() {
         .0
         .clone();
 
+    let commands = record_commands::<VideoPlayer>(&mut app, video_player);
     app.world_mut()
         .entity_mut(video_player)
         .insert(VideoPlayer(PbVideoPlayer {
-            src: EXAMPLE_VIDEO.to_owned(),
+            src: stalled_media_url(),
             ..Default::default()
         }));
+    assert_disposed_once(commands);
 
     test_components::<VideoPlayer>(
         &mut app,
@@ -922,7 +979,7 @@ pub(super) fn test_source_change() {
     app.world_mut()
         .entity_mut(video_player)
         .insert(VideoPlayer(PbVideoPlayer {
-            src: EXAMPLE_VIDEO.to_owned(),
+            src: stalled_media_url(),
             ..Default::default()
         }));
 
@@ -954,7 +1011,7 @@ pub(super) fn test_source_change() {
     app.world_mut()
         .entity_mut(video_player)
         .insert(VideoPlayer(PbVideoPlayer {
-            src: EXAMPLE_VIDEO.to_owned(),
+            src: stalled_media_url(),
             ..Default::default()
         }));
 
@@ -1016,7 +1073,7 @@ fn test_despawn_av_player() {
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: EXAMPLE_VIDEO.to_owned(),
+                src: stalled_media_url(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -1030,4 +1087,51 @@ fn test_despawn_av_player() {
         .id();
 
     app.world_mut().entity_mut(video_player).despawn();
+}
+
+#[cfg(all(feature = "ffmpeg", not(target_arch = "wasm32")))]
+pub(super) fn test_stalled_source_shutdown() {
+    use std::{
+        io::Read,
+        net::TcpListener,
+        time::{Duration, Instant},
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut app = min_test_app();
+    let ipfs = app.world().resource::<ipfs::IpfsResource>().clone();
+    let sinks = crate::video_stream::av_sinks::<VideoPlayer>(
+        ipfs,
+        format!("http://{}/stalled.mp4", listener.local_addr().unwrap()),
+        "hash".to_owned(),
+        Some(Handle::default()),
+        true,
+        false,
+    );
+    app.world_mut().spawn(sinks);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut connection = loop {
+        match listener.accept() {
+            Ok((connection, _)) => break connection,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "FFmpeg never opened the local source"
+                );
+                std::thread::park_timeout(Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
+    connection
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut request = [0; 4];
+    connection.read_exact(&mut request).unwrap();
+    assert_eq!(&request, b"GET ");
+    drop(app);
+    assert!(crate::video_stream::join_av_threads(Duration::from_secs(
+        10
+    )));
 }

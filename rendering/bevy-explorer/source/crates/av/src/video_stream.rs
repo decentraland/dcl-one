@@ -99,7 +99,7 @@ pub fn av_sinks<T: AVPlayer>(
         video: image
             .filter(|_| T::HAS_VIDEO)
             .map(|image| VideoSink::new(source, video_receiver, image)),
-        command_sender,
+        command_sender: Some(command_sender),
         rate: None,
         state: state_receiver,
         sent_event: 0.,
@@ -208,19 +208,14 @@ fn av_thread(
 
 /// Sinks that never play: an empty source.
 pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> AVSinks<T> {
+    #[cfg(feature = "html")]
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
     #[cfg_attr(not(feature = "html"), expect(unused))]
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
-    let audio = {
-        let (_audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
-        let (handle_sender, _handle_receiver) = tokio::sync::oneshot::channel();
-        drop(command_receiver);
-        drop(video_sender);
-        Some(AudioSink::new(audio_receiver, handle_sender))
-    };
+    drop(video_sender);
     #[cfg(feature = "html")]
     media::spawn_av(
         command_receiver,
@@ -233,14 +228,52 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
 
     AVSinks {
         #[cfg(feature = "ffmpeg")]
-        audio,
+        audio: None,
         video: image.map(|image| VideoSink::new(source, video_receiver, image)),
-        command_sender,
+        #[cfg(feature = "ffmpeg")]
+        command_sender: None,
+        #[cfg(feature = "html")]
+        command_sender: Some(command_sender),
         rate: None,
         state: state_receiver,
         sent_event: 0.,
         sent_volume: None,
         sent_state: VideoState::VsNone,
         _phantom: Default::default(),
+    }
+}
+
+#[cfg(all(test, feature = "ffmpeg"))]
+mod tests {
+    use super::*;
+    use crate::VideoPlayer;
+
+    #[test]
+    fn an_empty_native_source_accepts_configuration_and_disposal() {
+        let sinks = noop_sinks::<VideoPlayer>(String::new(), Some(Handle::default()));
+        assert!(sinks.audio.is_none());
+        assert!(sinks.video.is_some());
+        for command in [
+            AVCommand::Play,
+            AVCommand::Pause,
+            AVCommand::Repeat(true),
+            AVCommand::Seek(2.0),
+            AVCommand::Volume(0.5),
+            AVCommand::Dispose,
+        ] {
+            sinks.send_command(command).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_closed_real_backend_still_reports_failed_commands() {
+        let mut sinks = noop_sinks::<VideoPlayer>(String::new(), None);
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        sinks.command_sender = Some(sender);
+        sinks.send_command(AVCommand::Play).unwrap();
+        assert!(matches!(receiver.try_recv().unwrap(), AVCommand::Play));
+        drop(receiver);
+        assert!(sinks.send_command(AVCommand::Pause).is_err());
+        sinks.send_command(AVCommand::Dispose).unwrap();
     }
 }

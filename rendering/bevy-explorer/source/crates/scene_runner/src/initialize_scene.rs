@@ -1318,7 +1318,7 @@ fn load_active_entities(
         }
         RealmInitialLocation::Base => {
             if *pending_teleport {
-                error!("pending ...");
+                debug!("waiting for the realm spawn scene");
                 Some(
                     current_realm
                         .config

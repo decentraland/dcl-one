@@ -1,8 +1,4 @@
-use bevy::{
-    log::{Level, LogPlugin},
-    prelude::*,
-    state::app::StatesPlugin,
-};
+use bevy::{prelude::*, state::app::StatesPlugin};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::*;
 
@@ -17,16 +13,10 @@ use crate::{
 wasm_bindgen_test_configure!(run_in_browser);
 
 fn min_app() -> App {
+    common::test_support::init_logging();
     let mut app = App::new();
 
-    app.add_plugins((
-        AssetPlugin::default(),
-        LogPlugin {
-            level: Level::DEBUG,
-            ..Default::default()
-        },
-        StatesPlugin,
-    ));
+    app.add_plugins((AssetPlugin::default(), StatesPlugin));
 
     app.init_asset::<Image>();
 
