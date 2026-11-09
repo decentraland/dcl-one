@@ -16,6 +16,9 @@ import type { PublishableItem } from "../lib/builder";
 import type { ImportItem } from "../lib/import";
 import { setShopCapabilities } from "../lib/featureFlags";
 import { marketplaceOn } from "../../market/testing-flags";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
+
+const MY_STORE_FLAG = "dapps-shop-my-store";
 
 const MARKET = latestOffChainMarketplace(CHAIN.POLYGON).address;
 const originalFetch = globalThis.fetch;
@@ -107,6 +110,9 @@ const storeRoutes = (over: FakeRoute[] = []): FakeRoute[] => [
 ];
 
 describe("My store", () => {
+  // As upstream, the dashboard opens only while decentraland.org's `dapps-shop-my-store` rollout is on.
+  beforeEach(() => primeRemoteFlags({ [MY_STORE_FLAG]: true }));
+
   it("shows sales and MANA earnings, the collections with each item's Shop state, and lists an unlisted item for credits", async () => {
     const wallet = fakeWallet();
     const posted: unknown[] = [];
@@ -185,6 +191,36 @@ describe("My store", () => {
     mountShop({ path: "/shop/my-store", who: "web3", routes: [{ method: "GET", path: /./, reply: PENDING }] });
     expect(await screen.findByTestId("overview")).toBeInTheDocument();
     expect(screen.queryByTestId("shop-signin-gate")).toBeNull();
+  });
+
+  it("with decentraland.org's rollout off, as in production, sends even its creator to the overview, as upstream", async () => {
+    primeRemoteFlags({});
+    const { PENDING } = await import("../../market/testing");
+    mountShop({ path: "/shop/my-store", who: "web3", routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("store-tile-sold")).toBeNull();
+  });
+
+  it("a rollout naming accounts opens the dashboard to them alone, whatever their address's case", async () => {
+    const { PENDING } = await import("../../market/testing");
+    const wallet = fakeWallet();
+    primeRemoteFlags({ [MY_STORE_FLAG]: true }, { [MY_STORE_FLAG]: `0x${"1".repeat(40)},\n${wallet.address.toUpperCase().replace("0X", "0x")}` });
+    const allowed = mountShop({ path: "/shop/my-store", who: "web3", wallet, routes: storeRoutes([]) });
+    expect(await screen.findByTestId("store-tile-sold")).toBeInTheDocument();
+    allowed.unmount();
+    primeRemoteFlags({ [MY_STORE_FLAG]: true }, { [MY_STORE_FLAG]: `0x${"1".repeat(40)}` });
+    mountShop({ path: "/shop/my-store", who: "web3", wallet, routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("overview")).toBeInTheDocument();
+  });
+
+  it("a host's declared switch stands for the rollout, without the file's list", async () => {
+    primeRemoteFlags({}, { [MY_STORE_FLAG]: `0x${"1".repeat(40)}` });
+    window.__SHOP_FLAGS__ = { myStore: true };
+    onTestFinished(() => {
+      delete window.__SHOP_FLAGS__;
+    });
+    mountShop({ path: "/shop/my-store", who: "web3", routes: storeRoutes([]) });
+    expect(await screen.findByTestId("store-tile-sold")).toBeInTheDocument();
   });
 });
 

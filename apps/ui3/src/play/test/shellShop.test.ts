@@ -697,6 +697,9 @@ describe('the shell purchase', () => {
     const { view } = await t.until('failed')
     expect(view).toMatchObject({ retry: false })
     expect(view.step === 'failed' && view.message).toMatch(/failed on-chain/)
+    // Retired, not handed back: the Credits come back with the expiry sweep, and the copy says no more than that.
+    expect(view.step === 'failed' && view.message).toMatch(/come back on their own/)
+    expect(view.step === 'failed' && view.message).not.toMatch(/were returned/)
   })
 
   it('leaves another purchase’s dialog alone when a closed one settles', async () => {
@@ -1304,6 +1307,7 @@ describe('a purchase of several items (the cart)', () => {
     watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
     const { view } = await t.until('failed')
     expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
+    expect(view.step === 'failed' && view.message).not.toMatch(/were returned/)
   })
 
   it('says nothing was bought when no group of it was', async () => {

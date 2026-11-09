@@ -7,8 +7,10 @@ import { rarityCardPalette } from "../discovery/lib/rarity";
 import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
 import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
-import { creatorTrade } from "./fakes";
+import { batchAuthorization, creatorTrade } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
+import { resetIapModeCache } from "../credits/iap";
+import { takeTopUpReturn } from "../credits/returns";
 import { RESUME_CART_KEY } from "./purchase/cart";
 
 function renderCart(s: DemoScenario, tweak?: (demo: ReturnType<typeof createDemo>) => void) {
@@ -422,7 +424,7 @@ describe("the cart page", () => {
     expect(screen.queryByTestId("pay-with-credits")).toBeNull();
     expect(screen.queryByTestId("pay-with-mana")).toBeNull();
     await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
-    expect(await screen.findByTestId("topup-panel")).toBeTruthy();
+    expect(within(await screen.findByTestId("cart-checkout")).getByRole("heading", { name: "Buy Credits and Items" })).toBeTruthy();
     expect(demo.cart.getSnapshot().lines[0]!.method).toBeNull();
   });
 
@@ -434,35 +436,110 @@ describe("the cart page", () => {
     expect(confirmButton()).toBeDisabled();
   });
 
-  it("insufficient credits: an explicit top-up with packs that close the gap, the line stays on credits", async () => {
+  it("insufficient credits: upstream's checkout dialog with the shortfall, the cart's lines and the packs that close the gap", async () => {
     const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
-    // As upstream: no inline shortfall; Checkout stays enabled and opens the top-up.
+    // As upstream: no inline shortfall; Checkout stays enabled and opens the dialog.
     await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
-    expect(screen.queryByText(/You need 57 more Credits/)).toBeNull();
+    expect(screen.queryByText(/57 Credits/)).toBeNull();
     await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
-    const panel = await screen.findByTestId("topup-panel");
-    expect(panel.textContent).toContain("You need 57 more Credits");
-    expect(within(panel).getAllByTestId("credit-pack").map((b) => b.getAttribute("aria-label"))).toEqual([
+    const dialog = await screen.findByRole("dialog", { name: "Check out your cart" });
+    expect(within(dialog).getByRole("heading", { name: "Buy Credits and Items" })).toBeTruthy();
+    expect(within(dialog).getByTestId("cart-checkout-balance")).toHaveTextContent("My Credits Balance:3");
+    expect(within(dialog).getByTestId("cart-checkout-insufficient")).toHaveTextContent("Insufficient Funds. You will need to buy 57 Credits to purchase these items.Learn More");
+    // The line, its units and what they cost: 5 at 12 Credits.
+    expect(within(within(dialog).getByTestId("dialog-lines")).getByText("Rainbow Hat").textContent).toBe("Rainbow Hat× 5");
+    expect(within(dialog).getByTestId("dialog-lines")).toHaveTextContent("60");
+    expect(within(dialog).getAllByTestId("credit-pack").map((b) => b.getAttribute("aria-label"))).toEqual([
       expect.stringContaining("100 Credits"),
       expect.stringContaining("260 Credits"),
       expect.stringContaining("540 Credits"),
     ]);
-    expect(within(panel).getByTestId("pack-recommended")).toBeTruthy();
     expect(demo.cart.getSnapshot().lines[0]!.method).toBeNull();
-    expect(panel.textContent).not.toMatch(/MANA/);
+    expect(dialog.textContent).not.toMatch(/MANA/);
+    // Cancel closes it, and the cart is as it was.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("cart-checkout")).toBeNull());
+    expect(demo.cart.getSnapshot().lines).toHaveLength(1);
+  });
+
+  it("the top-up's way back is bound to the pack order it created: that order's grant returns to the cart, another's never", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    demo.services.openExternal = () => {};
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout");
+    await act(async () => fireEvent.click(within(dialog).getByTestId("cart-checkout-topup")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "createPackOrder")).toBe(true));
+    const order = `order-${(demo.shop.log.find((r) => r.name === "createPackOrder")!.body as { packId: string }).packId}`;
+    const raw = sessionStorage.getItem("dcl-shop-topup-return:v1");
+    expect(takeTopUpReturn(Date.now(), "order-other")).toBeNull();
+    sessionStorage.setItem("dcl-shop-topup-return:v1", raw!);
+    expect(takeTopUpReturn(Date.now(), order)).toMatchObject({ path: "/shop/cart", orderId: order });
+  });
+
+  it("a pack checkout that does not start says so and drops the cart's hand-off, so no later top-up pays this basket", async () => {
+    renderCart({
+      session: "web3",
+      lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }],
+      balanceCents: 30,
+      handlers: { createPackOrder: () => ({ status: 500, body: { error: "down" } }) },
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout");
+    await act(async () => fireEvent.click(within(dialog).getByTestId("cart-checkout-topup")));
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
+    expect(takeTopUpReturn()).toBeNull();
+  });
+
+  it("the packs dialog lists the lines the Credits pay: a LAND paid in MANA is not short of Credits", async () => {
+    onTestFinished(marketplaceOn());
+    renderCart({
+      session: "web3",
+      lines: [
+        { offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 },
+        { offer: (s) => parcelResale(s), listing: { orderId: "order-1" }, name: "Parcel 12,-4" },
+      ],
+      balanceCents: 30,
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    const lines = within(dialog).getByTestId("dialog-lines");
+    expect(lines).toHaveTextContent("Rainbow Hat");
+    expect(lines).not.toHaveTextContent("Parcel 12,-4");
+    expect(within(dialog).getByTestId("cart-checkout-insufficient")).toHaveTextContent("to purchase these items.");
+  });
+
+  it("in the app's web view, where Credits are not sold here, the dialog says where to get them", async () => {
+    window.history.replaceState({}, "", "/?view=mobile-iap");
+    resetIapModeCache();
+    onTestFinished(() => {
+      window.history.replaceState({}, "", "/");
+      resetIapModeCache();
+    });
+    renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], balanceCents: 30 });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    const dialog = await screen.findByTestId("cart-checkout");
+    expect(within(dialog).getByTestId("cart-checkout-insufficient")).toHaveTextContent("Get Credits in the Decentraland app, then come back to finish this purchase.");
+    expect(within(dialog).queryByTestId("credit-pack")).toBeNull();
+    expect(within(dialog).queryByRole("link", { name: "Learn More" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
   it("a balance a few cents short says the whole Credits the buyer must add, rounded up", async () => {
     renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], balanceCents: 115 });
     await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
-    expect((await screen.findByTestId("topup-panel")).textContent).toContain("You need 1 more Credits");
+    expect(await screen.findByTestId("cart-checkout-insufficient")).toHaveTextContent("You will need to buy 1 Credits to purchase this item.");
   });
 
   it("wallet rejection: the group fails as cancelled, nothing is bought, and the checkout can resume", async () => {
     const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }] });
     demo.wallet.next = "reject";
     await clickWhenEnabled(confirmButton);
-    await screen.findByText("You cancelled the request in your wallet.");
+    // Upstream's failure panel says why; closed, the cart's banner keeps the way to resume.
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    expect(within(dialog).getByTestId("buy-error")).toHaveTextContent("We couldn't complete your purchase this time. You cancelled the request in your wallet.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("cart-checkout")).toBeNull());
     expect(demo.cart.getSnapshot().lines).toHaveLength(1);
     expect(screen.getByText("A purchase from this cart didn't finish")).toBeTruthy();
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
@@ -473,8 +550,84 @@ describe("the cart page", () => {
   it("a revert (sold between review and settlement) fails the group without taking the line out", async () => {
     const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], confirm: "reverted" });
     await clickWhenEnabled(confirmButton);
-    await screen.findByText(/The transaction failed on-chain/);
+    expect(within(await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 })).getByTestId("buy-error")).toHaveTextContent(/The transaction failed on-chain/);
     expect(demo.cart.getSnapshot().lines).toHaveLength(1);
+  });
+
+  it("the failure panel's Try again runs again only what didn't complete", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }] });
+    demo.wallet.next = "reject";
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Try again" })));
+    await screen.findByText("SUCCESS PAGE", undefined, { timeout: 5000 });
+  });
+
+  it("Try again on a run that half completed sends only what failed: the item already bought is not bought twice", async () => {
+    const { demo } = renderCart({
+      session: "web3",
+      lines: [
+        { offer: (s) => storeMint(s), name: "Rainbow Hat" },
+        { offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" },
+      ],
+    });
+    // One signature declined: one group fails, the other completes.
+    demo.wallet.next = "reject";
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
+    const sentBefore = demo.relay.posts.length + demo.wallet.sent.length;
+    expect(sentBefore).toBe(1);
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Try again" })));
+    await screen.findByText("SUCCESS PAGE", undefined, { timeout: 5000 });
+    // One more purchase sent, for the group that failed; the completed one was not sent again.
+    expect(demo.relay.posts.length + demo.wallet.sent.length).toBe(sentBefore + 1);
+  });
+
+  it("a failure while something else holds the cart offers no Try again that would do nothing", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }] });
+    demo.wallet.next = "reject";
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout", undefined, { timeout: 5000 });
+    await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 });
+    // The wallet moves to another account: nothing can run again until that is sorted out.
+    act(() => demo.wallet.emit("accountsChanged", [BOOK.reseller]));
+    await waitFor(() => expect(within(screen.getByTestId("cart-checkout")).queryByRole("button", { name: "Try again" })).toBeNull());
+    expect(within(screen.getByTestId("cart-checkout")).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("closed, the cart's dialog gives focus back to the Checkout that opened it", async () => {
+    renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
+    const checkout = screen.getByTestId("pay-with-credits-topup");
+    checkout.focus();
+    fireEvent.click(checkout);
+    const dialog = await screen.findByTestId("cart-checkout");
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("cart-checkout")).toBeNull());
+    expect(document.activeElement).toBe(screen.getByTestId("pay-with-credits-topup"));
+  });
+
+  it("while the purchase runs the dialog says so and cannot be closed; it goes when the purchase ends", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    renderCart({
+      session: "web3",
+      lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }],
+      // The Credits are reserved only once released: the purchase is held running until then.
+      handlers: { authorizeCreditBatch: async ({ body }) => (await gate, batchAuthorization((body as { items: { usdPriceCents: number }[] }).items)) },
+    });
+    await clickWhenEnabled(confirmButton);
+    const dialog = await screen.findByTestId("cart-checkout");
+    expect(within(dialog).getByRole("heading", { name: "Buy Items" })).toBeTruthy();
+    expect(dialog).toHaveTextContent("Preparing your purchase…");
+    expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByTestId("cart-checkout")).toBeTruthy();
+    await act(async () => release());
+    await screen.findByText("SUCCESS PAGE", undefined, { timeout: 5000 });
   });
 
   it("process death: a reloaded cart finds its pending group, watches it, and a late receipt completes it", async () => {

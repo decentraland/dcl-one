@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createShopClient } from "@ui/shop/api";
+import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
@@ -126,6 +127,19 @@ describe("the other pages", () => {
 
     const off = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags: {} });
     expect(off.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"]]);
+    // No variants, no field: the page data stays as it was.
+    expect("featureFlagVariants" in overview.data).toBe(false);
+  });
+
+  it("sends the flags' variants on with them, primed on the server as in the browser", async () => {
+    const { client } = node([]);
+    const list = "0x00000000000000000000000000000000000000aa";
+    const flags = { "dapps-shop-my-store": true };
+    const variants = { "dapps-shop-my-store": list };
+    const page = await loadShopPage("myStore", { request: request("/shop/my-store"), params: {}, client, now, env: {}, flags, flagVariants: variants });
+    expect(page.data.featureFlags).toEqual(flags);
+    expect(page.data.featureFlagVariants).toEqual(variants);
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list);
   });
 
   it("the collectibles grid primes its first page under the key the page asks for", async () => {

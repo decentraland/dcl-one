@@ -1,3 +1,4 @@
+use crate::components::WebviewSize;
 use crate::core::browser_process::ClientHandlerBuilder;
 #[cfg(not(target_os = "macos"))]
 use crate::core::browser_process::cef_command::CefCommand;
@@ -77,7 +78,7 @@ impl BrowsersInner {
         &mut self,
         webview: Entity,
         uri: &str,
-        webview_size: Vec2,
+        webview_size: WebviewSize,
         requester: Requester,
         ipc_event_sender: Sender<IpcEventRaw>,
         system_cursor_icon_sender: SystemCursorIconSenderInner,
@@ -271,10 +272,15 @@ impl BrowsersInner {
         };
     }
 
-    pub fn resize(&self, webview: &Entity, size: Vec2) {
+    pub fn resize(&self, webview: &Entity, size: WebviewSize) {
         if let Some(browser) = self.browsers.get(webview) {
-            browser.size.set(size);
-            browser.host.was_resized();
+            let previous = browser.size.replace(size);
+            if previous.scale_factor != size.scale_factor {
+                browser.host.notify_screen_info_changed();
+            }
+            if previous != size {
+                browser.host.was_resized();
+            }
         }
     }
 
@@ -470,7 +476,7 @@ impl Browsers {
         &mut self,
         webview: Entity,
         uri: &str,
-        webview_size: Vec2,
+        webview_size: WebviewSize,
         requester: Requester,
         ipc_event_sender: Sender<IpcEventRaw>,
         system_cursor_icon_sender: SystemCursorIconSenderInner,
@@ -609,7 +615,7 @@ impl Browsers {
         });
     }
 
-    pub fn resize(&self, webview: &Entity, size: Vec2) {
+    pub fn resize(&self, webview: &Entity, size: WebviewSize) {
         #[cfg(target_os = "macos")]
         self.inner.resize(webview, size);
         #[cfg(not(target_os = "macos"))]

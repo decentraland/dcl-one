@@ -37,7 +37,7 @@ describe("the native shop", () => {
     await act(async () => {
       mount = mountShop(container, host);
     });
-    expect(fetchMock).toHaveBeenCalledWith("/internal/dapps-flags", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/internal/dapps-flags?variants=1", expect.anything());
     expect(container.dataset.shopReady).toBeUndefined();
 
     await act(async () => answer(new Response(JSON.stringify({ "dapps-shop-creator-sales": true }))));

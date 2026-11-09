@@ -37,7 +37,7 @@ mod avatar_state;
 pub mod avatar_texture;
 pub mod colliders;
 mod debug_avatars;
-mod dynamic_nametag;
+pub mod dynamic_nametag;
 pub mod emote_report;
 pub mod foot_ik;
 pub mod foreign_dynamics;

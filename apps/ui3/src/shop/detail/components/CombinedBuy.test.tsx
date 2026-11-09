@@ -3,7 +3,7 @@
 // MANA gap checked against what was shown, and a declined signature releasing the credit.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization } from "../../checkout/fakes";
@@ -12,11 +12,15 @@ import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "../../model/money";
 import { presentPayment, type MixedPayment } from "../../payment/present";
 import { BOOK, storeMint } from "../../payment/fixtures";
-import CombinedBuy from "./CombinedBuy";
+import { cartLineId } from "../../cart/store";
+import CombinedBuy, { readSentSplit } from "./CombinedBuy";
 
-function setup(signedFor?: string) {
+afterEach(() => sessionStorage.clear());
+
+function setup(signedFor?: string, confirm?: "none") {
   const demo = createDemo({
     session: "web3",
+    ...(confirm ? { confirm } : {}),
     handlers: {
       authorizeCredit: ({ body }) => {
         const cents = (body as { usdPriceCents: number }).usdPriceCents;
@@ -30,12 +34,13 @@ function setup(signedFor?: string) {
   const view = presentPayment(offer, demo.session, { creditsBalance: usdCents(50), report: () => {} });
   const mixed = view.options.find((o) => o.method === "mana")!.mixed as MixedPayment;
   const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
-  render(
+  const shell = () => (
     <DemoShell demo={demo} path="/shop/item/x/7">
       <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
-    </DemoShell>,
+    </DemoShell>
   );
-  return { demo, mixed };
+  const shown = render(shell());
+  return { demo, mixed, line, unmount: shown.unmount, again: () => render(shell()) };
 }
 
 describe("buying with Credits and MANA", () => {
@@ -76,5 +81,18 @@ describe("buying with Credits and MANA", () => {
     expect(demo.relay.posts).toHaveLength(0);
     expect(demo.chain.allowances).toEqual(before);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+  });
+
+  it("a split left confirming is recorded for this account and item, so a dialog opened again offers no second one", async () => {
+    const { line, unmount, again } = setup(undefined, "none");
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).not.toBeNull();
+    unmount();
+    again();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(screen.getByTestId("combined-check-again")).toBeEnabled();
   });
 });

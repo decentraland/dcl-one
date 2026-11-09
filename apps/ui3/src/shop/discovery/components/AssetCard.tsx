@@ -14,7 +14,7 @@ import { itemAsset, tokenAsset, type AssetId } from "../../model/asset";
 import { parseEvmAddress, shortAddress } from "../../model/address";
 import { useShopWallet } from "../../wallet/context";
 import { formatMana } from "../../model/money";
-import { cardPrice } from "../cardPrice";
+import { cardPrice, type CardPrice } from "../cardPrice";
 import { useCreatorProfile, useSaleActive } from "../hooks";
 import { t } from "../intl";
 import type { CatalogItem } from "../lib/catalogItem";
@@ -147,7 +147,11 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
   const [thumbFailures, setThumbFailures] = useState(0);
   const thumbSource = item.thumbnail ? (thumbFailures ? item.thumbnail : publicThumbnail(item.thumbnail, 320)) : undefined;
   const early = position !== undefined && position < 10;
-  const price = cardPrice(item, session);
+  // A browse card, in either mode (a creator's unlisted items and the off-catalogue grids are view cards), says
+  // NOT FOR SALE for a mint with no copies left, as upstream's AssetCard: to a buyer the two mean the same.
+  // The outfit pages, which read cardPrice directly, keep upstream's SOLD OUT.
+  const fromFeed = cardPrice(item, session);
+  const price: CardPrice = fromFeed.kind === "soldOut" ? { kind: "notForSale" } : fromFeed;
   const onSale = useSaleActive({ priceCredits: item.priceCredits, compareAtCredits: item.compareAtCredits, saleEndsAt: item.saleEndsAt });
   const resale = !!item.tokenId || item.listingType === "secondary";
   // A flash sale is a native listing's (upstream applies it to fixed-price listings only). Resales are priced
@@ -160,7 +164,12 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
   const line = lineId ? lines.find((l) => l.id === lineId) : undefined;
   const stockCap = item.tokenId ? 1 : typeof item.available === "number" ? item.available : Infinity;
   const cartFull = !!line && line.quantity >= stockCap;
-  const buyable = mode === "shop" && !!input && isListingForSale(item) && price.kind !== "soldOut" && price.kind !== "notForSale";
+  const buyable = mode === "shop" && !!input && isListingForSale(item) && price.kind !== "notForSale";
+  // Nothing to buy, a view card included: as upstream's, VIEW stands where Add to cart would (revealed the same
+  // way, with Add to cart's hover) and the compact card shows a dark round arrow for the + button. As upstream's
+  // ViewCtaLink and ViewRoundLink, both are links to the detail page above the card's overlay link, hidden from
+  // assistive tech and out of the tab order: the overlay link is the one announced navigation.
+  const viewPath = buyable ? null : detailPath;
   const genderIco = genderIcon(item.gender);
   const palette = rarityCardPalette(item.rarity);
   const unitsLeft = showSale ? saleUnitsHint(item.saleUnitsLeft) : null;
@@ -252,8 +261,8 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
           </div>
         </div>
         <div className="shop-card__action">
-          {/* The cart button takes this row's place on hover and keyboard focus; a card with nothing to buy keeps it. */}
-          <div className="shop-card__rest" data-chips={buyable || undefined}>
+          {/* The cart button, or VIEW on a card with nothing to buy, takes this row's place on hover and keyboard focus. */}
+          <div className="shop-card__rest" data-chips={buyable || !!viewPath || undefined}>
             <div className="shop-card__chips">
               <span className="shop-card__chip" data-variant="rarity" data-testid="chip-rarity" style={{ background: palette.labelBg, color: palette.label }} title={rarityDescription(item.rarity)}>
                 {rarityLabel(item.rarity)}
@@ -302,6 +311,16 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
                 <Icon name="cart" />
                 <span>{cartFull ? t("itemDetail.inCart") : t("itemDetail.addToCart")}</span>
               </button>
+            </>
+          ) : viewPath ? (
+            <>
+              <Link className="shop-card__addround" data-variant="view" data-testid="card-view-round" to={viewPath} state={{ item }} aria-hidden tabIndex={-1}>
+                <Icon name="arrow-right" size={18} />
+              </Link>
+              <Link className="shop-card__cart" data-variant="view" data-testid="card-view" to={viewPath} state={{ item }} aria-hidden tabIndex={-1}>
+                <Icon name="eye" size={20} />
+                <span>{t("assetCard.view")}</span>
+              </Link>
             </>
           ) : null}
         </div>

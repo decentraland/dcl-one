@@ -739,7 +739,7 @@ impl PipelineCache {
 
         #[cfg(any(target_arch = "wasm32", not(feature = "multi_threaded")))]
         if let CachedPipelineState::Creating(..) = state {
-            let taken = std::mem::replace(state, CachedPipelineState::Queued);
+            let taken = mem::replace(state, CachedPipelineState::Queued);
             let CachedPipelineState::Creating(_, sync_task) = taken else {
                 panic!("should be Creating");
             };
