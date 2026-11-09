@@ -126,11 +126,17 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'retire') {
     const pageId = values['page-id']
     if (!pageId || !values.reason) throw new Error(USAGE)
-    // Ownership is derived from the capture, so it is read only after the cache is verified.
-    await createApp(process.cwd(), values.config).then((app) =>
-      app.createSource('snapshot').ready?.()
-    )
+    // Ownership is derived from the capture at figma/figma-snapshot, so that exact directory is verified first:
+    // a --config naming another snapshotDir would verify one cache and read another.
+    const app = await createApp(process.cwd(), values.config)
     const root = path.resolve(process.cwd(), '..')
+    if (
+      path.resolve(app.cwd, app.config.snapshotDir) !== path.resolve(root, 'figma/figma-snapshot')
+    )
+      throw new Error(
+        'retire reads the capture at figma/figma-snapshot, but the config names another snapshotDir'
+      )
+    await app.createSource('snapshot').ready?.()
     const ownership = await buildOwnership(root)
     const componentId = values['component-id']
     const name = values.name ?? (componentId ? ownership.componentById.get(componentId) : undefined)

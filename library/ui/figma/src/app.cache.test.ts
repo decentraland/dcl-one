@@ -101,6 +101,17 @@ describe('when a command opens the capture', () => {
     await expect(app.createSource().listPages()).rejects.toThrow(/another pin/)
   })
 
+  it.each(['null', '42', '[]', '{ not json'])(
+    'should refuse a marker holding %s as a cache error',
+    async (content) => {
+      await writeConfig({ snapshotLock: '../upstream.lock.json' })
+      await writeFile(path.join(cache, MARKER), content)
+      const app = await createApp(figma, path.join(figma, 'figma.config.json'))
+
+      await expect(app.createSource().listPages()).rejects.toThrow(FdsCacheError)
+    }
+  )
+
   it('should refuse an edited cache file', async () => {
     await writeConfig({ snapshotLock: '../upstream.lock.json' })
     await writeFile(path.join(cache, 'pages.json'), '{"pages":[]}\n')

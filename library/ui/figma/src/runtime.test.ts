@@ -5,8 +5,9 @@ import { resolveComponent } from './contract/resolve.js'
 import { makeLibrary } from './contract/test-fixtures.js'
 import type { ComponentSpec } from './ir/components.js'
 import { LfsPointerError } from './lfs.js'
-import { FdsCacheError } from './sources/fds-source.js'
+import { FdsCacheError, MARKER } from './sources/fds-source.js'
 import { createRuntime, supersessionCandidates } from './runtime.js'
+import { copySnapshot, pinTestCapture, testConfig } from '../test/snapshot.js'
 
 const spec = (name: string, extra: Partial<ComponentSpec> = {}) =>
   ({ name, page: 'Buttons', needsManual: [], ...extra }) as ComponentSpec
@@ -136,5 +137,27 @@ describe('when distinguishing configured capture failures from resolve-only mode
       ok: true,
       warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
     })
+  })
+
+  it('should reject synced components from a pinned cache whose marker is null instead of resolving an empty map', async () => {
+    const { pages } = await testConfig()
+    await copySnapshot(path.join(library.root, 'figma-snapshot'))
+    await writeFile(
+      path.join(library.root, 'figma.config.json'),
+      JSON.stringify({
+        outDir: 'generated',
+        snapshotDir: 'figma-snapshot',
+        pages,
+        contract: { mappingRoot: 'src' }
+      })
+    )
+    await pinTestCapture(library.root)
+    const runtime = await createRuntime({ cwd: library.root, env: {} })
+    const context = await runtime.resolveContext()
+
+    await writeFile(path.join(library.root, 'figma-snapshot', MARKER), 'null')
+
+    await expect(context.loadSyncedComponents?.()).rejects.toBeInstanceOf(FdsCacheError)
+    await expect(runtime.resolveContext()).rejects.toBeInstanceOf(FdsCacheError)
   })
 })

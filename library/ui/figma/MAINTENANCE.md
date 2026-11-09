@@ -80,7 +80,7 @@ A component is flagged when the mapper cannot reproduce it confidently. Reasons 
 - Follow CLAUDE.md's component architecture rules: custom browser primitives, no Base UI or other component kit, co-located CSS Modules instead of Emotion/styled-components, and TanStack only when shared state or data caching is needed. Apply changes to generated components through their templates.
 - Everything in the repo is English: code, comments, tests, docs.
 - Dependencies: exact versions (`--save-exact`), `@dcl/*` and `decentraland-*` with caret. Install with `pnpm install --frozen-lockfile` in `library/ui`.
-- Never write a Figma token or any secret to a file or to chat. `.env.example` holds placeholders only.
+- Never write a Figma token or any secret to a file or to chat: `FIGMA_TOKEN` and `FIGMA_FILE_KEY` are read from the environment only.
 - Never hand-edit `figma/review/src/generated/**` (CI `diff` is the enforcement).
 - Keep explicit mappings and inference apart: a prop name read from a `*.figma.ts` is explicit; `Variant2/3/4` meaning is inference and must stay labelled.
 - Preserve `needs-manual` flags; never clear one to make a count look better.

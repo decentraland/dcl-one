@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { redactFileKey } from '../config.js'
 
 const FIGMA_API = 'https://api.figma.com'
@@ -28,15 +27,11 @@ interface TokenProvider {
 class EnvTokenProvider implements TokenProvider {
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
+  // The token comes from the environment only; no file is read for it.
   async getToken(): Promise<string> {
-    if (!this.env.FIGMA_TOKEN && existsSync('.env')) {
-      process.loadEnvFile('.env')
-    }
     const token = this.env.FIGMA_TOKEN
     if (!token || token === '<FIGMA_TOKEN>') {
-      throw new Error(
-        'FIGMA_TOKEN is not set: export it, or put it in a local .env file (never committed).'
-      )
+      throw new Error('FIGMA_TOKEN is not set: export it in the environment.')
     }
     return token
   }

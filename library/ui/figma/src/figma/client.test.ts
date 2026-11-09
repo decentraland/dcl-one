@@ -10,12 +10,18 @@ describe('EnvTokenProvider', () => {
     })
   })
 
-  describe('when FIGMA_TOKEN is the placeholder from .env.example', () => {
+  describe('when FIGMA_TOKEN is the placeholder', () => {
     it('should reject', async () => {
       const provider = new EnvTokenProvider({ FIGMA_TOKEN: '<FIGMA_TOKEN>' })
 
       await expect(provider.getToken()).rejects.toThrow('FIGMA_TOKEN is not set')
     })
+  })
+})
+
+describe('EnvTokenProvider without FIGMA_TOKEN', () => {
+  it('should reject instead of reading a token from any file', async () => {
+    await expect(new EnvTokenProvider({}).getToken()).rejects.toThrow('FIGMA_TOKEN is not set')
   })
 })
 

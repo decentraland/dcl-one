@@ -490,6 +490,9 @@ async function verifyFdsCache(dir: string, lockFile: string): Promise<void> {
   } catch (error) {
     throw new FdsCacheError(`The Figma capture marker is unreadable: ${repair}`, { cause: error })
   }
+  // Valid JSON that is not an object (null, a number, an array) is a broken marker too.
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker))
+    throw new FdsCacheError(`The Figma capture marker is malformed: ${repair}`)
   if (marker.revision !== pin.snapshotRevision || marker.digests !== digestTableHash(pin.digests))
     throw new FdsCacheError(
       `The Figma capture was built for another pin than upstream.lock.json: ${repair}`
