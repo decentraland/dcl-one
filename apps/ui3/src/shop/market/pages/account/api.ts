@@ -5,7 +5,7 @@
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { shopClient, type ShopClient } from "../../../api/shop";
 import { catalogCategoryParams } from "../../../discovery/lib/categories";
-import type { Gender } from "../../../discovery/lib/catalogItem";
+import type { Gender } from "@shop/discovery/lib/catalogItem";
 import { toMyAsset, type MyAsset } from "../../lib/api";
 
 export type AccountNft = MyAsset & {

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import { formatMana, type ManaWei } from "../../model/money";
+import { formatMana, type ManaWei } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { LoadFailure, Loading } from "../../market/components/kit";
 import Icon from "../../discovery/components/Icon";

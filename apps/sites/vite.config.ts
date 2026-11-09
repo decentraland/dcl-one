@@ -8,6 +8,7 @@ import { validateAliasObject } from "../ui3/vite.validate.js";
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
+const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -241,7 +242,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -249,6 +250,7 @@ export default defineConfig({
       ...validateAliasObject(),
       "@ui": ui,
       "@catalyst-api": catalystApi,
+      "@shop": shopCore,
       "@": src,
       "monaco-editor": monaco,
       three,

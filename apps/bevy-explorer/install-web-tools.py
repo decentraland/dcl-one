@@ -45,7 +45,13 @@ def install(name, destination):
         binary.write_bytes(contents.read())
     binary.chmod(0o755)
     actual = subprocess.check_output([str(binary), '--version'], text=True).strip()
-    if actual != (f'wasm-bindgen {version}' if name == 'wasm-bindgen' else f'wasm-opt version {version}'):
+    expected = (
+        f'wasm-bindgen {version}'
+        if name == 'wasm-bindgen'
+        # binaryen prints its release tag after the number: `wasm-opt version 129 (version_129)`.
+        else f'wasm-opt version {version} (version_{version})'
+    )
+    if actual != expected:
         raise ValueError(f'Unexpected {name} version: {actual}')
     print(actual, flush=True)
 

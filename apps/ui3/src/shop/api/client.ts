@@ -1,5 +1,5 @@
 import { catalystBase, type QueryParams } from "../../data/catalyst/client";
-import { SHOP_API_PREFIX, templateParams, type Endpoint } from "./endpoints";
+import { SHOP_API_PREFIX, templateParams, type Endpoint } from "@shop/api/endpoints";
 import type { ShopSigner, ShopTransport, TransportRequest } from "./signer";
 
 export type ShopApiMode = "canonical" | "legacy";

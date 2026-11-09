@@ -24,7 +24,7 @@ import {
 } from "./wire";
 
 const reads = JSON.parse(
-  readFileSync(join(__dirname, "../../../../../services/catalyst/tests/fixtures/shop/chain-reads.json"), "utf8"),
+  readFileSync(join(__dirname, "../../../services/catalyst/tests/fixtures/shop/chain-reads.json"), "utf8"),
 ) as { ethereum: { dclRegistrar: string; getTokenId: { Nacho: string } }; polygon: { creditsManager: { address: string } } };
 
 describe("identities and the chain reads (tests/shop/policy.rs identities_and_the_chain_reads)", () => {
