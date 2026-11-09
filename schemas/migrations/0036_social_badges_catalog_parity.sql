@@ -50,6 +50,33 @@ FROM (VALUES
 WHERE t.badge_id = 'emotionista' AND t.tier_id = u.tier_id;
 -- every other single badge was a one-step goal
 UPDATE social.badge_definitions SET criteria_steps = 1 WHERE NOT is_tier AND criteria_steps IS NULL;
+-- the old console grant completed every tiered grant; a tiered badge completes at its last tier
+UPDATE social.user_badge_progress p
+SET completed_at = NULL
+FROM social.badge_definitions d
+WHERE d.id = p.badge_id AND d.is_tier AND p.completed_at IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM social.user_achieved_tiers a
+    WHERE a.address = p.address AND a.badge_id = p.badge_id
+      AND a.tier_id = (SELECT t.tier_id FROM social.badge_tiers t WHERE t.badge_id = p.badge_id
+                       ORDER BY t.ordinal DESC LIMIT 1));
+-- old targets were higher: steps stop at the highest held tier's new target, so no unearned tier follows
+UPDATE social.user_badge_progress p
+SET steps_done = h.steps,
+    progress = CASE WHEN p.progress ? 'steps' THEN jsonb_set(p.progress, '{steps}', to_jsonb(h.steps)) ELSE p.progress END
+FROM (
+  SELECT DISTINCT ON (a.address, a.badge_id) a.address, a.badge_id, t.criteria_steps AS steps
+  FROM social.user_achieved_tiers a
+  JOIN social.badge_tiers t ON t.badge_id = a.badge_id AND t.tier_id = a.tier_id
+  ORDER BY a.address, a.badge_id, t.ordinal DESC
+) h
+WHERE h.address = p.address AND h.badge_id = p.badge_id AND p.steps_done > h.steps;
+-- a completed single badge reads its (possibly raised) target as reached
+UPDATE social.user_badge_progress p
+SET steps_done = d.criteria_steps,
+    progress = CASE WHEN p.progress ? 'steps' THEN jsonb_set(p.progress, '{steps}', to_jsonb(d.criteria_steps)) ELSE p.progress END
+FROM social.badge_definitions d
+WHERE d.id = p.badge_id AND NOT d.is_tier AND p.completed_at IS NOT NULL AND p.steps_done < d.criteria_steps;
 -- upstream's creation order for its ids, wherever they already are
 UPDATE social.badge_definitions d
 SET created_at = timestamp '2026-10-07 00:00:00' + s.n * interval '1 millisecond'

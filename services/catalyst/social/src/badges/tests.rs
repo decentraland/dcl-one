@@ -590,11 +590,18 @@ async fn a_single_grant_reaches_the_target_and_is_idempotent() {
         return;
     };
     let (pool, addr) = (state.badges.pool().clone(), fresh_address());
+    let err = state
+        .badges
+        .grant_badge(&addr, "open_for_business", Some("bogus"), "t")
+        .await
+        .unwrap_err();
+    assert_eq!(status_of(&err), 400, "a single badge takes no tierId");
+    assert!(progress(&pool, &addr, "open_for_business").await.is_none());
     for actor in ["first", "again"] {
         assert!(
             state
                 .badges
-                .grant_badge(&addr, "open_for_business", Some("ignored-on-single"), actor)
+                .grant_badge(&addr, "open_for_business", None, actor)
                 .await
                 .unwrap()
         );
@@ -737,6 +744,48 @@ async fn apply_progress_keeps_the_document_and_only_awards_awardable_badges() {
     state.badges.invalidate_catalog();
     let (status, _) = get(app(state.clone()), &format!("/badges/badges/{badge}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    drop_badge(&pool, &badge).await;
+}
+
+#[tokio::test]
+async fn a_grant_waiting_on_an_archive_sees_it_archived() {
+    let Some(state) = state(Settings::default()).await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let (badge, addr) = (own_badge(&pool, 1).await, fresh_address());
+    let mut archive = pool.begin().await.unwrap();
+    let archiver: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *archive)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE social.badge_definitions SET archived_at = timezone('UTC', now()) WHERE id = $1",
+    )
+    .bind(&badge)
+    .execute(&mut *archive)
+    .await
+    .unwrap();
+    let grant = tokio::spawn({
+        let (state, badge, addr) = (state.clone(), badge.clone(), addr.clone());
+        async move { state.badges.grant_badge(&addr, &badge, None, "t").await }
+    });
+    // the grant blocks on the uncommitted archive before it reads the definition
+    while !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid)))",
+    )
+    .bind(archiver)
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    {
+        tokio::task::yield_now().await;
+    }
+    archive.commit().await.unwrap();
+    let err = grant.await.unwrap().unwrap_err();
+    assert_eq!(status_of(&err), 400, "archived, not \"no badge found\"");
+    assert!(progress(&pool, &addr, &badge).await.is_none());
+    assert!(audit(&pool, &addr).await.is_empty());
     drop_badge(&pool, &badge).await;
 }
 
