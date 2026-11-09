@@ -89,6 +89,9 @@ export async function room_close(room) {
  * @param {livekit.Room} room
  */
 export function room_drop(room) {
+    // A connect may finish after its engine owner has gone. No later Close command
+    // is guaranteed, so releasing the page handle must also close the SDK session.
+    void room.disconnect().catch(() => {});
     room.removeAllListeners();
 }
 
@@ -235,6 +238,7 @@ function set_room_event_handler(room, handler) {
                     }
 
                     const audioElement = remote_track.attach();
+                    audioElement.volume = 0;
                     remote_track.audioElement = audioElement;
                 } else {
                     track_rig_new(remote_track);
@@ -496,6 +500,17 @@ export async function local_audio_track_new(options) {
     }
 }
 
+// Disable the actual capture source synchronously. LiveKit's async signaling mute is not a
+// routing barrier: a room handoff must silence the old source before publishing the next one.
+export function local_audio_track_set_enabled(track, enabled) {
+    track.mediaStreamTrack.enabled = enabled;
+}
+
+export function local_audio_track_stop(track) {
+    track.mediaStreamTrack.enabled = false;
+    track.stop();
+}
+
 /**
  * 
  * @param {livekit.RemoteTrack} remote_track 
@@ -512,6 +527,8 @@ function track_rig_new(remote_track) {
     const source = audioContext.createMediaStreamSource(stream);
     const pannerNode = audioContext.createStereoPanner();
     const gainNode = audioContext.createGain();
+    // The engine applies voice/scene volume and block policy after subscription arrives.
+    gainNode.gain.value = 0;
 
     // Connect the audio graph: source -> panner -> gain -> destination
     source.connect(pannerNode);
@@ -582,5 +599,9 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
  * @param {number} volume 
  */
 export function remote_audio_track_set_volume(remote_audio_track, volume) {
-    remote_audio_track.setVolume(volume);
+    if (remote_audio_track.trackRig) {
+        remote_audio_track.trackRig.gainNode.gain.value = Math.max(0, volume);
+    } else {
+        remote_audio_track.setVolume(volume);
+    }
 }

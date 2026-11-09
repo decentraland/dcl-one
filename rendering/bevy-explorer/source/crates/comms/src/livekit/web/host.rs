@@ -78,6 +78,8 @@ extern "C" {
     fn remote_track_publication_track(remote_track_publication: &JsValue) -> JsValue;
 
     async fn local_audio_track_new(options: JsValue) -> JsValue;
+    fn local_audio_track_set_enabled(track: &JsValue, enabled: bool);
+    fn local_audio_track_stop(track: &JsValue);
 
     fn local_track_publication_sid(local_track_publication: &JsValue) -> String;
     fn local_track_publication_kind(local_track_publication: &JsValue) -> String;
@@ -213,6 +215,7 @@ struct HostRoom {
 struct Host {
     registry: Registry,
     rooms: HashMap<RoomId, HostRoom>,
+    pending: crate::recovery::PendingConnections,
 }
 
 type SharedHost = Rc<RefCell<Host>>;
@@ -253,6 +256,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             token,
             options,
         } => {
+            host.borrow_mut().pending.start(room);
             let host = host.clone();
             let events = events.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -272,6 +276,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             });
         }
         LivekitCommand::DropRoom(room) => {
+            host.borrow_mut().pending.cancel(room);
             let host_room = host.borrow_mut().rooms.remove(&room);
             if let Some(host_room) = host_room {
                 room_drop(&host_room.room);
@@ -357,6 +362,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 let result = if track.is_null() || track.is_undefined() {
                     Err("could not create the local audio track".to_owned())
                 } else {
+                    local_audio_track_set_enabled(&track, false);
                     let id = host.borrow_mut().registry.id_of(&track);
                     Ok(LocalAudioTrack {
                         id,
@@ -366,6 +372,34 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 };
                 reply(&events, request, Reply::LocalAudioTrack(result));
             });
+        }
+        LivekitCommand::SetLocalAudioEnabled { track, enabled } => {
+            let track = host.borrow().registry.get(track);
+            if let Some(track) = track {
+                local_audio_track_set_enabled(&track, enabled);
+                // A revoked publication is never reused. Stop its physical source now,
+                // including while publishTrack still awaits a signaling response.
+                if !enabled {
+                    local_audio_track_stop(&track);
+                }
+            }
+        }
+        LivekitCommand::StopLocalAudio {
+            request,
+            track,
+            release,
+        } => {
+            let source = host.borrow().registry.get(track);
+            let result = source
+                .ok_or_else(|| "microphone source unavailable".to_owned())
+                .map(|track| {
+                    local_audio_track_set_enabled(&track, false);
+                    local_audio_track_stop(&track);
+                });
+            if release {
+                host.borrow_mut().registry.release(track);
+            }
+            reply(events, request, Reply::LocalAudioStopped(result));
         }
         LivekitCommand::PublishTrack {
             request,
@@ -438,7 +472,7 @@ async fn connect(
     url: &str,
     token: &str,
     options: &RoomOptions,
-) -> Result<ConnectedRoom, String> {
+) -> Result<ConnectedRoom, super::RoomError> {
     let handler = Closure::new({
         let host = host.clone();
         let events = events.clone();
@@ -450,15 +484,29 @@ async fn connect(
         }
     });
 
-    let js_room = room_connect(
+    let result = room_connect(
         url,
         token,
         build_room_options(options),
         build_room_connect_options(options),
         &handler,
     )
-    .await
-    .map_err(js_error)?;
+    .await;
+    let wanted = host.borrow_mut().pending.finish(room);
+    let js_room = result.map_err(|error| super::RoomError {
+        message: "LiveKit connection failed".to_owned(),
+        status: Reflect::get(&error, &"status".into())
+            .ok()
+            .and_then(|value| value.as_f64())
+            .filter(|value| (100.0..600.0).contains(value))
+            .map(|value| value as u16),
+    })?;
+    if !wanted {
+        room_drop(&js_room);
+        return Err(super::RoomError::from(
+            "room connection cancelled".to_owned(),
+        ));
+    }
 
     let connected = ConnectedRoom {
         name: room_name(&js_room),

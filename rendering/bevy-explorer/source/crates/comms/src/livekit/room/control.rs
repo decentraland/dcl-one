@@ -88,6 +88,9 @@ pub(super) struct RoomConnections<'w, 's> {
             Has<RoomPaused>,
             Has<ConnectFailed>,
             Option<&'static LivekitRoom>,
+            &'static crate::room_connection::RoomRecovery,
+            Has<crate::room_connection::CredentialRequest>,
+            Option<&'static crate::archipelago::IslandOwner>,
         ),
         With<LivekitTransport>,
     >,
@@ -109,24 +112,37 @@ impl RoomConnections<'_, '_> {
             .filter(|(_, scene, private, transport, ..)| {
                 RoomKind::for_room(*scene, *private, *transport) == Some(kind)
             });
-        let (entity, _, _, _, paused, failed, room) = matching.next().ok_or("No current room")?;
+        let (entity, _, _, _, paused, failed, room, recovery, refreshable, island) =
+            matching.next().ok_or("No current room")?;
         if matching.next().is_some() {
             return Err("More than one room matches");
         }
-        let mut entity = self.commands.entity(entity);
         if enabled && (paused || failed) {
-            entity.remove::<RoomPaused>();
-            // Re-add Connecting to trigger a new dial after a refusal.
-            if failed {
-                entity.remove::<Connecting>();
+            if recovery
+                .failure
+                .is_some_and(|kind| kind != crate::room_connection::FailureKind::Transient)
+            {
+                return Err("Room requires an access change or replacement credentials");
             }
+            self.commands
+                .entity(entity)
+                .remove::<(RoomPaused, crate::room_connection::RoomSuspended)>();
             // While an SDK close is in flight, its Disconnected event will restart the room
             // after retiring participants from the previous connection.
             if failed || room.is_none_or(|room| room.closed) {
-                entity.insert(Connecting);
+                self.commands.entity(entity).remove::<Connecting>();
+                super::plugin::restart_room(
+                    &mut self.commands,
+                    entity,
+                    refreshable,
+                    island.map(|owner| owner.0),
+                );
             }
         } else if !enabled && !paused {
-            entity.insert(RoomPaused).remove::<Connecting>();
+            self.commands
+                .entity(entity)
+                .insert((RoomPaused, crate::room_connection::RoomSuspended))
+                .remove::<Connecting>();
         }
         Ok(())
     }

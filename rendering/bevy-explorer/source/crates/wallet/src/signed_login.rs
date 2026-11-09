@@ -30,7 +30,7 @@ pub async fn signed_login(
     let res = request.send().await?;
 
     if res.status() != StatusCode::OK {
-        warn!("signed fetch failed: {res:#?}");
+        warn!(status = %res.status(), "signed fetch failed");
         return Err(anyhow::anyhow!("status: {}", res.status()));
     }
 

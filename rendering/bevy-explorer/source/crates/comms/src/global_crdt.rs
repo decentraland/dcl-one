@@ -108,8 +108,15 @@ impl Plugin for GlobalCrdtPlugin {
         app.init_resource::<VoiceMessageStreams>();
 
         app.add_event::<EmoteLifecycleEvent>();
-        app.add_systems(Update, process_transport_updates);
-        app.add_systems(Update, despawn_players);
+        app.add_systems(
+            Update,
+            (
+                retire_unhealthy_sockets,
+                process_transport_updates,
+                despawn_players,
+            )
+                .chain(),
+        );
         app.init_resource::<PlayerLanguage>();
         // a server has no local player, so no language to report
         if !common::structs::server_mode() {
@@ -838,7 +845,10 @@ pub fn process_transport_updates(
     mut profile_meta_cache: ResMut<ProfileMetaCache>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports): (Res<DiscardPlayerUpdates>, Query<(), With<Transport>>),
+    (discard_player_updates, transports): (
+        Res<DiscardPlayerUpdates>,
+        Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
+    ),
 ) {
     // gather any event receivers
     for ev in subscribers.read() {
@@ -878,7 +888,10 @@ pub fn process_transport_updates(
                     }
                     // queued before its transport was despawned: registering a dead transport
                     // would hold the player forever, as nothing can remove it again
-                    if !transports.contains(update.transport_id) {
+                    if !transports
+                        .get(update.transport_id)
+                        .is_ok_and(|health| health.is_none_or(|health| health.is_connected()))
+                    {
                         debug!(
                             "dropping update from {} on despawned transport {}",
                             update.address, update.transport_id
@@ -1388,6 +1401,26 @@ fn process_messagebus(
     }
 }
 
+/// Socket retry owners survive disconnection; their peer memberships do not.
+/// LiveKit and Pulse already withdraw their rosters through their protocol events.
+fn retire_unhealthy_sockets(
+    health: Query<&crate::room_connection::ConnectionHealth>,
+    mut players: Query<&mut ForeignPlayer>,
+    mut audio: Query<&mut ForeignAudioSource>,
+) {
+    let connected = |entity: &Entity| {
+        health
+            .get(*entity)
+            .map_or(true, |health| health.is_connected())
+    };
+    for mut player in &mut players {
+        player.transports.retain(connected);
+    }
+    for mut audio in &mut audio {
+        audio.available_transports.retain(connected);
+    }
+}
+
 fn despawn_players(
     mut commands: Commands,
     players: Query<(Entity, &ForeignPlayer)>,
@@ -1611,7 +1644,15 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
-        app.add_systems(Update, (process_transport_updates, despawn_players).chain());
+        app.add_systems(
+            Update,
+            (
+                retire_unhealthy_sockets,
+                process_transport_updates,
+                despawn_players,
+            )
+                .chain(),
+        );
         app.add_observer(remove_transport_from_foreign_players);
         let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
         (app, context)
@@ -1679,5 +1720,33 @@ mod tests {
         app.world_mut().despawn(gone);
         app.update();
         assert!(foreign_players(&mut app).is_empty());
+    }
+
+    #[test]
+    fn disconnected_socket_retires_presence_without_removing_other_room_memberships() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let socket = spawn_transport(&mut app, context);
+        let other = spawn_transport(&mut app, context);
+        let health = crate::room_connection::ConnectionHealth::default();
+        health.connected();
+        app.world_mut().entity_mut(socket).insert(health.clone());
+        queue_joined(&mut app, context, socket, peer);
+        app.update();
+        queue_joined(&mut app, context, other, peer);
+        app.update();
+        health.disconnected();
+        queue_joined(&mut app, context, socket, peer);
+        queue_joined(&mut app, context, socket, Address::repeat_byte(0xcd));
+        app.update();
+        assert_eq!(foreign_players(&mut app), vec![HashSet::from_iter([other])]);
+        assert!(app.world().get::<Transport>(socket).is_some());
+        health.connected();
+        queue_joined(&mut app, context, socket, peer);
+        app.update();
+        assert_eq!(
+            foreign_players(&mut app),
+            vec![HashSet::from_iter([other, socket])]
+        );
     }
 }

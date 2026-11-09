@@ -591,4 +591,35 @@ mod tests {
             2
         );
     }
+
+    #[test]
+    fn reconnect_refreshes_credentials_and_cannot_override_a_denial() {
+        use crate::room_connection::{CredentialRequest, FailureKind, NeedsAdapter, RoomRecovery};
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .add_console_command::<RoomConnectionCommand, _>(room_connection);
+        let room = spawn_island(&mut app);
+        app.world_mut().entity_mut(room).insert((
+            ConnectFailed,
+            CredentialRequest {
+                method: "POST",
+                url: "https://admission.example/".into(),
+                metadata: "{}".into(),
+            },
+        ));
+        invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap();
+        assert!(app.world().get::<NeedsAdapter>(room).is_some());
+        assert!(app.world().get::<Connecting>(room).is_none());
+        app.world_mut().entity_mut(room).remove::<NeedsAdapter>();
+        app.world_mut()
+            .get_mut::<RoomRecovery>(room)
+            .unwrap()
+            .failure = Some(FailureKind::Denied);
+        assert!(invoke(&mut app, "/room_connection", &["island", "connect"]).is_err());
+        assert!(app.world().get::<NeedsAdapter>(room).is_none());
+        assert!(app.world().get::<Connecting>(room).is_none());
+    }
 }

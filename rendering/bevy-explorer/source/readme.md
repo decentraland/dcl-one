@@ -169,7 +169,10 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  `/voice_state`, `/voice_room [status|leave]` (on-demand voice and proximity suppression),
+  `/connectivity_state` (safe room state, offline warning and reachability probe),
+  `/connectivity_retry` (immediate recovery without overriding denied access),
+  `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by

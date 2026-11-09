@@ -1,0 +1,12 @@
+.status {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%) scale(var(--ui-scale));
+  transform-origin: top center;
+  padding: 12px 16px;
+  max-width: 420px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+}

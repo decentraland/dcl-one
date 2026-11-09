@@ -222,6 +222,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 anyhow = "1.0.70"
 thiserror = "2.0"
 url = "2"
+livekit-signaling = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
 http = "1.4"
 urn = "0.7.0"
 futures-lite = "2.6"

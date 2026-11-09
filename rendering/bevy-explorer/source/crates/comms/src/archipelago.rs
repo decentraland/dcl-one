@@ -1,6 +1,5 @@
 use anyhow::{anyhow, bail};
 use bevy::{
-    platform::collections::HashMap,
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
@@ -13,12 +12,19 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender},
-    structs::CurrentRealm,
+    structs::{CurrentRealm, WorldHold},
     util::TaskExt,
 };
 use wallet::Wallet;
 
-use crate::{global_crdt::GlobalCrdtState, AdapterManager, Transport, TransportType};
+use crate::{
+    global_crdt::GlobalCrdtState,
+    room_connection::{
+        AdmissionError, ConnectionHealth, CredentialRequest, FailureKind, NeedsAdapter,
+        RoomRecovery, RoomSuspended,
+    },
+    AdapterManager, Transport, TransportType,
+};
 
 use super::NetworkMessage;
 
@@ -29,7 +35,8 @@ use dcl_component::{
             rfc4,
             v3::{
                 client_packet, server_packet, ChallengeRequestMessage, ChallengeResponseMessage,
-                ClientPacket, Heartbeat, ServerPacket, SignedChallengeMessage,
+                ClientPacket, ControlError, ControlErrorCode, Heartbeat, KickedReason,
+                ServerPacket, SignedChallengeMessage,
             },
         },
     },
@@ -43,11 +50,14 @@ impl Plugin for ArchipelagoPlugin {
         app.add_systems(
             Update,
             (
-                connect_websocket,
                 reconnect_websocket,
+                refresh_island.run_if(not(resource_exists::<WorldHold>)),
                 start_archipelago,
-                manage_islands,
-            ),
+                connect_websocket,
+                manage_islands.run_if(not(resource_exists::<WorldHold>)),
+                settle_island.run_if(not(resource_exists::<WorldHold>)),
+            )
+                .chain(),
         );
 
         app.add_event::<StartArchipelago>();
@@ -57,11 +67,13 @@ impl Plugin for ArchipelagoPlugin {
 
 #[derive(Event)]
 pub struct StartArchipelago {
+    pub entity: Entity,
     pub address: String,
 }
 
 pub struct StartIsland {
     owner: Entity,
+    generation: u64,
     connect_str: String,
     name: String,
 }
@@ -80,21 +92,32 @@ impl Default for IslandChannel {
 }
 
 #[derive(Component)]
+#[require(RoomRecovery, IslandAssignment, ConnectionHealth)]
 pub struct ArchipelagoTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
     pub retries: usize,
+    generation: u64,
 }
 
 #[derive(Component)]
-pub struct ArchipelagoConnection(Task<(Receiver<NetworkMessage>, anyhow::Error)>);
+pub struct ArchipelagoConnection {
+    task: Task<(Receiver<NetworkMessage>, anyhow::Error)>,
+    authenticated: bool,
+}
 
 pub fn start_archipelago(
     mut commands: Commands,
     mut archi_events: EventReader<StartArchipelago>,
     contexts: Query<Entity, With<GlobalCrdtState>>,
+    existing: Query<&ArchipelagoTransport>,
+    entities: Query<Entity>,
 ) {
-    if let Some(ev) = archi_events.read().last() {
+    if let Some(ev) = archi_events
+        .read()
+        .filter(|event| entities.contains(event.entity))
+        .last()
+    {
         // archipelago is realm comms, primary-player driven: client-only (headless sets
         // DisableRealmComms), so the single shared context is its feed. Checked after
         // draining events so a failed lookup can't leave the reader cursor behind.
@@ -104,7 +127,11 @@ pub fn start_archipelago(
         info!("starting archipelago protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
-        commands.spawn((
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
+            return;
+        };
+        entity.remove::<ArchipelagoConnection>();
+        entity.insert((
             Transport {
                 transport_type: TransportType::Archipelago,
                 sender,
@@ -115,9 +142,43 @@ pub fn start_archipelago(
                 address: ev.address.to_owned(),
                 receiver: Some(receiver),
                 retries: 0,
+                generation: existing
+                    .get(ev.entity)
+                    .map_or(0, |transport| transport.generation.wrapping_add(1)),
             },
+            ConnectionHealth::default(),
         ));
     }
+}
+
+#[derive(Component, Default)]
+struct IslandAssignment {
+    active: Option<Entity>,
+    pending: Option<Entity>,
+}
+
+#[derive(Component)]
+pub(crate) struct IslandOwner(pub Entity);
+
+#[derive(Component)]
+pub(crate) struct RefreshIsland;
+
+#[derive(Component)]
+struct IslandName(String);
+
+#[derive(Component)]
+struct IslandGeneration(u64);
+
+fn island_connected(
+    island: Entity,
+    health: &Query<&ConnectionHealth>,
+    #[cfg(feature = "livekit")] connected: &Query<(), With<crate::livekit::room::Connected>>,
+) -> bool {
+    #[cfg(feature = "livekit")]
+    if connected.contains(island) {
+        return true;
+    }
+    health.get(island).is_ok_and(ConnectionHealth::is_connected)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,148 +186,289 @@ fn manage_islands(
     mut commands: Commands,
     mut manager: AdapterManager,
     mut channel: ResMut<IslandChannel>,
-    mut current_island: Local<HashMap<Entity, Entity>>,
+    mut owners: Query<(&ArchipelagoTransport, &mut IslandAssignment)>,
     contexts: Query<Entity, With<GlobalCrdtState>>,
+    islands: Query<(&IslandName, &IslandOwner)>,
+    health: Query<&ConnectionHealth>,
+    #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
+) {
+    let mut latest = None;
+    while let Ok(island) = channel.receiver.try_recv() {
+        if owners
+            .get(island.owner)
+            .is_ok_and(|(transport, _)| island.generation == transport.generation)
+        {
+            latest = Some(island);
+        }
+    }
+    let Some(island) = latest else {
+        return;
+    };
+    let Ok((_, mut assignment)) = owners.get_mut(island.owner) else {
+        return;
+    };
+    let Ok(context) = contexts.single() else {
+        return;
+    };
+    if let Some(active) = assignment.active {
+        if islands
+            .get(active)
+            .is_ok_and(|(name, owner)| name.0 == island.name && owner.0 == island.owner)
+            && island_connected(
+                active,
+                &health,
+                #[cfg(feature = "livekit")]
+                &connected,
+            )
+        {
+            if let Some(pending) = assignment
+                .pending
+                .take()
+                .filter(|pending| *pending != active)
+            {
+                if let Ok(mut entity) = commands.get_entity(pending) {
+                    entity.despawn();
+                }
+            }
+            return;
+        }
+    }
+    if let Some(entity) = manager.connect(&island.connect_str, context) {
+        if let Some(pending) = assignment.pending.replace(entity) {
+            if Some(pending) != assignment.active {
+                if let Ok(mut old) = commands.get_entity(pending) {
+                    old.despawn();
+                }
+            }
+        }
+        commands.entity(entity).insert((
+            IslandOwner(island.owner),
+            IslandGeneration(island.generation),
+            IslandName(island.name),
+            common::util::DespawnWith(island.owner),
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_island(
+    mut commands: Commands,
+    mut owners: Query<(Entity, &ArchipelagoTransport, &mut IslandAssignment)>,
+    health: Query<&ConnectionHealth>,
+    #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
+    islands: Query<(&IslandName, &IslandOwner, &IslandGeneration)>,
     current_realm: Res<CurrentRealm>,
     mut senders: Local<Vec<RpcEventSender>>,
     mut events: EventReader<RpcCallEvent>,
 ) {
-    for sender in events.read().filter_map(|ev| match &ev.call {
-        RpcCall::SubscribeRealmChanged { sender } => Some(sender),
-        _ => None,
-    }) {
-        senders.push(sender.clone());
+    for event in events.read() {
+        if let RpcCall::SubscribeRealmChanged { sender } = &event.call {
+            senders.push(sender.clone());
+        }
     }
-
-    // Only the latest assignment matters. Acting on two in one frame would spawn the first
-    // island's transport via `manager`'s command buffer and despawn it via `commands`, and
-    // the buffers apply in parameter order: the despawn lands first, then the spawn's
-    // bookkeeping runs on an entity that no longer exists and panics.
-    let mut latest = None;
-    while let Ok(island) = channel.receiver.try_recv() {
-        latest = Some(island);
-    }
-
-    if let Some(island) = latest {
-        // client-only (see start_archipelago): islands feed the single shared context.
-        // Checked before despawning the previous island so a failed lookup can't leave
-        // no island transport at all.
-        let Ok(context) = contexts.single() else {
-            return;
+    for (owner, transport, mut assignment) in &mut owners {
+        if assignment
+            .active
+            .is_some_and(|active| !islands.contains(active))
+        {
+            assignment.active = None;
+        }
+        let Some(pending) = assignment.pending else {
+            continue;
         };
-        if let Some(entity) = current_island.remove(&island.owner) {
-            commands.entity(entity).despawn();
+        let Ok((name, pending_owner, generation)) = islands.get(pending) else {
+            assignment.pending = None;
+            continue;
+        };
+        if pending_owner.0 != owner || generation.0 != transport.generation {
+            assignment.pending = None;
+            if pending_owner.0 == owner && Some(pending) != assignment.active {
+                commands.entity(pending).despawn();
+            }
+            continue;
         }
-        if let Some(entity) = manager.connect(&island.connect_str, context) {
-            current_island.insert(island.owner, entity);
+        if !island_connected(
+            pending,
+            &health,
+            #[cfg(feature = "livekit")]
+            &connected,
+        ) {
+            continue;
         }
-
-        let mut event_data = None;
-        senders.retain_mut(|sender| {
-            let message = event_data
-                .get_or_insert_with(|| {
-                    let server = current_realm
-                        .config
-                        .realm_name
-                        .as_deref()
-                        .unwrap_or_default();
-                    let room = &island.name;
-                    json!({
-                        "serverName": server,
-                        "room": room,
-                        "displayName": format!("{server}-{room}"),
-                        "domain": current_realm.address,
-                    })
-                    .to_string()
-                })
-                .clone();
-            let _ = sender.send(message);
+        if let Some(old) = assignment
+            .active
+            .replace(pending)
+            .filter(|old| *old != pending)
+        {
+            if let Ok(mut entity) = commands.get_entity(old) {
+                entity.despawn();
+            }
+        }
+        assignment.pending = None;
+        let server = current_realm
+            .config
+            .realm_name
+            .as_deref()
+            .unwrap_or_default();
+        let message = json!({"serverName": server, "room": name.0, "displayName": format!("{server}-{}", name.0), "domain": current_realm.address}).to_string();
+        senders.retain(|sender| {
+            let _ = sender.send(message.clone());
             !sender.is_closed()
         });
+    }
+}
+
+fn refresh_island(
+    mut commands: Commands,
+    mut owners: Query<
+        (
+            Entity,
+            &mut ArchipelagoTransport,
+            &ConnectionHealth,
+            Has<CredentialRequest>,
+        ),
+        With<RefreshIsland>,
+    >,
+    mut starts: EventWriter<StartArchipelago>,
+) {
+    for (entity, mut transport, health, refreshable) in &mut owners {
+        health.disconnected();
+        transport.generation = transport.generation.wrapping_add(1);
+        commands
+            .entity(entity)
+            .remove::<(RefreshIsland, ArchipelagoConnection)>();
+        if refreshable {
+            commands.entity(entity).insert(NeedsAdapter);
+        } else {
+            starts.write(StartArchipelago {
+                entity,
+                address: transport.address.clone(),
+            });
+        }
     }
 }
 
 #[allow(clippy::type_complexity)]
 fn connect_websocket(
     mut commands: Commands,
-    mut new_websockets: Query<(Entity, &mut ArchipelagoTransport), Without<ArchipelagoConnection>>,
+    mut new_websockets: Query<
+        (Entity, &mut ArchipelagoTransport, &RoomRecovery),
+        (
+            Without<ArchipelagoConnection>,
+            Without<NeedsAdapter>,
+            Without<RoomSuspended>,
+        ),
+    >,
     wallet: Res<Wallet>,
     island_channel: Res<IslandChannel>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut new_transport) in new_websockets.iter_mut() {
+    if wallet.address().is_none() {
+        return;
+    }
+    for (transport_id, mut new_transport, recovery) in new_websockets.iter_mut() {
+        if !recovery.can_retry(time.elapsed_secs_f64()) {
+            continue;
+        }
+        let Some(receiver) = new_transport.receiver.take() else {
+            continue;
+        };
+        new_transport.generation = new_transport.generation.wrapping_add(1);
         let remote_address = new_transport.address.to_owned();
         let wallet = wallet.clone();
-        let receiver = new_transport.receiver.take().unwrap();
         let sender = island_channel.sender.clone();
+        let health = ConnectionHealth::default();
         let task = IoTaskPool::get().spawn(archipelago_handler(
             transport_id,
+            new_transport.generation,
             remote_address,
             wallet,
             receiver,
             sender,
+            health.clone(),
         ));
-        commands
-            .entity(transport_id)
-            .try_insert(ArchipelagoConnection(task));
+        commands.entity(transport_id).try_insert((
+            ArchipelagoConnection {
+                task,
+                authenticated: false,
+            },
+            health,
+        ));
     }
 }
 
 fn reconnect_websocket(
+    mut commands: Commands,
     mut websockets: Query<(
         Entity,
         &mut ArchipelagoTransport,
         &mut ArchipelagoConnection,
+        &mut RoomRecovery,
+        &ConnectionHealth,
+        Has<CredentialRequest>,
     )>,
-    wallet: Res<Wallet>,
-    island_channel: Res<IslandChannel>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut transport, mut conn) in websockets.iter_mut() {
-        if transport.retries < 3 {
-            if let Some((receiver, err)) = conn.0.complete() {
-                transport.retries += 1;
-                warn!("archipelago error: {err}, retrying [{}]", transport.address);
-                let remote_address = transport.address.to_owned();
-                let wallet = wallet.clone();
-                let sender = island_channel.sender.clone();
-                let task = IoTaskPool::get().spawn(archipelago_handler(
-                    transport_id,
-                    remote_address,
-                    wallet,
-                    receiver,
-                    sender,
-                ));
-                conn.0 = task;
+    for (entity, mut transport, mut connection, mut recovery, health, refreshable) in
+        &mut websockets
+    {
+        if health.is_connected() && !connection.authenticated {
+            connection.authenticated = true;
+            transport.retries = 0;
+            recovery.reset();
+        }
+        if let Some((receiver, error)) = connection.task.complete() {
+            health.disconnected();
+            transport.generation = transport.generation.wrapping_add(1);
+            transport.receiver = Some(receiver);
+            transport.retries = transport.retries.saturating_add(1);
+            let error = error
+                .downcast_ref::<AdmissionError>()
+                .copied()
+                .unwrap_or(AdmissionError::new(FailureKind::Transient));
+            recovery.fail(time.elapsed_secs_f64(), error);
+            commands.entity(entity).remove::<ArchipelagoConnection>();
+            if refreshable && !error.terminal() {
+                commands.entity(entity).insert(NeedsAdapter);
             }
-        } else if transport.retries == 3 {
-            if let Some((_, err)) = conn.0.complete() {
-                transport.retries += 1;
-                error!("archipelago error: {err}, giving up");
-            }
+            warn!(?entity, kind = ?error.kind, "archipelago disconnected");
         }
     }
 }
 
 async fn archipelago_handler(
     transport_id: Entity,
+    generation: u64,
     remote_address: String,
     wallet: Wallet,
     mut receiver: Receiver<NetworkMessage>,
     sender: Sender<StartIsland>,
+    health: ConnectionHealth,
 ) -> (Receiver<NetworkMessage>, anyhow::Error) {
-    let res =
-        archipelago_handler_inner(transport_id, remote_address, wallet, &mut receiver, sender)
-            .await;
+    let _health_lifetime = health.reset_on_drop();
+    let res = archipelago_handler_inner(
+        transport_id,
+        generation,
+        remote_address,
+        wallet,
+        &mut receiver,
+        sender,
+        &health,
+    )
+    .await;
     (receiver, res.err().unwrap_or(anyhow!("connection closed")))
 }
 
 async fn archipelago_handler_inner(
     transport_id: Entity,
+    generation: u64,
     remote_address: String,
     wallet: Wallet,
     receiver: &mut Receiver<NetworkMessage>,
     sender: Sender<StartIsland>,
+    health: &ConnectionHealth,
 ) -> Result<(), anyhow::Error> {
-    debug!(">> stream connect async : {remote_address}");
+    debug!("connecting archipelago");
 
     let remote_address = if remote_address.starts_with("ws:") || remote_address.starts_with("wss:")
     {
@@ -275,7 +477,14 @@ async fn archipelago_handler_inner(
         format!("wss://{remote_address}")
     };
 
-    let mut request = remote_address.into_client_request()?;
+    let url = crate::adapter::validate_url(&remote_address)
+        .map_err(|_| AdmissionError::new(FailureKind::Invalid))?;
+    if !matches!(url.scheme(), "ws" | "wss") {
+        return Err(AdmissionError::new(FailureKind::Invalid).into());
+    }
+    let mut request = remote_address
+        .into_client_request()
+        .map_err(|_| AdmissionError::new(FailureKind::Invalid))?;
     request.headers_mut().append(
         "Sec-WebSocket-Protocol",
         HeaderValue::from_static("archipelago"),
@@ -297,7 +506,7 @@ async fn archipelago_handler_inner(
         )),
     };
     stream.send(ident.encode_to_vec().into()).await?;
-    debug!(">> challeng request sent: {ident:?}");
+    debug!("archipelago challenge request sent");
 
     // challenge / welcome
     loop {
@@ -311,26 +520,30 @@ async fn archipelago_handler_inner(
         };
 
         match message {
-            server_packet::Message::Welcome(welcome) => {
-                debug!("<< welcome received: {welcome:?}");
+            server_packet::Message::Welcome(_) => {
+                debug!("archipelago welcome received");
+                health.connected();
                 break;
             }
             server_packet::Message::ChallengeResponse(ChallengeResponseMessage {
                 challenge_to_sign,
+                already_connected,
                 ..
             }) => {
+                if already_connected {
+                    return Err(AdmissionError::new(FailureKind::IdentityConflict).into());
+                }
                 // send challenge response
-                debug!("<< challenge received; {challenge_to_sign}");
+                debug!("archipelago challenge received");
 
                 if !challenge_to_sign.starts_with("dcl-") {
-                    error!("invalid challenge to sign");
-                    return Err(anyhow!("invalid challenge to sign"));
+                    return Err(AdmissionError::new(FailureKind::Invalid).into());
                 }
 
                 // sign challenge
                 let chain = wallet.sign_message(challenge_to_sign).await?;
                 let auth_chain_json = serde_json::to_string(&chain)?;
-                debug!(">> auth chain created: {auth_chain_json}");
+                debug!("archipelago auth chain created");
 
                 // send response
                 let message = ClientPacket {
@@ -343,7 +556,13 @@ async fn archipelago_handler_inner(
                 stream.send(message.into()).await?;
                 debug!(">> auth chain sent");
             }
-            _ => bail!("unexpected message during handshake: {message:?}"),
+            server_packet::Message::Kicked(kicked) => {
+                return Err(kick_error(kicked.reason).into());
+            }
+            server_packet::Message::Error(error) => {
+                return Err(control_error(&error).into());
+            }
+            _ => bail!("unexpected archipelago handshake packet"),
         }
     }
 
@@ -387,8 +606,6 @@ async fn archipelago_handler_inner(
 
     // unwrap and forward inbound messages
     let f_read = async move {
-        // let mut island = None;
-
         while let Some(next) = read.next().await {
             let next = next?;
             let next = ServerPacket::decode(next.into_data().as_slice())?;
@@ -399,24 +616,32 @@ async fn archipelago_handler_inner(
             match message {
                 server_packet::Message::ChallengeResponse(_)
                 | server_packet::Message::Welcome(_) => {
-                    warn!("unexpected bau message: {message:?}");
+                    warn!("unexpected archipelago handshake packet after welcome");
                     continue;
                 }
                 server_packet::Message::IslandChanged(change) => {
                     sender
                         .send(StartIsland {
                             owner: transport_id,
+                            generation,
                             connect_str: change.conn_str,
                             name: change.island_id,
                         })
                         .await?;
                 }
+                server_packet::Message::Kicked(kicked) => {
+                    return Err(kick_error(kicked.reason).into());
+                }
                 server_packet::Message::LeftIsland(_)
                 | server_packet::Message::JoinIsland(_)
-                | server_packet::Message::Kicked(_)
-                | server_packet::Message::Ack(_)
-                | server_packet::Message::Error(_) => {
-                    warn!("message: {:?}", message);
+                | server_packet::Message::Ack(_) => {}
+                server_packet::Message::Error(error) => {
+                    warn!(
+                        code = error.code,
+                        retry = error.retry,
+                        "archipelago control error"
+                    );
+                    return Err(control_error(&error).into());
                 }
             }
         }
@@ -430,5 +655,322 @@ async fn archipelago_handler_inner(
     select! {
         read_res = f_read => read_res,
         write_res = f_write => write_res,
+    }
+}
+
+fn kick_error(reason: i32) -> AdmissionError {
+    AdmissionError::new(if reason == KickedReason::KrNewSession as i32 {
+        FailureKind::IdentityConflict
+    } else {
+        FailureKind::Transient
+    })
+}
+
+fn control_error(error: &ControlError) -> AdmissionError {
+    AdmissionError::new(match error.code {
+        code if code == ControlErrorCode::AuthFailed as i32 => FailureKind::Denied,
+        code if [
+            ControlErrorCode::InvalidFrame,
+            ControlErrorCode::ProtocolViolation,
+            ControlErrorCode::InvalidLane,
+        ]
+        .iter()
+        .any(|kind| code == *kind as i32) =>
+        {
+            FailureKind::Invalid
+        }
+        _ => FailureKind::Transient,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{signed_login::StartSignedLogin, websocket_room::StartWsRoom};
+
+    fn island_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(ArchipelagoPlugin)
+            .init_resource::<CurrentRealm>()
+            .init_resource::<Wallet>()
+            .init_resource::<Time>()
+            .add_event::<StartWsRoom>()
+            .add_event::<StartSignedLogin>()
+            .add_event::<RpcCallEvent>();
+        #[cfg(feature = "livekit")]
+        app.add_event::<crate::livekit::StartLivekit>();
+        app.world_mut().spawn(GlobalCrdtState::new(None));
+        app
+    }
+
+    fn owner(world: &mut World, generation: u64) -> Entity {
+        world
+            .spawn(ArchipelagoTransport {
+                address: "wss://example.org/ws".to_owned(),
+                receiver: None,
+                retries: 0,
+                generation,
+            })
+            .id()
+    }
+
+    fn island(
+        world: &mut World,
+        owner: Entity,
+        generation: u64,
+        name: &str,
+        connected: bool,
+    ) -> Entity {
+        let health = ConnectionHealth::default();
+        if connected {
+            health.connected();
+        }
+        world
+            .spawn((
+                IslandOwner(owner),
+                IslandGeneration(generation),
+                IslandName(name.to_owned()),
+                health,
+            ))
+            .id()
+    }
+
+    fn assign(app: &App, owner: Entity, generation: u64, name: &str) {
+        assert!(app
+            .world()
+            .resource::<IslandChannel>()
+            .sender
+            .try_send(StartIsland {
+                owner,
+                generation,
+                connect_str: "ws-room:wss://example.org/room".to_owned(),
+                name: name.to_owned(),
+            })
+            .is_ok());
+    }
+
+    #[test]
+    fn stale_last_events_cannot_hide_a_current_assignment() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let departed = app.world_mut().spawn_empty().id();
+        app.world_mut().despawn(departed);
+        assign(&app, owner, 7, "current");
+        assign(&app, owner, 6, "old-generation");
+        assign(&app, departed, 7, "departed-owner");
+
+        app.update();
+
+        let pending = app
+            .world()
+            .get::<IslandAssignment>(owner)
+            .unwrap()
+            .pending
+            .unwrap();
+        assert_eq!(app.world().get::<IslandName>(pending).unwrap().0, "current");
+        assert!(app.world().resource::<IslandChannel>().receiver.is_empty());
+    }
+
+    #[test]
+    fn handoff_keeps_the_active_island_until_the_replacement_is_connected() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let active = island(app.world_mut(), owner, 7, "active", true);
+        app.world_mut()
+            .get_mut::<IslandAssignment>(owner)
+            .unwrap()
+            .active = Some(active);
+        assign(&app, owner, 7, "next");
+
+        app.update();
+
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        let pending = assignment.pending.unwrap();
+        assert_eq!(assignment.active, Some(active));
+        assert!(app.world().get_entity(active).is_ok());
+        let health = ConnectionHealth::default();
+        health.connected();
+        app.world_mut().entity_mut(pending).insert(health);
+
+        app.update();
+
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        assert_eq!(assignment.active, Some(pending));
+        assert_eq!(assignment.pending, None);
+        assert!(app.world().get_entity(active).is_err());
+    }
+
+    #[test]
+    fn a_repeat_healthy_active_assignment_cancels_the_obsolete_handoff() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let active = island(app.world_mut(), owner, 7, "active", true);
+        let obsolete = island(app.world_mut(), owner, 7, "obsolete", false);
+        app.world_mut().entity_mut(owner).insert(IslandAssignment {
+            active: Some(active),
+            pending: Some(obsolete),
+        });
+        assign(&app, owner, 7, "active");
+
+        app.update();
+
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        assert_eq!(assignment.active, Some(active));
+        assert_eq!(assignment.pending, None);
+        assert!(app.world().get_entity(active).is_ok());
+        assert!(app.world().get_entity(obsolete).is_err());
+        assert!(app.world().resource::<Events<StartWsRoom>>().is_empty());
+    }
+
+    #[test]
+    fn disappeared_or_stale_pending_islands_never_replace_the_active_island() {
+        for disappeared in [false, true] {
+            let mut app = island_app();
+            let owner = owner(app.world_mut(), 8);
+            let active = island(app.world_mut(), owner, 7, "active", true);
+            let pending = island(app.world_mut(), owner, 7, "stale", true);
+            app.world_mut().entity_mut(owner).insert(IslandAssignment {
+                active: Some(active),
+                pending: Some(pending),
+            });
+            if disappeared {
+                app.world_mut().despawn(pending);
+            }
+
+            app.update();
+
+            let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+            assert_eq!(assignment.active, Some(active));
+            assert_eq!(assignment.pending, None);
+            assert!(app.world().get_entity(pending).is_err());
+        }
+    }
+
+    #[test]
+    fn world_hold_defers_assignments_and_ready_handoffs() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let active = island(app.world_mut(), owner, 7, "active", true);
+        let pending = island(app.world_mut(), owner, 7, "pending", true);
+        app.world_mut().entity_mut(owner).insert(IslandAssignment {
+            active: Some(active),
+            pending: Some(pending),
+        });
+        app.insert_resource(WorldHold);
+        assign(&app, owner, 7, "latest");
+
+        app.update();
+
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        assert_eq!(assignment.active, Some(active));
+        assert_eq!(assignment.pending, Some(pending));
+        app.world_mut().remove_resource::<WorldHold>();
+        app.update();
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        assert_eq!(assignment.active, Some(active));
+        assert_ne!(assignment.pending, Some(pending));
+        assert_eq!(
+            app.world()
+                .get::<IslandName>(assignment.pending.unwrap())
+                .unwrap()
+                .0,
+            "latest"
+        );
+        assert!(app.world().get_entity(pending).is_err());
+    }
+
+    #[test]
+    fn world_hold_defers_credential_refresh_and_preserves_socket_health() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        app.world()
+            .get::<ConnectionHealth>(owner)
+            .unwrap()
+            .connected();
+        app.world_mut().entity_mut(owner).insert(RefreshIsland);
+        app.insert_resource(WorldHold);
+
+        app.update();
+
+        assert!(app.world().get::<RefreshIsland>(owner).is_some());
+        assert!(app
+            .world()
+            .get::<ConnectionHealth>(owner)
+            .unwrap()
+            .is_connected());
+        assert_eq!(
+            app.world()
+                .get::<ArchipelagoTransport>(owner)
+                .unwrap()
+                .generation,
+            7
+        );
+        app.world_mut().remove_resource::<WorldHold>();
+        app.update();
+        assert!(app.world().get::<RefreshIsland>(owner).is_none());
+        assert!(!app
+            .world()
+            .get::<ConnectionHealth>(owner)
+            .unwrap()
+            .is_connected());
+        assert!(
+            app.world()
+                .get::<ArchipelagoTransport>(owner)
+                .unwrap()
+                .generation
+                > 7
+        );
+    }
+
+    #[test]
+    fn a_stale_start_event_does_not_hide_a_live_owner_start() {
+        let mut app = App::new();
+        app.add_event::<StartArchipelago>()
+            .add_systems(Update, start_archipelago);
+        app.world_mut().spawn(GlobalCrdtState::new(None));
+        let current = app.world_mut().spawn_empty().id();
+        let departed = app.world_mut().spawn_empty().id();
+        app.world_mut().despawn(departed);
+        for entity in [current, departed] {
+            app.world_mut()
+                .resource_mut::<Events<StartArchipelago>>()
+                .send(StartArchipelago {
+                    entity,
+                    address: "wss://example.org/ws".to_owned(),
+                });
+        }
+
+        app.update();
+
+        assert!(app.world().get::<ArchipelagoTransport>(current).is_some());
+        assert!(!app
+            .world()
+            .get::<ConnectionHealth>(current)
+            .unwrap()
+            .is_connected());
+    }
+
+    #[test]
+    fn protocol_denial_and_identity_conflict_are_distinct_terminal_failures() {
+        let conflict = kick_error(KickedReason::KrNewSession as i32);
+        assert_eq!(conflict.kind, FailureKind::IdentityConflict);
+        assert!(conflict.terminal());
+
+        let denied = control_error(&ControlError {
+            code: ControlErrorCode::AuthFailed as i32,
+            retry: 0,
+            public_detail: Some("private server response".to_owned()),
+        });
+        assert_eq!(denied.kind, FailureKind::Denied);
+        assert!(denied.terminal());
+        assert!(!denied.to_string().contains("private server response"));
+
+        let unavailable = control_error(&ControlError {
+            code: ControlErrorCode::AuthorityUnavailable as i32,
+            retry: 0,
+            public_detail: None,
+        });
+        assert_eq!(unavailable.kind, FailureKind::Transient);
+        assert!(!unavailable.terminal());
     }
 }

@@ -22,6 +22,10 @@ use wallet::Wallet;
 use crate::{
     global_crdt::{NetworkUpdate, PlayerMessage},
     profile::CurrentUserProfile,
+    room_connection::{
+        AdmissionError, ConnectionHealth, CredentialRequest, FailureKind, NeedsAdapter,
+        RoomRecovery,
+    },
     Transport, TransportType,
 };
 
@@ -44,12 +48,14 @@ impl Plugin for WebsocketRoomPlugin {
 
 #[derive(Event)]
 pub struct StartWsRoom {
+    pub entity: Entity,
     pub address: String,
     /// crdt context this room's transport feeds
     pub context: Entity,
 }
 
 #[derive(Component)]
+#[require(RoomRecovery)]
 pub struct WebsocketRoomTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
@@ -57,7 +63,7 @@ pub struct WebsocketRoomTransport {
 }
 
 #[derive(Component)]
-pub struct WebSocketConnection(Task<(Receiver<NetworkMessage>, anyhow::Error)>);
+pub struct WebSocketConnection(Task<(Receiver<NetworkMessage>, anyhow::Error, bool)>);
 
 pub fn start_ws_room(
     mut commands: Commands,
@@ -68,22 +74,24 @@ pub fn start_ws_room(
         info!("starting ws-room protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
-        let Some(current_profile) = current_profile.profile.as_ref() else {
+        // queue a profile version message
+        if let Some(current_profile) = current_profile.profile.as_ref() {
+            let response = rfc4::Packet {
+                message: Some(rfc4::packet::Message::ProfileVersion(
+                    rfc4::AnnounceProfileVersion {
+                        profile_version: current_profile.version,
+                    },
+                )),
+                protocol_version: 100,
+            };
+            let _ = sender.try_send(NetworkMessage::reliable(&response));
+        }
+
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
             return;
         };
-
-        // queue a profile version message
-        let response = rfc4::Packet {
-            message: Some(rfc4::packet::Message::ProfileVersion(
-                rfc4::AnnounceProfileVersion {
-                    profile_version: current_profile.version,
-                },
-            )),
-            protocol_version: 100,
-        };
-        let _ = sender.try_send(NetworkMessage::reliable(&response));
-
-        commands.spawn((
+        entity.remove::<WebSocketConnection>();
+        entity.insert((
             Transport {
                 transport_type: TransportType::WebsocketRoom,
                 sender,
@@ -103,30 +111,43 @@ pub fn start_ws_room(
 fn connect_websocket(
     mut commands: Commands,
     mut new_websockets: Query<
-        (Entity, &mut WebsocketRoomTransport, &Transport),
-        Without<WebSocketConnection>,
+        (
+            Entity,
+            &mut WebsocketRoomTransport,
+            &Transport,
+            &RoomRecovery,
+        ),
+        (Without<WebSocketConnection>, Without<NeedsAdapter>),
     >,
     wallet: Res<Wallet>,
     contexts: Query<&GlobalCrdtState>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut new_transport, transport) in new_websockets.iter_mut() {
+    for (transport_id, mut new_transport, transport, recovery) in new_websockets.iter_mut() {
+        if !recovery.can_retry(time.elapsed_secs_f64()) {
+            continue;
+        }
         let Ok(player_state) = contexts.get(transport.context) else {
             continue;
         };
         let remote_address = new_transport.address.to_owned();
         let wallet = wallet.clone();
-        let receiver = new_transport.receiver.take().unwrap();
+        let Some(receiver) = new_transport.receiver.take() else {
+            continue;
+        };
         let sender = player_state.get_sender();
+        let health = ConnectionHealth::default();
         let task = IoTaskPool::get().spawn(websocket_room_handler(
             transport_id,
             remote_address,
             wallet,
             receiver,
             sender,
+            health.clone(),
         ));
         commands
             .entity(transport_id)
-            .try_insert(WebSocketConnection(task));
+            .try_insert((WebSocketConnection(task), health));
     }
 }
 
@@ -136,41 +157,28 @@ fn reconnect_websocket(
         Entity,
         &mut WebsocketRoomTransport,
         &mut WebSocketConnection,
-        &Transport,
+        &mut RoomRecovery,
+        Has<CredentialRequest>,
     )>,
-    wallet: Res<Wallet>,
-    contexts: Query<&GlobalCrdtState>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut transport, mut conn, base_transport) in websockets.iter_mut() {
-        if transport.retries < 3 {
-            if let Some((receiver, err)) = conn.0.complete() {
-                transport.retries += 1;
-                warn!(
-                    "websocket room error: {err}, retrying [{}]",
-                    transport.address
-                );
-                let Ok(player_state) = contexts.get(base_transport.context) else {
-                    continue;
-                };
-                let remote_address = transport.address.to_owned();
-                let wallet = wallet.clone();
-                let sender = player_state.get_sender();
-                let task = IoTaskPool::get().spawn(websocket_room_handler(
-                    transport_id,
-                    remote_address,
-                    wallet,
-                    receiver,
-                    sender,
-                ));
-                conn.0 = task;
+    for (entity, mut transport, mut connection, mut recovery, refreshable) in &mut websockets {
+        if let Some((receiver, error, connected)) = connection.0.complete() {
+            if connected {
+                recovery.reset();
             }
-        } else if transport.retries == 3 {
-            if let Some((_, err)) = conn.0.complete() {
-                warn!("websocket room error: {err}, giving up");
-                // despawning the transport scrubs it from all foreign players' transport
-                // sets, so members don't linger on a connection that will never recover
-                commands.entity(transport_id).despawn();
+            transport.receiver = Some(receiver);
+            transport.retries = transport.retries.saturating_add(1);
+            let error = error
+                .downcast_ref::<AdmissionError>()
+                .copied()
+                .unwrap_or(AdmissionError::new(FailureKind::Transient));
+            recovery.fail(time.elapsed_secs_f64(), error);
+            commands.entity(entity).remove::<WebSocketConnection>();
+            if refreshable && !error.terminal() {
+                commands.entity(entity).insert(NeedsAdapter);
             }
+            warn!(?entity, kind = ?error.kind, "websocket room disconnected");
         }
     }
 }
@@ -181,11 +189,25 @@ async fn websocket_room_handler(
     wallet: Wallet,
     mut receiver: Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
-) -> (Receiver<NetworkMessage>, anyhow::Error) {
-    let res =
-        websocket_room_handler_inner(transport_id, remote_address, wallet, &mut receiver, sender)
-            .await;
-    (receiver, res.err().unwrap_or(anyhow!("connection closed")))
+    health: ConnectionHealth,
+) -> (Receiver<NetworkMessage>, anyhow::Error, bool) {
+    let _health_lifetime = health.reset_on_drop();
+    let mut connected = false;
+    let res = websocket_room_handler_inner(
+        transport_id,
+        remote_address,
+        wallet,
+        &mut receiver,
+        sender,
+        &mut connected,
+        &health,
+    )
+    .await;
+    (
+        receiver,
+        res.err().unwrap_or(anyhow!("connection closed")),
+        connected,
+    )
 }
 
 async fn websocket_room_handler_inner(
@@ -194,8 +216,10 @@ async fn websocket_room_handler_inner(
     wallet: Wallet,
     receiver: &mut Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
+    connected: &mut bool,
+    health: &ConnectionHealth,
 ) -> Result<(), anyhow::Error> {
-    debug!(">> stream connect async : {remote_address}");
+    debug!("connecting websocket room");
 
     let remote_address = if remote_address.starts_with("ws:") || remote_address.starts_with("wss:")
     {
@@ -204,6 +228,7 @@ async fn websocket_room_handler_inner(
         format!("wss://{remote_address}")
     };
 
+    crate::adapter::validate_url(&remote_address)?;
     let mut request = remote_address.into_client_request()?;
     request
         .headers_mut()
@@ -239,7 +264,9 @@ async fn websocket_room_handler_inner(
 
         match message {
             ws_packet::Message::WelcomeMessage(welcome) => {
-                debug!("<< welcome received: {welcome:?}");
+                *connected = true;
+                health.connected();
+                debug!("websocket welcome received");
                 from_alias = welcome.alias;
                 foreign_aliases = BiMap::from_iter(welcome.peer_identities.into_iter().flat_map(
                     |(alias, address)| {
@@ -257,7 +284,7 @@ async fn websocket_room_handler_inner(
                 challenge_to_sign, ..
             }) => {
                 // send challenge response
-                debug!("<< challenge received; {challenge_to_sign}");
+                debug!("websocket challenge received");
 
                 if !challenge_to_sign.starts_with("dcl-") {
                     error!("invalid challenge to sign");
@@ -267,7 +294,7 @@ async fn websocket_room_handler_inner(
                 // sign challenge
                 let chain = wallet.sign_message(challenge_to_sign).await?;
                 let auth_chain_json = serde_json::to_string(&chain)?;
-                debug!(">> auth chain created: {auth_chain_json}");
+                debug!("websocket auth chain created");
 
                 // send response
                 let message = WsPacket {
@@ -414,9 +441,8 @@ async fn websocket_room_handler_inner(
                         .await
                         .map_err(|_| anyhow!("Send error"))?;
                 }
-                ws_packet::Message::PeerKicked(reason) => {
-                    warn!("kicked: {}", reason.reason);
-                    return Ok(());
+                ws_packet::Message::PeerKicked(_) => {
+                    return Err(AdmissionError::new(FailureKind::Denied).into());
                 }
             }
         }

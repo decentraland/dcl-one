@@ -24,6 +24,17 @@ const control = (extra: Record<string, unknown> = {}) =>
   JSON.stringify({ found: true, role: 'button', name: 'Backpack', text: 'Backpack', disabled: false, visible: true, actionable: true, x: 10, y: 20, width: 40, height: 30, ...extra })
 
 describe('Explorer', () => {
+  test('connectivity reads safe status and requests immediate engine recovery', async () => {
+    const fake = new FakeConsole({
+      connectivity_state: JSON.stringify({ connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [{ scope: 'scene', state: 'denied', retryAt: null }] }),
+      connectivity_retry: 'Recovery requested'
+    })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.connectivity()).rooms[0]?.state, 'denied')
+    await explorer.retryConnectivity()
+    assert.deepEqual(fake.lines, ['/connectivity_state', '/connectivity_retry'])
+  })
+
   test('teleport waits for a new arrival in the world', async () => {
     let arrivals = 1
     let teleported = false

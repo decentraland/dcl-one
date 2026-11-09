@@ -4,7 +4,7 @@
 mod kira_bridge;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod livekit_bridge;
-mod mic;
+pub(crate) mod mic;
 pub mod participant;
 pub mod plugin;
 pub mod room;
@@ -27,14 +27,20 @@ pub struct StartLivekit {
     pub entity: Entity,
     pub address: String,
     /// crdt context this room's transport feeds
-    pub context: Entity,
+    pub context: Option<Entity>,
 }
 
 #[derive(Component)]
-#[require(participant::ParticipantIndex)]
+#[require(participant::ParticipantIndex, crate::room_connection::RoomRecovery)]
 pub struct LivekitTransport {
     pub address: String,
     pub retries: usize,
+}
+
+#[derive(Component)]
+pub struct RoomSender {
+    pub sender: mpsc::Sender<NetworkMessage>,
+    pub control: mpsc::Sender<ChannelControl>,
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -89,8 +95,8 @@ pub struct LivekitAudioManager {
 pub enum ConnectionAvailability {
     #[default]
     Available,
-    /// If client is disconnected from room due to duplicate identity
-    /// or from being kicked, client won't try connecting again
+    /// Duplicate identity disables new connections until the client identity changes.
+    /// Room-scoped admission denials are held on that room's recovery component instead.
     Unavailable,
 }
 

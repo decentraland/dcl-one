@@ -399,6 +399,16 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
+// Explicit activation/replacement only. An error leaves the existing session unchanged.
+// Keep adapter credentials out of console commands and debug output.
+module.exports.setVoiceRoom = function(session, adapter) {
+    return Deno.core.ops.op_set_voice_room(session, adapter);
+}
+
+module.exports.leaveVoiceRoom = function() {
+    return Deno.core.ops.op_leave_voice_room();
+}
+
 // [{ userId: string, hideAvatar: bool, hideProfile: bool }]
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();

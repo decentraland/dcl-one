@@ -18,6 +18,7 @@ import { storedLoginType, type LoginType } from './sessionAnalytics'
 import type { InteractableArea } from '../../lib/hudInset'
 import type { FatalError } from '../error/fatalError'
 import { createLoadingProgress } from './loadingProgress'
+import { useConnectivity } from './useConnectivity'
 import { DEFAULT_REALM } from '../../lib/baseDomain'
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
@@ -672,6 +673,7 @@ export interface EngineSession {
    *  'entering'. NOT the scene the player is in — that is `minimap.sceneTitle`, resolved by
    *  parcel; this title is whatever was last loading and goes stale as the player moves. */
   sceneLoading: SceneLoadingState | null
+  connectivity: ReturnType<typeof useConnectivity>
   /** One 0–100 value for the whole loader, across every stage it waits on; it only rises. */
   loadingProgress: number
   /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
@@ -2897,6 +2899,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ? 'entering'
         : 'world'
 
+  const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
+
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).
   const prevPhase = useRef<SessionPhase | null>(null)
@@ -3170,6 +3174,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       openLegal
     },
     sceneLoading,
+    connectivity,
     loadingProgress,
     travelError,
     dismissTravelError,

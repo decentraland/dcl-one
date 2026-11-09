@@ -1,11 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
-use std::{borrow::Cow, sync::Arc};
-
-use bevy::prelude::*;
-use common::{
-    debug_panic,
-    structs::{MicState, SystemAudio},
+use std::borrow::Cow;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc, Mutex,
 };
+
+use bevy::{ecs::relationship::Relationship, prelude::*};
+use common::structs::{MicState, SystemAudio};
 use tokio::task::JoinHandle;
 #[cfg(target_arch = "wasm32")]
 use {
@@ -33,7 +34,7 @@ use {
 #[cfg(not(target_arch = "wasm32"))]
 use crate::global_crdt::{LocalAudioFrame, LocalAudioSource};
 use crate::livekit::{
-    participant::{LivekitParticipant, Local as LivekitLocalParticipant},
+    participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
     LivekitRuntimeRes,
 };
 #[cfg(target_arch = "wasm32")]
@@ -64,6 +65,7 @@ impl Plugin for MicPlugin {
         app.init_state::<MicrophonePermission>();
         app.init_state::<MicrophoneState>();
         app.init_state::<MicrophoneTransmissionState>();
+        app.init_resource::<MicrophoneDrain>();
 
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Startup, setup_microphone_permission);
@@ -74,19 +76,16 @@ impl Plugin for MicPlugin {
                 poll_microphone_permission,
                 verify_availability.run_if(in_state(MicrophoneAvailability::Unavailable)),
                 verify_microphone_device_health.run_if(in_state(MicrophoneAvailability::Available)),
-                (microphone_disabled, verify_enabled).run_if(
+                verify_enabled.run_if(
                     in_state(MicrophoneAvailability::Available)
                         .and(in_state(MicrophoneState::Disabled)),
                 ),
-                (microphone_enabled, verify_disabled).run_if(in_state(MicrophoneState::Enabled)),
-                (
-                    poll_local_audio_track_futures,
-                    publish_tracks.run_if(in_state(MicrophonePermission::Granted)),
-                    unpublish_tracks,
-                )
-                    .run_if(in_state(MicrophoneAvailability::Available)),
+                verify_disabled.run_if(in_state(MicrophoneState::Enabled)),
+                // Revocation runs even when permission or device availability was lost.
+                reconcile_publications,
             )
-                .chain(),
+                .chain()
+                .after(crate::voice_room::update_voice_room),
         );
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(OnEnter(MicrophoneState::Enabled), build_cpal_stream);
@@ -155,14 +154,80 @@ enum MicrophoneTransmissionState {
 #[derive(Resource, Deref, DerefMut)]
 struct MicrophoneDevice(Device);
 
+/// New routes wait until every revoked route has acknowledged stopping its source.
+#[derive(Resource, Default, Clone)]
+pub(crate) struct MicrophoneDrain(Arc<AtomicUsize>);
+
+impl MicrophoneDrain {
+    pub(crate) fn pending(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[derive(Default)]
+struct PublicationControl {
+    track: Option<LocalAudioTrack>,
+    revoked: bool,
+    complete: bool,
+    draining: bool,
+    transmitting: bool,
+}
+
+/// Dropping a participant or changing its route revokes its async work, including work which
+/// has not created a track yet. The task continues only to stop/unpublish its own track.
 #[derive(Component)]
-struct ParticipantWithTrack;
+pub(crate) struct MicrophonePublication {
+    state: Arc<Mutex<PublicationControl>>,
+    revoked: Arc<AtomicBool>,
+    cancel: tokio::sync::watch::Sender<bool>,
+    drain: MicrophoneDrain,
+    task: JoinHandle<()>,
+}
 
-#[derive(Component, Deref, DerefMut)]
-struct LocalAudioTrackFuture(JoinHandle<LocalAudioTrack>);
+impl MicrophonePublication {
+    pub(crate) fn revoke(&self) {
+        self.revoked.store(true, Ordering::SeqCst);
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        state.revoked = true;
+        state.transmitting = false;
+        if let Some(track) = &state.track {
+            mute_local_track(track, true);
+        }
+        if !state.complete && !state.draining {
+            state.draining = true;
+            self.drain.0.fetch_add(1, Ordering::SeqCst);
+        }
+        let _ = self.cancel.send(true);
+    }
+}
 
-#[derive(Component, Deref)]
-struct MicrophoneLocalTrack(LocalAudioTrack);
+impl Drop for MicrophonePublication {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}
+
+fn complete_publication(state: &Mutex<PublicationControl>, drain: &MicrophoneDrain, stopped: bool) {
+    let mut state = state.lock().unwrap_or_else(|err| err.into_inner());
+    state.complete = true;
+    state.transmitting = false;
+    // Missing browser acknowledgment fails closed, even after the owner is gone.
+    if state.draining && stopped {
+        state.draining = false;
+        drain.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn mute_local_track(track: &LocalAudioTrack, muted: bool) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if muted {
+        track.mute();
+    } else {
+        track.unmute();
+    }
+    #[cfg(target_arch = "wasm32")]
+    track.set_enabled(!muted);
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default, Deref, DerefMut)]
@@ -187,15 +252,21 @@ fn add_ping_systems(world: &mut World) {
 }
 
 fn transmission_state(
-    tracks: Query<(), With<MicrophoneLocalTrack>>,
+    tracks: Query<&MicrophonePublication>,
     microphone_transmission_state: Res<State<MicrophoneTransmissionState>>,
     mut next_state: ResMut<NextState<MicrophoneTransmissionState>>,
 ) {
-    if tracks.is_empty()
-        && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
+    let transmitting = tracks.iter().any(|publication| {
+        let state = publication
+            .state
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        state.transmitting
+    });
+    if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
         next_state.set(MicrophoneTransmissionState::Disabled);
-    } else if !tracks.is_empty()
+    } else if transmitting
         && microphone_transmission_state.get() == &MicrophoneTransmissionState::Disabled
     {
         next_state.set(MicrophoneTransmissionState::Enabled);
@@ -393,193 +464,155 @@ fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>) {
     }
 }
 
-fn microphone_enabled(
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn reconcile_publications(
     mut commands: Commands,
-    local_participants: Populated<
-        Entity,
-        (With<LivekitLocalParticipant>, Without<ParticipantWithTrack>),
-    >,
-) {
-    commands.insert_batch(
-        local_participants
-            .iter()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|entity| (entity, ParticipantWithTrack)),
-    );
-}
-
-fn microphone_disabled(
-    mut commands: Commands,
-    local_participants: Populated<
-        Entity,
-        (With<LivekitLocalParticipant>, With<ParticipantWithTrack>),
-    >,
-) {
-    for entity in local_participants.into_inner() {
-        commands.entity(entity).remove::<ParticipantWithTrack>();
-    }
-}
-
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
-fn publish_tracks(
-    mut commands: Commands,
-    local_participants: Query<
-        (Entity, &LivekitParticipant),
+    participants: Query<
         (
-            With<LivekitLocalParticipant>,
-            With<ParticipantWithTrack>,
-            Without<MicrophoneLocalTrack>,
-            Without<LocalAudioTrackFuture>,
+            Entity,
+            &LivekitParticipant,
+            &HostedBy,
+            Option<&MicrophonePublication>,
         ),
+        With<LivekitLocalParticipant>,
     >,
+    rooms: Query<(
+        Has<crate::Transport>,
+        Has<crate::private_chat::PrivateChatRoom>,
+        Has<super::room::Connected>,
+    )>,
+    route: Res<crate::voice_room::ActiveVoiceRoom>,
+    mic: Res<MicState>,
+    permission: Res<State<MicrophonePermission>>,
+    availability: Res<State<MicrophoneAvailability>>,
+    drain: Res<MicrophoneDrain>,
     livekit_runtime: LivekitRuntimeRes,
-    #[cfg(not(target_arch = "wasm32"))] local_audio_source: Res<LocalAudioSource>,
-    #[cfg(not(target_arch = "wasm32"))] microphone_device: Res<MicrophoneDevice>,
+    #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
+    #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
 ) {
-    if local_participants.is_empty() {
+    let enabled = mic.enabled
+        && *permission.get() == MicrophonePermission::Granted
+        && *availability.get() == MicrophoneAvailability::Available;
+    let eligible = |room: Entity| {
+        rooms
+            .get(room)
+            .is_ok_and(|(proximity, private, connected)| {
+                enabled && connected && route.routing.allows(room, proximity, private)
+            })
+    };
+
+    // Revoke all old routes before considering any new one. Removing the component runs Drop
+    // at the next command flush; avoid starting a replacement in this same update.
+    let mut revoking = false;
+    for (entity, _, room, publication) in &participants {
+        if let Some(publication) = publication {
+            if !eligible(room.get())
+                || publication.revoked.load(Ordering::SeqCst)
+                || publication.task.is_finished()
+            {
+                commands.entity(entity).remove::<MicrophonePublication>();
+                revoking = true;
+            }
+        }
+    }
+    if revoking || drain.pending() != 0 {
         return;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    let Ok(config) = microphone_device
-        .default_input_config()
-        .inspect_err(|err| error!("{err}"))
+    let Some(format) = format
     else {
         return;
     };
 
-    for (entity, livekit_participant) in local_participants {
-        if !matches!(**livekit_participant, Participant::Local(_)) {
-            debug_panic!(
-                "Participant {} ({}) has 'Local', but was remote.",
-                livekit_participant.sid(),
-                livekit_participant.identity()
-            );
+    for (entity, participant, room, publication) in &participants {
+        if publication.is_some() || !eligible(room.get()) {
+            continue;
         }
-
-        #[cfg(target_arch = "wasm32")]
-        let local_audio_track_future = livekit_runtime.spawn(build_audio_local_track());
+        let Participant::Local(participant) = &**participant else {
+            continue;
+        };
+        let participant = participant.clone();
+        let state = Arc::new(Mutex::new(PublicationControl::default()));
+        let task_state = state.clone();
+        let revoked = Arc::new(AtomicBool::new(false));
+        let task_revoked = revoked.clone();
+        let task_drain = drain.clone();
+        let (cancel, mut cancellation) = tokio::sync::watch::channel(false);
         #[cfg(not(target_arch = "wasm32"))]
-        let local_audio_track_future = livekit_runtime.spawn(build_audio_local_track(
-            local_audio_source.subscribe(),
-            config.sample_rate().0,
-            u32::from(config.channels()),
-        ));
+        let receiver = source.subscribe();
+        #[cfg(not(target_arch = "wasm32"))]
+        let (sample_rate, channels) = (format.sample_rate, format.channels);
 
-        commands.entity(entity).try_insert((
-            ParticipantWithTrack,
-            LocalAudioTrackFuture(local_audio_track_future),
-        ));
-    }
-}
-
-fn poll_local_audio_track_futures(
-    mut commands: Commands,
-    local_audio_tracks: Populated<(Entity, &LivekitParticipant, &mut LocalAudioTrackFuture)>,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    for (entity, livekit_participant, mut local_audio_track_future) in
-        local_audio_tracks.into_inner()
-    {
-        let Participant::Local(ref local_participant) = **livekit_participant else {
-            debug_panic!(
-                "Participant {} ({}) has 'Local', but was remote.",
-                livekit_participant.sid(),
-                livekit_participant.identity()
-            );
-        };
-
-        if local_audio_track_future.is_finished() {
-            match livekit_runtime.block_on(&mut **local_audio_track_future) {
-                Ok(local_audio_track) => {
-                    let local_participant_clone = local_participant.clone();
-                    let local_audio_track_clone = local_audio_track.clone();
-                    livekit_runtime.spawn(async move {
-                        if let Err(err) = local_participant_clone
-                            .publish_track(
-                                LocalTrack::Audio(local_audio_track_clone),
-                                TrackPublishOptions {
-                                    source: TrackSource::Microphone,
-                                    ..Default::default()
-                                },
-                            )
-                            .await
-                        {
-                            error!(
-                                "Failed to publish local audio track for {} ({}) due to '{err}'.",
-                                local_participant_clone.sid(),
-                                local_participant_clone.identity()
-                            );
-                        }
-                    });
-
-                    commands
-                        .entity(entity)
-                        .try_insert(MicrophoneLocalTrack(local_audio_track))
-                        .remove::<LocalAudioTrackFuture>();
-                }
-                Err(err) => {
-                    debug_panic!(
-                        "Failed to poll local audio track of {} ({}) due to '{err}'.",
-                        livekit_participant.sid(),
-                        livekit_participant.identity()
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
-fn unpublish_tracks(
-    mut commands: Commands,
-    local_participants: Populated<
-        (Entity, &LivekitParticipant, &MicrophoneLocalTrack),
-        (With<LivekitLocalParticipant>, Without<ParticipantWithTrack>),
-    >,
-    livekit_runtime: LivekitRuntimeRes,
-    #[cfg(not(target_arch = "wasm32"))] local_audio_source: Res<LocalAudioSource>,
-) {
-    for (entity, livekit_participant, microphone_local_track) in local_participants.into_inner() {
-        let Participant::Local(ref local_participant) = **livekit_participant else {
-            debug_panic!(
-                "Participant {} ({}) has 'Local', but was remote.",
-                livekit_participant.sid(),
-                livekit_participant.identity()
-            );
-        };
-
-        let local_participant_clone = local_participant.clone();
-        let local_audio_track_clone = (*microphone_local_track).clone();
-        livekit_runtime.spawn(async move {
+        let task = livekit_runtime.spawn(async move {
             #[cfg(not(target_arch = "wasm32"))]
-            let unpublished = local_participant_clone
-                .unpublish_track(&local_audio_track_clone.sid())
-                .await;
+            let (track, capture) =
+                build_audio_local_track(receiver, sample_rate, channels, task_revoked.clone())
+                    .await;
             #[cfg(target_arch = "wasm32")]
-            let unpublished = local_participant_clone
-                .unpublish_track(&LocalTrack::Audio(local_audio_track_clone))
-                .await;
-
-            if let Err(err) = unpublished {
-                error!(
-                    "Failed to unpublish local audio track of {} ({}) due to '{err}'.",
-                    local_participant_clone.sid(),
-                    local_participant_clone.identity()
-                );
+            let track = build_audio_local_track().await;
+            // Both backends create tracks muted. Publishing itself may outlive cancellation;
+            // a canceled publication is never unmuted.
+            {
+                let mut state = task_state.lock().unwrap_or_else(|err| err.into_inner());
+                state.track = Some(track.clone());
             }
-        });
+            let mut published = false;
+            if !task_revoked.load(Ordering::SeqCst) {
+                published = participant
+                    .publish_track(
+                        LocalTrack::Audio(track.clone()),
+                        TrackPublishOptions {
+                            source: TrackSource::Microphone,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .is_ok();
+                if !published {
+                    warn!("microphone publication failed");
+                }
+            }
+            if published {
+                {
+                    let mut state = task_state.lock().unwrap_or_else(|err| err.into_inner());
+                    if !state.revoked {
+                        mute_local_track(&track, false);
+                        state.transmitting = true;
+                    }
+                }
+                if !task_revoked.load(Ordering::SeqCst) {
+                    let _ = cancellation.changed().await;
+                }
+            }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = local_audio_source.sender.send(LocalAudioFrame {
-            data: Default::default(),
-            sample_rate: 0,
-            num_channels: 0,
-            samples_per_channel: 0,
+            // Stop the source before releasing the drain barrier. On web this is an acknowledged
+            // page operation, so no later route races an asynchronous old media operation.
+            mute_local_track(&track, true);
+            #[cfg(not(target_arch = "wasm32"))]
+            capture.abort();
+            #[cfg(target_arch = "wasm32")]
+            let stopped = track.stop(!published).await.is_ok();
+            #[cfg(not(target_arch = "wasm32"))]
+            let stopped = true;
+            if published {
+                #[cfg(not(target_arch = "wasm32"))]
+                let unpublished = participant.unpublish_track(&track.sid()).await;
+                #[cfg(target_arch = "wasm32")]
+                let unpublished = participant.unpublish_track(&LocalTrack::Audio(track)).await;
+                if unpublished.is_err() {
+                    warn!("microphone unpublish failed after stopping capture");
+                }
+            }
+            complete_publication(&task_state, &task_drain, stopped);
         });
-
-        commands.entity(entity).remove::<MicrophoneLocalTrack>();
+        commands.entity(entity).insert(MicrophonePublication {
+            state,
+            revoked,
+            cancel,
+            drain: drain.clone(),
+            task,
+        });
     }
 }
 
@@ -592,7 +625,8 @@ fn locate_foreign_streams(
         &ForeignPlayer,
         &mut VoicePan,
     )>,
-    participants: Query<(&LivekitParticipant, &Publishing)>,
+    participants: Query<(&LivekitParticipant, &Publishing, &HostedBy)>,
+    proximity_rooms: Query<(), With<crate::Transport>>,
     tracks: Query<&LivekitTrack, (With<Subscribed>, With<Audio>)>,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
@@ -603,13 +637,14 @@ fn locate_foreign_streams(
         if source.current_transport.is_some() {
             let Some(publishing) = participants
                 .iter()
-                .filter_map(|(participant, publishing)| {
-                    if participant
-                        .identity()
-                        .as_str()
-                        .as_h160()
-                        .filter(|h160| *h160 == player.address)
-                        .is_some()
+                .filter_map(|(participant, publishing, room)| {
+                    if proximity_rooms.contains(room.get())
+                        && participant
+                            .identity()
+                            .as_str()
+                            .as_h160()
+                            .filter(|h160| *h160 == player.address)
+                            .is_some()
                     {
                         Some(publishing.collection().to_vec())
                     } else {
@@ -643,7 +678,8 @@ async fn build_audio_local_track(
     mic_receiver: broadcast::Receiver<LocalAudioFrame>,
     sample_rate: u32,
     num_channels: u32,
-) -> LocalAudioTrack {
+    revoked: Arc<AtomicBool>,
+) -> (LocalAudioTrack, JoinHandle<()>) {
     let new_source = NativeAudioSource::new(
         AudioSourceOptions {
             echo_cancellation: true,
@@ -656,12 +692,14 @@ async fn build_audio_local_track(
     );
     let local_audio_track =
         LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(new_source.clone()));
+    local_audio_track.mute();
 
     let local_audio_track_clone = local_audio_track.clone();
-    tokio::task::spawn(async move {
+    let capture = tokio::task::spawn(async move {
         let mut mic_receiver = mic_receiver;
         while let Ok(frame) = mic_receiver.recv().await {
-            if frame.sample_rate == 0 && frame.num_channels == 0 {
+            if revoked.load(Ordering::SeqCst) || (frame.sample_rate == 0 && frame.num_channels == 0)
+            {
                 // Termination frame
                 break;
             }
@@ -683,7 +721,7 @@ async fn build_audio_local_track(
         );
     });
 
-    local_audio_track
+    (local_audio_track, capture)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -712,4 +750,69 @@ fn ping_disabled(mut commands: Commands) {
     commands.send_event(SystemAudio(
         "embedded://sounds/ui/voice_chat_mic_off.wav".to_owned(),
     ));
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod routing_tests {
+    use super::*;
+
+    fn pending(
+        runtime: &tokio::runtime::Runtime,
+        drain: &MicrophoneDrain,
+    ) -> MicrophonePublication {
+        let (cancel, _) = tokio::sync::watch::channel(false);
+        MicrophonePublication {
+            state: Arc::new(Mutex::new(PublicationControl::default())),
+            revoked: Arc::new(AtomicBool::new(false)),
+            cancel,
+            drain: drain.clone(),
+            task: runtime.spawn(std::future::pending()),
+        }
+    }
+
+    #[test]
+    fn cancellation_before_creation_blocks_new_route_until_stop_acknowledged() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let publication = pending(&runtime, &drain);
+        let state = publication.state.clone();
+        let revoked = publication.revoked.clone();
+        publication.revoke();
+        publication.revoke();
+        assert_eq!(drain.pending(), 1);
+        drop(publication);
+        assert_eq!(drain.pending(), 1);
+        assert!(revoked.load(Ordering::SeqCst));
+        // A late completion retains revocation; it can never unmute the old route.
+        assert!(state.lock().unwrap().revoked);
+        complete_publication(&state, &drain, true);
+        assert_eq!(drain.pending(), 0);
+    }
+
+    #[test]
+    fn failed_stop_acknowledgment_keeps_routing_closed() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let publication = pending(&runtime, &drain);
+        let state = publication.state.clone();
+        drop(publication);
+        complete_publication(&state, &drain, false);
+        assert_eq!(drain.pending(), 1);
+    }
+
+    #[test]
+    fn completed_publication_does_not_leave_a_phantom_drain() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let publication = pending(&runtime, &drain);
+        complete_publication(&publication.state, &drain, true);
+        drop(publication);
+        assert_eq!(drain.pending(), 0);
+    }
 }

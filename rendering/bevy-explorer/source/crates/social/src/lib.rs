@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use bevy::tasks::IoTaskPool;
 #[cfg(feature = "social")]
 use bevy_console::ConsoleCommand;
+use common::access_status::AccessStatus;
 use common::rpc::{RpcResultSender, RpcStreamSender};
 #[cfg(feature = "social")]
 use common::structs::DebugInfo;
@@ -50,16 +51,10 @@ impl Plugin for SocialPlugin {
         app.add_event::<BlockUpdateEvent>();
         app.add_event::<DirectChatEvent>();
         app.init_resource::<SocialClient>();
+        app.init_resource::<AccessStatus>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(
-            PostUpdate,
-            |mut client: ResMut<SocialClient>, mut changed: EventWriter<SocialStateChanged>| {
-                if client.0.as_mut().is_some_and(|client| client.update()) {
-                    changed.write(SocialStateChanged);
-                }
-            },
-        );
+        app.add_systems(PostUpdate, update_social_client);
         app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
@@ -86,6 +81,31 @@ impl Plugin for SocialPlugin {
                 debug_write_social.run_if(|e: Res<DebugSocialEnabled>| e.0),
             );
         }
+    }
+}
+
+fn update_social_client(
+    wallet: Res<Wallet>,
+    mut social: ResMut<SocialClient>,
+    mut access: ResMut<AccessStatus>,
+    mut changed: EventWriter<SocialStateChanged>,
+) {
+    let identity = wallet.address();
+    access.set_identity(identity);
+    // init_social_client replaces the handler on wallet changes. It may run
+    // later in PostUpdate, so do not publish the departing account's updates.
+    if identity.is_none() || wallet.is_changed() {
+        return;
+    }
+    let Some(client) = social.0.as_mut() else {
+        return;
+    };
+    if client.update() {
+        access.replace_blocks(
+            client.blocked.iter().copied(),
+            client.blocked_by.iter().copied(),
+        );
+        changed.write(SocialStateChanged);
     }
 }
 
@@ -117,6 +137,7 @@ fn is_social_consumer_request(event: &SystemApi) -> bool {
             | SystemApi::GetBlockingStatus(_)
             | SystemApi::GetBlockUpdateStream(_)
             | SystemApi::GetDmUserStateStream(_, _)
+            | SystemApi::SetVoiceRoom { .. }
     )
 }
 
@@ -1306,4 +1327,71 @@ pub struct DirectChatMessage {
     pub partner: Address,
     pub me_speaking: bool,
     pub message: String,
+}
+
+#[cfg(test)]
+mod access_status_tests {
+    use super::*;
+    use common::access_status::{AccessScope, AccessStatus};
+
+    #[test]
+    fn voice_activation_requests_the_existing_block_status_source() {
+        let (sender, _) = RpcResultSender::channel();
+        assert!(is_social_consumer_request(&SystemApi::SetVoiceRoom {
+            session: "call".into(),
+            adapter: "livekit:wss://voice.example/?access_token=test".into(),
+            response: sender,
+        }));
+        assert!(!is_social_consumer_request(&SystemApi::LeaveVoiceRoom));
+    }
+
+    #[test]
+    fn social_updates_clear_cached_access_on_account_change_and_logout() {
+        let mut app = App::new();
+        app.init_resource::<Wallet>()
+            .init_resource::<SocialClient>()
+            .init_resource::<AccessStatus>()
+            .add_event::<SocialStateChanged>()
+            .add_systems(PostUpdate, update_social_client);
+        let scope = AccessScope::PrivateChat;
+        let blocked = Address::from([3; 20]);
+
+        app.world_mut()
+            .resource_mut::<Wallet>()
+            .finalize_as_guest_with_seed([1; 32]);
+        app.update();
+        {
+            let mut status = app.world_mut().resource_mut::<AccessStatus>();
+            status.set_denied(scope.clone());
+            status.replace_blocks([blocked], [blocked]);
+        }
+
+        // A normal social update must preserve a room's terminal admission result.
+        app.update();
+        assert!(app.world().resource::<AccessStatus>().is_denied(&scope));
+
+        for next_seed in [Some([2; 32]), None] {
+            {
+                let mut wallet = app.world_mut().resource_mut::<Wallet>();
+                if let Some(seed) = next_seed {
+                    wallet.finalize_as_guest_with_seed(seed);
+                } else {
+                    wallet.disconnect();
+                }
+            }
+            app.update();
+            let status = app.world().resource::<AccessStatus>();
+            assert_eq!(
+                status.identity(),
+                app.world().resource::<Wallet>().address()
+            );
+            assert!(!status.is_denied(&scope));
+            assert!(!status.is_blocked(blocked));
+            assert!(!status.is_blocked_by(blocked));
+
+            let mut status = app.world_mut().resource_mut::<AccessStatus>();
+            status.set_denied(scope.clone());
+            status.replace_blocks([blocked], [blocked]);
+        }
+    }
 }

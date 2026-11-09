@@ -106,6 +106,14 @@ export interface VoiceState {
   speakers: string[] | null
 }
 
+export interface ConnectivityState {
+  connectionLost: boolean
+  probing: boolean
+  everConnected: boolean
+  suppressed: boolean
+  rooms: { scope: string; state: string; retryAt: number | null }[]
+}
+
 export interface ScreenPosition {
   entity: string
   scene: string
@@ -328,6 +336,14 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  connectivity(): Promise<ConnectivityState> {
+    return this.json<ConnectivityState>('/connectivity_state')
+  }
+
+  retryConnectivity(): Promise<string> {
+    return this.run('/connectivity_retry')
   }
 
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */

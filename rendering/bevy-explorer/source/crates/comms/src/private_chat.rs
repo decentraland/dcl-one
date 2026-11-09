@@ -6,25 +6,18 @@
 //! realm's transports can reach it, and its participants never touch the avatar store.
 
 use alloy_core::primitives::Address;
-use bevy::{
-    ecs::relationship::Relationship,
-    prelude::*,
-    tasks::{IoTaskPool, Task},
-};
+use bevy::{ecs::relationship::Relationship, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
     base_domain::Service,
     structs::{AppConfig, DmPrivacy, PrimaryUser},
-    util::{AsH160, TaskCompat, TaskExt},
+    util::AsH160,
 };
 use console::DoAddConsoleCommand;
 use dcl_component::proto_components::kernel::comms::rfc4;
-use http::Uri;
-use ipfs::IpfsAssetServer;
 use prost::Message as _;
 use serde::Deserialize;
 use system_bridge::SystemApi;
-use tokio::sync::mpsc::Sender;
 use wallet::Wallet;
 
 use crate::{
@@ -32,7 +25,7 @@ use crate::{
         canonical_message_id, emoji_to_atlas_index, encode_wire_index, received_emoji,
         ChatReactionEvent,
     },
-    global_crdt::{ChannelControl, ChatEvent},
+    global_crdt::ChatEvent,
     livekit::{
         participant::{
             plugin::InboundRateLimiter, HostedBy, HostingParticipants, LivekitParticipant,
@@ -40,10 +33,9 @@ use crate::{
             ParticipantPayload,
         },
         room::{Connected, Connecting, Disconnected},
-        standalone_room_components, LivekitTransport,
+        LivekitTransport, RoomSender,
     },
-    mint_gatekeeper_adapter, DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage,
-    NetworkMessageRecipient,
+    DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage, NetworkMessageRecipient,
 };
 
 pub struct PrivateChatPlugin;
@@ -69,13 +61,9 @@ impl Plugin for PrivateChatPlugin {
     }
 }
 
-/// Marks the private chat room entity and holds its outgoing channel.
+/// Marks the data-only private chat room; its channel is the shared `RoomSender`.
 #[derive(Component)]
-pub struct PrivateChatRoom {
-    pub sender: Sender<NetworkMessage>,
-    // keeps the room's control channel open; the room has no voice, so nothing is ever sent
-    _control: Sender<ChannelControl>,
-}
+pub struct PrivateChatRoom;
 
 /// On a private chat room participant: the DM privacy the server stamped into their participant
 /// metadata, `None` until it arrives.
@@ -111,94 +99,38 @@ fn privacy_from_metadata(metadata: &str) -> Option<DmPrivacy> {
     }
 }
 
-/// Gatekeeper retry backoff: 5s doubling to 60s.
-fn gatekeeper_retry_delay(attempt: u32) -> f64 {
-    (5.0 * 2f64.powi(attempt.min(4) as i32)).min(60.0)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn connect_private_chat_room(
     mut commands: Commands,
     wallet: Res<Wallet>,
     config: Res<AppConfig>,
-    ipfs: IpfsAssetServer,
-    time: Res<Time>,
     rooms: Query<Entity, With<PrivateChatRoom>>,
-    mut gatekeeper_task: Local<Option<Task<Result<String, anyhow::Error>>>>,
-    mut retry: Local<Option<(f64, u32)>>,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
     disable_gatekeeper: Res<DisableSceneRoomGatekeeper>,
 ) {
-    // headless servers never join (they would be a ghost participant), and orchestrated servers
-    // never sign gatekeeper handshakes themselves
     if disable_realm_comms.is_some_and(|d| d.0) || disable_gatekeeper.0 {
         return;
     }
-
-    let now = time.elapsed_secs_f64();
-    let mint = if wallet.is_changed() {
-        for room in rooms.iter() {
-            commands.entity(room).despawn();
-        }
-        *gatekeeper_task = None;
-        *retry = None;
-
-        if wallet.address().is_none() {
-            info!("private chat: no identity, not connecting");
-            return;
-        }
-        true
-    } else {
-        gatekeeper_task.is_none() && retry.is_some_and(|(due, _)| now >= due)
-    };
-
-    if mint {
-        let uri = Uri::try_from(common::base_domain::url(
-            Service::CommsGatekeeper,
-            "/private-messages/token",
-        ))
-        .unwrap();
-        let meta = serde_json::json!({
-            "signer": "dcl:explorer",
-            "deviceIdentifier": config.user_id,
-        })
-        .to_string();
-        let client = ipfs.ipfs().client();
-        let wallet = wallet.clone();
-        *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-            mint_gatekeeper_adapter("GET", client, uri, &wallet, meta).await
-        }));
+    if !wallet.is_changed() {
+        return;
     }
-
-    if let Some(mut task) = gatekeeper_task.take() {
-        match task.complete() {
-            None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => {
-                let attempt = retry.map_or(0, |(_, attempt)| attempt);
-                let delay = gatekeeper_retry_delay(attempt);
-                warn!(
-                    "private chat: failed to get room from gatekeeper: {e}; retrying in {delay}s"
-                );
-                *retry = Some((now + delay, attempt + 1));
-            }
-            Some(Ok(adapter)) => {
-                *retry = None;
-                let Some(("livekit", address)) = adapter.split_once(':') else {
-                    warn!("private chat: unsupported adapter `{adapter}`");
-                    return;
-                };
-                let (components, sender, control) = standalone_room_components(address.to_owned());
-                commands.spawn((
-                    components,
-                    PrivateChatRoom {
-                        sender,
-                        _control: control,
-                    },
-                ));
-                info!("private chat: connecting");
-            }
-        }
+    for room in &rooms {
+        commands.entity(room).despawn();
     }
+    if wallet.address().is_none() {
+        return;
+    }
+    commands.spawn((
+        PrivateChatRoom,
+        crate::room_connection::RoomAccessScope(common::access_status::AccessScope::PrivateChat),
+        crate::room_connection::CredentialRequest {
+            method: "GET",
+            url: common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token"),
+            metadata:
+                serde_json::json!({"signer": "dcl:explorer", "deviceIdentifier": config.user_id})
+                    .to_string(),
+        },
+        crate::room_connection::NeedsAdapter,
+    ));
 }
 
 /// Stamps a private chat room participant with the privacy from their metadata.
@@ -351,7 +283,7 @@ fn participant_payload(
 fn send_private_chats(
     mut chats: EventReader<ChatEvent>,
     player: Query<Entity, With<PrimaryUser>>,
-    room: Query<&PrivateChatRoom>,
+    room: Query<&RoomSender, (With<PrivateChatRoom>, With<Connected>)>,
 ) {
     let Ok(player) = player.single() else {
         return;
@@ -388,7 +320,7 @@ fn send_private_chats(
 fn send_private_reactions(
     mut reactions: EventReader<ChatReactionEvent>,
     wallet: Res<Wallet>,
-    room: Query<&PrivateChatRoom>,
+    room: Query<&RoomSender, (With<PrivateChatRoom>, With<Connected>)>,
 ) {
     let Some(me) = wallet.address() else {
         reactions.clear();

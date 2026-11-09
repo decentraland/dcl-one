@@ -15,11 +15,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     crate::livekit::LivekitAudioManager,
-    common::structs::AudioSettings,
-    kira::{
-        manager::{AudioManager, AudioManagerSettings, DefaultBackend},
-        tween::Tween,
-    },
+    kira::manager::{AudioManager, AudioManagerSettings, DefaultBackend},
 };
 
 #[cfg(feature = "room_debug")]
@@ -35,8 +31,7 @@ use crate::{
             plugin::LivekitTrackPlugin, Camera as LivekitSourceCamera, LivekitTrack, Publishing,
             ScreenshareVideo as LivekitSourceScreenshare, Video,
         },
-        ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage, LivekitRuntime,
-        LivekitTransport, StartLivekit,
+        ConnectionAvailability, LivekitRuntime, LivekitTransport, StartLivekit,
     },
     SceneRoom, Transport, TransportType,
 };
@@ -72,17 +67,19 @@ impl Plugin for LivekitPlugin {
         app.add_plugins(LivekitParticipantPlugin);
         app.add_plugins(LivekitTrackPlugin);
 
-        app.add_systems(Update, (start_livekit, verify_player_update_tasks));
+        app.add_systems(
+            Update,
+            (
+                reset_identity_policy,
+                start_livekit,
+                verify_player_update_tasks,
+            ),
+        );
         // on the web the page plays voice (livekit-client), and the engine worker has no audio
         // output; a headless app plays nothing, so opens no audio device
         #[cfg(not(target_arch = "wasm32"))]
         if !headless {
             app.add_systems(Startup, build_kira_audio_manager);
-            app.add_systems(
-                Update,
-                respond_to_audio_settings_change
-                    .run_if(resource_exists_and_changed::<AudioSettings>),
-            );
         }
 
         app.add_event::<StartLivekit>();
@@ -94,6 +91,17 @@ impl Plugin for LivekitPlugin {
 
         #[cfg(feature = "room_debug")]
         app.add_plugins(RoomDebugPlugin);
+    }
+}
+
+fn reset_identity_policy(
+    wallet: Res<wallet::Wallet>,
+    mut identity: Local<Option<alloy_core::primitives::Address>>,
+    mut availability: ResMut<NextState<ConnectionAvailability>>,
+) {
+    if wallet.is_changed() && *identity != wallet.address() {
+        *identity = wallet.address();
+        availability.set(ConnectionAvailability::Available);
     }
 }
 
@@ -112,33 +120,49 @@ pub(super) struct PlayerUpdateTask {
     pub task: JoinHandle<Result<(), mpsc::error::SendError<NetworkUpdate>>>,
 }
 
-fn start_livekit(mut commands: Commands, mut room_events: EventReader<StartLivekit>) {
+fn start_livekit(
+    mut commands: Commands,
+    mut room_events: EventReader<StartLivekit>,
+    mut existing: Query<&mut LivekitTransport>,
+) {
     for ev in room_events.read() {
+        if crate::adapter::livekit_credentials(&ev.address).is_err() {
+            warn!("invalid or insecure LiveKit adapter");
+            continue;
+        }
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
+            continue;
+        };
+        if let Ok(mut transport) = existing.get_mut(ev.entity) {
+            transport.address.clone_from(&ev.address);
+            entity.remove::<(super::room::Connecting, super::room::ConnectFailed)>();
+            entity.insert(super::room::Connecting);
+            continue;
+        }
         info!("starting livekit protocol");
-        let (sender, receiver) = tokio::sync::mpsc::channel(1000);
-        let (control_sender, control_receiver) = tokio::sync::mpsc::channel(128);
+        let (components, sender, control_sender) =
+            super::standalone_room_components(ev.address.clone());
 
         // No connect-time profile announce here — `profile::mod` periodically announces the version
         // over PRIMARY (Pulse + websocket dev server), and the Pulse handshake carries the
         // connect-time version. Peers reach this transport for guest profile request/response by
         // picking a profile-capable transport at request time, not off any announcement of ours.
 
-        commands.entity(ev.entity).try_insert((
-            Transport {
+        entity.insert((
+            components,
+            super::RoomSender {
+                sender: sender.clone(),
+                control: control_sender.clone(),
+            },
+        ));
+        if let Some(context) = ev.context {
+            entity.insert(Transport {
                 transport_type: TransportType::Livekit,
                 sender,
                 control: Some(control_sender),
-                context: ev.context,
-            },
-            LivekitTransport {
-                address: ev.address.to_owned(),
-                retries: 0,
-            },
-            LivekitChannelControl {
-                receiver: control_receiver,
-            },
-            LivekitNetworkMessage { receiver },
-        ));
+                context,
+            });
+        }
     }
 }
 
@@ -184,16 +208,6 @@ fn build_kira_audio_manager(mut commands: Commands) {
             debug_panic!("Failed to livekit build AudioManager due to '{err}'.");
         }
     };
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn respond_to_audio_settings_change(
-    mut livekit_audio_manager: ResMut<LivekitAudioManager>,
-    audio_settings: Res<AudioSettings>,
-) {
-    livekit_audio_manager
-        .main_track()
-        .set_volume(audio_settings.scene() as f64, Tween::default());
 }
 
 fn handle_input(

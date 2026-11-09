@@ -1,7 +1,9 @@
+pub mod adapter;
 pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
 pub mod chat_reaction;
+pub mod connectivity;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
@@ -11,29 +13,25 @@ pub mod preview;
 pub mod private_chat;
 pub mod profile;
 pub mod pulse;
+pub mod recovery;
+pub mod room_connection;
 pub mod signed_login;
 #[cfg(test)]
 mod test;
 mod traffic;
 #[cfg(feature = "transport_debug")]
 mod transport_debug;
+#[cfg(feature = "livekit")]
+pub mod voice_room;
 pub mod websocket_room;
 
 use std::marker::PhantomData;
 
 use alloy_core::primitives::Address;
-use bevy::{
-    ecs::system::SystemParam,
-    prelude::*,
-    tasks::{IoTaskPool, Task},
-};
-use common::{
-    structs::{CurrentRealm, EmoteMask, MicState, WorldHold},
-    util::{TaskCompat, TaskExt},
-};
-use http::{StatusCode, Uri};
+use bevy::{ecs::system::SystemParam, prelude::*};
+use common::structs::{CurrentRealm, EmoteMask, MicState, WorldHold};
 use preview::PreviewPlugin;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use signed_login::{SignedLoginPlugin, StartSignedLogin};
 use tokio::sync::mpsc::Sender;
 
@@ -41,9 +39,8 @@ use dcl_component::{
     proto_components::{kernel::comms::rfc4, pulse as pulse_proto},
     DclWriter, ToDclWriter,
 };
-use ipfs::IpfsAssetServer;
 use prost::Message as _;
-use wallet::{sign_request, Wallet};
+use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
 
@@ -99,6 +96,8 @@ impl Plugin for CommsPlugin {
             ));
 
         app.add_plugins((
+            room_connection::RoomConnectionPlugin,
+            connectivity::ConnectivityPlugin,
             WebsocketRoomPlugin,
             SignedLoginPlugin,
             ArchipelagoPlugin,
@@ -111,7 +110,13 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
+        app.add_plugins((
+            LivekitPlugin,
+            private_chat::PrivateChatPlugin,
+            voice_room::VoiceRoomPlugin,
+        ));
+        #[cfg(not(feature = "livekit"))]
+        app.add_systems(Update, reject_unavailable_voice_rooms);
         app.init_resource::<MicState>()
             .init_resource::<global_crdt::NearbyPanning>();
 
@@ -123,12 +128,21 @@ impl Plugin for CommsPlugin {
             Update,
             (
                 process_realm_change.run_if(not(resource_exists::<WorldHold>)),
-                connect_scene_room,
+                (connect_scene_room, update_scene_connection).chain(),
             ),
         );
 
         #[cfg(feature = "transport_debug")]
         app.add_plugins(transport_debug::TransportDebugPlugin);
+    }
+}
+
+#[cfg(not(feature = "livekit"))]
+fn reject_unavailable_voice_rooms(mut events: EventReader<system_bridge::SystemApi>) {
+    for event in events.read() {
+        if let system_bridge::SystemApi::SetVoiceRoom { response, .. } = event {
+            response.send(Err("Voice rooms are unavailable in this build".to_owned()));
+        }
     }
 }
 
@@ -475,7 +489,7 @@ pub fn broadcast<'a, B: Broadcast + Clone + 'static>(
 fn process_realm_change(
     mut commands: Commands,
     realm: Res<CurrentRealm>,
-    adapters: Query<Entity, With<Transport>>,
+    adapters: Query<Entity, With<room_connection::RealmRoom>>,
     mut manager: AdapterManager,
     wallet: Res<Wallet>,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
@@ -501,10 +515,7 @@ fn process_realm_change(
 
         if let Some(comms) = realm.comms.as_ref() {
             if let Some(adapter) = comms.adapter.as_ref() {
-                let real_adapter = adapter
-                    .split_once(':')
-                    .map(|(_, tail)| tail)
-                    .unwrap_or(adapter.as_str());
+                let real_adapter = adapter.strip_prefix("v3:").unwrap_or(adapter);
                 // realm transports are client-only (gate above): the single shared context
                 let Ok(context) = contexts.single() else {
                     return;
@@ -529,41 +540,11 @@ pub struct SetCurrentScene {
     pub scene_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct GatekeeperResponse {
-    #[serde(alias = "fixedAdapter")]
-    adapter: String,
-}
-
-/// Signed request to a comms-gatekeeper endpoint, returning the adapter string it mints. `meta`
-/// travels in the signed identity headers, not the body.
-pub(crate) async fn mint_gatekeeper_adapter(
-    method: &str,
-    client: reqwest::Client,
-    uri: Uri,
-    wallet: &Wallet,
-    meta: String,
-) -> Result<String, anyhow::Error> {
-    let headers = sign_request(method, &uri, wallet, meta).await?;
-
-    let mut request = client
-        .request(method.parse()?, uri.to_string())
-        .timeout(std::time::Duration::from_secs(10))
-        .header("Content-Type", "application/json");
-    for (k, v) in headers {
-        request = request.header(k, v);
-    }
-    let response = request.send().await?;
-
-    if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.status()));
-    }
-
-    Ok(response.json::<GatekeeperResponse>().await?.adapter)
-}
-
 #[derive(Component)]
 pub struct SceneRoom(pub String);
+
+#[derive(Component)]
+struct SceneRoomTarget(SetCurrentScene);
 
 #[derive(Resource, Default)]
 pub struct SceneRoomConnection(pub Option<(SetCurrentScene, String, Entity)>);
@@ -594,143 +575,143 @@ pub struct DisableRealmComms(pub bool);
 #[derive(Resource, Default)]
 pub struct SceneRoomAdapterOverride(pub Option<String>);
 
-#[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,
-    mut gatekeeper_task: Local<Option<Task<Result<(String, SetCurrentScene), anyhow::Error>>>>,
     mut current: ResMut<SceneRoomConnection>,
     mut scene: EventReader<SetCurrentScene>,
     wallet: Res<Wallet>,
-    ipfs: IpfsAssetServer,
+    config: Res<common::structs::AppConfig>,
     disabled: Res<DisableSceneRoomGatekeeper>,
     adapter_override: Res<SceneRoomAdapterOverride>,
     preview_mode: Res<common::structs::PreviewMode>,
     contexts: Query<Entity, With<global_crdt::GlobalCrdtState>>,
     current_realm: Res<CurrentRealm>,
     world_secret: Res<ipfs::world_access::WorldCommsSecret>,
+    rooms: Query<(Entity, &SceneRoomTarget)>,
 ) {
+    use room_connection::{CredentialRequest, NeedsAdapter, RoomContext};
     if disabled.0 {
-        // orchestrated servers receive pre-minted adapters over the control channel and
-        // must never sign gatekeeper handshakes themselves
         scene.clear();
         return;
     }
-    if let Some(ev) = scene.read().last().cloned() {
-        if let Some((existing, room, entity)) = current.0.take() {
-            if existing == ev {
-                current.0 = Some((existing, room, entity));
-                return;
-            }
-            if let Ok(mut commands) = commands.get_entity(entity) {
-                commands.despawn();
-            }
-            warn!("disconnected scene channel {ev:?}");
+    let event = scene.read().last().cloned();
+    if current_realm.is_changed() && event.is_none() {
+        for (entity, _) in &rooms {
+            commands.entity(entity).despawn();
         }
-        if adapter_override.0.is_some() && !preview_mode.is_preview {
-            warn_once!("DCL_SCENE_ROOM_ADAPTER is ignored outside preview mode");
+        current.0 = None;
+        return;
+    }
+    let desired = event.or_else(|| {
+        wallet
+            .is_changed()
+            .then(|| rooms.iter().next().map(|(_, target)| target.0.clone()))
+            .flatten()
+    });
+    let Some(ev) = desired else {
+        return;
+    };
+    if !wallet.is_changed()
+        && !current_realm.is_changed()
+        && rooms.iter().any(|(_, target)| target.0 == ev)
+    {
+        return;
+    }
+    for (entity, _) in &rooms {
+        commands.entity(entity).despawn();
+    }
+    current.0 = None;
+    if ev.scene_id.is_empty() || wallet.address().is_none() {
+        return;
+    }
+    let Ok(context) = contexts.single() else {
+        return;
+    };
+    if let Some(adapter) = adapter_override
+        .0
+        .as_ref()
+        .filter(|_| preview_mode.is_preview)
+    {
+        if !matches!(
+            adapter::parse_adapter(adapter),
+            Ok((adapter::AdapterKind::Livekit, _))
+        ) {
+            warn!("invalid scene room adapter override");
+            return;
         }
-        if ev.scene_id.is_empty() {
-            *gatekeeper_task = None;
-        } else if let Some(adapter) = adapter_override
-            .0
-            .clone()
-            .filter(|_| preview_mode.is_preview)
-        {
-            // local/offline testing (preview only): skip the gatekeeper HTTP mint and
-            // connect the given adapter directly. Scene rooms feed the single shared
-            // client context. ONLY livekit adapters, mirroring the orchestrated-server
-            // gate: any other protocol (signed-login, ws-room, fixed-adapter recursion)
-            // could make the engine sign a remote-chosen payload with its identity.
-            *gatekeeper_task = None;
-            if !adapter.starts_with("livekit:") {
-                warn_once!("ignoring non-livekit scene room adapter override");
-                return;
-            }
-            let Ok(context) = contexts.single() else {
-                return;
-            };
-            if let Some(ent) = manager.connect_scene(&adapter, context) {
-                commands
-                    .entity(ent)
-                    .try_insert(SceneRoom(ev.scene_id.clone()));
-                current.0 = Some((ev, adapter, ent));
-            }
-        } else {
-            let wallet = wallet.clone();
-            let preview = ev.scene_id.starts_with("b64-");
-            // A world's scene rooms come from the worlds server itself, which applies the
-            // world's access rule and takes the password the realm was entered with.
-            let world = (!common::structs::server_mode() && !preview)
-                .then(|| ipfs::world_access::world_name(&current_realm.about_url))
-                .flatten();
-            let url = match (&world, common::structs::server_mode(), preview) {
-                (Some(world), _, _) => format!(
-                    "{}/worlds/{world}/scenes/{}/comms",
-                    common::base_domain::service(Service::WorldsServer),
-                    ev.scene_id
-                ),
-                (None, true, true) => preview_server_gatekeeper_url(),
-                (None, true, false) => server_gatekeeper_url(),
-                (None, false, true) => preview_gatekeeper_url(),
-                (None, false, false) => gatekeeper_url(),
-            };
-            let uri = Uri::try_from(url).unwrap();
-            let client = ipfs.ipfs().client();
-            // The authoritative-server gatekeeper endpoint validates the full comms-handshake
-            // metadata (intent/signer/realm) that the client `get-scene-adapter` path omits;
-            // signing the bare SetCurrentScene there returns 401. Mirror hammurabi's payload.
-            let meta = if common::structs::server_mode() || world.is_some() {
-                let mut meta = serde_json::json!({
-                    "intent": "dcl:explorer:comms-handshake",
-                    "signer": "dcl:explorer",
-                    "isGuest": wallet.is_guest(),
-                    "realm": { "serverName": ev.realm_name },
-                    "realmName": ev.realm_name,
-                    "sceneId": ev.scene_id,
-                });
-                if let Some(secret) = world_secret.0.as_ref().filter(|_| world.is_some()) {
-                    meta["secret"] = serde_json::json!(secret);
-                }
-                meta.to_string()
-            } else {
-                serde_json::to_string(&ev).unwrap()
-            };
-            *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-                Ok((
-                    mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await?,
-                    ev,
-                ))
-            }));
+        if let Some(entity) = manager.connect_scene(adapter, context) {
+            commands
+                .entity(entity)
+                .insert((SceneRoom(ev.scene_id.clone()), SceneRoomTarget(ev)));
+        }
+        return;
+    }
+    let preview = ev.scene_id.starts_with("b64-");
+    let world = (!common::structs::server_mode() && !preview)
+        .then(|| ipfs::world_access::world_name(&current_realm.about_url))
+        .flatten();
+    let url = match (&world, common::structs::server_mode(), preview) {
+        (Some(world), _, _) => format!(
+            "{}/worlds/{world}/scenes/{}/comms",
+            common::base_domain::service(Service::WorldsServer),
+            ev.scene_id
+        ),
+        (None, true, true) => preview_server_gatekeeper_url(),
+        (None, true, false) => server_gatekeeper_url(),
+        (None, false, true) => preview_gatekeeper_url(),
+        (None, false, false) => gatekeeper_url(),
+    };
+    let mut meta = serde_json::json!({
+        "realmName": ev.realm_name, "sceneId": ev.scene_id, "deviceIdentifier": config.user_id,
+    });
+    if common::structs::server_mode() || world.is_some() {
+        meta["intent"] = serde_json::json!("dcl:explorer:comms-handshake");
+        meta["signer"] = serde_json::json!("dcl:explorer");
+        meta["isGuest"] = serde_json::json!(wallet.is_guest());
+        meta["realm"] = serde_json::json!({ "serverName": ev.realm_name });
+        if let Some(secret) = world_secret.0.as_ref().filter(|_| world.is_some()) {
+            meta["secret"] = serde_json::json!(secret);
         }
     }
+    commands.spawn((
+        SceneRoom(ev.scene_id.clone()),
+        SceneRoomTarget(ev.clone()),
+        RoomContext(context),
+        room_connection::RoomAccessScope(common::access_status::AccessScope::Scene(
+            ev.scene_id.clone(),
+        )),
+        CredentialRequest {
+            method: "POST",
+            url,
+            metadata: meta.to_string(),
+        },
+        NeedsAdapter,
+    ));
+}
 
-    if let Some(mut task) = gatekeeper_task.take() {
-        match task.complete() {
-            None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => warn!("failed to get scene room from gatekeeper: {e}"),
-            Some(Ok((adapter, ev))) => {
-                // client-only (gatekeeper is disabled on servers): the client's scene
-                // rooms feed its single shared context, all scenes share one view
-                let Ok(context) = contexts.single() else {
-                    return;
-                };
-                if let Some(ent) = manager.connect_scene(&adapter, context) {
-                    warn!("added scene channel {ev:?}");
-                    commands
-                        .entity(ent)
-                        .try_insert(SceneRoom(ev.scene_id.clone()));
-                    current.0 = Some((ev, adapter, ent));
-                }
-            }
-        }
+fn update_scene_connection(
+    mut current: ResMut<SceneRoomConnection>,
+    #[cfg(feature = "livekit")] rooms: Query<
+        (Entity, &SceneRoomTarget, &livekit::LivekitTransport),
+        With<livekit::room::Connected>,
+    >,
+) {
+    #[cfg(feature = "livekit")]
+    let next = rooms.iter().next().and_then(|(entity, target, transport)| {
+        let (address, _) = adapter::livekit_credentials(&transport.address).ok()?;
+        Some((target.0.clone(), format!("livekit:{address}"), entity))
+    });
+    #[cfg(not(feature = "livekit"))]
+    let next = None;
+    if current.0 != next {
+        current.0 = next;
     }
 }
 
 #[derive(SystemParam)]
 pub struct AdapterManager<'w, 's> {
-    #[cfg(feature = "livekit")]
     commands: Commands<'w, 's>,
     ws_room_events: EventWriter<'w, StartWsRoom>,
     #[cfg(feature = "livekit")]
@@ -744,7 +725,11 @@ pub struct AdapterManager<'w, 's> {
 impl AdapterManager<'_, '_> {
     /// Connect the realm's island comms, feeding `context`.
     pub fn connect(&mut self, adapter: &str, context: Entity) -> Option<Entity> {
-        self.connect_inner(adapter, context)
+        let entity = self.connect_inner(adapter, context)?;
+        self.commands
+            .entity(entity)
+            .insert(room_connection::RealmRoom);
+        Some(entity)
     }
 
     /// Connect a per-scene messagebus room, feeding `context`. A scene room is distinguished only
@@ -754,60 +739,70 @@ impl AdapterManager<'_, '_> {
         self.connect_inner(adapter, context)
     }
 
-    #[cfg_attr(not(feature = "livekit"), allow(unused_variables))]
     fn connect_inner(&mut self, adapter: &str, context: Entity) -> Option<Entity> {
-        let Some((protocol, address)) = adapter.split_once(':') else {
-            warn!("unrecognised adapter string: {adapter}");
+        if adapter::parse_adapter(adapter).is_err() {
+            warn!("invalid or insecure room adapter");
             return None;
-        };
+        }
+        let entity = self
+            .commands
+            .spawn(room_connection::RoomContext(context))
+            .id();
+        self.connect_existing(adapter, Some(context), entity);
+        Some(entity)
+    }
 
-        match protocol {
-            "ws-room" => {
+    pub(crate) fn connect_existing(
+        &mut self,
+        adapter: &str,
+        context: Option<Entity>,
+        entity: Entity,
+    ) {
+        use adapter::AdapterKind;
+        let Ok((kind, address)) = adapter::parse_adapter(adapter) else {
+            warn!("invalid or insecure room adapter");
+            return;
+        };
+        match kind {
+            AdapterKind::Websocket => {
+                let Some(context) = context else {
+                    return;
+                };
                 self.ws_room_events.write(StartWsRoom {
-                    address: address.to_owned(),
+                    entity,
+                    address,
                     context,
                 });
             }
-            "signed-login" => {
+            AdapterKind::SignedLogin => {
+                let Some(context) = context else {
+                    return;
+                };
                 self.signed_login_events.send(StartSignedLogin {
-                    address: address.to_owned(),
+                    entity,
+                    address,
                     context,
                 });
             }
             #[cfg(feature = "livekit")]
-            "livekit" => {
-                let entity = self.commands.spawn_empty().id();
+            AdapterKind::Livekit => {
                 self.livekit_events.write(StartLivekit {
                     entity,
-                    address: address.to_owned(),
+                    address,
                     context,
                 });
-                return Some(entity);
             }
             #[cfg(not(feature = "livekit"))]
-            "livekit" => {
+            AdapterKind::Livekit => {
                 info!("livekit not enabled: comms offline");
             }
-            "offline" => {
+            AdapterKind::Offline => {
                 info!("comms offline");
             }
-            "archipelago" => {
-                debug!("arch starting: {address}");
-                // realm comms, client-only: archipelago transports resolve the shared
-                // context themselves, `context` is not forwarded
-                self.archipelago_events.write(StartArchipelago {
-                    address: address.to_owned(),
-                });
-            }
-            "fixed-adapter" => {
-                // fixed-adapter should be ignored and we use the tail as the full protocol:address
-                return self.connect_inner(address, context);
-            }
-            _ => {
-                warn!("unrecognised adapter protocol: {protocol}");
+            AdapterKind::Archipelago => {
+                self.archipelago_events
+                    .write(StartArchipelago { entity, address });
             }
         }
-
-        None
     }
 }

@@ -181,6 +181,7 @@ export function fakeSession(): EngineSession {
     pickDestination: vi.fn(),
     welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, reroll: vi.fn(), showLook: vi.fn(), preloadLook: vi.fn(), lookPending: false, lastLook: null, expectLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn() },
     sceneLoading: null,
+    connectivity: { state: null, retry: vi.fn() },
     loadingProgress: 0,
     travelError: null,
     dismissTravelError: vi.fn(),

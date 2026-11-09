@@ -3,8 +3,11 @@ name = "comms"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [features]
-livekit = ["dep:livekit", "media/html"]
+livekit = ["dep:livekit", "dep:livekit-signaling", "media/html"]
 room_debug = []
 transport_debug = ["bevy/bevy_picking"]
 
@@ -56,6 +59,7 @@ multipart = { version = "0.18.0", default-features = false, features = [
 image = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+livekit-signaling = { workspace = true, optional = true }
 livekit = { version = "0.9.7", features = ["native-tls"], optional = true }
 cpal = "0.15.2"
 rusty_enet = { workspace = true }

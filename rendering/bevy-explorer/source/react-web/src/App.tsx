@@ -54,6 +54,7 @@ import { ErrorBoundary } from './features/error/ErrorBoundary'
 import { SurfaceBoundary } from './features/error/SurfaceBoundary'
 import { CrashModal } from './features/error/CrashModal'
 import { openRealmError } from './features/error/RealmErrorModal'
+import { ConnectivityFeedback } from './features/error/ConnectivityFeedback'
 import { DIALOG_TITLE, isDialogSource } from './features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { unrecognisedEntryParams } from './lib/entryParams'
@@ -479,6 +480,7 @@ function Hud(): React.JSX.Element {
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

@@ -1,18 +1,14 @@
 use super::control::RoomPaused;
 use alloy_core::primitives::Address;
-use bevy::{
-    platform::{collections::HashMap, sync::Arc},
-    prelude::*,
-};
+use bevy::prelude::*;
 use common::{debug_panic, structs::AudioDecoderError, util::AsH160};
-use http::Uri;
 use tokio::sync::{mpsc, oneshot};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     kira::sound::streaming::StreamingSoundData,
     livekit::{
         id::ParticipantIdentity, participant::Participant, ConnectionState, DataPacket,
-        DisconnectReason, Room, RoomEvent, RoomOptions, RoomResult,
+        DisconnectReason, Room, RoomEvent, RoomOptions,
     },
 };
 
@@ -31,6 +27,9 @@ use crate::{
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
     },
+    room_connection::{
+        AdmissionError, CredentialRequest, FailureKind, NeedsAdapter, RoomRecovery, RoomSuspended,
+    },
     NetworkMessageRecipient,
 };
 #[cfg(target_arch = "wasm32")]
@@ -38,7 +37,7 @@ use crate::{
     global_crdt::StreamingSoundData,
     livekit::web::{
         ConnectionState, DataPacket, DisconnectReason, Participant, ParticipantIdentity, Room,
-        RoomEvent, RoomOptions, RoomResult,
+        RoomEvent, RoomOptions,
     },
 };
 
@@ -50,7 +49,6 @@ impl Plugin for LivekitRoomPlugin {
         app.add_observer(livekit_transport_added);
         app.add_observer(initiate_room_connection);
         app.add_observer(create_local_participant);
-        app.add_observer(disconnect_from_room_on_replace);
 
         app.add_systems(
             Update,
@@ -78,7 +76,7 @@ fn livekit_transport_added(trigger: Trigger<OnAdd, LivekitTransport>, mut comman
 fn initiate_room_connection(
     trigger: Trigger<OnAdd, Connecting>,
     mut commands: Commands,
-    mut livekit_transports: Query<&mut LivekitTransport>,
+    mut livekit_transports: Query<(&mut LivekitTransport, &mut RoomRecovery)>,
     paused: Query<(), With<RoomPaused>>,
     livekit_runtime: LivekitRuntimeRes,
     connection_availability: Res<State<ConnectionAvailability>>,
@@ -87,11 +85,15 @@ fn initiate_room_connection(
         || *connection_availability.get() == ConnectionAvailability::Unavailable
     {
         debug!("Can't connect because new connections are disabled.");
+        commands
+            .entity(trigger.target())
+            .remove::<Connecting>()
+            .insert(ConnectFailed);
         return;
     }
 
     let entity = trigger.target();
-    let Ok(mut livekit_transport) = livekit_transports.get_mut(entity) else {
+    let Ok((mut livekit_transport, mut recovery)) = livekit_transports.get_mut(entity) else {
         error!("{entity} does not have a LivekitRuntime.");
         return;
     };
@@ -99,20 +101,14 @@ fn initiate_room_connection(
     livekit_transport.retries += 1;
     let remote_address = &livekit_transport.address;
 
-    let url = Uri::try_from(remote_address).unwrap();
-    let address = format!(
-        "{}://{}{}",
-        url.scheme_str().unwrap_or_default(),
-        // authority, not host: host() drops an explicit port (breaks e.g. ws://localhost:7880)
-        url.authority().map(|a| a.as_str()).unwrap_or_default(),
-        url.path()
-    );
-    let params: HashMap<_, _, bevy::platform::hash::FixedHasher> =
-        HashMap::from_iter(url.query().unwrap_or_default().split('&').flat_map(|par| {
-            par.split_once('=')
-                .map(|(a, b)| (a.to_owned(), b.to_owned()))
-        }));
-    let token = params.get("access_token").cloned().unwrap_or_default();
+    let Ok((address, token)) = crate::adapter::livekit_credentials(remote_address) else {
+        recovery.failure = Some(FailureKind::Invalid);
+        commands
+            .entity(entity)
+            .remove::<Connecting>()
+            .insert(ConnectFailed);
+        return;
+    };
 
     commands
         .entity(entity)
@@ -124,37 +120,48 @@ fn initiate_room_connection(
 
 fn poll_connecting_rooms(
     mut commands: Commands,
-    livekit_rooms: Populated<(Entity, &mut ConnectingLivekitRoom)>,
+    livekit_rooms: Populated<(
+        Entity,
+        &mut ConnectingLivekitRoom,
+        &mut RoomRecovery,
+        Has<CredentialRequest>,
+        Has<crate::archipelago::IslandOwner>,
+    )>,
     livekit_runtime: LivekitRuntimeRes,
+    time: Res<Time>,
 ) {
-    for (entity, mut connecting_livekit_room) in livekit_rooms.into_inner() {
+    for (entity, mut connecting_livekit_room, mut recovery, refreshable, island) in
+        livekit_rooms.into_inner()
+    {
         if connecting_livekit_room.is_finished() {
-            let Ok(poll) =
-                livekit_runtime.block_on(connecting_livekit_room.as_deref_mut().as_mut())
-            else {
-                error!("Failed to poll ConnectingLivekitRoom.");
-                continue;
-            };
+            let poll = livekit_runtime
+                .block_on(connecting_livekit_room.as_deref_mut().as_mut())
+                .unwrap_or_else(|_| Err(AdmissionError::new(FailureKind::Transient)));
 
             match poll {
-                Ok((room, room_event_receiver)) => {
+                Ok(room) => {
+                    recovery.reset();
                     commands
                         .entity(entity)
-                        .try_insert(LivekitRoom {
-                            room: Arc::new(room),
-                            room_event_receiver,
-                            closed: false,
-                            traffic: Default::default(),
-                            publishes: Vec::new(),
-                        })
+                        .try_insert(room)
                         .remove::<ConnectingLivekitRoom>();
                 }
                 Err(err) => {
-                    error!("Failed to connect to room due to '{err}'.");
+                    let err = if err.kind == FailureKind::Denied {
+                        AdmissionError::new(if refreshable || island {
+                            FailureKind::Transient
+                        } else {
+                            FailureKind::CredentialsRequired
+                        })
+                    } else {
+                        err
+                    };
+                    recovery.fail(time.elapsed_secs_f64(), err);
+                    warn!(?entity, kind = ?err.kind, "room connection failed");
                     commands
                         .entity(entity)
                         .try_insert(ConnectFailed)
-                        .remove::<ConnectingLivekitRoom>();
+                        .remove::<(ConnectingLivekitRoom, Connecting)>();
                 }
             }
         }
@@ -162,15 +169,35 @@ fn poll_connecting_rooms(
 }
 
 #[allow(clippy::result_large_err)] // RoomError is livekit's, and connect failures are rare
-async fn connect_to_room(
-    address: String,
-    token: String,
-) -> RoomResult<(Room, mpsc::UnboundedReceiver<RoomEvent>)> {
+async fn connect_to_room(address: String, token: String) -> Result<LivekitRoom, AdmissionError> {
     let mut options = RoomOptions::default();
     options.auto_subscribe = false;
     options.adaptive_stream = false;
     options.dynacast = false;
-    Room::connect(&address, &token, options).await
+    Room::connect(&address, &token, options)
+        .await
+        .map(|(room, receiver)| LivekitRoom::new(room, receiver))
+        .map_err(classify_connect_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn classify_connect_error(error: livekit::RoomError) -> AdmissionError {
+    if let livekit::RoomError::Engine(livekit::rtc_engine::EngineError::Signal(
+        livekit_signaling::SignalError::Client(status, _),
+    )) = error
+    {
+        return AdmissionError::status(status.as_u16(), None);
+    }
+    AdmissionError::new(FailureKind::Transient)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn classify_connect_error(error: crate::livekit::web::RoomError) -> AdmissionError {
+    error
+        .status
+        .map_or(AdmissionError::new(FailureKind::Transient), |status| {
+            AdmissionError::status(status, None)
+        })
 }
 
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
@@ -189,10 +216,15 @@ const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
 fn process_room_events(
     mut commands: Commands,
-    livekit_rooms: Query<(Entity, &mut LivekitRoom, &mut UnannouncedParticipants)>,
+    livekit_rooms: Query<(
+        Entity,
+        &mut LivekitRoom,
+        &mut UnannouncedParticipants,
+        &mut RoomRecovery,
+    )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced, mut recovery) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -223,19 +255,29 @@ fn process_room_events(
                             // a server has no "connected in another tab" UX: mark the room
                             // terminal so the headless supervisor reaps it and re-mints
                             commands.entity(entity).try_insert(ServerRoomTerminal);
-                        } else {
+                        } else if reason == DisconnectReason::DuplicateIdentity {
+                            recovery.failure = Some(FailureKind::IdentityConflict);
                             commands.set_state(ConnectionAvailability::Unavailable);
+                        } else {
+                            recovery.failure = Some(FailureKind::Denied);
                         }
                     }
                 }
                 RoomEvent::ConnectionStateChanged(state) => match state {
                     ConnectionState::Connected => {
+                        recovery.reset();
                         commands.entity(entity).try_insert(Connected);
                     }
                     ConnectionState::Reconnecting => {
                         commands.entity(entity).try_insert(Reconnecting);
                     }
                     ConnectionState::Disconnected => {
+                        if recovery.failure.is_none() {
+                            recovery.fail(
+                                time.elapsed_secs_f64(),
+                                AdmissionError::new(FailureKind::Transient),
+                            );
+                        }
                         livekit_room.closed = true;
                         commands.entity(entity).try_insert(Disconnected);
                     }
@@ -428,29 +470,6 @@ fn create_local_participant(
     });
 }
 
-fn disconnect_from_room_on_replace(
-    trigger: Trigger<OnReplace, LivekitRoom>,
-    livekit_rooms: Query<&LivekitRoom>,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    let entity = trigger.target();
-    let Ok(livekit_room) = livekit_rooms.get(entity) else {
-        unreachable!("Infallible query.");
-    };
-
-    if livekit_room.closed {
-        // re-dialled after the SDK gave the room up; nothing left to close
-        return;
-    }
-    let room = livekit_room.room.clone();
-    debug!("Closing room {}.", room.name());
-    livekit_runtime.spawn(async move {
-        if let Err(err) = room.close().await {
-            error!("Error while closing room {}. '{err}'.", room.name());
-        }
-    });
-}
-
 type SubscribeToAudio = (
     Entity,
     Address,
@@ -605,7 +624,22 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
 
 fn try_reconnect(
     mut commands: Commands,
-    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>)>,
+    rooms: Query<
+        (
+            Entity,
+            &RoomRecovery,
+            Has<CredentialRequest>,
+            Option<&crate::archipelago::IslandOwner>,
+        ),
+        (
+            Or<(With<Disconnected>, With<ConnectFailed>)>,
+            Without<Connecting>,
+            Without<NeedsAdapter>,
+            Without<RoomPaused>,
+            Without<RoomSuspended>,
+        ),
+    >,
+    time: Res<Time>,
 ) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints
@@ -613,7 +647,34 @@ fn try_reconnect(
         // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
         return;
     }
-    for entity in rooms.into_inner() {
+    for (entity, recovery, refreshable, island) in &rooms {
+        if !recovery.can_retry(time.elapsed_secs_f64()) {
+            continue;
+        }
+        restart_room(
+            &mut commands,
+            entity,
+            refreshable,
+            island.map(|island| island.0),
+        );
+    }
+}
+
+/// Manual resume and automatic recovery use the same credential source.
+pub(super) fn restart_room(
+    commands: &mut Commands,
+    entity: Entity,
+    refreshable: bool,
+    island: Option<Entity>,
+) {
+    if let Some(island) = island {
+        if let Ok(mut owner) = commands.get_entity(island) {
+            owner.insert(crate::archipelago::RefreshIsland);
+            commands.entity(entity).insert(RoomSuspended);
+        }
+    } else if refreshable {
+        commands.entity(entity).insert(NeedsAdapter);
+    } else {
         commands.entity(entity).try_insert(Connecting);
     }
 }
