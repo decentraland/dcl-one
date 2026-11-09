@@ -3,8 +3,7 @@ import type { VoiceChatParticipant } from "./VoiceChatParticipant";
 
 /**
  * The voice chat the local user is in or being offered: one snapshot per change
- * (`GetVoiceChatStateStream`). Statuses and kinds follow unity-explorer's `VoiceChatStatus` and
- * `VoiceChatType`.
+ * (`GetVoiceChatStateStream`).
  */
 export type VoiceChatState = { 
 /**

@@ -1,7 +1,6 @@
 /* Voice chat panel — the private call titlebar (incoming / outgoing / connecting / in call / error)
-   and the community stream (speakers, people, controls). Unity's ChatMainSharedAreaView stacks
-   VoiceChatPanelView over the chat in a 738px shared area: the panel is --panel-h tall (the
-   VoiceChatPanelResizePresenter sizes, set by VoiceChatPanel.tsx) and sits on the chat column
+   and the community stream (speakers, people, controls). The panel stacks over the chat in a 738px
+   shared area: it is --panel-h tall (VOICE_PANEL_SIZE, set by VoiceChatPanel.tsx) and sits on the chat column
    (--chat-h), scaled with the HUD from the bottom-left like the chat. Layout only: every control is
    a design primitive. */
 .root {
@@ -61,7 +60,7 @@
   gap: 4px;
 }
 
-/* The private call titlebar (Unity VoiceChat*Titlebar, 46px): the peer and two text lines on the
+/* The private call titlebar (46px): the peer and two text lines on the
    left, the round buttons on the right. */
 .bar {
   display: flex;
@@ -133,7 +132,7 @@
   to { opacity: 1; }
 }
 
-/* The round 28px call buttons (Unity HangUpButton, AcceptButton, MicrophoneButton). */
+/* The round 28px call buttons (hang up, accept, microphone). */
 .hangUp {
   background: var(--error);
   color: var(--text);
@@ -333,7 +332,7 @@
   flex: 1;
 }
 
-/* The "stream in this scene" banner (Unity SceneVoiceChatPanelView, 50px) in the panel's dock: it
+/* The "stream in this scene" banner (50px) in the panel's dock: it
    composes .root. */
 .banner {
   gap: 10px;

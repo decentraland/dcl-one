@@ -4,8 +4,7 @@
 //   to:   the page: voiceChatState (one snapshot per change), communityVoiceUpdate,
 //         activeCommunityVoiceChats, sceneVoiceChat (the stream happening where the player stands)
 // Actions go the other way (voiceChatAction → BevyApi.voiceChat.action); their outcome shows on
-// the state stream. Mirrors unity-explorer's VoiceChatOrchestrator relays plus its
-// CommunityVoiceChatCallStatusService active-chats fetch and SceneVoiceChatTrackerService.
+// the state stream.
 import { getPlayer } from '@dcl/sdk/players'
 import { getRealm } from '~system/Runtime'
 import { BevyApi } from '../bevy-api'
@@ -51,7 +50,7 @@ export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[] | n
 
 /** The stream whose places include where the player is (the first wins): in a world (an ENS name,
  *  `*.eth`), a place in that world; in Genesis City, the parcel. A world's parcels are its own, so
- *  they never match a Genesis place (unity-explorer's tracker picks by `IsWorld` the same way). With
+ *  they never match a Genesis place. With
  *  the realm not known yet, nothing matches. */
 export function streamHere(chats: ActiveCommunityVoiceChat[], parcel: string, realm: string): ActiveCommunityVoiceChat | null {
   const name = realm.toLowerCase()

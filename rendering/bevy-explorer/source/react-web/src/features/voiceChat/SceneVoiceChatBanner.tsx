@@ -1,5 +1,5 @@
 // "A stream is happening here": the live community stream whose places include the parcel or the
-// world the player stands in (unity-explorer's SceneVoiceChatActiveCallView), with a Join button.
+// world the player stands in, with a Join button.
 import { Avatar, Button, MaskIcon } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'

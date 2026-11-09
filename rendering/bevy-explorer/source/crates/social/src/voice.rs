@@ -2,8 +2,7 @@
 //! procedures of `SocialService` and the two update subscriptions, as plain types the engine's
 //! voice module consumes without the proto. The server side of every procedure is the catalyst's
 //! social RPC (`services/catalyst/social/src/rpc/service/{private_voice,community_voice}.rs`),
-//! which mirrors upstream; the client behaviour follows unity-explorer's
-//! `Assets/DCL/VoiceChat/Services/RPC{Private,Community}VoiceChatService.cs`.
+//! which mirrors upstream.
 
 use tokio::sync::oneshot;
 
@@ -215,7 +214,7 @@ pub(crate) mod rpc {
     use dcl_rpc::transports::Transport;
     use web_time::Duration;
 
-    /// Unity's `RPCSocialServices` unary timeout.
+    /// How long a unary call waits for its reply.
     const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// Maps a response `oneof` to the plain result: `Ok` through the given expression, each

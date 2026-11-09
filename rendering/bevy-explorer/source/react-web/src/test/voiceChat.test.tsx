@@ -137,7 +137,7 @@ describe('community stream panel', () => {
 
   it('a moderator sees the raised hands, approves one and can end the stream', async () => {
     const s = renderPanel(inStream({ localRole: 'owner', localSpeaker: true, micEnabled: false }))
-    // the raised hands live in the People view (Unity's search view), reached from the footer
+    // the raised hands live in the People view, reached from the footer
     expect(screen.getByRole('button', { name: 'People' })).toHaveTextContent('1')
     await userEvent.click(screen.getByRole('button', { name: 'People' }))
     await userEvent.click(screen.getByRole('button', { name: 'Approve Sharknado' }))
@@ -249,7 +249,7 @@ describe('live streams', () => {
 })
 
 describe('the call gate', () => {
-  it('follows the partner state and the current call, as the Unity tooltips do', () => {
+  it('follows the partner state and the current call, as the call button tooltips do', () => {
     expect(callGate(null, { state: 'connected', online: true }, false).reason).toBe('Voice chat is not available.')
     expect(callGate(idle, { state: 'connected', online: true }, false)).toEqual({ allowed: true })
     expect(callGate(idle, { state: 'connected', online: false }, false).reason).toBe('This user is offline.')

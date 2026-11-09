@@ -374,7 +374,7 @@ export type VoiceChatStatus =
   | 'genericError'
 
 /** The voice chat the local user is in or being offered (scene → page, one per change). Mirrors the
- *  engine's VoiceChatState; statuses follow unity-explorer's VoiceChatStatus. */
+ *  engine's VoiceChatState. */
 export interface VoiceChatState {
   status: VoiceChatStatus
   /** 'none' | 'private' | 'community' */
@@ -447,8 +447,7 @@ export interface ActiveCommunityVoiceChatsMessage {
   loaded?: boolean
 }
 
-/** The live community stream whose places include where the player stands, or none
- *  (unity-explorer's SceneVoiceChatTrackerService). */
+/** The live community stream whose places include where the player stands, or none. */
 export interface SceneVoiceChatMessage {
   kind: 'sceneVoiceChat'
   chat: ActiveCommunityVoiceChat | null

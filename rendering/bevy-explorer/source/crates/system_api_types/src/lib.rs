@@ -161,8 +161,7 @@ pub struct VoiceChatParticipant {
 }
 
 /// The voice chat the local user is in or being offered: one snapshot per change
-/// (`GetVoiceChatStateStream`). Statuses and kinds follow unity-explorer's `VoiceChatStatus` and
-/// `VoiceChatType`.
+/// (`GetVoiceChatStateStream`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]

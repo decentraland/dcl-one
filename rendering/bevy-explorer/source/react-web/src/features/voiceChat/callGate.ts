@@ -1,5 +1,5 @@
-// Whether the local user may call someone right now, and the reason shown when not — unity-explorer's
-// CallButtonPresenter tooltips: the user is offline, accepts calls from friends only, the local user's
+// Whether the local user may call someone right now, and the reason shown when not — the
+// call button tooltips: the user is offline, accepts calls from friends only, the local user's
 // own privacy blocks it, a call is already running, a community stream is running, the remote is busy.
 import { showToast } from '../../design'
 import type { DmUserState, VoiceChatActionWire, VoiceChatState } from '../../engine/protocol'
@@ -95,7 +95,7 @@ function knownPartner(session: EngineSession, address: string): { state: DmUserS
 }
 
 /** Ring a user from a profile card, passport or the friends list: opens the DM conversation first
- *  (unity-explorer's `StartPrivateCallWithUserId`), then rings, or says why not. */
+ *  then rings, or says why not. */
 export function startCallWith(session: EngineSession, address: string): void {
   // a repeated click while this very call is being set up or rings: nothing to refuse
   if (callingAlready(session.voiceChat.state, address)) {

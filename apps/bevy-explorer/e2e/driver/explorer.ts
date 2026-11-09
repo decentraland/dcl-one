@@ -143,9 +143,9 @@ export interface VoiceCallParticipant {
   isSpeaking: boolean
 }
 
-/** The private call or community stream as the HUD sees it: unity-explorer's `VoiceChatStatus`
+/** The private call or community stream as the HUD sees it: its status
  *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
- *  `rejectingCall`, `busy`, `genericError`) and `VoiceChatType` (`none`, `private`, `community`). */
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
 export interface VoiceCallState {
   status: string
   kind: string

@@ -17,7 +17,7 @@
 }
 
 .open {
-  /* Unity's 738px shared area less the voice chat panel above it (46px by default; the panel
+  /* The 738px shared area less the voice chat panel above it (46px by default; the panel
      publishes its height as --voice-dock, VoiceChatPanel.tsx) and a 3px gap. */
   height: calc(735px - var(--voice-dock, 46px));
 }

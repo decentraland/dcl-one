@@ -602,7 +602,7 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
   const { name, picture, claimed, color } = usePartner(conversation.address)
   const { base, tag } = splitName(name)
   const status = conversation.state == null ? 'Checking…' : conversation.online ? 'Online' : 'Offline'
-  // Unity's CallButtonPresenter: the button, and why it is disabled when it is. Only with a session
+  // The call button, and why it is disabled when it is. Only with a session
   // (the chat also renders on its own).
   const session = useOptionalSession()
   const gate = session == null ? null : callGate(session.voiceChat.state, conversation, session.profile.data?.isGuest === true)

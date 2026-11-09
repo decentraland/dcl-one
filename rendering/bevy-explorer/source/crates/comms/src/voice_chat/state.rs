@@ -1,9 +1,6 @@
 //! The call state machine, off the ECS: every input (a HUD command, an RPC reply, a social update,
 //! a room or participant change) is applied to [`CallState`] and answered with the effects the
-//! engine must perform. Statuses, their transitions and the guards follow unity-explorer's
-//! `Assets/DCL/VoiceChat/Core/VoiceChatStatus.cs`, `VoiceChatOrchestrator.cs`,
-//! `PrivateVoiceChat/PrivateVoiceChatCallStatusService.cs` and
-//! `CommunityVoiceChat/CommunityVoiceChatCallStatusService.cs`.
+//! engine must perform.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +11,7 @@ use social::voice::{
     VoiceRefusal,
 };
 
-/// Unity `VoiceChatStatus`.
+/// Where the call stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Status {
     #[default]
@@ -34,7 +31,7 @@ pub enum Status {
 }
 
 impl Status {
-    /// Unity `IsNotConnected`: a new call may start.
+    /// A new call may start.
     pub fn is_not_connected(self) -> bool {
         matches!(
             self,
@@ -57,7 +54,7 @@ impl Status {
     }
 }
 
-/// Unity `VoiceChatType` (nearby voice is the existing, separate feature).
+/// The kind of call (nearby voice is the existing, separate feature).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Kind {
     #[default]
@@ -76,7 +73,7 @@ impl Kind {
     }
 }
 
-/// Unity `VoiceChatParticipantCommunityRole`, from the participant metadata `role`.
+/// A participant's community role, from the participant metadata `role`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Role {
     #[default]
@@ -105,7 +102,7 @@ impl Role {
         }
     }
 
-    /// Unity `VoiceChatRoleHelper.IsModeratorOrOwner`.
+    /// A moderator or the owner.
     pub fn is_moderator(self) -> bool {
         matches!(self, Role::Moderator | Role::Owner)
     }
@@ -113,7 +110,7 @@ impl Role {
 
 /// The participant metadata the gatekeeper stamps on a community room token and patches as
 /// moderation happens (`services/catalyst/comms/src/gatekeeper/voice/mod.rs`); a private room
-/// carries none. Unity `ParticipantCallMetadata`.
+/// carries none.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Metadata {
@@ -214,7 +211,7 @@ pub enum Rpc {
     },
 }
 
-/// Unity's call sounds (`PrivateVoiceChatView`, `CommunityVoiceChatInCallView`).
+/// The call sounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sound {
     /// Start the ring tune loop.
@@ -258,8 +255,8 @@ pub enum Reply {
     JoinCommunity(String, u64, Result<String, VoiceRefusal>),
     /// With the community it ends: ending an abandoned start must not drop the current stream.
     EndCommunity(String, Result<(), VoiceRefusal>),
-    /// Raise hand, promote, demote, kick, reject, mute: fire and forget, the result only logged
-    /// (Unity) or shown as the last error.
+    /// Raise hand, promote, demote, kick, reject, mute: fire and forget, the result only shown as
+    /// the last error.
     Moderation(Result<(), VoiceRefusal>),
 }
 
@@ -316,11 +313,11 @@ pub enum Input {
     CallMicChanged(bool),
 }
 
-/// Unity `HANG_UP_BEFORE_NEW_CALL_DELAY_MS`: a community start / join while in another call
+/// A community start / join while in another call
 /// hangs up first and starts this long after.
 pub const HANG_UP_BEFORE_NEW_CALL_SECS: f64 = 1.0;
 
-/// Unity `VoiceChatMicrophoneHandler`: who is not allowed in.
+/// Who is not allowed in.
 pub const GUEST_REFUSAL: &str = "Voice chat is not available for guest accounts.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -484,8 +481,7 @@ impl CallState {
                 let Some(call_id) = self.call_id.clone() else {
                     return effects;
                 };
-                // the tune stops the moment the callee answers (Unity: the InCall view replaces
-                // the ringing one); a refused accept then fails without a second stop
+                // the tune stops the moment the callee answers; a refused accept then fails without a second stop
                 self.status = Status::StartingCall;
                 effects.push(Effect::Sound(Sound::RingStop));
                 effects.push(Effect::Rpc(Rpc::AcceptPrivate { call_id }));
@@ -528,7 +524,7 @@ impl CallState {
                     if self.status.is_not_connected() {
                         return effects;
                     }
-                    // Unity `HangUp`: no server call, the room is just left
+                    // no server call, the room is just left
                     self.drop_call(&mut effects);
                 }
                 Kind::None => {}
@@ -620,7 +616,7 @@ impl CallState {
                             return effects;
                         }
                         self.set_call_mic(enabled, &mut effects);
-                        // Unity `VoiceChatMicrophoneHandler.NotifyMicrophoneStateChange`
+                        // tell the server, so the others see the speaker muted or not
                         if let (Some(community_id), Some(me)) = (self.community_id.clone(), self.me)
                         {
                             effects.push(Effect::Rpc(Rpc::MuteSpeaker {
@@ -663,7 +659,7 @@ impl CallState {
                 }
             }
             Input::SocialDisconnected => {
-                // Unity: the transport closed while not in a call is an error
+                // the transport closed while not in a call is an error
                 if !self.status.is_not_connected() && self.status != Status::InCall {
                     // the server keeps a ringing call open until told
                     self.pending_end = match (self.kind, self.status, self.call_id.clone()) {
@@ -841,7 +837,7 @@ impl CallState {
         self.local_role = Role::parse(&metadata.role);
         self.local_requesting_to_speak = metadata.is_requesting_to_speak;
         self.local_speaker = self.kind == Kind::Private || metadata.is_speaker;
-        // Unity `VoiceChatRoomManager`: a demoted speaker's mic goes down; a promoted one's
+        // a demoted speaker's mic goes down; a promoted one's
         // comes up muted (here: stays down until toggled)
         if was_speaker && !self.local_speaker {
             if self.mic_enabled {
@@ -979,7 +975,7 @@ impl CallState {
             && self.attempt == attempt
     }
 
-    /// Unity: `InvalidRequest` and `ConflictingError` are "busy", anything else an error.
+    /// `InvalidRequest` and `ConflictingError` are "busy", anything else an error.
     fn refused(&mut self, refusal: VoiceRefusal) {
         let status = match refusal {
             VoiceRefusal::Invalid(_) | VoiceRefusal::Conflict(_) => Status::Busy,
@@ -998,7 +994,7 @@ impl CallState {
     }
 
     fn private_update(&mut self, update: PrivateVoiceUpdate, effects: &mut Vec<Effect>) {
-        // Unity `VoiceChatOrchestrator`: private updates are ignored during a community call
+        // private updates are ignored during a community call
         if self.kind == Kind::Community && !self.status.is_not_connected() {
             return;
         }

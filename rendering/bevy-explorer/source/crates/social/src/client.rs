@@ -907,7 +907,7 @@ async fn run_one_connection(
         }
     };
     // Subscribe to the voice chat updates (private calls, community rooms), then ask for a call
-    // that rang while we were away, as unity-explorer's voice services do on every (re)connect.
+    // that rang while we were away, on every (re)connect.
     // Like community connectivity, a refusal is not fatal: it costs calls, not friends, DMs or
     // blocks.
     debug!("[social] Subscribing to voice chat updates...");

@@ -1,11 +1,9 @@
 // The voice chat panel: a private call (incoming, outgoing, connecting, in call, busy / error) or a
 // community stream (speakers, people, controls), driven by the engine's state snapshots
-// (session.voiceChat.state). Port of unity-explorer's VoiceChatPanelView: it is a layout element of
-// ChatMainSharedAreaView stacked above the chat, so it docks over the chat column and the chat
-// shrinks by its height (VoiceChatPanelResizePresenter's sizes, --voice-dock). The private call is
-// one 46px titlebar (VoiceChat{Incoming,Outgoing,ConnectingToCall,InCall,Error}Titlebar); the
-// community stream is CommunityVoiceChatInCallView (header, SPEAKERS grid, footer) with the People
-// view (CommunityVoiceChatSearchView) in its place. Actions go to the engine, whose next snapshot
+// (session.voiceChat.state). It is stacked above the chat in their shared area, so it docks over
+// the chat column and the chat shrinks by its height (VOICE_PANEL_SIZE, --voice-dock). The private
+// call is one 46px titlebar; the community stream is a header, the SPEAKERS grid and a footer, with
+// the People view in its place. Actions go to the engine, whose next snapshot
 // moves the panel.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, ContextMenu, ControlButton, Kebab, MaskIcon, SearchField, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
@@ -16,8 +14,6 @@ import { openProfileCard } from '../profileCard/ProfileCard'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { useSession } from '../session/SessionContext'
 import { voiceActive } from './callGate'
-// Unity's sprites (Assets/DCL/VoiceChat/Textures): MuteIcn / Unmute are the mic on / off images
-// of MicrophoneButton, the rest keep their names.
 import callIcon from '../../assets/voice/call.png'
 import endCallIcon from '../../assets/voice/end-call.png'
 import rejectCallIcon from '../../assets/voice/reject-call.png'
@@ -35,24 +31,24 @@ import rejectRequestIcon from '../../assets/voice/reject-request.png'
 import speakingFeedbackIcon from '../../assets/voice/speaking-feedback.png'
 import styles from './VoiceChatPanel.module.css'
 
-/** Unity `CommunityVoiceChatInCallPresenter.MAX_VISIBLE_SPEAKERS`. */
+/** The speakers shown in the grid. */
 const MAX_VISIBLE_SPEAKERS = 8
 
-/** Unity `VoiceChatPanelResizePresenter`: the panel's height (1080p canvas px) by state. The chat
+/** The panel's height (1080p canvas px) by state. The chat
  *  column below gives up the same amount (Chat.module.css reads --voice-dock). */
 export const VOICE_PANEL_SIZE = {
-  /** DEFAULT_VOICE_CHAT_SIZE / COLLAPSED_*_VOICE_CHAT_SIZE: the chat reserves this much always. */
+  /** A titlebar, or a collapsed stream: the chat reserves this much always. */
   bar: 46,
-  /** EXPANDED_COMMUNITY_VOICE_CHAT_1_LINE_SIZE: up to MAX_SPEAKERS_PER_LINE speakers. */
+  /** An expanded stream with one line of speakers (up to maxSpeakersPerLine). */
   expanded1: 215,
-  /** EXPANDED_COMMUNITY_VOICE_CHAT_2_LINES_SIZE. */
+  /** An expanded stream with two lines of speakers. */
   expanded2: 305,
   maxSpeakersPerLine: 4,
-  /** SceneVoiceChatPanelView's height. */
+  /** The "stream in this scene" banner. */
   scene: 50
 } as const
 
-/** The chat's shared area (Unity 738px): the voice panel sits at its top, the chat fills the rest. */
+/** The chat's shared area (738px): the voice panel sits at its top, the chat fills the rest. */
 const SHARED_AREA = 738
 const PANEL_GAP = 3
 /** The collapsed chat (its input row only). */
@@ -116,7 +112,7 @@ function peerName(address: string | null, fallback: string): { name: string; pic
 }
 
 
-/** Unity MicrophoneButton: a round 28px toggle; the clip plays from the engine. */
+/** The microphone button: a round 28px toggle; the clip plays from the engine. */
 function MicButton({ enabled, onToggle, disabled = false }: { enabled: boolean; onToggle: () => void; disabled?: boolean }): React.JSX.Element {
   const label = enabled ? 'Mute microphone' : 'Unmute microphone'
   return (
@@ -128,7 +124,7 @@ function MicButton({ enabled, onToggle, disabled = false }: { enabled: boolean; 
   )
 }
 
-/** Unity HangUpButton: the round red 28px button that ends, refuses or leaves. */
+/** The round red 28px button that ends, refuses or leaves. */
 function HangUpButton({ label, onClick, disabled = false }: { label: string; onClick: () => void; disabled?: boolean }): React.JSX.Element {
   return (
     <Tooltip label={label} side="top">
@@ -150,7 +146,7 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
   const connected = state.status === 'inCall' && state.connection === 'connected'
   const failed = state.status === 'busy' || state.status === 'genericError'
 
-  // Unity's titlebars: the header line above the name (or the talking line in an ongoing call)
+  // The titlebar: the header line above the name (or the talking line in an ongoing call)
   let head = 'Voice call'
   let line: React.ReactNode = null
   if (state.status === 'receivedCall') head = 'Incoming Call from'
@@ -325,7 +321,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
   }
   const shown = (p: VoiceChatParticipant): string => (p.address.toLowerCase() === me ? 'You' : splitName(p.name || p.address).base)
 
-  // Unity InCallHeader: the people count, then who is talking (Playername / Several people / *Crickets*)
+  // The header: the people count, then who is talking (Playername / Several people / *Crickets*)
   const status = !voiceActive(state)
     ? null
     : state.status === 'startingCall' || !connected
@@ -334,7 +330,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
         : 'Connecting'
       : `${state.participants.length} · ${talking.length === 0 ? '*Crickets*' : talking.length === 1 ? `${shown(talking[0])} talking` : 'Several people talking'}`
 
-  // Unity CommunityVoiceChatInCallButtonsView: mic (speakers) or raise / lower hand, leave stage, hang up
+  // The controls: mic (speakers) or raise / lower hand, leave stage, hang up
   const controls = (
     <>
       {state.localSpeaker ? (
@@ -386,7 +382,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
 
       {collapsed ? null : people ? (
         <>
-          {/* Unity CommunityVoiceChatSearchView: "People", back, the search, the sections */}
+          {/* The People view: "People", back, the search, the sections */}
           <div className={styles.sectionHead}>
             <ControlButton variant="faint" size="sm" aria-label="Back to speakers" onClick={() => setPeople(false)}>
               ‹
@@ -407,7 +403,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
                     <Face p={p} size={30} />
                     <span className={styles.rowName}>{splitName(p.name || p.address).base}</span>
                     <div className={styles.rowActions}>
-                      {/* Unity VoiceChatParticipantEntry: the 20px Approve / Deny sprites */}
+                      {/* The 20px Approve / Deny icons */}
                       <Tooltip label="Deny" side="top">
                         <ControlButton variant="ghost" shape="circle" size="sm" aria-label={`Deny ${splitName(p.name || p.address).base}`} onClick={() => act({ op: 'rejectSpeakRequest', address: p.address })}>
                           <img src={rejectRequestIcon} alt="" width={20} height={20} />

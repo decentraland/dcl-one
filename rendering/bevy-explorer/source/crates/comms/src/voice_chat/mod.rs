@@ -5,9 +5,7 @@
 //!
 //! The room is deliberately not a [`Transport`](crate::Transport): nothing broadcast to the realm's
 //! transports reaches it, its participants never touch the avatar store, and its audio tracks are
-//! subscribed here, not by the spatial path. Port of unity-explorer's `Assets/DCL/VoiceChat/`
-//! (`VoiceChatOrchestrator`, `VoiceChatRoomManager`, `VoiceChatParticipantsStateService`,
-//! `MicrophoneTrackPublisher`, `RemoteTrackListener`).
+//! subscribed here, not by the spatial path.
 
 pub mod state;
 
@@ -99,10 +97,10 @@ impl Plugin for VoiceChatPlugin {
     }
 }
 
-/// Unity `VoiceChatConfiguration.MaxReconnectionAttempts` and `ReconnectionDelayMs`.
+/// How often, and how far apart, a dropped call room is re-dialled.
 const MAX_RECONNECTION_ATTEMPTS: u32 = 3;
 const RECONNECTION_DELAY_SECS: f64 = 2.0;
-/// `voice_chat_call_tune.mp3` (Unity `Chat - Voice - Call Tune.mp3`) plays once; the ring loops
+/// `voice_chat_call_tune.mp3` plays once; the ring loops
 /// it by re-triggering it this often (its length).
 const CALL_TUNE_SECS: f32 = 3.056;
 /// What the active-speaker stream names the voice room's channel.
@@ -278,7 +276,7 @@ fn sound_clip(sound: Sound) -> Option<&'static str> {
     })
 }
 
-/// Unity `VoiceChatDisconnectReasonHelper`: every reason the SDK names is terminal; what is left
+/// Every reason the SDK names is terminal; what is left
 /// (a media failure, an agent error, a refused dial) gets the re-dial budget.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_terminal_disconnect(reason: &livekit::DisconnectReason) -> bool {

@@ -78,7 +78,7 @@ export function CommunitiesPage({
   const [openId, setOpenId] = useState<string | null>(null)
   // Main area shows the browse grid, or all of "My Communities" (via VIEW ALL).
   const [tab, setTab] = useState<'browse' | 'mine'>('browse')
-  // Unity's "Streaming" filter: only the communities with a live voice stream.
+  // The "Streaming" filter: only the communities with a live voice stream.
   const [streaming, setStreaming] = useState(false)
 
   // The community detail modal lives in the HUD-wide popup layer (openCommunityModal), not this page's
