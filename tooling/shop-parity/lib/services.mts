@@ -129,6 +129,13 @@ export function fromShopApi(method: string, path: string): { service: Service; p
   return null;
 }
 
+/**
+ * Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
+ * miss when the recording lacks it) instead of rendering the app's 404 page. It covers each same-origin
+ * service path the production sites build reads (apps/sites/.env.production).
+ */
+export const NODE_MOUNTS = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "camera-reel-service", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
+
 /** A request the dcl-one side makes to its own origin (or that sites makes to the node). */
 export function fromNodePath(method: string, path: string): { service: Service; path: string } {
   if (path.startsWith(`${SHOP_API_PREFIX}/`)) {
@@ -141,6 +148,9 @@ export function fromNodePath(method: string, path: string): { service: Service; 
     ["/transactions-api", "transactions"],
     ["/signatures-api", "signatures"],
     ["/builder-api", "builder"],
+    // The node serves the camera reel's API under /camera-reel-service, and the gateway aliases /camera-reel to it.
+    ["/camera-reel-service", "camera-reel"],
+    ["/camera-reel", "camera-reel"],
   ] as const) {
     if (path.startsWith(`${prefix}/`)) return { service, path: path.slice(prefix.length) };
   }

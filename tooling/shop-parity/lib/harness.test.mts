@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,13 +10,13 @@ import { deflateSync } from "node:zlib";
 import { assertFreshBuild, buildSites, dclOneIdentity, isCommitted, localEnvFiles, stampFile } from "./build.mts";
 import type { Collected, Node } from "./collect.mts";
 import { foreignRequest, guardLoopback } from "./guard.mts";
-import { referencePin } from "./paths.mts";
+import { referencePin, SITES } from "./paths.mts";
 import { decodePng, encodePng, imageSize, pasteTile, placeholderPng, type Rgba } from "./png.mts";
 import { pixelDiff } from "./pixeldiff.mts";
 import { fillMisses, learnable, Recording, savingAfter } from "./recording.mts";
 import { classifyMiss, classifyUnknown, gateFailures, isIdentical } from "./verdict.mts";
 import { fromBrowser, imageSeed, startReplay } from "./servers.mts";
-import { canonicalQuery, fromNodePath, fromShopApi } from "./services.mts";
+import { canonicalQuery, fromNodePath, fromShopApi, NODE_MOUNTS } from "./services.mts";
 import { compareStructure, coverByRegions, line } from "./structure.mts";
 
 const solid = (w: number, h: number, rgb: [number, number, number]): Rgba => {
@@ -178,6 +178,17 @@ describe("services", () => {
     assert.deepEqual(fromShopApi("GET", "/v1/outfits"), { service: "shop-server", path: "/v1/outfits" });
     assert.deepEqual(fromShopApi("POST", "/v1/purchase-offers"), { service: "offers", path: "/v1/purchase-offers" });
     assert.deepEqual(fromNodePath("GET", "/lambdas/profiles/0x1"), { service: "peer", path: "/lambdas/profiles/0x1" });
+  });
+  it("answers the node's camera reel, and the gateway's alias of it, from the recorded camera-reel service", () => {
+    const upstream = { service: "camera-reel", path: "/api/wearables/0xabc-0/images" };
+    assert.deepEqual(fromNodePath("GET", "/camera-reel-service/api/wearables/0xabc-0/images"), upstream);
+    assert.deepEqual(fromNodePath("GET", "/camera-reel/api/wearables/0xabc-0/images"), upstream);
+  });
+  it("relays to the replay every same-origin service path the production sites build reads", () => {
+    const env = readFileSync(join(SITES, ".env.production"), "utf8");
+    const paths = [...env.matchAll(/^VITE_[A-Z_]+_URL=["']?(\/[^\s"']*)/gm)].map((m) => m[1]!);
+    assert.ok(paths.includes("/camera-reel-service"), "apps/sites/.env.production no longer names the camera reel's path");
+    for (const p of paths) assert.ok(NODE_MOUNTS.some((m) => p === `/${m}` || p.startsWith(`/${m}/`)), `${p} renders the sites app's 404 instead of reaching the replay`);
   });
   it("orders and re-encodes a query so equal queries key alike", () => {
     assert.equal(canonicalQuery("?b=2&a=x%20y&a=1"), canonicalQuery("a=1&a=x+y&b=2"));
