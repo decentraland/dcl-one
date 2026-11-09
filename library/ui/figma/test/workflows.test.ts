@@ -64,24 +64,33 @@ describe.each(['ui-library.yml'])('%s', (file) => {
 // workflow_run workflow that executes only the default branch's code and reads the pull request as data.
 type WorkflowStep = {
   id?: string
+  name?: string
   uses?: string
   run?: string
+  shell?: string
+  'working-directory'?: string
   with?: Record<string, unknown>
   env?: Record<string, unknown>
+}
+type Job = {
+  name?: string
+  needs?: string | string[]
+  if?: string
+  env?: Record<string, unknown>
+  environment?: string | { name?: string; deployment?: boolean }
+  permissions?: Record<string, string>
+  outputs?: Record<string, string>
+  container?: unknown
+  services?: unknown
+  defaults?: unknown
+  steps: WorkflowStep[]
 }
 type Workflow = {
   on: Record<string, unknown> | string | string[]
   permissions?: Record<string, string>
   env?: Record<string, unknown>
-  jobs: Record<
-    string,
-    {
-      name?: string
-      env?: Record<string, unknown>
-      environment?: string | { name?: string }
-      steps: WorkflowStep[]
-    }
-  >
+  defaults?: unknown
+  jobs: Record<string, Job>
 }
 const workflowFiles = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))
 const load = (file: string) => parse(readFileSync(path.join(workflows, file), 'utf8')) as Workflow
@@ -92,42 +101,176 @@ const triggers = (workflow: Workflow) =>
       ? workflow.on
       : Object.keys(workflow.on)
 const SECRET = 'secrets.FIGMA_FILE_KEY'
+// Context names ignore case, so every spelling of the secret counts.
+const KEY_REFERENCE = /\bsecrets\.figma_file_key\b/i
+// The whole secrets context (toJSON(secrets), secrets['…'], secrets[…]) reaches the key without naming it.
+const expressions = (value: unknown) =>
+  [...JSON.stringify(value ?? null).matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((match) => match[1]!)
+const readsWholeSecrets = (value: unknown) =>
+  expressions(value).some((expression) => /\bsecrets\b(?!\s*\.\s*[A-Za-z_])/i.test(expression))
+const referencesKey = (value: unknown) =>
+  KEY_REFERENCE.test(JSON.stringify(value ?? null)) || readsWholeSecrets(value)
+const environmentName = (job: Job) =>
+  String(typeof job.environment === 'string' ? job.environment : (job.environment?.name ?? ''))
+// FIGMA_FILE_KEY is a repository secret, so a key reader is any job that references it in any form.
+const isKeyReaderJob = (job: Job) => referencesKey(job)
+const isKeyReader = (workflow: Workflow) => referencesKey(workflow)
+// Environments a key-holding job may declare. None for now: the key needs no environment, so a reader that
+// declares one is reported for a decision rather than accepted.
+const KEY_ENVIRONMENTS: string[] = []
+// A reader may only be started by events that run the default branch's copy of the workflow.
+const DEFAULT_BRANCH = 'main'
+const PUSH_FILTERS = ['branches', 'paths', 'paths-ignore']
+function triggerViolations(workflow: Workflow): string[] {
+  const problems: string[] = []
+  for (const name of triggers(workflow)) {
+    if (name === 'workflow_run' || name === 'deployment_status') continue
+    if (name === 'push') {
+      const push =
+        typeof workflow.on === 'object' && !Array.isArray(workflow.on)
+          ? (workflow.on.push as Record<string, unknown> | null | undefined)
+          : undefined
+      const branches = push?.branches
+      if (
+        !push ||
+        Object.keys(push).some((key) => !PUSH_FILTERS.includes(key)) ||
+        !Array.isArray(branches) ||
+        branches.length !== 1 ||
+        branches[0] !== DEFAULT_BRANCH
+      )
+        problems.push(`triggered by push beyond ${DEFAULT_BRANCH}`)
+      continue
+    }
+    problems.push(`triggered by ${name}`)
+  }
+  return problems
+}
 // The only workflows that may read the key. web-previews-publish.yml is the CDN reviewer publisher; it is
 // allowed before it exists on main, and it must pass the same rules as the key scan once it does.
 const KEY_READERS = ['ui-library-key-scan.yml', 'web-previews-publish.yml']
 const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ github.workflow_sha }}']
-
-// A job that holds the key runs under the main-only web-preview environment, checks out only trusted code,
-// keeps the secret in a single step's env, runs no package manager or pull request script, and never prints
-// the key. Pull request files may only arrive as data (fetched objects or downloaded artifacts).
-function keyReaderViolations(workflow: Workflow): string[] {
+// Actions a key-holding job may use, each pinned by a full commit sha.
+const TRUSTED_ACTIONS =
+  /^(actions\/checkout|actions\/setup-node|actions\/download-artifact|decentraland\/oddish-action)@[0-9a-f]{40}$/
+// Variables that make the shell or node load code a step did not name.
+const LOADER_VARIABLES =
+  /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|SHELLOPTS)$/i
+// Where a command starts in a shell line.
+const START = String.raw`(?:^|[;&|(]|\b(?:then|do|else)\b)\s*`
+// Pipes and redirects of the key step may only write into $RUNNER_TEMP.
+const TEMP_PATH = String.raw`"?\$\{?RUNNER_TEMP\}?/[^"\s]*"?`
+const KEY_STEP_COMMANDS = [
+  /^set -o pipefail$/,
+  /^node (?:trusted\/)?library\/ui\/figma\/key-guard\.mjs(?: .*)?$/,
+  new RegExp(`^tee(?: -a)? ${TEMP_PATH}$`),
+  new RegExp(`^grep(?: -[A-Za-z]+)* (?:'[^']*'|"[^"$]*")(?: ${TEMP_PATH})?$`),
+  new RegExp(`^head(?: -[cn] \\d+)?(?: ${TEMP_PATH})?$`),
+  new RegExp(`^cat(?: ${TEMP_PATH})*$`),
+  // Plain assignments and tests, which the scan needs to build its arguments; nothing they hold runs.
+  /^[A-Za-z_]\w*=(?:\([^()]*\)|"[^"]*"|'[^']*'|[^\s"'()]*)$/,
+  /^\[ [^[\]]* \]$/,
+  /^fi$/
+]
+// What the step that maps the key may run: the commands above, joined by pipes, lists and redirects only.
+function keyStepViolations(run: string): string[] {
   const problems: string[] = []
-  for (const name of triggers(workflow))
-    if (name === 'pull_request' || name === 'pull_request_target')
-      problems.push(`triggered by ${name}`)
-  if (JSON.stringify(workflow.env ?? {}).includes(SECRET)) problems.push('key in workflow env')
-  for (const [id, job] of Object.entries(workflow.jobs)) {
-    if (!JSON.stringify(job).includes(SECRET)) continue
-    const environment =
-      typeof job.environment === 'string' ? job.environment : job.environment?.name
-    if (environment !== 'web-preview') problems.push(`${id}: environment is not web-preview`)
-    if (JSON.stringify(job.env ?? {}).includes(SECRET))
-      problems.push(`${id}: key outside a step env`)
-    for (const step of job.steps) {
-      if (JSON.stringify(step.with ?? {}).includes(SECRET) || step.run?.includes(SECRET))
-        problems.push(`${id}: key outside a step env`)
-      if (step.uses?.startsWith('actions/checkout@')) {
-        const ref = String(step.with?.ref ?? '')
-        if (!TRUSTED_REFS.includes(ref))
-          problems.push(`${id}: checkout of ${ref || 'the event ref'}`)
-        if (step.with?.['persist-credentials'] !== false)
-          problems.push(`${id}: checkout persists credentials`)
+  if (/\$\(|`|<\(|>\(|&(?!&)|\/proc\b|environ/.test(run.replace(/&&/g, '')))
+    problems.push('substitutes, backgrounds or reads the environment')
+  const commands = run
+    .replace(/\\\n/g, ' ')
+    .split(/\n|&&|\|\||[;|]/)
+    .map((part) =>
+      part
+        .trim()
+        .replace(/^(?:if|then|else|elif)(?:\s+|$)/, '')
+        .trim()
+    )
+    .filter(Boolean)
+  for (const command of commands) {
+    let rest = command
+    for (const [redirect, target] of command.matchAll(
+      /\d?>>?\s*("[^"]*"|\S+)|<\s*("[^"]*"|\S+)/g
+    )) {
+      if (!new RegExp(`^${TEMP_PATH}$`).test((target ?? '').trim()))
+        problems.push(`redirects outside $RUNNER_TEMP: ${redirect}`)
+      rest = rest.replace(redirect, '').trim()
+    }
+    if (!KEY_STEP_COMMANDS.some((allowed) => allowed.test(rest))) problems.push(`runs ${rest}`)
+  }
+  return problems
+}
+
+// A job that holds the key runs only from the default branch's workflow, declares no environment, checks out
+// only trusted code, uses only pinned trusted actions, keeps the secret in a single step's env, runs no package manager or pull
+// request script, and never prints the key. Pull request files may only arrive as data (fetched objects or
+// downloaded artifacts).
+function keyReaderViolations(workflow: Workflow): string[] {
+  const problems: string[] = triggerViolations(workflow)
+  if (readsWholeSecrets(workflow)) problems.push('reads the whole secrets context')
+  const { jobs, ...top } = workflow
+  if (referencesKey(top)) problems.push('key in workflow env')
+  if (top.defaults !== undefined) problems.push('sets workflow defaults')
+  for (const name of Object.keys(workflow.env ?? {}))
+    if (LOADER_VARIABLES.test(name)) problems.push(`sets ${name}`)
+  for (const [id, job] of Object.entries(jobs)) {
+    if (!isKeyReaderJob(job)) continue
+    const environment = environmentName(job)
+    if (environment !== '' && !KEY_ENVIRONMENTS.includes(environment.toLowerCase()))
+      problems.push(`${id}: declares environment ${environment}`)
+    const { steps: jobSteps, ...jobRest } = job
+    if (referencesKey(jobRest)) problems.push(`${id}: key outside a step env`)
+    if (job.container !== undefined) problems.push(`${id}: runs in a container`)
+    if (job.services !== undefined) problems.push(`${id}: starts service containers`)
+    if (job.defaults !== undefined) problems.push(`${id}: sets job defaults`)
+    for (const name of Object.keys(job.env ?? {}))
+      if (LOADER_VARIABLES.test(name)) problems.push(`${id}: sets ${name}`)
+    for (const step of jobSteps) {
+      const { env, ...stepRest } = step
+      if (referencesKey(stepRest)) problems.push(`${id}: key outside a step env`)
+      for (const name of Object.keys(env ?? {}))
+        if (LOADER_VARIABLES.test(name)) problems.push(`${id}: sets ${name}`)
+      if (step.uses !== undefined) {
+        if (!TRUSTED_ACTIONS.test(step.uses)) problems.push(`${id}: uses ${step.uses}`)
+        if (step.uses.startsWith('actions/checkout@')) {
+          const ref = String(step.with?.ref ?? '')
+          if (!TRUSTED_REFS.includes(ref))
+            problems.push(`${id}: checkout of ${ref || 'the event ref'}`)
+          if (step.with?.['persist-credentials'] !== false)
+            problems.push(`${id}: checkout persists credentials`)
+        }
       }
       const run = step.run ?? ''
+      if (referencesKey(env)) {
+        if (step.shell !== undefined) problems.push(`${id}: key step sets its shell`)
+        if (step['working-directory'] !== undefined)
+          problems.push(`${id}: key step changes its working directory`)
+        for (const problem of keyStepViolations(run)) problems.push(`${id}: key step ${problem}`)
+      }
       for (const tool of ['pnpm', 'npm', 'npx', 'yarn', 'corepack'])
         if (new RegExp(`\\b${tool}\\b`).test(run)) problems.push(`${id}: runs ${tool}`)
       if (/\b(bash|sh|source)\s+\S/.test(run)) problems.push(`${id}: runs a shell script`)
-      if (/\$\{?FIGMA_FILE_KEY\b|set -x/.test(run)) problems.push(`${id}: prints the key`)
+      if (
+        new RegExp(`${START}\\.{1,2}/`, 'm').test(run) ||
+        new RegExp(`${START}\\.\\s+\\S`, 'm').test(run)
+      )
+        problems.push(`${id}: runs a local script`)
+      for (const [, script] of run.matchAll(
+        /\bpython[\d.]*\s+(?:-[A-Za-z]+\s+)*("[^"]*"|'[^']*'|\S+)/g
+      ))
+        if (!/^["']?(trusted|tooling)\//.test(script!))
+          problems.push(`${id}: runs python ${script}`)
+      if (new RegExp(`${START}make\\b`, 'm').test(run)) problems.push(`${id}: runs make`)
+      if (
+        /\b(node|python[\d.]*)\s+(?:-\S+\s+)*["']?(\$\{?RUNNER_TEMP|(\.\/)?\.preview\b)/.test(run)
+      )
+        problems.push(`${id}: runs a downloaded file`)
+      if (/\bgit\b[^\n;|&]*\b(checkout|switch|worktree)\b[^\n;|&]*refs\/key-scan/.test(run))
+        problems.push(`${id}: checks out the scanned commits`)
+      if (
+        /\$\{?!?FIGMA_FILE_KEY\b|\$\{!|\bprintenv\b|set -x|set -o xtrace/i.test(run) ||
+        new RegExp(`${START}env\\s*(?:$|[;&|>])`, 'm').test(run)
+      )
+        problems.push(`${id}: prints the key`)
     }
   }
   return problems
@@ -170,15 +313,12 @@ describe('the Figma file key secret', () => {
       const pullRequestTriggered = triggers(load(file)).some((name) =>
         ['pull_request', 'pull_request_target'].includes(name)
       )
-      if (pullRequestTriggered)
-        expect(readFileSync(path.join(workflows, file), 'utf8')).not.toContain(SECRET)
+      if (pullRequestTriggered) expect(isKeyReader(load(file))).toBe(false)
     }
   )
 
   it('should be read only by the key scan and, once it lands, the web preview publisher', () => {
-    const holders = workflowFiles.filter((file) =>
-      readFileSync(path.join(workflows, file), 'utf8').includes(SECRET)
-    )
+    const holders = workflowFiles.filter((file) => isKeyReader(load(file)))
     expect(holders).toContain('ui-library-key-scan.yml')
     for (const file of holders) expect(KEY_READERS, file).toContain(file)
   })
@@ -186,7 +326,7 @@ describe('the Figma file key secret', () => {
   it.each(workflowFiles)(
     'should hold the key in %s only under the trusted reader rules',
     (file) => {
-      if (!readFileSync(path.join(workflows, file), 'utf8').includes(SECRET)) return
+      if (!isKeyReader(load(file))) return
       expect(keyReaderViolations(load(file))).toEqual([])
     }
   )
@@ -210,6 +350,7 @@ jobs:
       expect.arrayContaining([
         'triggered by pull_request',
         'test: checkout of ${{ github.event.pull_request.head.sha }}',
+        'test: declares environment web-preview',
         'test: checkout persists credentials',
         'test: runs pnpm',
         'test: prints the key'
@@ -217,7 +358,7 @@ jobs:
     )
   })
 
-  it('should reject a reader that holds the key outside the web-preview environment or at job level', () => {
+  it('should reject a reader that holds the key at job level', () => {
     const loose = parse(`
 on:
   workflow_run:
@@ -232,11 +373,269 @@ jobs:
       - run: node library/ui/figma/key-guard.mjs
 `) as Workflow
     expect(keyReaderViolations(loose)).toEqual(
-      expect.arrayContaining([
-        'scan: environment is not web-preview',
-        'scan: key outside a step env'
-      ])
+      expect.arrayContaining(['scan: key outside a step env'])
     )
+  })
+
+  // A reader that passes every rule; each case below breaks exactly one.
+  const PINNED = '3d3c42e5aac5ba805825da76410c181273ba90b1'
+  const reader = (change: (job: Job, workflow: Workflow) => void = () => {}): Workflow => {
+    const job: Job = {
+      steps: [
+        {
+          uses: `actions/checkout@${PINNED}`,
+          with: { ref: TRUSTED_REFS[0], path: 'trusted', 'persist-credentials': false }
+        },
+        { run: 'git -C trusted fetch --no-tags origin "+$HEAD_SHA:refs/key-scan/head"' },
+        {
+          env: { FIGMA_FILE_KEY: '${{ secrets.FIGMA_FILE_KEY }}' },
+          run: [
+            'set -o pipefail',
+            'node trusted/library/ui/figma/key-guard.mjs --root trusted | tee "$RUNNER_TEMP/out.txt"',
+            `grep -qx 'check key: ran' "$RUNNER_TEMP/out.txt"`
+          ].join('\n')
+        }
+      ]
+    }
+    const workflow: Workflow = {
+      on: { workflow_run: { workflows: ['x'], types: ['completed'] } },
+      jobs: { scan: job }
+    }
+    change(job, workflow)
+    return workflow
+  }
+  const otherStep = (run: string) => reader((job) => (job.steps[1] = { run }))
+  const keyStep = (run: string, extra: Partial<WorkflowStep> = {}) =>
+    reader((job) => Object.assign(job.steps[2]!, { run }, extra))
+
+  it('should accept a reader that follows every rule', () => {
+    expect(keyReaderViolations(reader())).toEqual([])
+    expect(keyReaderViolations(otherStep('python3 tooling/web-preview.py resolve'))).toEqual([])
+  })
+
+  it.each([
+    [
+      'a lower-case secret name',
+      {
+        on: 'workflow_run',
+        jobs: { a: { steps: [{ env: { K: '${{ secrets.figma_file_key }}' } }] } }
+      }
+    ],
+    [
+      'the whole secrets context',
+      { on: 'workflow_run', jobs: { a: { steps: [{ env: { ALL: '${{ toJSON(secrets) }}' } }] } } }
+    ],
+    [
+      'an indexed secret',
+      {
+        on: 'workflow_run',
+        jobs: { a: { steps: [{ env: { K: "${{ secrets['FIGMA_FILE_KEY'] }}" } }] } }
+      }
+    ]
+  ] as [string, Workflow][])('should treat %s as a key reader', (_, workflow) => {
+    expect(isKeyReader(workflow)).toBe(true)
+  })
+
+  it('should not treat a job that never names the key as a reader', () => {
+    expect(isKeyReader(reader((job) => (job.steps = [{ run: 'true' }])))).toBe(false)
+  })
+
+  it.each([
+    { on: { workflow_run: { workflows: ['x'] } } },
+    { on: { deployment_status: null } },
+    { on: { push: { branches: ['main'] } } },
+    { on: { push: { branches: ['main'], paths: ['library/ui/**'] }, workflow_run: null } }
+  ])('should accept a reader triggered by %j', ({ on }) => {
+    expect(triggerViolations({ on, jobs: {} } as Workflow)).toEqual([])
+  })
+
+  it.each([
+    [{ pull_request: null }, 'triggered by pull_request'],
+    [{ pull_request_target: null }, 'triggered by pull_request_target'],
+    [{ workflow_dispatch: null }, 'triggered by workflow_dispatch'],
+    ['push', 'triggered by push beyond main'],
+    [{ push: null }, 'triggered by push beyond main'],
+    [{ push: { branches: ['feature'] } }, 'triggered by push beyond main'],
+    [{ push: { branches: ['main', 'release/*'] } }, 'triggered by push beyond main'],
+    [{ push: { branches: ['main'], tags: ['v*'] } }, 'triggered by push beyond main'],
+    [{ push: { 'branches-ignore': ['x'] } }, 'triggered by push beyond main']
+  ] as [Workflow['on'], string][])('should reject a reader triggered by %j', (on, problem) => {
+    expect(triggerViolations({ on, jobs: {} } as Workflow)).toContain(problem)
+  })
+
+  it('should reject a job that reaches the key through the whole secrets context', () => {
+    const all = reader((job) => {
+      job.steps = [{ env: { ALL: '${{ toJSON(secrets) }}' }, run: 'pnpm build' }]
+    })
+    expect(keyReaderViolations(all)).toEqual(
+      expect.arrayContaining(['reads the whole secrets context', 'scan: runs pnpm'])
+    )
+    const indexed = reader((job) => {
+      job.steps[2]!.env = { FIGMA_FILE_KEY: "${{ secrets['FIGMA_FILE_KEY'] }}" }
+    })
+    expect(keyReaderViolations(indexed)).toEqual(
+      expect.arrayContaining(['reads the whole secrets context'])
+    )
+  })
+
+  it.each([
+    [
+      'a lower-case key in a run',
+      otherStep('echo ${{ secrets.figma_file_key }}'),
+      'scan: key outside a step env'
+    ],
+    [
+      'the key in workflow env',
+      reader((_, workflow) => (workflow.env = { K: '${{ secrets.Figma_File_Key }}' })),
+      'key in workflow env'
+    ],
+    [
+      'the web-preview environment',
+      reader((job) => (job.environment = 'web-preview')),
+      'scan: declares environment web-preview'
+    ],
+    [
+      'an environment in object form',
+      reader((job) => (job.environment = { name: 'Web-Preview' })),
+      'scan: declares environment Web-Preview'
+    ],
+    [
+      'an environment chosen by an expression',
+      reader((job) => (job.environment = '${{ inputs.target }}')),
+      'scan: declares environment ${{ inputs.target }}'
+    ],
+    ['a job container', reader((job) => (job.container = 'node:24')), 'scan: runs in a container'],
+    [
+      'service containers',
+      reader((job) => (job.services = { db: { image: 'postgres' } })),
+      'scan: starts service containers'
+    ],
+    [
+      'job run defaults',
+      reader((job) => (job.defaults = { run: { shell: 'python {0}' } })),
+      'scan: sets job defaults'
+    ],
+    [
+      'workflow run defaults',
+      reader((_, workflow) => (workflow.defaults = { run: { 'working-directory': '.preview' } })),
+      'sets workflow defaults'
+    ],
+    [
+      'a loader variable',
+      reader((job) => (job.steps[2]!.env!.NODE_OPTIONS = '--require ./x.js')),
+      'scan: sets NODE_OPTIONS'
+    ],
+    [
+      'a third-party action',
+      reader((job) => job.steps.push({ uses: 'someone/action@main' })),
+      'scan: uses someone/action@main'
+    ],
+    [
+      'a local action',
+      reader((job) => job.steps.push({ uses: './.github/actions/x' })),
+      'scan: uses ./.github/actions/x'
+    ],
+    [
+      'a docker action',
+      reader((job) => job.steps.push({ uses: 'docker://alpine:3' })),
+      'scan: uses docker://alpine:3'
+    ],
+    [
+      'a look-alike checkout',
+      reader((job) => job.steps.push({ uses: `actions/checkout-pr@${PINNED}` })),
+      `scan: uses actions/checkout-pr@${PINNED}`
+    ],
+    [
+      'an action pinned by tag',
+      reader((job) => job.steps.push({ uses: 'actions/setup-node@v7' })),
+      'scan: uses actions/setup-node@v7'
+    ],
+    [
+      'a key step that runs a downloaded script',
+      keyStep('node "$RUNNER_TEMP/pr-artifact/x.mjs"'),
+      'scan: key step runs node "$RUNNER_TEMP/pr-artifact/x.mjs"'
+    ],
+    [
+      'a key step that runs python',
+      keyStep('python3 trusted/tooling/x.py'),
+      'scan: key step runs python3 trusted/tooling/x.py'
+    ],
+    [
+      'a key step that substitutes a command',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs $(cat x)'),
+      'scan: key step substitutes, backgrounds or reads the environment'
+    ],
+    [
+      'a key step that reads its environment',
+      keyStep('cat /proc/self/environ'),
+      'scan: key step substitutes, backgrounds or reads the environment'
+    ],
+    [
+      'a key step that redirects outside $RUNNER_TEMP',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs > /tmp/out'),
+      'scan: key step redirects outside $RUNNER_TEMP: > /tmp/out'
+    ],
+    [
+      'a key step that tees outside $RUNNER_TEMP',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs | tee out.txt'),
+      'scan: key step runs tee out.txt'
+    ],
+    [
+      'a key step that cats a workspace file',
+      keyStep('cat .preview/input/x'),
+      'scan: key step runs cat .preview/input/x'
+    ],
+    [
+      'a key step with its own shell',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs', { shell: 'python {0}' }),
+      'scan: key step sets its shell'
+    ],
+    [
+      'a key step in another directory',
+      keyStep('node library/ui/figma/key-guard.mjs', { 'working-directory': '.preview/input' }),
+      'scan: key step changes its working directory'
+    ],
+    ['a relative script', otherStep('./script.sh'), 'scan: runs a local script'],
+    ['a sourced script', otherStep('true && . script'), 'scan: runs a local script'],
+    [
+      'python outside trusted/ and tooling/',
+      otherStep('python3 .preview/input/x.py'),
+      'scan: runs python .preview/input/x.py'
+    ],
+    ['inline python', otherStep("python3 -c 'print(1)'"), "scan: runs python 'print(1)'"],
+    ['make', otherStep('make build'), 'scan: runs make'],
+    [
+      'node on the downloaded artifact',
+      otherStep('node "$RUNNER_TEMP/pr-artifact/x.mjs"'),
+      'scan: runs a downloaded file'
+    ],
+    [
+      'node on the preview input',
+      otherStep('node .preview/input/x.mjs'),
+      'scan: runs a downloaded file'
+    ],
+    [
+      'a checkout of the scanned head',
+      otherStep('git -C trusted checkout refs/key-scan/head'),
+      'scan: checks out the scanned commits'
+    ],
+    [
+      'a switch to the scanned head',
+      otherStep('git -C trusted switch --detach refs/key-scan/head'),
+      'scan: checks out the scanned commits'
+    ],
+    [
+      'a worktree of the scanned head',
+      otherStep('git -C trusted worktree add ../x refs/key-scan/head'),
+      'scan: checks out the scanned commits'
+    ],
+    ['printenv', otherStep('printenv'), 'scan: prints the key'],
+    ['a bare env', otherStep('env | sort'), 'scan: prints the key'],
+    ['indirect expansion', otherStep('v=FIGMA_FILE_KEY; echo "${!v}"'), 'scan: prints the key'],
+    ['xtrace', otherStep('set -o xtrace'), 'scan: prints the key'],
+    ['a lower-case key variable', otherStep('echo "$figma_file_key"'), 'scan: prints the key']
+  ] as [string, Workflow, string][])('should reject %s', (_, workflow, problem) => {
+    expect(keyReaderViolations(workflow)).toContain(problem)
   })
 })
 
@@ -250,8 +649,8 @@ describe('ui-library-key-scan.yml', () => {
     expect(workflow.permissions).toEqual({ actions: 'read', checks: 'write', contents: 'read' })
   })
 
-  it('should take the key from the main-only web-preview environment, on the key-scan job only', () => {
-    expect(workflow.jobs['key-scan']!.environment).toBe('web-preview')
+  it('should take the key from the repository secret, in one job that declares no environment', () => {
+    expect(workflow.jobs['key-scan']!.environment).toBeUndefined()
     expect(Object.keys(workflow.jobs)).toEqual(['key-scan'])
   })
 

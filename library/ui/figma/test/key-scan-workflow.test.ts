@@ -109,11 +109,12 @@ describe('when a trusted scan cannot run', () => {
       'required Review artifact was missing'
     )
   })
-  // gh prints one artifact id per line for the matching artifacts; the fake stands in for that output.
+  // gh prints one artifact id per line for the matching artifacts; the fake stands in for that output. Actions
+  // runs the step as bash -e, so pipefail comes from the step itself.
   const countArtifacts = (ids: string[], status = 0) => {
     const step = steps.find((step) => step.id === 'artifact_check')!
     const gh = `gh() { printf '%s' '${ids.map((id) => `${id}\n`).join('')}'; return ${status}; }\n`
-    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', gh + step.run], {
+    return spawnSync('bash', ['-e', '-c', gh + step.run], {
       cwd: root,
       encoding: 'utf8',
       env: defaults()
@@ -127,6 +128,47 @@ describe('when a trusted scan cannot run', () => {
   })
   it('should fail when the artifact listing itself fails', async () => {
     expect(countArtifacts(['7'], 1).status).not.toBe(0)
+  })
+  // The step's own select filter, run by the real jq over one artifacts page that gh would page through.
+  const selectArtifacts = async (artifacts: unknown[]) => {
+    await writeFile(path.join(root, 'page.json'), JSON.stringify({ artifacts }))
+    const gh =
+      `gh() { local filter=; while [ $# -gt 0 ]; do [ "$1" != --jq ] || filter=$2; shift; done; ` +
+      `jq -r "$filter" "$RUNNER_TEMP/page.json" | tee -a "$RUNNER_TEMP/ids"; }\n`
+    const step = steps.find((step) => step.id === 'artifact_check')!
+    const result = spawnSync('bash', ['-e', '-c', gh + step.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: defaults()
+    })
+    const ids = await readFile(path.join(root, 'ids'), 'utf8').catch(() => '')
+    return { status: result.status, stderr: result.stderr, ids: ids.split('\n').filter(Boolean) }
+  }
+  const artifact = (id: number, change: Record<string, unknown> = {}) => ({
+    id,
+    name: `ui-review-${head}`,
+    expired: false,
+    workflow_run: { id: 123, head_sha: head },
+    ...change
+  })
+  it('should select only the unexpired Review artifact of the run and head', async () => {
+    const { status, stderr, ids } = await selectArtifacts([
+      artifact(7),
+      artifact(8, { expired: true }),
+      artifact(9, { workflow_run: { id: 123, head_sha: base } }),
+      artifact(10, { name: `ui-review-${base}` }),
+      artifact(11, { workflow_run: { id: 124, head_sha: head } })
+    ])
+    expect(ids).toEqual(['7'])
+    expect(status, stderr).toBe(0)
+  })
+  it('should reject a page whose only artifacts fail the filter', async () => {
+    const { status, ids } = await selectArtifacts([
+      artifact(8, { expired: true }),
+      artifact(10, { name: 'ui-review-other' })
+    ])
+    expect(ids).toEqual([])
+    expect(status).not.toBe(0)
   })
 })
 describe('when selecting the LFS inputs of the scan', () => {

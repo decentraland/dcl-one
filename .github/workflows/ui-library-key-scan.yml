@@ -21,13 +21,12 @@ concurrency:
 jobs:
   key-scan:
     runs-on: ubuntu-26.04
-    # FIGMA_FILE_KEY lives only in web-preview, which admits the default branch only. workflow_run runs from
-    # main, so the job qualifies; each scan waits for a web-preview approval before any step runs.
-    environment: web-preview
+    # FIGMA_FILE_KEY is a repository secret. workflow_run runs main's copy of this workflow, and the key is
+    # mapped only into the env of the scan step; no other step can read it.
     steps:
-      # No FIGMA_FILE_KEY is in scope here. Anything unexpected ends the job before the key is read. The
-      # triggering workflow is pinned by its file path and by the id GitHub assigns to that file, resolved
-      # through the API from this repository, never by display name.
+      # FIGMA_FILE_KEY is not mapped into this step's env. Anything unexpected ends the job before the key is
+      # read. The triggering workflow is pinned by its file path and by the id GitHub assigns to that file,
+      # resolved through the API from this repository, never by display name.
       - name: Validate the triggering run
         id: trigger
         env:
@@ -170,8 +169,9 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      # The only step that holds the key: main's key guard over the scanned commits, their library/ui tree and
-      # the unpacked Review build (enumerated without following links, and size and count limited), all as data.
+      # The only step whose env maps the key: main's key guard over the scanned commits, their library/ui tree
+      # and the unpacked Review build (enumerated without following links, and size and count limited), all as
+      # data.
       # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
       # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
       # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
