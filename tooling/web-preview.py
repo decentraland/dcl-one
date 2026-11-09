@@ -22,7 +22,6 @@ PIPELINE_INPUTS = {
     '.github/workflows/web-previews-publish.yml',
     'tooling/web-preview.py',
     'tooling/tests/test_web_preview.py',
-    'tooling/web-preview-browser.mjs',
 }
 PACKAGE = '@dcl-regenesislabs/dcl-one-ui-review'
 MARKER = '<!-- web-pr-previews -->'
@@ -67,11 +66,9 @@ def bot_account(account):
     return account.get('type') == 'Bot' or str(account.get('login', '')).endswith('[bot]')
 
 
-def publishable(run, pr, repository):
+def current_pull_request(run, pr, repository):
     return (
         run.get('event') == 'pull_request'
-        and run.get('status') == 'completed'
-        and run.get('conclusion') in ('success', 'failure')
         and run.get('path') == WORKFLOW
         and not any(bot_account(run.get(field)) for field in ('actor', 'triggering_actor'))
         and not bot_account(pr.get('user'))
@@ -79,6 +76,22 @@ def publishable(run, pr, repository):
         and pr.get('state') == 'open'
         and (pr.get('head', {}).get('repo') or {}).get('full_name') == repository
         and pr.get('head', {}).get('sha') == run.get('head_sha')
+    )
+
+
+def publishable(run, pr, repository):
+    return (
+        current_pull_request(run, pr, repository)
+        and run.get('status') == 'completed'
+        and run.get('conclusion') in ('success', 'failure')
+    )
+
+
+def reportable(run, pr, repository):
+    return (
+        current_pull_request(run, pr, repository)
+        and run.get('status') == 'completed'
+        and run.get('conclusion') in ('success', 'failure', 'cancelled', 'timed_out')
     )
 
 
@@ -119,6 +132,12 @@ def package_reviewer(source, target, revision, run_id, attempt):
         relative = path.relative_to(source)
         if path.is_symlink() or any(part.startswith('.') for part in relative.parts):
             raise ValueError(f'Unsafe static preview path: {relative}')
+        if (
+            len(relative.parts) > 1
+            and relative.parts[0] == 'dcl-ui-review'
+            and relative.parts[1] in {'references', 'renders', 'fidelity.json', 'icons'}
+        ):
+            raise ValueError(f'Unexpected retired reviewer output: {relative}')
         if path.is_dir():
             continue
         if (
@@ -159,6 +178,7 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
         args += ['--input', '-']
     attempts = 3 if method in ('GET', 'PATCH') else 1
     for attempt in range(attempts):
+        delay = 2**attempt
         try:
             result = subprocess.run(
                 args,
@@ -181,6 +201,8 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
                         and re.search(r'rate.?limit|secondary limit|abuse', result.stderr, re.I)
                     )
                 )
+                if limited:
+                    delay = 60 * 2**attempt
                 if (status and int(status[1]) < 500 and not limited) or attempt == attempts - 1:
                     print(result.stderr, file=sys.stderr)
                     result.check_returncode()
@@ -199,7 +221,7 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
                         ]
                     return value
         print(f'Transient GitHub API failure; retrying ({attempt + 1}/{attempts})', file=sys.stderr)
-        time.sleep(2**attempt)
+        time.sleep(delay)
 
 
 def require_publication_environment(repository):
@@ -295,7 +317,7 @@ def newest_run_for_pr(repository, run_id, run, pr):
         return False
     for candidate in runs:
         candidate_id = int(candidate['id'])
-        if candidate_id <= run_id or candidate.get('conclusion') in ('skipped', 'cancelled'):
+        if candidate_id <= run_id or candidate.get('conclusion') == 'skipped':
             continue
         associations = candidate.get('pull_requests')
         if associations and not any(same_pull_request(item, pr) for item in associations):
@@ -308,7 +330,9 @@ def newest_run_for_pr(repository, run_id, run, pr):
             continue
         if associations:
             return False
-        _, candidate_pr = resolve(repository, candidate_id)
+        _, candidate_pr = resolve(
+            repository, candidate_id, eligible=current_pull_request, target_pr=pr
+        )
         if candidate_pr and same_pull_request(candidate_pr, pr):
             return False
     return True
@@ -318,7 +342,7 @@ def selection_job(jobs):
     return next((job for job in jobs if job['name'] == 'changes'), None)
 
 
-def resolve(repository, run_id, *, expected_attempt=None):
+def resolve(repository, run_id, *, expected_attempt=None, eligible=publishable, target_pr=None):
     run = api(f'repos/{repository}/actions/runs/{run_id}')
     if expected_attempt is not None and str(run.get('run_attempt')) != str(expected_attempt):
         return run, None
@@ -333,8 +357,10 @@ def resolve(repository, run_id, *, expected_attempt=None):
     )
     matches = []
     for candidate in candidates:
+        if target_pr is not None and not same_pull_request(candidate, target_pr):
+            continue
         pr = api(f'repos/{repository}/pulls/{int(candidate["number"])}')
-        if same_pull_request(candidate, pr) and publishable(run, pr, repository):
+        if same_pull_request(candidate, pr) and eligible(run, pr, repository):
             matches.append(pr)
     return run, matches[0] if len(matches) == 1 else None
 
@@ -413,10 +439,6 @@ def verify_reviewer_resources(url, entry, html):
         expected = 'text/css' if asset.endswith('.css') else 'javascript'
         if expected not in content_type or not response.read(1):
             raise CdnResourceNotReady('CDN reviewer asset is not JavaScript or CSS')
-    with cdn_open(f'{url}/dcl-ui-review/fidelity.json') as response:
-        fidelity = json.load(response)
-        if not isinstance(fidelity, (dict, list)):
-            raise CdnResourceNotReady('CDN reviewer fidelity data is not a JSON object or array')
 
 
 def verify_cdn(version, revision, run_id, timeout=60, *, attempt):
@@ -480,7 +502,7 @@ def complete_cdn(repository, event):
 
 
 def report(repository, run_id, reviewer_url, publication_result, *, expected_attempt=None):
-    run, pr = resolve(repository, run_id, expected_attempt=expected_attempt)
+    run, pr = resolve(repository, run_id, expected_attempt=expected_attempt, eligible=reportable)
     if pr is None:
         print('No current same-repository pull request to report into')
         return
@@ -490,8 +512,11 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     if selection and selection.get('conclusion') == 'skipped':
         print('Preview selection was skipped; keep the existing preview status')
         return
-    if selection and selection['conclusion'] == 'failure':
-        rows.append(f'| Preview selection | failure | [Build log]({selection["html_url"]}) |')
+    if selection and selection.get('conclusion') in ('failure', 'cancelled', 'timed_out'):
+        rows.append(
+            f'| Preview selection | {selection["conclusion"]} | '
+            f'[Build log]({selection["html_url"]}) |'
+        )
     for name, label in [('UI reviewer', 'UI reviewer'), ('Sites', 'Sites')]:
         job = next((job for job in jobs if job['name'] == name), None)
         if not job or job['conclusion'] == 'skipped':
@@ -514,8 +539,8 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
         else:
             link = 'SSR preview pending: shared host deployment is not wired yet'
         rows.append(f'| {label} | {result} | {link} |')
-    if not rows and run.get('conclusion') == 'failure':
-        rows.append(f'| Preview selection | failure | [Build run]({run["html_url"]}) |')
+    if not rows and run.get('conclusion') in ('failure', 'cancelled', 'timed_out'):
+        rows.append(f'| Preview selection | {run["conclusion"]} | [Build run]({run["html_url"]}) |')
     no_products = not rows
     if no_products:
         rows.append('| Web previews | not selected | No web products in the cumulative PR diff |')
@@ -550,7 +575,7 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
         print('Keep the verified preview instead of a late publication-progress update')
         return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
-    _, live = resolve(repository, run_id, expected_attempt=expected_attempt)
+    _, live = resolve(repository, run_id, expected_attempt=expected_attempt, eligible=reportable)
     if live is None or not same_pull_request(live, pr):
         return
     if not newest_run_for_pr(repository, run_id, run, live):
@@ -620,6 +645,8 @@ def main():
         return
     run, pr = resolve(repository, run_id, expected_attempt=expected_attempt)
     if args.command == 'resolve':
+        if pr is not None and not newest_run_for_pr(repository, run_id, run, pr):
+            pr = None
         print(f'pr={pr["number"] if pr else ""}')
         print(f'publish={str(pr is not None).lower()}')
         print('reviewer=' + str(require_reviewer(repository, run_id)).lower())
@@ -630,6 +657,9 @@ def main():
         raise ValueError('Reviewer did not produce one successful job and static artifact')
     if args.command == 'check-publication':
         require_publication_environment(repository)
+    if not newest_run_for_pr(repository, run_id, run, pr):
+        raise ValueError('A newer meaningful source run superseded this publication')
+    if args.command == 'check-publication':
         return
     if args.command == 'package-reviewer':
         package_reviewer(args.source, args.target, run['head_sha'], run_id, run['run_attempt'])
