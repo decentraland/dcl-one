@@ -32,6 +32,8 @@ const allowListES2020 = [
   "BigInt64Array",
   "BigUint64Array",
   "Boolean",
+  "clearInterval",
+  "clearTimeout",
   "DataView",
   "Date",
   "decodeURI",
@@ -67,6 +69,8 @@ const allowListES2020 = [
   "Reflect",
   "RegExp",
   "Set",
+  "setInterval",
+  "setTimeout",
   "SharedArrayBuffer",
   "String",
   "Symbol",
@@ -84,6 +88,10 @@ const allowListES2020 = [
   "WeakSet",
 ];
 
+export function isSceneGlobal(name) {
+  return allowListES2020.includes(name);
+}
+
 // Remove an inherited property. Interface objects (BroadcastChannel, Worker) are own properties of
 // the global and go with a plain delete; attributes like navigator.storage live on a prototype, and
 // deleting them off the instance silently succeeds without removing anything.
@@ -94,14 +102,8 @@ function deleteFromPrototypeChain(obj, name) {
   return false;
 }
 
-const jsContext = Object.create(null);
-var jsProxy = undefined;
-var jsPreamble = undefined;
-// Per-boot bridge session id from engine.js (INIT_WORKER payload); see the isSuper block below.
-var bridgeSession = undefined;
-function createJsContext(wasmApi, context) {
-  const isSuper = wasmApi.is_super(context);
-
+// Withhold from the worker global what scene code must not reach. Runs before any scene code.
+export function scrubSceneGlobal() {
   // The allowlist below cannot withhold a capability: jsProxy is only consulted for
   // `globalThis.X` property lookups, so a bare identifier in scene code resolves straight
   // through to the real worker global. Withholding therefore has to be a deletion from that
@@ -148,6 +150,33 @@ function createJsContext(wasmApi, context) {
   // image_processing/src/processor/wasm_fs.rs runs on the asset processor worker, which engine.js spawns
   // as its own worker, and service_worker.js is a different context entirely.
   deleteFromPrototypeChain(self, "caches");
+
+  // Requests that bypass createSceneFetch, its send limit and its credentials policy.
+  deleteFromPrototypeChain(self, "XMLHttpRequest");
+  deleteFromPrototypeChain(self, "EventSource");
+  // A module worker's importScripts only throws, but it is still a way to load a url.
+  deleteFromPrototypeChain(self, "importScripts");
+  // Older persistent stores, where a browser still exposes them to workers.
+  for (const name of [
+    "webkitRequestFileSystem",
+    "webkitRequestFileSystemSync",
+    "webkitResolveLocalFileSystemURL",
+    "webkitResolveLocalFileSystemSyncURL",
+    "cookieStore",
+  ]) {
+    deleteFromPrototypeChain(self, name);
+  }
+}
+
+const jsContext = Object.create(null);
+var jsProxy = undefined;
+var jsPreamble = undefined;
+// Per-boot bridge session id from engine.js (INIT_WORKER payload); see the isSuper block below.
+var bridgeSession = undefined;
+function createJsContext(wasmApi, context) {
+  const isSuper = wasmApi.is_super(context);
+
+  scrubSceneGlobal();
 
   // BroadcastChannel is a same-origin, serverless side channel — handed ONLY to the trusted
   // super-user (--system-scene) scene, so an embedded host page can drive it; ordinary scenes never see it

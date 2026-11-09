@@ -12,7 +12,10 @@ The standalone scene Fetch regression runs with `npm run test:scene-fetch` from
 production sandbox scripts. Two client scenes and two hosted scenes each fetch 40
 URLs. The test checks that each worker dispatches five at a time in FIFO order,
 that a blocked scene leaves its neighbour free to finish, and that queued and
-active calls respect caller abort signals. Install Chromium with `npx playwright install chromium`
+active calls respect caller abort signals. It also checks that the scrubbed worker
+global has no storage API, `XMLHttpRequest`, `EventSource` or `importScripts`, that a
+scene fetch sends and stores no cookies and bypasses the HTTP cache while the page's own
+fetch does not, and that the timers are on the scene global allowlist. Install Chromium with `npx playwright install chromium`
 or set `CHROME_BIN` to an installed Chromium executable.
 
 Per-domain tests that drive the **live** app — the React HUD, the bevy engine (in a
