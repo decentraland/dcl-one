@@ -59,6 +59,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
+  the content check's two refusal screens, every HTTP 400 read as the check's answer), with
+  these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
+  form's own CANCEL does; unity-explorer closes at once. A refused edit says "Your Community
+  Couldn't Be Updated"; unity-explorer says "Created" for edits too. A failed delete shows its
+  message on the community card, like the card's other actions, instead of as a toast. A
+  picture saved by an edit is kept by the HUD for the session, as unity-explorer's image cache
+  does, since its URL does not change and the CDN (CloudFront on .org) ignores a version query.
+  The places picker is not ported yet.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
