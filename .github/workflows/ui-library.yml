@@ -71,8 +71,8 @@ jobs:
           node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
           LFS_AUTHORIZATION="$authorization" node library/ui/figma/lfs-prefetch.mjs \
             --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
-      # The allowlist is read from the pull request head, as the trusted scan in ui-library-key-scan.yml reads it,
-      # never from the merge commit, so a change to the allowlist on main cannot make the two url checks disagree.
+      # This unprivileged scan reads the allowlist from the pull request head, never from the merge commit. The
+      # privileged scan in ui-library-key-scan.yml reads it from the default branch, so only main can suppress a url.
       - name: Scan every outgoing commit for Figma urls
         env:
           RANGE: ${{ steps.scope.outputs.range }}
