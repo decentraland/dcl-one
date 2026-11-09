@@ -72,21 +72,23 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
 /** Close the open page with Escape, as explorer-automation's Panel.Close does. While a field of
  *  the page holds the keyboard (the engine says so) no action resolves: the first press only
  *  leaves the field, so it waits for the engine to have the keyboard back, and the next closes the
- *  page. The top bar's Close button closes a page the Escape did not. Closing the Backpack deploys
- *  the look it changed, so it waits out the catalyst's window since the last deployment first. */
+ *  page. The top bar's Close button closes a page the Escape did not, and one whose field keeps
+ *  the keys through a press (the map's search spends its first Escape clearing itself). Closing
+ *  the Backpack deploys the look it changed, so it waits out the catalyst's window since the last
+ *  deployment first. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
   if (page === 'backpack') await explorer.profileDeployWindow()
-  if ((await explorer.worldState()).keyboardClaimed === true) {
-    await explorer.escape()
-    await explorer.keyboardReleased()
-  }
-  await explorer.escape()
   try {
+    if ((await explorer.worldState()).keyboardClaimed === true) {
+      await explorer.escape()
+      await explorer.keyboardReleased()
+    }
+    await explorer.escape()
     await explorer.hud.waitHidden(marker, PAGE_CLOSE_TIMEOUT_MS)
     return
   } catch {
-    // still open: the page did not take the press
+    // still open: a field kept the keys, or the page did not take the press
   }
   await explorer.hud.click({ name: 'Close', role: 'button', index: 0 })
   await explorer.hud.waitHidden(marker, 15_000)

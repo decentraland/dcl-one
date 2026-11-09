@@ -43,7 +43,8 @@ export interface WorldState {
   outOfWorld: boolean | null
   position: [number, number, number] | null
   /** A text field (the HUD's or the engine's) holds the keyboard: keys are typed and resolve no
-   *  action. Null where the client takes no input; absent from builds before it was reported. */
+   *  action. Null where the client takes no input; absent from builds older than the suite, which
+   *  the keyboard waits refuse. */
   keyboardClaimed?: boolean | null
 }
 
@@ -210,6 +211,10 @@ export const PROFILE_DEPLOY_WINDOW_MS = 4_000
 export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
+
+/** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
+export const OLDER_CLIENT =
+  "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
 
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
 /** How long a click, a fill or a hover waits for its control to take a click: uncovered and no
@@ -551,22 +556,24 @@ export class Explorer {
    *  `/world_state` reports it; until then a key is still the engine's (Enter opens the chat,
    *  Escape closes the page) and not typed. A client that does not report it is not waited on. */
   async keyboardTaken(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
-    await until(() => this.worldState(), (state) => state.keyboardClaimed !== false, {
-      timeoutMs,
-      intervalMs: 50,
-      what: 'the engine to hand the keyboard to the HUD field'
-    })
+    await this.#keyboard((claimed) => claimed !== false, timeoutMs, 'the engine to hand the keyboard to the HUD field')
   }
 
   /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): wait for
    *  the engine to let the keyboard go, as `/world_state` reports it; a key sent sooner is typed
    *  into nothing. A client that does not report it (an older build) is not waited on. */
   async keyboardReleased(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
-    await until(() => this.worldState(), (state) => state.keyboardClaimed !== true, {
-      timeoutMs,
-      intervalMs: 50,
-      what: 'the engine to let the keyboard go (a HUD field had it)'
-    })
+    await this.#keyboard((claimed) => claimed !== true, timeoutMs, 'the engine to let the keyboard go (a HUD field had it)')
+  }
+
+  /** Wait for the engine's word on the keyboard to be `done`. Null (a client that takes no input)
+   *  is its own answer; a client whose `/world_state` has no such word is older than the suite and
+   *  is refused, not raced. */
+  async #keyboard(done: (claimed: boolean | null) => boolean, timeoutMs: number, what: string): Promise<void> {
+    const first = await this.worldState()
+    if (first.keyboardClaimed === undefined) throw new Error(OLDER_CLIENT)
+    if (done(first.keyboardClaimed)) return
+    await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
   }
 
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */

@@ -94,9 +94,20 @@ interface Layers {
   open: string
   /** The rail is on its way back in: what the last press closed is still going away. */
   moving: boolean
+  /** The chat input has the focus, as the HUD shows it. */
+  typing: boolean
+  /** The engine's word on the keyboard (`/world_state`): it hears of a field's focus a few
+   *  frames after the HUD shows it. */
+  keyboardClaimed: boolean | null | undefined
 }
 
-const NO_LAYERS: Layers = { rest: 'no-hud', open: '', moving: false }
+const NO_LAYERS: Layers = { rest: 'no-hud', open: '', moving: false, typing: false, keyboardClaimed: null }
+
+/** The HUD has left the chat input but the engine still holds the keys for it: the bridge has
+ *  not relayed the blur yet, and a key sent now is typed into nothing. */
+function relaying(before: Layers, now: Layers): boolean {
+  return before.typing && !now.typing && now.keyboardClaimed === true
+}
 
 /** The rail, the panels beside it, the chat input, the layers inside a page, and the engine's
  *  word on whether a field holds the keyboard. At rest the rail takes a click, no panel beside it
@@ -126,23 +137,37 @@ async function hudLayers(explorer: Explorer): Promise<Layers> {
   return {
     rest: atRest ? 'rest' : 'open',
     open: JSON.stringify({ railState, pressed, typing, settings, layers, keyboardClaimed }),
-    moving: rail.found && rail.reason === 'still moving'
+    moving: rail.found && rail.reason === 'still moving',
+    typing,
+    keyboardClaimed
+  }
+}
+
+/** The layers once the rail holds still: a rail still sliding in reads as open with nothing
+ *  open. Past `timeoutMs` the last read stands. */
+async function stillLayers(explorer: Explorer, timeoutMs: number): Promise<Layers> {
+  try {
+    return await until(() => hudLayers(explorer), (now) => !now.moving, { timeoutMs, intervalMs: 100, what: 'the HUD rail to hold still' })
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error
+    return hudLayers(explorer)
   }
 }
 
 /** Close what an earlier scenario left open, a layer per Escape, until the HUD is at rest. Each
- *  press waits for the HUD to show it took effect (a layer gone, the rail done moving back in)
- *  before the next, so no press lands in the middle of the last one's change. A HUD at rest gets
- *  no Escape, which would have nothing to close. A HUD that never gets to rest is left to the
- *  scenario, whose first step then fails saying what it found. */
+ *  press waits for the HUD to show it took effect (a layer gone, the rail done moving back in,
+ *  the engine told of a field the HUD left) before the next, so no press lands in the middle of
+ *  the last one's change. A HUD at rest, the rail held still, gets no Escape, which would have
+ *  nothing to close. At rest no field holds the keys. A HUD that never gets to rest is left to
+ *  the scenario, whose first step then fails saying what it found. */
 export async function closeToRest(explorer: Explorer, pressTimeoutMs = REST_PRESS_TIMEOUT_MS): Promise<void> {
-  let layers = await hudLayers(explorer)
-  if (layers.rest !== 'open') return
+  let layers = await stillLayers(explorer, pressTimeoutMs)
   for (let press = 0; press < REST_ESCAPES && layers.rest === 'open'; press++) {
-    const before = layers.open
+    const before = layers
     await explorer.escape()
     try {
-      layers = await until(() => hudLayers(explorer), (now) => now.rest !== 'open' || (now.open !== before && !now.moving), {
+      const took = (now: Layers): boolean => now.rest !== 'open' || (now.open !== before.open && !now.moving && !relaying(before, now))
+      layers = await until(() => hudLayers(explorer), took, {
         timeoutMs: pressTimeoutMs,
         intervalMs: 100,
         what: 'the Escape to close a layer of the HUD'
@@ -151,7 +176,6 @@ export async function closeToRest(explorer: Explorer, pressTimeoutMs = REST_PRES
       if (!(error instanceof TimeoutError)) throw error
     }
   }
-  await explorer.keyboardReleased()
 }
 
 /** The spec file's name for the report, from its `import.meta.url`. */

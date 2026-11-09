@@ -114,10 +114,13 @@ What the driver does for every scenario, so a spec need not:
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
   rail reads pressed, the rail's settings popover is closed and no field holds the keys
-  (`/world_state`'s `keyboardClaimed`). Each press waits for the HUD to show it took effect (a
-  layer gone, the rail done sliding back in) before the next. A HUD already at rest gets no
-  Escape; a client with no HUD (the standalone built without it) gets none, and any other error
-  fails the scenario at its start. The web boot waits for the HUD's own world (the rail), which
+  (`/world_state`'s `keyboardClaimed`). The rail is read once it holds still (sliding in, it reads
+  as covered with nothing open). Each press waits for the HUD to show it took effect (a layer
+  gone, the rail done sliding back in, and after leaving the chat input the engine told of it)
+  before the next. A HUD already at rest gets no Escape; a client with no HUD (the standalone
+  built without it) gets none; a HUD still not at rest after four presses is left to the
+  scenario, whose first step says what it found; any other error fails the scenario at its
+  start. The web boot waits for the HUD's own world (the rail), which
   comes after the engine's.
 - **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the HUD to call the
   control actionable: visible, enabled, uncovered and no longer moving. The HUD reports a control
@@ -128,7 +131,9 @@ What the driver does for every scenario, so a spec need not:
   keys (`keyboardClaimed`). A real `hud.fill` returns once the field has them, so the next key is
   typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
   closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
-  Escape twice only when a field holds the keys.
+  Escape twice only when a field holds the keys, and falls back to the page's Close button when a
+  field keeps them. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
+  and is refused, not raced: run the suite against a web build of its own commit.
 - **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
   slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
   their query changes (a filter, a page, the search box's debounce) until its answer shows; the
@@ -140,8 +145,9 @@ What the driver does for every scenario, so a spec need not:
   wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
   change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for unsigned guest sessions and checks that authenticated
-login delivery is inactive. The **Client login events** section is included in the registered-reading
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the page signs in
+itself as a scene preview does, `?guest=1`; the HUD's Continue as guest makes a signed guest account
+instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual

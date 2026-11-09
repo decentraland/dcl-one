@@ -239,13 +239,20 @@ describe('Explorer', () => {
     assert.equal(fake.sent('world_state').length, 3)
   })
 
-  test('hud.fill does not wait for the keyboard after a synthetic fill, or from a client that does not say', async () => {
+  test('hud.fill does not wait for the keyboard after a synthetic fill, or from a client that takes no input', async () => {
     const synthetic = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'synthetic' }) })
     await new Explorer(synthetic, { allowSyntheticInput: true }).hud.fill('Search', 'hi')
     assert.deepEqual(synthetic.sent('world_state'), [])
-    const silent = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'trusted' }), world_state: world() })
-    await new Explorer(silent).hud.fill('Search', 'hi')
-    assert.equal(silent.sent('world_state').length, 1)
+    const inputless = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'trusted' }), world_state: world({ keyboardClaimed: null }) })
+    await new Explorer(inputless).hud.fill('Search', 'hi')
+    assert.equal(inputless.sent('world_state').length, 1)
+  })
+
+  test('the keyboard waits refuse a client older than the suite, whose /world_state does not say', async () => {
+    const older = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'trusted' }), world_state: world() })
+    await assert.rejects(new Explorer(older).hud.fill('Search', 'hi'), /older than this suite/)
+    await assert.rejects(new Explorer(older).keyboardReleased(), /older than this suite/)
+    assert.equal(older.sent('world_state').length, 2)
   })
 
   test('keyboardReleased waits for the engine to let the keyboard go', async () => {

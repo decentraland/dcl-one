@@ -16,7 +16,11 @@ import { until } from './wait.ts'
 import { BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
-export type SignIn = 'account' | 'guest' | 'none'
+/** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
+ *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
+ *  `unsigned-guest`, the session-only guest with no signed identity, as a scene preview's
+ *  `?guest=1` boot signs in (natively `/login_guest`); or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -150,6 +154,13 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     // with no session, holding the world; `/hud_login` then signs in through the HUD and goes to
     // the realm and the parcel from the lobby, as a link's destination would.
     page.searchParams.set('baseDomain', target.baseDomain)
+    if (options.signIn === 'unsigned-guest') {
+      // the HUD's own unsigned guest: `?guest=1` signs in the moment the engine is warm, with no
+      // start page, and launches straight at the url's destination, as a scene preview does
+      page.searchParams.set('guest', '1')
+      page.searchParams.set('realm', realm)
+      page.searchParams.set('position', position)
+    }
     url = page.toString()
     console_ = await WebConsole.launch({
       url,
@@ -217,6 +228,10 @@ export async function signIn(
   destination: { realm: string; position: string } = { realm: target.realm, position: target.position }
 ): Promise<WorldState> {
   const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
+  if (target.transport === 'web' && mode === 'unsigned-guest') {
+    // signed in by the page itself (`?guest=1`), on its way to the url's destination
+    return explorer.waitInWorld(WORLD_TIMEOUT_MS)
+  }
   if (target.transport === 'web' && mode !== 'none') {
     const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())
     let reply: HudLoginReply
@@ -244,7 +259,7 @@ export async function signIn(
   }
   if (mode === 'account') {
     await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
-  } else if (mode === 'guest') {
+  } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
   return enterWorld(explorer, WORLD_TIMEOUT_MS)

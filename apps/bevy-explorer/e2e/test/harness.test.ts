@@ -11,11 +11,27 @@ const button = (name: string, actionable: boolean, checked = false, reason?: str
 const worldState = (keyboardClaimed: boolean | null) => JSON.stringify({ inWorld: true, arrivals: 1, keyboardClaimed })
 
 /** A HUD with `layers` modals over the rail, one closed per Escape, each listed as a dialog;
- *  `typing` keeps the chat input focused; `panel` names a rail panel, and `popover` the rail's
- *  settings popover, open until the first Escape; `claimed` has a field hold the keyboard until
- *  the first Escape. */
-function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel?: string; popover?: boolean; claimed?: boolean } = {}): FakeConsole {
+ *  `typing` keeps the chat input focused, or `chat` until the first Escape; `panel` names a rail
+ *  panel, and `popover` the rail's settings popover, open until the first Escape; `claimed` has a
+ *  field hold the keyboard until the first Escape (`always`: through every press), and `relay`
+ *  more reads of `/world_state` after it; `sliding` has the rail read still moving that many
+ *  times. */
+function hud(
+  layers: number,
+  options: {
+    typing?: boolean
+    chat?: boolean
+    empty?: boolean
+    panel?: string
+    popover?: boolean
+    claimed?: boolean | 'always'
+    relay?: number
+    sliding?: number
+  } = {}
+): FakeConsole {
   let escapes = 0
+  let releasedReads = 0
+  let railReads = 0
   return new FakeConsole({
     press_key: () => {
       escapes += 1
@@ -23,9 +39,12 @@ function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel
     },
     hud_read: (line) => {
       if (options.empty) return '{"found":false}'
-      if (line.includes('Write a message')) return options.typing ? button('Write a message', true) : '{"found":false}'
+      if (line.includes('Write a message')) return options.typing || (options.chat && escapes === 0) ? button('Write a message', true) : '{"found":false}'
       if (line.includes('"role":"dialog"')) return options.popover && escapes === 0 ? button('Sidebar settings', true).replace('"button"', '"dialog"') : '{"found":false}'
-      if (line.includes('Sidebar settings')) return escapes >= layers ? button('Sidebar settings', true) : button('Sidebar settings', false, false, 'covered')
+      if (line.includes('Sidebar settings')) {
+        if (escapes < layers) return button('Sidebar settings', false, false, 'covered')
+        return ++railReads <= (options.sliding ?? 0) ? button('Sidebar settings', false, false, 'still moving') : button('Sidebar settings', true)
+      }
       const name = /"name":"([^"]+)"/.exec(line)?.[1] ?? ''
       return button(name, true, name === options.panel && escapes === 0)
     },
@@ -34,7 +53,12 @@ function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel
       const modals = Array.from({ length: Math.max(0, layers - escapes) }, (_, i) => ({ role: 'dialog', name: `Modal ${i + 1}` }))
       return JSON.stringify([{ role: 'button', name: 'Close' }, ...modals])
     },
-    world_state: () => worldState(options.claimed === true && escapes === 0)
+    world_state: () => {
+      if (options.claimed === 'always') return worldState(true)
+      if (options.claimed !== true) return worldState(false)
+      if (escapes === 0) return worldState(true)
+      return worldState(++releasedReads <= (options.relay ?? 0))
+    }
   })
 }
 
@@ -96,6 +120,25 @@ describe('closeToRest', () => {
     const fake = hud(0, { claimed: true })
     await closeToRest(new Explorer(fake), 300)
     assert.deepEqual(fake.sent('press_key'), ['/press_key Escape'])
+  })
+
+  test('after leaving the chat input, waits for the engine to hear of it before another press', { timeout: 10_000 }, async () => {
+    // the HUD shows the input left at once; the engine holds the keys for three more reads
+    const fake = hud(0, { chat: true, claimed: true, relay: 3 })
+    await closeToRest(new Explorer(fake), 600_000)
+    assert.deepEqual(fake.sent('press_key'), ['/press_key Escape'])
+  })
+
+  test('leaves a field that keeps the keys through every press to the scenario, without failing first', async () => {
+    const fake = hud(0, { claimed: 'always' })
+    await closeToRest(new Explorer(fake), 50)
+    assert.equal(fake.sent('press_key').length, REST_ESCAPES)
+  })
+
+  test('a rail still sliding in with nothing open is at rest once it holds still, with no press', { timeout: 10_000 }, async () => {
+    const fake = hud(0, { sliding: 3 })
+    await closeToRest(new Explorer(fake), 600_000)
+    assert.deepEqual(fake.sent('press_key'), [])
   })
 
   test('follows a press as soon as the HUD shows it closed a layer, not after a window', { timeout: 10_000 }, async () => {
