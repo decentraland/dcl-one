@@ -95,10 +95,6 @@ jobs:
           cache-dependency-path: library/js-sdk-toolchain/package-lock.json
       - name: Install (builds library/protocol's out-ts first)
         run: make install
-      - name: Stamp the version into @dcl/sdk (make prepare copies it to the other packages)
-        run: cd packages/@dcl/sdk && npm version "$VERSION" --no-git-tag-version --allow-same-version
-        env:
-          VERSION: ${{ inputs.version }}
       - name: Lint
         run: make lint
       - name: Package manifests agree
@@ -109,6 +105,11 @@ jobs:
         run: make test
       - name: Test the CLI
         run: make test-cli
+      - name: Stamp the version into @dcl/sdk
+        # after the tests, which expect the placeholder; make prepare copies it to the other packages
+        run: cd packages/@dcl/sdk && npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ inputs.version }}
       - name: Pack the releasable packages
         run: make prepare
       - name: Packed manifests name no local dependency
