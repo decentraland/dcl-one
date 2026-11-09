@@ -146,12 +146,12 @@ pub struct DecodeError {
     pub why: String,
 }
 
-fn topic_address(topic: &str) -> Option<String> {
+pub(crate) fn topic_address(topic: &str) -> Option<String> {
     let hex = topic.strip_prefix("0x")?;
     (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
 }
 
-fn topic_u256(topic: &str) -> Option<String> {
+pub(crate) fn topic_u256(topic: &str) -> Option<String> {
     U256::from_str_radix(topic.strip_prefix("0x")?, 16)
         .ok()
         .map(|v| v.to_string())

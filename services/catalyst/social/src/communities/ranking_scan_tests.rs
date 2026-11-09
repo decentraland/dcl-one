@@ -27,6 +27,25 @@ async fn event(
         .bind(duration_ms).bind(community.to_string()).bind(raw).execute(pool).await.unwrap();
 }
 
+async fn wait_for_backend_block(pool: &PgPool, blocker: i32, waiter: i32) {
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT $1=ANY(pg_blocking_pids($2))")
+                .bind(blocker)
+                .bind(waiter)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            if blocked {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 async fn counts(pool: &PgPool, community: Uuid) -> (i32, i32, i64) {
     sqlx::query_as("SELECT ranking_events_count,ranking_events_total_attendees,(SELECT count(*) FROM social.community_ranking_events r WHERE r.community_id=c.id AND kind='event') FROM social.communities c WHERE id=$1")
         .bind(community).fetch_one(pool).await.unwrap()
@@ -50,7 +69,7 @@ async fn remove(pool: &PgPool, community: Uuid) {
 #[tokio::test]
 async fn completed_catalog_pages_rotate_before_long_recurrence_windows_and_restart_safely() {
     let _serial = ENDED_SCAN_TESTS.lock().await;
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
@@ -109,7 +128,7 @@ async fn completed_catalog_pages_rotate_before_long_recurrence_windows_and_resta
 #[tokio::test]
 async fn cyclic_scan_reconsiders_duration_edits_new_backdated_rows_and_recurrence_changes() {
     let _serial = ENDED_SCAN_TESTS.lock().await;
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
@@ -175,7 +194,7 @@ async fn cyclic_scan_reconsiders_duration_edits_new_backdated_rows_and_recurrenc
 #[tokio::test]
 async fn failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_with_counters() {
     let _serial = ENDED_SCAN_TESTS.lock().await;
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
@@ -199,7 +218,7 @@ async fn failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_wit
         ..Default::default()
     };
     let before = cursor.clone();
-    assert!(scan_ended_page(&pool, now, &mut cursor, 100).await.is_err());
+    assert!(scan_ended(&pool, now, &mut cursor).await.is_err());
     assert_eq!(cursor, before);
     assert_eq!(counts(&pool, community).await, (0, 0, 0));
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -208,8 +227,17 @@ async fn failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_wit
     .execute(&pool)
     .await
     .unwrap();
+    let cancellation_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let cancellation_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&cancellation_pool)
+        .await
+        .unwrap();
     let mut barrier = pool.begin().await.unwrap();
-    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *barrier)
         .await
         .unwrap();
@@ -218,28 +246,92 @@ async fn failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_wit
         .execute(&mut *barrier)
         .await
         .unwrap();
-    let mut pending = Box::pin(scan_ended_page(&pool, now, &mut cursor, 100));
-    let blocked = async {
-        loop {
-            let waiting: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
-            )
-            .bind(pid)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            if waiting {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    };
+    tokio::time::pause();
+    let clock = crate::shared::test_wait::hold_paused_clock();
+    let mut pending = Box::pin(DISABLE_ENDED_STATEMENT_TIMEOUT.scope(
+        (),
+        scan_ended_page(&cancellation_pool, now, &mut cursor, 100),
+    ));
     tokio::select! {
         result=&mut pending=>panic!("scan must reach its row barrier: {result:?}"),
-        result=tokio::time::timeout(std::time::Duration::from_secs(5),blocked)=>result.unwrap(),
+        ()=wait_for_backend_block(&pool,blocker,cancellation_pid)=>{},
     }
     drop(pending);
     assert_eq!(cursor, before);
+    barrier.commit().await.unwrap();
+    sqlx::query("SELECT 1")
+        .execute(&cancellation_pool)
+        .await
+        .unwrap();
+    assert_eq!(counts(&pool, community).await, (0, 0, 0));
+    tokio::time::resume();
+    drop(clock);
+    let mut barrier = pool.begin().await.unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *barrier)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM social.communities WHERE id=$1 FOR UPDATE")
+        .bind(community)
+        .execute(&mut *barrier)
+        .await
+        .unwrap();
+    assert_eq!(scan_ended(&pool, now, &mut cursor).await.unwrap(), 0);
+    assert_eq!(cursor, before);
+    assert_eq!(counts(&pool, community).await, (0, 0, 0));
+    let cancellation_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&cancellation_pool)
+        .await
+        .unwrap();
+    tokio::time::pause();
+    let clock = crate::shared::test_wait::hold_paused_clock();
+    let mut pending = Box::pin(
+        DISABLE_ENDED_STATEMENT_TIMEOUT.scope((), scan_ended(&cancellation_pool, now, &mut cursor)),
+    );
+    tokio::select! {
+        result=&mut pending=>panic!("scan must reach its cancellation barrier: {result:?}"),
+        ()=wait_for_backend_block(&pool,blocker,cancellation_pid)=>{},
+    }
+    let mut delayed_cursor = before.clone();
+    tokio::select! {
+        result=&mut pending=>panic!("scan must survive the observer's server deadline: {result:?}"),
+        result=scan_ended_page(&pool,now,&mut delayed_cursor,100)=>{
+            let error = result.unwrap_err();
+            let error = error.downcast_ref::<sqlx::Error>().unwrap().as_database_error().unwrap();
+            assert_eq!(error.code().as_deref(),Some("57014"));
+            assert_eq!(error.message(),"canceling statement due to statement timeout");
+        },
+    }
+    assert_eq!(delayed_cursor, before);
+    assert_eq!(counts(&pool, community).await, (0, 0, 0));
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT $1=ANY(pg_blocking_pids($2))")
+            .bind(blocker)
+            .bind(cancellation_pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT pg_cancel_backend($1)")
+            .bind(cancellation_pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    );
+    let error = pending.await.unwrap_err();
+    let error = error
+        .downcast_ref::<sqlx::Error>()
+        .unwrap()
+        .as_database_error()
+        .unwrap();
+    assert_eq!(error.code().as_deref(), Some("57014"));
+    assert_eq!(error.message(), "canceling statement due to user request");
+    cancellation_pool.close().await;
+    assert_eq!(cursor, before);
+    assert_eq!(counts(&pool, community).await, (0, 0, 0));
+    tokio::time::resume();
+    drop(clock);
     barrier.commit().await.unwrap();
     scan_ended_page(&pool, now, &mut cursor, 100).await.unwrap();
     assert_ne!(cursor, before);
@@ -253,7 +345,7 @@ async fn failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_wit
 #[tokio::test]
 async fn pass_shares_one_deadline_and_receipt_budget_across_pages_without_losing_progress() {
     let _serial = ENDED_SCAN_TESTS.lock().await;
-    let Some(pool) = crate::db::scratch::pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
@@ -294,6 +386,55 @@ async fn pass_shares_one_deadline_and_receipt_budget_across_pages_without_losing
     assert_eq!(scan_ended(&pool, now, &mut cursor).await.unwrap(), 0);
     assert_eq!(counts(&pool, community).await, (205, 0, 205));
     remove(&pool, community).await;
+}
+
+#[tokio::test]
+async fn statement_budget_keeps_prior_page_progress_and_resumes_the_rolled_back_page() {
+    let _serial = ENDED_SCAN_TESTS.lock().await;
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .unwrap()
+        .naive_utc();
+    let committed = community(&pool, now).await;
+    let blocked = community(&pool, now).await;
+    let prefix = format!("r17-budget-{}", Uuid::new_v4());
+    sqlx::query("INSERT INTO explore.event(id,name,start_at,finish_at,duration_ms,approved,community_id,raw,origin) SELECT $1||'-'||lpad(n::text,3,'0'),'Statement budget',$2,$2+interval '1 second',1000,true,CASE WHEN n=101 THEN $4 ELSE $3 END,jsonb_build_object('start_at',$5::text),'local' FROM generate_series(1,101) n")
+        .bind(&prefix).bind(now-Duration::hours(2)).bind(committed.to_string())
+        .bind(blocked.to_string()).bind((now-Duration::hours(2)).and_utc().to_rfc3339())
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO social.community_ranking_events(kind,event_key,community_id,occurred_at) SELECT 'event',id||':'||start_at::text,$1,finish_at FROM explore.event WHERE community_id=$2 AND id<$3")
+        .bind(committed).bind(committed.to_string()).bind(format!("{prefix}-100"))
+        .execute(&pool).await.unwrap();
+    sqlx::query("UPDATE social.communities SET ranking_events_count=99 WHERE id=$1")
+        .bind(committed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut barrier = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM social.communities WHERE id=$1 FOR UPDATE")
+        .bind(blocked)
+        .execute(&mut *barrier)
+        .await
+        .unwrap();
+    let mut cursor = EndedScan {
+        after_event: prefix,
+        ..Default::default()
+    };
+    assert_eq!(scan_ended(&pool, now, &mut cursor).await.unwrap(), 1);
+    assert!(cursor.after_event.ends_with("-100"));
+    assert_eq!(counts(&pool, committed).await, (100, 0, 100));
+    assert_eq!(counts(&pool, blocked).await, (0, 0, 0));
+    barrier.commit().await.unwrap();
+    assert_eq!(
+        scan_ended_page(&pool, now, &mut cursor, 100).await.unwrap(),
+        1
+    );
+    assert_eq!(counts(&pool, committed).await, (100, 0, 100));
+    assert_eq!(counts(&pool, blocked).await, (1, 0, 1));
+    remove(&pool, committed).await;
+    remove(&pool, blocked).await;
 }
 
 #[tokio::test]

@@ -468,6 +468,7 @@ async fn the_cleanup_keeps_files_something_else_names() {
 #[tokio::test]
 async fn the_collector_keeps_a_pending_uploads_files() {
     let Some(f) = fixture().await else { return };
+    let _gc_runs = GC_RUNS.lock().await;
     let (world, owner) = owned(&f).await;
     let u = upload(&world, 2);
     expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
@@ -514,6 +515,7 @@ async fn the_collector_keeps_a_pending_uploads_files() {
 #[tokio::test]
 async fn gc_reports_the_expired_upload_cleanup() {
     let Some(f) = fixture().await else { return };
+    let _gc_runs = GC_RUNS.lock().await;
     let _cleanup = CLEANUP.lock().await;
     let body = gc(&f.app, "/gc").await;
     assert!(

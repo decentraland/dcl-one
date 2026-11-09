@@ -27,7 +27,7 @@ There is no single proven recipe for Decentraland mobile UI yet — the platform
 * **Don't anchor UI to the top-left or the left edge.** That's where the client draws chat, the profile and the virtual joystick, all on top of your scene UI. Anchor right or center instead, or use `screenInset: 'interactable'`. See [Never anchor your UI to the top-left](/docs/creator/sdk7/design-experience/ux-ui-guide/#never-anchor-your-ui-to-the-top-left).
 * **Don't put interactive elements in the bottom-right corner.** The action buttons are drawn over that region, and taps there go to the client's buttons, not to your scene.
 * **Don't rely on small buttons.** Small targets are unreliable to tap on a touch screen.
-* **Don't bind key actions to `IA_ACTION_3`–`IA_ACTION_6`** (the `1`/`2`/`3`/`4` keys on a keyboard). They are not easily reachable on mobile. See [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
+* **Don't bind key actions to `IA_SECONDARY` or `IA_ACTION_3`–`IA_ACTION_6`** (the `F` and `1`/`2`/`3`/`4` keys on a keyboard) unless your scene shows those buttons. They are hidden by default on mobile (SDK 7.32.0+). See [Input on mobile](/docs/creator/build-for-mobile/develop/input-on-mobile/).
 
 ## Full-screen UI over the action buttons
 
@@ -47,13 +47,13 @@ function openScoreboard() {
 }
 
 function closeScoreboard() {
-  TouchScreenControls.showAll()
+  TouchScreenControls.showDefault()
   TouchScreenControls.showJoystick()
   // ... hide your UI
 }
 ```
 
-`showAll()` only restores the gamepad buttons, so pair it with `showJoystick()`. Both helpers do nothing on desktop, so there's no need to branch on the platform. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/) for the full component.
+Use `showDefault()` rather than `showAll()` to restore the buttons: scenes start with only jump, pointer and primary visible, so `showAll()` would bring back five buttons the player never had. Both the three-button default and `showDefault()` need SDK 7.32.0 or later; on older SDKs all eight buttons show and `showAll()` is the only way to restore them. `showDefault()` only restores the gamepad buttons, so pair it with `showJoystick()`. Both helpers do nothing on desktop, so there's no need to branch on the platform. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/) for the full component.
 
 If the avatar should also stop moving while the panel is open, add an [input modifier](/docs/creator/sdk7/interactivity/avatars/locomotion/#freeze-the-player) on top.
 

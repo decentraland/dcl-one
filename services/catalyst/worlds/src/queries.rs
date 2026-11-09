@@ -218,7 +218,9 @@ pub async fn list_scenes_full(
 
 /// The scenes of one page of unblocked worlds (name order), projected to
 /// what the index summary reads: timestamp, display, runtimeVersion and the
-/// one content entry the thumbnail names.
+/// one content entry the thumbnail names. No name deny-list filter: upstream's
+/// compares full world names with suffix-stripped entries, so it leaves out no
+/// world (WR-17).
 pub async fn list_index_scenes(
     pool: &PgPool,
     limit: i64,

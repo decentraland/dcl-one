@@ -318,17 +318,6 @@ pub(super) fn build_where_from(
     if f.only_excluded_from_ranking {
         clauses.push(format!("{EXCLUDE_FROM_RANKING_SQL} IS TRUE"));
     }
-    match &f.active {
-        ActiveRows::All => {}
-        ActiveRows::Live(positions) => {
-            clauses.push(format!("base_position = ANY(${idx})"));
-            binds.push(Bind::TextArray(positions.clone()));
-            idx += 1;
-        }
-        ActiveRows::Mirrored => {
-            clauses.push(format!("{} > 0", PlaceOrderBy::MostActive.column()));
-        }
-    }
     // An explicit pointer narrows a lookup independently of ownership. Operator
     // parcels are an alternative to the owner leg, never alternative pointers.
     let positions = f.positions.clone();
@@ -499,6 +488,24 @@ pub(super) fn build_live_user_count_order(
 
     let expr = format!("(CASE WHEN world THEN {worlds_case} ELSE {places_case} END)::int DESC, ");
     (expr, binds)
+}
+
+/// `Place/model.ts:291-303,630`: under `most_active` the places with players
+/// (`is_most_active_place`) lead the cut and the rest follow in the list's
+/// order; `idx` binds the live positions. Without a presence snapshot the
+/// mirrored headcount leads instead. Empty unless the route set `active`.
+pub(super) fn build_active_lead(f: &PlaceListFilters, idx: usize) -> (String, Vec<Bind>) {
+    match &f.active {
+        ActiveRows::All => (String::new(), Vec::new()),
+        ActiveRows::Live(positions) => (
+            format!("(base_position = ANY(${idx}))::int DESC, "),
+            vec![Bind::TextArray(positions.clone())],
+        ),
+        ActiveRows::Mirrored => (
+            format!("{} DESC, ", PlaceOrderBy::MostActive.column()),
+            Vec::new(),
+        ),
+    }
 }
 
 pub(super) fn destinations_highlighted_prefix(f: &PlaceListFilters) -> &'static str {
@@ -1192,29 +1199,6 @@ mod tests {
             matches!(&binds[1], Bind::Text(p) if p == "%_\\.%"),
             "{binds:?}"
         );
-        // `places-repository/component.ts:78-84`: most_active reads the active rows.
-        let live = PlaceListFilters {
-            active: ActiveRows::Live(vec!["10,10".to_string()]),
-            ..Default::default()
-        };
-        let (where_clause, binds) = build_where(&live, false);
-        assert!(
-            where_clause.contains("base_position = ANY($1)"),
-            "{where_clause}"
-        );
-        assert!(matches!(&binds[0], Bind::TextArray(p) if p == &["10,10".to_string()]));
-        let mirrored = PlaceListFilters {
-            active: ActiveRows::Mirrored,
-            ..Default::default()
-        };
-        assert!(
-            build_where(&mirrored, false)
-                .0
-                .contains("COALESCE(user_count_num, 0) > 0"),
-            "{}",
-            build_where(&mirrored, false).0
-        );
-
         let f = PlaceListFilters {
             creator_address: Some("0xABC".to_string()),
             ..Default::default()
@@ -1225,6 +1209,34 @@ mod tests {
             Bind::Text(s) => assert_eq!(s, "0xabc"),
             _ => panic!("expected creator text bind"),
         }
+    }
+
+    /// `Place/model.ts:630`: the places with players lead the `most_active`
+    /// cut and never narrow it.
+    #[test]
+    fn the_active_places_lead_the_order_and_never_narrow_the_where() {
+        let live = PlaceListFilters {
+            active: ActiveRows::Live(vec!["10,10".to_string()]),
+            ..Default::default()
+        };
+        let (where_clause, binds) = build_where(&live, false);
+        assert!(
+            !where_clause.contains("base_position = ANY"),
+            "{where_clause}"
+        );
+        assert!(binds.is_empty());
+        let (lead, binds) = build_active_lead(&live, 3);
+        assert_eq!(lead, "(base_position = ANY($3))::int DESC, ");
+        assert!(matches!(&binds[0], Bind::TextArray(p) if p == &["10,10".to_string()]));
+        let mirrored = PlaceListFilters {
+            active: ActiveRows::Mirrored,
+            ..Default::default()
+        };
+        assert!(!build_where(&mirrored, false).0.contains("user_count_num"));
+        let (lead, binds) = build_active_lead(&mirrored, 1);
+        assert_eq!(lead, "COALESCE(user_count_num, 0) DESC, ");
+        assert!(binds.is_empty());
+        assert_eq!(build_active_lead(&PlaceListFilters::default(), 1).0, "");
     }
 
     #[test]

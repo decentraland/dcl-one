@@ -10,11 +10,15 @@ nix develop                        # FOUNDATION_DEV_AUTOSTART=0: no services
 nix develop --command make check   # non-interactive: never starts services
 ```
 
+`flake.nix` pins nixpkgs to a nixos-unstable commit. The Update nixpkgs workflow
+proposes the current tip on the first of each month; `python3
+tooling/nixpkgs-update.py` does the same locally.
+
 `nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
 Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
-`.cache/dev/settings.json`): API and `/ws` +0, Sites and Pulse WebTransport +2,
+`.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. An occupied saved port fails startup.
 

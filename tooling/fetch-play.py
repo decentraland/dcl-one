@@ -290,6 +290,7 @@ def verify_production(receipt, wait=0):
         raise ValueError('Invalid production receipt or changed Explorer inputs')
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
+    poll_delay = 2
     while True:
         run = api(f'actions/runs/{proof["run_id"]}', read_deadline)
         if (not trusted(run) or run['id'] != proof['run_id'] or run['head_sha'] != proof['revision']
@@ -306,7 +307,8 @@ def verify_production(receipt, wait=0):
         if time.monotonic() >= deadline:
             raise RuntimeError('Complete Bevy CI is still pending; refusing publication')
         print(f'Waiting for complete Bevy CI run {run["id"]} before publication.', flush=True)
-        time.sleep(min(30, max(0, deadline - time.monotonic())))
+        time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
+        poll_delay = min(poll_delay * 2, 30)
 
 
 def fetch(wait=0, production=False, receipt=None):
@@ -316,6 +318,7 @@ def fetch(wait=0, production=False, receipt=None):
     match_inputs = production or engine_changed(pr)
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
+    poll_delay = 2
     checked = set()
     keys = {}
     # The newest Bevy run of this commit and why it cannot supply the build: named for a rerun.
@@ -384,7 +387,8 @@ def fetch(wait=0, production=False, receipt=None):
         wanted = f'with inputs {expected[:12]}' if match_inputs else 'on main (this PR changes no engine input)'
         print(f'Waiting for a successful {gate} {wanted} '
               f'({"matching run in progress" if pending else "no matching uploaded producer"})', flush=True)
-        time.sleep(min(30, max(0, deadline - time.monotonic())))
+        time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
+        poll_delay = min(poll_delay * 2, 30)
         candidates = poll_runs(pending, read_deadline)
 
 

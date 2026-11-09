@@ -4,6 +4,10 @@
 .shop-page.shop-fav {
   gap: 0;
   padding-top: 28px;
+  /* As upstream's .page: fills the first viewport below the nav, so an empty list keeps the footer below
+     the fold. */
+  flex: 1 0 auto;
+  min-height: calc(100vh - var(--shop-nav-h, 92px));
 }
 @media (max-width: 767px) {
   .shop-page.shop-fav {

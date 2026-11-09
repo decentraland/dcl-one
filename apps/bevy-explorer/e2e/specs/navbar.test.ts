@@ -9,7 +9,7 @@
 // Partial:
 // - TestSidebarShowsAllNavigationButtons reads the client's feature flags; the Bevy HUD reads none,
 //   so the expectation is the rail's fixed set of buttons (hud-accessible-names, "Sidebar rail").
-//   Presence only: Unity's Marketplace Credits, Portable Experiences and Camera entries have no
+//   Presence only: Unity's Marketplace Credits and Portable Experiences entries have no
 //   button here, so their present-or-absent cases do not exist; Create shows in dev builds only
 //   and is neither required nor forbidden. Unity logs that Map is absent from the rail by design;
 //   here it is asserted. "Exactly these buttons" is not checked: the `nav` landmark has no role in
@@ -35,6 +35,7 @@ const RAIL_BUTTONS = [
   'Communities',
   'Backpack',
   'Shop', // Marketplace
+  'Camera',
   'Gallery',
   'Settings',
   'Help & Support', // Help

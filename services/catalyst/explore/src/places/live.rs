@@ -182,12 +182,17 @@ pub async fn inject_live_user_counts(
 }
 
 /// Apply the same live ordering to legacy lists, maps and destinations.
+/// Without a presence snapshot the mirrored headcount leads the destinations
+/// (`Destination/model.ts:214-220`), as it does `GET /api/places`.
 pub fn apply_count_order(filters: &mut PlaceListFilters, counts: &LiveUserCounts) {
     if !matches!(filters.order_by, super::rows::PlaceOrderBy::MostActive) {
         return;
     }
     filters.place_user_counts = counts.places.clone();
     filters.world_user_counts = counts.worlds.clone();
+    if !counts.snapshot && filters.destinations_mode {
+        filters.active = super::rows::ActiveRows::Mirrored;
+    }
 }
 
 /// Every row's `user_count` from the headcounts (a world by its lowercase
@@ -300,6 +305,28 @@ mod tests {
             [Some(40), Some(0)],
             "no snapshot: the mirrored figure"
         );
+    }
+
+    #[test]
+    fn without_a_snapshot_the_mirrored_headcount_leads_the_destinations() {
+        use super::super::rows::{ActiveRows, PlaceListFilters, PlaceOrderBy};
+        let filters = |destinations_mode| PlaceListFilters {
+            order_by: PlaceOrderBy::MostActive,
+            destinations_mode,
+            ..Default::default()
+        };
+        let mut f = filters(true);
+        apply_count_order(&mut f, &LiveUserCounts::default());
+        assert_eq!(f.active, ActiveRows::Mirrored);
+        let mut f = filters(true);
+        apply_count_order(
+            &mut f,
+            &LiveUserCounts::new(vec![("1,2".into(), 7)], vec![], true),
+        );
+        assert_eq!((f.active, f.place_user_counts.len()), (ActiveRows::All, 1));
+        let mut f = filters(false);
+        apply_count_order(&mut f, &LiveUserCounts::default());
+        assert_eq!(f.active, ActiveRows::All, "the map keeps its order");
     }
 
     /// The old `destinations_connected_tests`: omitted unless asked (the

@@ -23,6 +23,7 @@
 # Environment: REPO (owner/name), PR_NUMBER, SECTION, and the body in SECTION_BODY or, for a body
 # too large to pass comfortably through the environment, in the file SECTION_BODY_FILE.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/retry.sh"
 
 if [ -n "${SECTION_BODY_FILE:-}" ]; then
   SECTION_BODY="$(cat "$SECTION_BODY_FILE")"
@@ -154,7 +155,10 @@ marker_ids() {
     '[.[] | select(.user.login==$bot and (.body|contains($m)))] | sort_by(.id) | .[].id' <<< "$(flatten_pages "$1")"
 }
 
-for attempt in 1 2 3 4 5; do
+COMMENT_WRITE_ATTEMPTS=5
+COMMENT_WRITE_MAX_DELAY_SECONDS=8
+
+for ((attempt=1; attempt<=COMMENT_WRITE_ATTEMPTS; attempt++)); do
   COMMENTS=$(gh api "/repos/$REPO/issues/$PR_NUMBER/comments" --paginate --slurp)
   IDS=()
   while IFS= read -r line; do [ -n "$line" ] && IDS+=("$line"); done <<< "$(marker_ids "$COMMENTS")"
@@ -206,7 +210,7 @@ for attempt in 1 2 3 4 5; do
     if ! RESULT=$(jq -n --arg b "$NEW_BODY" '{body:$b}' \
       | gh api -X POST "/repos/$REPO/issues/$PR_NUMBER/comments" --input -); then
       echo "Create failed (attempt $attempt); retrying."
-      sleep $((attempt * 2))
+      retry_after_attempt "$attempt" "$COMMENT_WRITE_ATTEMPTS" "$COMMENT_WRITE_MAX_DELAY_SECONDS"
       continue
     fi
     COMMENT_ID=$(jq -r '.id' <<< "$RESULT")
@@ -214,7 +218,7 @@ for attempt in 1 2 3 4 5; do
     if ! jq -n --arg b "$NEW_BODY" '{body:$b}' \
       | gh api -X PATCH "/repos/$REPO/issues/comments/$COMMENT_ID" --input - >/dev/null; then
       echo "Update failed (attempt $attempt); retrying."
-      sleep $((attempt * 2))
+      retry_after_attempt "$attempt" "$COMMENT_WRITE_ATTEMPTS" "$COMMENT_WRITE_MAX_DELAY_SECONDS"
       continue
     fi
   fi
@@ -232,7 +236,7 @@ for attempt in 1 2 3 4 5; do
   # on a comment about to be deleted.
   if [ -n "${RIDS[0]:-}" ] && [ "$COMMENT_ID" != "${RIDS[0]}" ]; then
     echo "Comment $COMMENT_ID lost the create race to ${RIDS[0]}; retrying on the survivor."
-    sleep $attempt
+    retry_after_attempt "$attempt" "$COMMENT_WRITE_ATTEMPTS" "$COMMENT_WRITE_MAX_DELAY_SECONDS"
     continue
   fi
 
@@ -249,8 +253,8 @@ for attempt in 1 2 3 4 5; do
   fi
 
   echo "Section '$SECTION' not settled (attempt $attempt); retrying."
-  sleep $((attempt * 2))
+  retry_after_attempt "$attempt" "$COMMENT_WRITE_ATTEMPTS" "$COMMENT_WRITE_MAX_DELAY_SECONDS"
 done
 
-echo "::warning::Could not confirm the '$SECTION' CI status section after 5 attempts."
+echo "::warning::Could not confirm the '$SECTION' CI status section after $COMMENT_WRITE_ATTEMPTS attempts."
 exit 0

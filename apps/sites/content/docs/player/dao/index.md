@@ -6,6 +6,7 @@ This section provides a comprehensive overview of how the DAO operates, its capa
 
 ## Quick Links
 
+* [Mission, Vision and Roles](/docs/player/dao/mission-vision-and-roles/) - The DAO's approved mission and who is responsible for what
 * [What is the DAO](/docs/player/dao/what-is-the-dao/) - Introduction to the Decentraland DAO
 * [How does the DAO work](/docs/player/dao/how-does-the-dao-work/) - Understanding the governance mechanisms
 * [What can you do with the DAO](/docs/player/dao/what-can-you-do-with-the-dao/) - Actions and capabilities

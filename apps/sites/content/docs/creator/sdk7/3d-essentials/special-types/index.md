@@ -41,9 +41,9 @@ To create a [custom component](/docs/creator/sdk7/architecture/custom-components
 
 > [!WARNING]
 > **📔 Note**: `Vector3` must be imported via
-> 
+>
 > > `import { Vector3 } from "@dcl/sdk/math"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -110,9 +110,9 @@ To create a [custom component](/docs/creator/sdk7/architecture/custom-components
 
 > [!WARNING]
 > **📔 Note**: `Quaternion` must be imported via
-> 
+>
 > > `import { Quaternion } from "@dcl/sdk/math"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -132,8 +132,8 @@ let clampedValue = Scalar.clamp(myInput, 0, 100)
 
 > [!WARNING]
 > **📔 Note**: `Scalar` must be imported via
-> 
+>
 > > `import { Scalar } from "@dcl/sdk/math"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 

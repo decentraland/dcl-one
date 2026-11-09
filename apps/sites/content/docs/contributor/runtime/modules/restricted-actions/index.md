@@ -15,22 +15,26 @@ Most of the restricted functionality is provided by this module, but there's als
 
 The module contains the following methods and types:
 
-* [`function movePlayerTo`](/docs/contributor/runtime/modules/restricted-actions/#movePlayerTo)
-* [`function teleportTo`](/docs/contributor/runtime/modules/restricted-actions/#teleportTo)
-* [`function triggerEmote`](/docs/contributor/runtime/modules/restricted-actions/#triggerEmote)
-* [`function changeRealm`](/docs/contributor/runtime/modules/restricted-actions/#changeRealm)
-* [`function openExternalUrl`](/docs/contributor/runtime/modules/restricted-actions/#openExternalUrl)
-* [`function openNftDialog`](/docs/contributor/runtime/modules/restricted-actions/#openNftDialog)
-* [`function setCommunicationsAdapter`](/docs/contributor/runtime/modules/restricted-actions/#setCommunicationsAdapter)
-* [`interface Vector3`](/docs/contributor/runtime/modules/restricted-actions/#Vector3)
+* [`function movePlayerTo`](/docs/contributor/runtime/modules/restricted-actions/#moveplayerto)
+* [`function teleportTo`](/docs/contributor/runtime/modules/restricted-actions/#teleportto)
+* [`function triggerEmote`](/docs/contributor/runtime/modules/restricted-actions/#triggeremote)
+* [`function changeRealm`](/docs/contributor/runtime/modules/restricted-actions/#changerealm)
+* [`function openExternalUrl`](/docs/contributor/runtime/modules/restricted-actions/#openexternalurl)
+* [`function openNftDialog`](/docs/contributor/runtime/modules/restricted-actions/#opennftdialog)
+* [`function openExplorerUi`](/docs/contributor/runtime/modules/restricted-actions/#openexplorerui)
+* [`function stopEmote`](/docs/contributor/runtime/modules/restricted-actions/#stopemote)
+* [`function triggerSceneEmote`](/docs/contributor/runtime/modules/restricted-actions/#triggersceneemote)
+* [`function copyToClipboard`](/docs/contributor/runtime/modules/restricted-actions/#copytoclipboard)
+* [`function setCommunicationsAdapter`](/docs/contributor/runtime/modules/restricted-actions/#setcommunicationsadapter)
+* [`interface Vector3`](/docs/contributor/runtime/modules/restricted-actions/#vector3)
 
 ### Methods
 
 Each of the methods below is associated with a specific [permission](/docs/contributor/content/entity-types/scenes/#permissions) that can be requested in the scene manifest.
 
-**`movePlayerTo`**
+### `movePlayerTo` {#moveplayerto}
 
-Displace the player to a new position relative to the current one, and optionally set the camera target with [vectors](/docs/contributor/runtime/modules/restricted-actions/#Vector3).
+Displace the player to a new position relative to the current one, and optionally set the camera target with [vectors](/docs/contributor/runtime/modules/restricted-actions/#vector3).
 
 Requires the [`ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE`](/docs/contributor/content/entity-types/scenes/#permissions) permission.
 
@@ -48,15 +52,23 @@ interface Response {
 function movePlayerTo(Request): Promise<Response>;
 ```
 
-**`teleportTo`**
+### `teleportTo` {#teleportto}
 
-Reposition the player to an absolute world location given a by [vectors](/docs/contributor/runtime/modules/restricted-actions/#Vector3).
+Reposition the player to a parcel, optionally in another realm.
 
 Instead of requiring a pre-approved permission, each call to `teleportTo` must be approved by the player.
 
 ```ts
 interface Request {
-  worldPosition: Vector3;
+  // The parcel to land on. Omitted: the realm's default spawn
+  // (only meaningful together with `realm`).
+  worldCoordinates?: Vector2;
+
+  // The realm the parcel belongs to: a world name (`foo.dcl.eth`) or a realm URL.
+  // When set, the client changes realm (a full reconnect, even to the realm the
+  // player is already in) and then lands on the parcel there.
+  // Omitted: the parcel is in the player's current realm.
+  realm?: string;
 }
 
 interface Response {}
@@ -64,7 +76,7 @@ interface Response {}
 function teleportTo(Request): Promise<Response>;
 ```
 
-**`triggerEmote`**
+### `triggerEmote` {#triggeremote}
 
 Make the player's avatar display an emote animation, using one of the predefined names.
 
@@ -80,7 +92,7 @@ interface Response {}
 function triggerEmote(Request): Promise<Response>;
 ```
 
-**`openExternalUrl`**
+### `openExternalUrl` {#openexternalurl}
 
 Offer to show a website to the player, using an appropriate UI (which may be another application).
 
@@ -99,7 +111,7 @@ interface Response {
 function openExternalUrl(Request): Promise<Response>;
 ```
 
-**`openNftDialog`**
+### `openNftDialog` {#opennftdialog}
 
 Show information about an NFT to the player, using an appropriate UI.
 
@@ -117,9 +129,100 @@ interface Response {
 function openNftDialog(Request): Promise<Response>;
 ```
 
-**`changeRealm`**
+### `openExplorerUi` {#openexplorerui}
+
+Open an explorer panel, fullscreen or modal, and return the open verdict.
+
+```ts
+interface Request {
+  ui: ExplorerUi;
+
+  // Echoed back in the events this request produces, so they can be matched to
+  // their call. Unset means no correlation, and 0 is reserved for the same
+  // meaning on the result, so ids start at 1.
+  requestId?: number;
+
+  // Only for `EU_ITEM_PURCHASE`.
+  itemPurchase?: { urn: string };
+}
+
+interface Response {
+  // Carries only the verdict of the open action.
+  openResult: OpenExplorerUiResult;
+}
+
+function openExplorerUi(Request): Promise<Response>;
+```
+
+### `stopEmote` {#stopemote}
+
+Stop the emote the player's avatar is currently playing.
+
+```ts
+interface Request {}
+
+interface Response {
+  success: boolean;
+}
+
+function stopEmote(Request): Promise<Response>;
+```
+
+### `triggerSceneEmote` {#triggersceneemote}
+
+Make the player's avatar display an emote animation from a file in the scene.
+
+```ts
+interface Request {
+  // The path to the emote file within the scene.
+  src: string;
+
+  loop?: boolean;
+  mask?: AvatarMask;
+}
+
+interface Response {
+  success: boolean;
+}
+
+function triggerSceneEmote(Request): Promise<Response>;
+```
+
+### `copyToClipboard` {#copytoclipboard}
+
+Copy the provided text into the player's clipboard.
+
+```ts
+interface Request {
+  text: string;
+}
+
+interface Response {}
+
+function copyToClipboard(Request): Promise<Response>;
+```
+
+### `setCommunicationsAdapter` {#setcommunicationsadapter}
+
+Ask the World Explorer to connect to another communications adapter, which scenes use to join private game servers.
+
+```ts
+interface Request {
+  connectionString: string;
+}
+
+interface Response {
+  success: boolean;
+}
+
+function setCommunicationsAdapter(Request): Promise<Response>;
+```
+
+### `changeRealm` (deprecated) {#changerealm}
 
 Switch the World Explorer to another content server, using its base URL.
+
+Deprecated in favour of [`teleportTo`](/docs/contributor/runtime/modules/restricted-actions/#teleportto) with a `realm` (and no `worldCoordinates` for the realm's default spawn). `changeRealm` resolves once the change is accepted rather than once the new realm is live, so a `teleportTo` issued straight after it runs against the previous realm.
 
 ```ts
 interface Request {
@@ -142,7 +245,7 @@ function changeRealm(Request): Promise<Response>;
 
 The only additional type used by methods in this module is the `Vector3`.
 
-**`Vector3`**
+### `Vector3` {#vector3}
 
 Holds a relative or absolute 3d position.
 

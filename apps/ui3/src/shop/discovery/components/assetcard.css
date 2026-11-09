@@ -389,6 +389,11 @@
   cursor: default;
 }
 .shop-card__addround { display: none; }
+/* VIEW and the round arrow are links on a card with nothing to buy (AssetCard's viewPath), VIEW with the cart
+   button's hover as upstream's ViewCtaLink. */
+.shop-card__cart[data-variant="view"],
+.shop-card__addround[data-variant="view"] { text-decoration: none; }
+.shop-card__addround[data-variant="view"] { background: #242129; }
 .shop-card__units {
   margin: 0;
   font-size: 12px;

@@ -13,7 +13,7 @@ This document shows how to set up a basic rig in Blender. If you want to get mor
 
 First of all, you’ll need to import your 3D model into Blender or, if you did it in Blender already, just open your blend file. In object mode, press `Shift+A` and select _**Armature**_ on the menu, like show below. Then, in _**Object Data Properties**_, under _**Viewport Display**_, toggle _**In Front**_, so you can see the bone through the mesh. Mesh and armature should be aligned, so make sure the model is well positioned in the center of the world before adding the bones. The origin of the armature should be at 0,0,0 (X,Y,Z).
 
-![](/docs/.gitbook/assets/01_add_armature.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/01_add_armature.webp)
 
 _Adding an armature and showing it through the mesh._
 
@@ -21,11 +21,11 @@ _Adding an armature and showing it through the mesh._
 
 After adding the Armature object, select it and go to _**Edit Mode**_. Here is where you add the other bones by extruding the original one (press `E`), duplicating it (`Shift+D`) or simply adding a new one with `Shift+A`. The skeleton should follow the shape of the model, like a real skeleton. Bones can be scaled, grabbed and rotated and they have two parts: the head and the tail. The head is the pivot point, which means that rotations and scale will start from there. That also means that it’s where the mesh deformation will happen, so position the bones as centered in the mesh as possible.
 
-![](/docs/.gitbook/assets/02_bone_head_tail.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/02_bone_head_tail.webp)
 
 _Bone structure._
 
-![](/docs/.gitbook/assets/03_bone_pivot_rotation.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/03_bone_pivot_rotation.webp)
 
 _Bone rotating from its pivot point._
 
@@ -41,17 +41,17 @@ Before moving on, you should check your bone orientation. You can do that by goi
 
 The axes should be aligned with the direction in which you want the bones to rotate. If it feels a little off, select the bone and, in the _**Item Transform**_ menu on the right of the viewport, adjust the _**Roll**_ until the orientation feels right.
 
-![](/docs/.gitbook/assets/04_bone_roll.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/04_bone_roll.webp)
 
 _Fixing the bone roll._
 
-![](/docs/.gitbook/assets/05_toggle_axes.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/05_toggle_axes.webp)
 
 _Toggle Axes on so you can see the direction in which the bone will rotate._
 
 Fixing the bone roll is especially important for fingers, so all the joints bend in the same proper direction. You don’t have to do it for all the bones in a finger though, just get one of them right. Then, select the ones you want to fix first and the one with the proper roll last, go to _**Armature > Bone Roll > Recalculate Roll > Active Bone**_ and they will all have the same roll. Or you can just press `Shift+N` > _**Active Bone**_. This can be used in many situations where you have a long chain of bones, like a tentacle, a tail, a long pony tail or a mechanical arm.
 
-![](/docs/.gitbook/assets/06_bone_roll_fingers.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/06_bone_roll_fingers.webp)
 
 _Press `Shift+N` to recalculate the bone roll._
 
@@ -67,7 +67,7 @@ Some examples of proper naming convention:
 
 **All the examples above are valid, but chose only one and keep it consistent through the rig.**
 
-![](/docs/.gitbook/assets/07_symmetrize.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/07_symmetrize.webp)
 
 _Use the Symmetrize option to mirror your bones._
 
@@ -80,7 +80,7 @@ _Use the Symmetrize option to mirror your bones._
 
 Skinning is the process of binding the mesh to the armature. To do so, in _**Object Mode**_, select the mesh, then the armature and press `CTRL+P` > _**Armature Deform > With Automatic Weights.**_ Then, go to _**Pose Mode**_ and test different poses to test the mesh deformation. Most of the time it will need some adjustments, as seen below.
 
-![](/docs/.gitbook/assets/08_skinning.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/08_skinning.webp)
 
 _For the Skinning, make the mesh child of the armature by pressing `CTRL+P` and test it in Pose Mode._
 
@@ -88,21 +88,21 @@ If you feel like a bone has been misplaced or that the pivot point is not accura
 
 To fix weird deformations, go to _**Object Mode**_, select the mesh and go to _**Weight Paint**_. In _**Object Data Properties**_ you will find the _**Vertex Groups**_.
 
-![](/docs/.gitbook/assets/09_weight_paint.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/09_weight_paint.webp)
 
 _Edit a bone’s influence in Weight Paint._
 
 Before you start editing, to have you weight paint automatically mirrored as you paint, toggle _**Mirror Vertex Groups**_ and select _**X**_ in _**Mirror**_ under _**Symmetry**_ (in Blender 3.4.0) To edit the influences, select the vertex group one you want and, in the _**Tool**_ menu, under _**Blend**_, switch between _**Add**_ and _**Subtract**_ according to your needs. You can also change the size, weight and strength of the brush.
 
-![](/docs/.gitbook/assets/10_weight_paint_tools.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/10_weight_paint_tools.webp)
 
 _Change the Blend to add or remove influence. Make sure Symmetry is right._
 
-![](/docs/.gitbook/assets/11_weight_paint_tools_02.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/11_weight_paint_tools_02.webp)
 
 Use the _**Blur**_ tool ont the left side of the screen to smooth the weight paint and make it more even.
 
-![](/docs/.gitbook/assets/12_blur_tool.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/12_blur_tool.webp)
 
 _Blur Tool._
 
@@ -110,11 +110,11 @@ _Blur Tool._
 
 IK is essential when you want something to stay in place. The best example of its use is on legs, but it can be adopted in a variety of situations, like in the examples below:
 
-![](/docs/.gitbook/assets/13_IK_example_mch_arm.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/13_IK_example_mch_arm.webp)
 
 _IK use in a mechanical arm._
 
-![](/docs/.gitbook/assets/14_IK_example_buddha.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/14_IK_example_buddha.webp)
 
 _IK use in cables._
 
@@ -122,23 +122,23 @@ Since it’ll change the hierarchy of bones, it’s best to keep it as a separat
 
 Remeber to rename the duplicated bones, adding IK to the name so you know they are part of the IK setup. And since they shouldn’t deform the mesh, select all them and in _**Bone Property**_, press and hold `Alt` and uncheck _**Deform**_.
 
-![](/docs/.gitbook/assets/15_Duplicating_bones.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/15_Duplicating_bones.webp)
 
 _Duplicate the bones and move them to a different layer._
 
-![](/docs/.gitbook/assets/16_uncheck_deform.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/16_uncheck_deform.webp)
 
 _Select all the IK bones and, while holding `Alt`, uncheck Deform._
 
 Next, you’ll need to create a bone that’ll drive the IK chain. Select the head of the foot bone and extrude it on Y. Then, press `Alt+P` to unparent it because the IK bone can’t be part of the chain and can’t be connected to other bones. You’ll need to make the foot a child of the IK, so select the foot bone first and the IK bone last and press `CTRL+P` > _**Keep Offset**_.
 
-![](/docs/.gitbook/assets/17_IK_bone.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/17_IK_bone.webp)
 
 _Creating an IK bone._
 
 In _**Pose Mode**_, click on the shin bone, press `CTRL+Shift+C` and select _**Inverse Kinematics**_. It will look all messed up, but don’t worry, it will be fixed once you change a few settings. With the shin selected, got to the _**Bone Constraint Properties**_ as shown below.
 
-![](/docs/.gitbook/assets/18_constraint_tab.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/18_constraint_tab.webp)
 
 _In Bone Constraint Properties you can edit the IK settings._
 
@@ -154,17 +154,17 @@ The Pole Target lets you control the direction in which the bones will bend. The
 * In _**Transform Orientation**_, change it to _**Normal**_ and in _**Tansform Pivot Point**_ change it to _**Active Element**_.
 * Rotate the bone in X -90 (or 90, depending on the orientation you set) so it points forward and grab it in Y until it has a nice position in front of the leg. You can also scale it down a little bit.
 
-![](/docs/.gitbook/assets/19_creating_pole_target.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/19_creating_pole_target.webp)
 
 _Creating a Pole Target._
 
 Back into _**Pose Mode**_, select the shin again and go to the _**Bone Constraint Properties**_. For _**Pole Target**_ select _**Armature**_ and for _**Bone**_, select the pole target one you just created. If you show the deform bones, you will see that the pole target rotated the IK a little.
 
-![](/docs/.gitbook/assets/20_pole_target_rotation.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/20_pole_target_rotation.webp)
 
 _IK chain and deform bones are not aligned anymore because of pole target._
 
-![](/docs/.gitbook/assets/21_pole_target_rotation_fix.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/21_pole_target_rotation_fix.webp)
 
 _The rotation can be fixed by changing the Pole Angle._
 
@@ -178,7 +178,7 @@ Move the thigh and shin to another layer since you won’t need them for animati
 
 The IK chain is all set up, but it should drive the deform bones and right now that’s not happening, but you can use constraints to fix that. In _**Pose Mode**_, select a bone from the IK chain first and the respective deforming bone last, press `CTRL+Shift+C` and select _**Copy Transforms**_. Do that for all the bones, which in the example are thigh, shin, foot and toes. The deform bones will have a green color to them, which means that they have a constraint. If you click on _**Bone Constraint Properties**_, you can see which constraint is being used and what bone is driving it.
 
-![](/docs/.gitbook/assets/22_constraints.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/22_constraints.webp)
 
 _Green bones have constraints. You can check them in Bone Constraints Properties._
 
@@ -187,7 +187,7 @@ _Green bones have constraints. You can check them in Bone Constraints Properties
 > **💡 Tip**: You don’t have to set up the IK all over again for the other side. In _Edit Mode_, just delete all the bones from the side that doesn’t have the IK, then select all the deforming bones and IK chain that you want to mirror, right click with the mouse and select _Symmetrize_. It will not only mirror the bones, but also all the constraints!
 
 
-![](/docs/.gitbook/assets/23_symmetrize_constraints.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/23_symmetrize_constraints.webp)
 
 _Use the option Symmetrize to mirror constraints too!_
 
@@ -201,7 +201,7 @@ The process for this is pretty much the same done for the IK setup. Duplicate al
 
 Now you’ll have to add constraints to bind the two skeletons together. To make this process easier, you can change the bone shape by clicking on _**Object Data Properties**_ and, under _**Viewport Display**_, change _**Display As**_ from _**Octahedral**_ to _**B-Bone**_. Then, press `CTRL+Alt+S` to scale the bones up a little bit so their are bigger than the original ones.
 
-![](/docs/.gitbook/assets/24_b-bone_scale.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/24_b-bone_scale.webp)
 
 _Change the bone shape and scale them up so it’s easier to differentiate between the two skeletons._
 
@@ -209,19 +209,19 @@ For the constraints, select a control bonefirst and the respective deforming bon
 
 You can separate the control bones into different groups and assign colors to them. Go to _**Pose Mode**_ > _**Object Data Properties**_ > _**Bone Groups**_. Click on the _**+**_ icon to add a new group, rename it as you see fit and select a color for it. Then, select the bones you want to be part of that group and click on _**Assign**_. You can create as many groups as you like to keep everything organized. You can also move different bone groups to different layers.
 
-![](/docs/.gitbook/assets/25_bone_groups.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/25_bone_groups.webp)
 
 _Bone groups will help you keep your rig organized and more intuitive._
 
 An extra way to improve your rig is to customize the shape of the bones. To do that, go to _**Object Mode**_, press `Shift+A` to ad a mesh, like a circle, for example. To keep everything organized, create a collection for your shapes and move there the circle you just created. Go back to Pose Mode and, in _**Object Data Properties**_ > _**Viewport Display**_ check _**Shapes**_. Select the bone you want and then, in _**Bone Properties**_, click on _**Viewport Display**_ > _**Custom Shape**_. In _**Custom object**_, select the circle in the outliner.
 
-![](/docs/.gitbook/assets/26_bone_shape.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/26_bone_shape.webp)
 
 _Customizing the bone shape._
 
 If the shape feels off, you can always edit it in _**Edit Mode**_, as shown below. Make sure the shape has the same orientation os the bone.
 
-![](/docs/.gitbook/assets/27_bone_shape_edit.webp)
+![](/docs/creator/images/3d-models-and-animations/create-rig/27_bone_shape_edit.webp)
 
 _Edit the shape in Edit Mode._
 
