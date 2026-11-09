@@ -13,6 +13,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // jsdom's localStorage, not Node's own (on by default from Node 25): .nvmrc pins 24, but a newer Node runs these too.
+    execArgv: ['--no-experimental-webstorage'],
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     sequence: { hooks: 'list' },

@@ -813,9 +813,13 @@ export function Chat({
   // the active/focused state, ready to type — matches Unity's "click chat → start typing". Also
   // reacts to focusTick alone: Enter while chat is already idle-open doesn't change `open`, so
   // the engine's "Chat" system action (see bridge-scene chat.ts) bumps this tick to force focus.
+  // Mounting already idle-open (entering the world) is not an opening: focusing then would take
+  // the keyboard from the engine, and WASD would type into the chat instead of walking.
+  const focusedFor = useRef({ open, tick: chat.focusTick })
   useEffect(() => {
-    if (open) inputRef.current?.focus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const prev = focusedFor.current
+    focusedFor.current = { open, tick: chat.focusTick }
+    if (open && (!prev.open || prev.tick !== chat.focusTick)) inputRef.current?.focus()
   }, [open, chat.focusTick])
 
   // Leaving the chat (click outside → not hovered/focused) resets the nearby-members

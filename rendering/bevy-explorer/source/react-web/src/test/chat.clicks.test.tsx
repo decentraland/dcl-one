@@ -40,6 +40,20 @@ describe('chat chrome clicks', () => {
   })
 })
 
+describe('chat focus', () => {
+  it('mounting idle-open leaves the keyboard to the engine; opening or a focus request takes it', () => {
+    const { rerender } = render(<Chat chat={chatState({ open: true, focusTick: 0 })} />)
+    const input = screen.getByRole('textbox')
+    expect(document.activeElement).not.toBe(input)
+    rerender(<Chat chat={chatState({ open: true, focusTick: 1 })} />)
+    expect(document.activeElement).toBe(input)
+    input.blur()
+    rerender(<Chat chat={chatState({ open: false, focusTick: 1 })} />)
+    rerender(<Chat chat={chatState({ open: true, focusTick: 1 })} />)
+    expect(document.activeElement).toBe(screen.getByRole('textbox'))
+  })
+})
+
 describe('emoji picker', () => {
   it('picking an emoji calls onPick with the glyph', async () => {
     const onPick = vi.fn()
