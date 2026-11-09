@@ -117,6 +117,9 @@ const _eventLoop = Symbol("[[eventLoop]]");
 const _sendQueue = Symbol("[[sendQueue]]");
 const _queueSend = Symbol("[[queueSend]]");
 const _fail = Symbol("[[fail]]");
+const _failSend = Symbol("[[failSend]]");
+const _sendNow = Symbol("[[sendNow]]");
+const _closedWhileConnecting = Symbol("[[closedWhileConnecting]]");
 
 class WebSocket extends EventTarget {
   constructor(url, protocols = []) {
@@ -129,6 +132,7 @@ class WebSocket extends EventTarget {
     this[_url] = "";
     this[_binaryType] = "blob";
     this[_sendQueue] = [];
+    this[_closedWhileConnecting] = false;
 
     const prefix = "Failed to construct 'WebSocket'";
     webidl.requiredArguments(arguments.length, 1, prefix);
@@ -215,13 +219,24 @@ class WebSocket extends EventTarget {
     PromisePrototypeThen(
       op_ws_connect(rid),
       (protocol) => {
+        if (this[_closedWhileConnecting]) {
+          // close() ran after the connection completed but before this callback
+          this[_readyState] = CLOSED;
+          this[_fail](
+            new DOMException(
+              "WebSocket was closed before the connection was established",
+              "NetworkError",
+            ),
+          );
+          core.tryClose(rid);
+          return;
+        }
         this[_protocol] = protocol;
         if (this[_readyState] === CONNECTING) {
           this[_readyState] = OPEN;
           const event = new Event("open");
           this.dispatchEvent(event);
         }
-        // closed while the connection completed: the loop delivers the close
         this[_eventLoop]();
       },
       (err) => {
@@ -286,11 +301,14 @@ class WebSocket extends EventTarget {
 
   get bufferedAmount() {
     webidl.assertBranded(this, WebSocketPrototype);
-    if (this[_readyState] === OPEN) {
-      return op_ws_get_buffered_amount(this[_rid]);
-    } else {
-      return 0;
+    if (this[_readyState] === OPEN || this[_readyState] === CLOSING) {
+      try {
+        return op_ws_get_buffered_amount(this[_rid]);
+      } catch {
+        return 0;
+      }
     }
+    return 0;
   }
 
   send(data) {
@@ -307,18 +325,14 @@ class WebSocket extends EventTarget {
     if (this[_sendQueue].length === 0) {
       // Fast path if the send queue is empty, for example when only synchronous
       // data is being sent.
-      if (ArrayBufferIsView(data)) {
-        op_ws_send_binary(this[_rid], data);
-      } else if (isArrayBuffer(data)) {
-        op_ws_send_binary_ab(this[_rid], data);
-      } else if (ObjectPrototypeIsPrototypeOf(BlobPrototype, data)) {
+      if (ObjectPrototypeIsPrototypeOf(BlobPrototype, data)) {
         this[_queueSend](data);
       } else {
-        const string = String(data);
-        op_ws_send_text(
-          this[_rid],
-          string,
-        );
+        try {
+          this[_sendNow](data);
+        } catch (err) {
+          this[_failSend](err);
+        }
       }
     } else {
       // Slower path if the send queue is not empty, for example when sending
@@ -364,6 +378,7 @@ class WebSocket extends EventTarget {
     if (this[_readyState] === CONNECTING) {
       // cancels the handshake; the pending connect fails with error and close events
       this[_readyState] = CLOSING;
+      this[_closedWhileConnecting] = true;
       try {
         op_ws_close(this[_rid], code, reason);
       } catch {
@@ -396,6 +411,27 @@ class WebSocket extends EventTarget {
     this.dispatchEvent(closeEv);
   }
 
+  // A send the runtime refused (full buffer) fails the socket instead of throwing.
+  [_failSend](err) {
+    if (this[_readyState] === CLOSED) {
+      return;
+    }
+    this[_readyState] = CLOSED;
+    this[_sendQueue].length = 0;
+    core.tryClose(this[_rid]);
+    PromisePrototypeThen(PromiseResolve(), () => this[_fail](err));
+  }
+
+  [_sendNow](data) {
+    if (ArrayBufferIsView(data)) {
+      op_ws_send_binary(this[_rid], data);
+    } else if (isArrayBuffer(data)) {
+      op_ws_send_binary_ab(this[_rid], data);
+    } else {
+      op_ws_send_text(this[_rid], String(data));
+    }
+  }
+
   async [_eventLoop]() {
     const rid = this[_rid];
     while (this[_readyState] !== CLOSED) {
@@ -403,9 +439,16 @@ class WebSocket extends EventTarget {
       try {
         kind = await op_ws_next_event(rid);
       } catch (err) {
+        if (this[_readyState] === CLOSED) {
+          break;
+        }
         this[_readyState] = CLOSED;
         this[_fail](err);
         core.tryClose(rid);
+        break;
+      }
+      // the socket was failed on the scene side and has already reported it
+      if (this[_readyState] === CLOSED) {
         break;
       }
 
@@ -494,21 +537,21 @@ class WebSocket extends EventTarget {
     }
 
     while (queue.length > 0) {
-      const data = queue[0];
-      if (ArrayBufferIsView(data)) {
-        op_ws_send_binary(this[_rid], data);
-      } else if (isArrayBuffer(data)) {
-        op_ws_send_binary_ab(this[_rid], data);
-      } else if (ObjectPrototypeIsPrototypeOf(BlobPrototype, data)) {
-        // deno-lint-ignore prefer-primordials
-        const ab = await data.slice().arrayBuffer();
-        op_ws_send_binary_ab(this[_rid], ab);
-      } else {
-        const string = String(data);
-        op_ws_send_text(
-          this[_rid],
-          string,
-        );
+      let data = queue[0];
+      try {
+        if (ObjectPrototypeIsPrototypeOf(BlobPrototype, data)) {
+          // deno-lint-ignore prefer-primordials
+          data = await data.slice().arrayBuffer();
+        }
+        if (this[_readyState] !== OPEN) {
+          // closed while a Blob was read: the rest is never sent
+          queue.length = 0;
+          return;
+        }
+        this[_sendNow](data);
+      } catch (err) {
+        this[_failSend](err);
+        return;
       }
       ArrayPrototypeShift(queue);
     }

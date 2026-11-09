@@ -318,12 +318,21 @@ function connect(url, protocols) {
 function closed(ws) { return new Promise((r) => ws.addEventListener("close", (e) => r(e))); }
 function message(ws) { return new Promise((r) => ws.addEventListener("message", (e) => r(e.data), { once: true })); }
 async function close(ws, code, reason) { const c = closed(ws); ws.close(code, reason); return await c; }
+function track(ws) {
+    const log = [];
+    for (const type of ["open", "error", "close"]) {
+        ws.addEventListener(type, (e) => log.push(type === "close" ? `close:${e.code}:${e.wasClean}` : type));
+    }
+    return log;
+}
 "#;
 
 struct Harness {
     runtime: JsRuntime,
     rt: tokio::runtime::Runtime,
     grant: bool,
+    /// The message of every permission prompt the scene raised.
+    prompts: Vec<Option<String>>,
     _system: Option<tokio::sync::mpsc::UnboundedReceiver<system_bridge::SystemApi>>,
 }
 
@@ -363,6 +372,7 @@ impl Harness {
             runtime,
             rt,
             grant: true,
+            prompts: Vec::new(),
             _system: system,
         }
     }
@@ -387,17 +397,22 @@ impl Harness {
         let state = self.runtime.op_state();
         let grant = self.grant;
         let runtime = &mut self.runtime;
+        let prompts = &mut self.prompts;
         self.rt.block_on(async {
-            let prompts = async {
+            let answer = async {
                 loop {
                     tokio::time::sleep(Duration::from_millis(2)).await;
                     let calls = std::mem::take(
                         &mut **state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>(),
                     );
                     for call in calls {
-                        if let common::rpc::RpcCall::RequestGenericPermission { response, .. } =
-                            call
+                        if let common::rpc::RpcCall::RequestGenericPermission {
+                            response,
+                            message,
+                            ..
+                        } = call
                         {
+                            prompts.push(message);
                             std::thread::spawn(move || response.send(grant));
                         }
                     }
@@ -408,7 +423,7 @@ impl Harness {
                     Ok(r) => { r.unwrap(); true }
                     Err(_) => false,
                 },
-                _ = prompts => unreachable!(),
+                _ = answer => unreachable!(),
             }
         })
     }
@@ -471,9 +486,14 @@ fn private_network_access_follows_the_fetch_rule() {
         let outcome = echo_outcome(scene, &url);
         assert!(outcome.contains("must be `wss`"), "{outcome}");
         // wss passes the scheme rule and is refused at the resolved address instead
-        let wss = format!("wss://localhost:{}/echo", server.addr.port());
-        let outcome = echo_outcome(scene, &wss);
+        let mut harness = Harness::new(scene);
+        let outcome = harness.run(&format!(
+            "const r = await connect('wss://localhost:{}/echo'); return r.ok ? 'open' : r.error;",
+            server.addr.port()
+        ));
         assert!(outcome.contains("non-public"), "{outcome}");
+        let counters = harness.counters();
+        assert_eq!((counters.ws_refused, counters.ws_failed), (1, 0));
     }
     // only the two permitted scenes ever reached the server
     assert_eq!(server.connections(), 2);
@@ -688,7 +708,109 @@ fn closing_while_connecting_cancels_the_handshake() {
 }
 
 #[test]
-fn outbound_bytes_are_capped_until_the_peer_drains_them() {
+fn a_send_past_the_outbound_cap_fails_the_socket() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem);
+    let outcome = harness.run(&format!(
+        r#"
+        const chunk = new Uint8Array({MIB});
+        const stalled = (await connect({sink:?})).ws;
+        const stalledLog = track(stalled);
+        const stalledEnded = closed(stalled);
+        let sent = 0, buffered = 0, threw = "no";
+        try {{
+            while (stalled.readyState === WebSocket.OPEN && sent < 64) {{
+                buffered = stalled.bufferedAmount;
+                stalled.send(chunk);
+                sent++;
+            }}
+        }} catch (e) {{ threw = String(e); }}
+        await stalledEnded;
+
+        const echo = (await connect({echo:?})).ws;
+        const echoLog = track(echo);
+        const echoEnded = closed(echo);
+        echo.send(new Uint8Array(8 * {MIB} + 1));
+        await echoEnded;
+
+        const fresh = (await connect({echo:?})).ws;
+        fresh.send(new Uint8Array(1000));
+        const echoed = (await message(fresh)).size;
+        await close(fresh);
+        return [sent, buffered, threw, stalledLog.join(","), echoLog.join(","), echoed].join(" | ");
+        "#,
+        sink = server.url("/sink"),
+        echo = server.url("/echo")
+    ));
+    let parts: Vec<&str> = outcome.split(" | ").collect();
+    assert_eq!(parts.len(), 6, "{outcome}");
+    // the eighth MiB passes the cap and fails the socket; send() itself never throws
+    assert_eq!(parts[0], "8", "{outcome}");
+    assert_eq!(parts[1], (7 * MIB).to_string());
+    assert_eq!(parts[2], "no");
+    assert_eq!(parts[3], "error,close:1006:false");
+    assert_eq!(parts[4], "error,close:1006:false");
+    assert_eq!(parts[5], "1000");
+    assert_eq!(harness.sockets(), 0);
+}
+
+#[test]
+fn a_flood_of_empty_sends_is_capped() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem);
+    let outcome = harness.run(&format!(
+        r#"
+        const ws = (await connect({:?})).ws;
+        const log = track(ws);
+        const ended = closed(ws);
+        let sent = 0;
+        while (ws.readyState === WebSocket.OPEN && sent < 1000000) {{
+            ws.send("");
+            sent++;
+        }}
+        await ended;
+        return [sent, log.join(",")].join(" | ");
+        "#,
+        server.url("/sink")
+    ));
+    let (sent, log) = outcome.split_once(" | ").unwrap();
+    let sent: usize = sent.parse().unwrap();
+    // every queued message counts against the 8 MiB cap, payload or not
+    let queued = harness.counters().ws_msgs_out as usize;
+    assert!(queued > 1000 && queued < 8 * MIB / 32, "{queued}");
+    assert_eq!(sent, queued + 1);
+    assert_eq!(log, "error,close:1006:false");
+    assert_eq!(harness.sockets(), 0);
+}
+
+#[test]
+fn a_queued_blob_past_the_cap_fails_the_socket_and_drops_later_sends() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem);
+    let outcome = harness.run(&format!(
+        r#"
+        const {{ ws }} = await connect({:?});
+        ws.send(new Uint8Array([1]));
+        const Blob = (await message(ws)).constructor;
+        const log = track(ws);
+        const received = [];
+        ws.addEventListener("message", (e) => received.push(e.data));
+        let threw = "no";
+        try {{
+            ws.send(new Blob([new Uint8Array(8 * {MIB} + 1)]));
+            ws.send("after");
+        }} catch (e) {{ threw = String(e); }}
+        await closed(ws);
+        return [threw, log.join(","), received.length].join(" | ");
+        "#,
+        server.url("/echo")
+    ));
+    assert_eq!(outcome, "no | error,close:1006:false | 0");
+    assert_eq!(harness.sockets(), 0);
+}
+
+#[test]
+fn buffered_amount_is_reported_while_closing() {
     let server = WsServer::start();
     let mut harness = Harness::new(Scene::DesktopSystem).with_net(WsNet {
         close_timeout: Duration::from_millis(300),
@@ -696,33 +818,95 @@ fn outbound_bytes_are_capped_until_the_peer_drains_them() {
     });
     let outcome = harness.run(&format!(
         r#"
-        const chunk = new Uint8Array({MIB});
-        const stalled = (await connect({:?})).ws;
-        for (let i = 0; i < 8; i++) stalled.send(chunk);
-        const buffered = stalled.bufferedAmount;
-        let refused = "accepted";
-        try {{ stalled.send(new Uint8Array(1)); }} catch (e) {{ refused = String(e); }}
-        const stalledClose = (await close(stalled)).code;
-
-        const echo = (await connect({:?})).ws;
-        let oversized = "accepted";
-        try {{ echo.send(new Uint8Array(8 * {MIB} + 1)); }} catch (e) {{ oversized = String(e); }}
-        echo.send(new Uint8Array(1000));
-        const echoed = (await message(echo)).size;
-        await close(echo);
-        return [buffered, refused, stalledClose, oversized, echoed].join(" | ");
+        const {{ ws }} = await connect({:?});
+        ws.send(new Uint8Array(1000));
+        const c = closed(ws);
+        ws.close();
+        const closing = [ws.readyState, ws.bufferedAmount];
+        const event = await c;
+        return [...closing, ws.readyState, event.code].join(" ");
         "#,
-        server.url("/sink"),
+        server.url("/silent")
+    ));
+    assert_eq!(outcome, "2 1000 3 1006");
+}
+
+#[test]
+fn a_peer_dropping_the_connection_reports_error_then_close() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const ws = new WebSocket({:?});
+        const log = track(ws);
+        await closed(ws);
+        return log.join(",");
+        "#,
+        server.url("/drop")
+    ));
+    assert_eq!(outcome, "open,error,close:1006:false");
+}
+
+#[test]
+fn closing_while_connecting_fails_even_once_the_connection_completed() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem);
+    // b's open can run before a's connect result reaches the scene; closing a then must still
+    // report a failed connection, not a clean close
+    let outcome = harness.run(&format!(
+        r#"
+        const url = {:?};
+        const settle = (ws) => new Promise((r) => {{
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CLOSED) r();
+            ws.addEventListener("open", () => r());
+            ws.addEventListener("close", () => r());
+        }});
+        const bad = [];
+        for (let round = 0; round < 3; round++) {{
+        const pairs = [];
+        for (let i = 0; i < 16; i++) {{
+            const a = new WebSocket(url), b = new WebSocket(url);
+            const pair = {{ a, b, log: track(a), early: false }};
+            b.addEventListener("open", () => {{
+                if (a.readyState === WebSocket.CONNECTING) {{ pair.early = true; a.close(1000); }}
+            }});
+            pairs.push(pair);
+        }}
+        for (const pair of pairs) {{
+            await settle(pair.a);
+            await settle(pair.b);
+            if (pair.early) {{
+                if (pair.a.readyState !== WebSocket.CLOSED) await closed(pair.a);
+                if (pair.log.join(",") !== "error,close:1006:false") bad.push(pair.log.join(","));
+            }}
+            for (const ws of [pair.a, pair.b]) if (ws.readyState === WebSocket.OPEN) await close(ws);
+        }}
+        }}
+        return bad.join(";");
+        "#,
         server.url("/echo")
     ));
-    let parts: Vec<&str> = outcome.split(" | ").collect();
-    assert_eq!(parts.len(), 5, "{outcome}");
-    assert_eq!(parts[0], (8 * MIB).to_string());
-    assert!(parts[1].contains("outbound buffer"), "{outcome}");
-    assert_eq!(parts[2], "1006");
-    assert!(parts[3].contains("outbound buffer"), "{outcome}");
-    assert_eq!(parts[4], "1000");
+    assert_eq!(outcome, "");
     assert_eq!(harness.sockets(), 0);
+}
+
+#[test]
+fn the_permission_prompt_names_the_parsed_origin() {
+    let server = WsServer::start();
+    let port = server.addr.port();
+    let mut harness = Harness::new(Scene::DesktopSystem);
+    let outcome = harness.run(&format!(
+        "const r = await connect('ws://decentraland.org:x@127.0.0.1:{port}/echo?q=1'); if (r.ok) await close(r.ws); return r.ok;"
+    ));
+    assert_eq!(outcome, "true");
+    let mut ordinary = Harness::new(Scene::Ordinary);
+    ordinary.run("await connect('wss://[::1]/echo');");
+    assert_eq!(
+        [harness.prompts, ordinary.prompts].concat(),
+        vec![
+            Some(format!("ws://127.0.0.1:{port}")),
+            Some("wss://[::1]:443".to_owned())
+        ]
+    );
 }
 
 #[test]
