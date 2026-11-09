@@ -124,13 +124,19 @@ across workers:
 - `SceneSpawner` forgets child instances when their parent is gone, and `unregister_instance`
   cancels a spawn that hasn't happened yet.
 - `SceneSpawner::set_spawn_deadline`: queued `Scene` instances are written an entity at a time,
-  one instance after another in request order, until the deadline. The rest waits for the next
-  run, and each run writes at least one entity. `None`, the default, spawns them whole as stock
-  bevy does; dynamic scenes and `spawn_sync` always do.
-  - A part-written instance's top-level entities are attached to the parent from the first run
-    and kept `Visibility::Hidden` until it is complete. Their own visibility is restored then.
+  parents before children, one instance after another in request order, until the deadline. The
+  rest waits for the next run, and each run writes at least one entity. `None`, the default,
+  spawns them whole with stock bevy's `write_to_world_with`; dynamic scenes and `spawn_sync`
+  always do.
+  - The progress is on the entities: those to write next carry a sparse-set marker, the
+    top-level ones first, and writing an entity passes it on to its children. Bevy shows a child
+    whose parent has no visibility yet, so a child is never written before its parent.
+  - A part-written instance's top-level entities are attached to the parent and kept
+    `Visibility::Hidden` until it is complete; a `HiddenSceneRoot` component holds their own
+    visibility, restored then.
   - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written.
-  - A scene replaced or removed mid-spawn starts the instance over.
+  - A scene replaced or removed mid-spawn starts the instance over. If no entity is marked while
+    some are unwritten (despawned by others, a scene changed in place), it is written whole.
   - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
     `reveal_instance_sync`.
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF

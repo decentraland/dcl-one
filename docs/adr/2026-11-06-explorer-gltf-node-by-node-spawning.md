@@ -33,24 +33,38 @@ source is no longer available; Bevy 0.20 itself still writes an instance in one 
 Both steps run a node at a time and stop at one deadline per frame; what is left resumes on the
 next frame, and a model stays hidden until both steps are done.
 
-- **Resumable spawning.** `SceneSpawner` writes a `Scene` instance one source entity at a time
-  (`Scene::write_entity_to_world`, split out of `write_to_world_with` with the same behaviour).
-  `set_spawn_deadline(Some(instant))` stops the writing once the instant has passed and resumes
-  it on the next run; each run writes at least one entity, so every instance completes.
-  Instances are written one after another in request order. `None`, the default, spawns every
-  queued instance whole, as stock Bevy does. Dynamic scenes and `spawn_sync` always spawn whole.
-- **A part-written instance is hidden.** Its top-level entities are attached to the parent from
-  the first run, in the order a whole spawn attaches them, and carry `Visibility::Hidden` until the
-  instance is complete; then each gets back the visibility its scene gives it (none, if it had
-  none). A root's own visibility written by a later slice is hidden again at once. Children
-  written before their parents, skinned meshes without their joints and live lights therefore
-  never show. `instance_is_ready` and `SceneInstanceReady` mean complete, as before, so every
-  caller that waits for them is unchanged.
-- **Cancelling mid-spawn leaves nothing behind.** Entities are allocated when an instance starts
-  and attached only as they are written, so a despawned parent does not reach them all. Its parent
-  despawned, `despawn_instance` and `unregister_instance` despawn every entity the instance
-  allocated. A scene replaced (another `World`) or removed mid-spawn starts its instance over;
-  a removed one waits for its scene to load again.
+- **Resumable spawning, parents first.** `SceneSpawner` writes a `Scene` instance one source
+  entity at a time (`Scene::write_entity_to_world`, split out of `write_to_world_with` with the
+  same behaviour). `set_spawn_deadline(Some(instant))` stops the writing once the instant has
+  passed and resumes it on the next run; each run writes at least one entity, so every instance
+  completes. Instances are written one after another in request order. `None`, the default,
+  spawns every queued instance whole with stock Bevy's `write_to_world_with`, its roots attached
+  after writing. Dynamic scenes and `spawn_sync` always spawn whole.
+- **The progress is on the entities.** Every entity of an instance is allocated when it starts:
+  Bevy's entity mapper turns a reference to an entity it has not seen into a dead id, so they must
+  all exist before the first write. The entities to write next carry a sparse-set marker
+  (`SceneEntityToWrite`, with their scene entity). The top-level ones carry it first, and writing
+  an entity passes it on to the entity's children. A cached query finds the next marked entity, so
+  the spawner keeps no list of entities and walks no archetypes after the allocation, which is
+  stock's own loop.
+- **A part-written instance is hidden.** When a run leaves an instance part-written, its
+  top-level entities are attached to the parent, in the order a whole spawn attaches them, and
+  carry `Visibility::Hidden` until the instance is complete, with a `HiddenSceneRoot` component
+  holding the visibility their scene gives them. Then each gets that visibility back; a root whose
+  scene gives it none loses the visibility components hiding added. A root's own visibility
+  written by a later slice is hidden again at once. Writing parents first is what makes the hiding
+  hold. Bevy resolves an `Inherited` child whose parent has no visibility components yet as
+  visible (`visibility_propagate_system`), so a child written before its parent, as archetype
+  order does, would show at the origin; a test with Bevy's propagation checks that nothing
+  written shows between slices. `instance_is_ready` and `SceneInstanceReady` mean complete, as
+  before, so every caller that waits for them is unchanged.
+- **Cancelling mid-spawn leaves nothing behind.** Entities are attached only as their instance is
+  hidden or complete, so a despawned parent does not reach them all. Its parent despawned,
+  `despawn_instance` and `unregister_instance` despawn every entity the instance allocated. A
+  scene replaced (another `World`) or removed mid-spawn starts its instance over; a removed one
+  waits for its scene to load again. If no entity is marked while some are still unwritten (an
+  entity despawned by others mid-spawn, a scene changed in place, or a hierarchy that does not
+  reach every entity), the instance starts over and is written whole.
 - **Hidden until revealed.** `spawn_as_child_hidden` keeps an instance hidden after it has
   spawned, until `reveal_instance_sync`. The Explorer spawns glTF containers that way and reveals
   them when processing is done, so Bevy's own materials and a model's collider meshes never show,
@@ -58,10 +72,11 @@ next frame, and a model stays hidden until both steps are done.
   processing adds colliders and triggers node by node, so for those frames a hidden model already
   blocks the player and takes pointer events where its processed nodes are.
 - **Resumable processing.** `update_ready_gltfs` processes a model's nodes until the same
-  deadline (`SceneSpawnerPlus::spawn_deadline`) and keeps its progress on the container
-  (`GltfProcessing`: the node list and a cursor, the collider counter, the animation flag and the
-  named nodes). Models already in progress go first; at least one node is processed a frame.
-  Resetting or removing the container drops the progress.
+  deadline (`SceneSpawnerPlus::spawn_deadline`). A node is processed once it has a
+  `ContainerEntity`, which processing gives it first, so each frame takes the model's nodes that
+  have none; the model's running state stays on the container (`GltfProcessing`: the collider
+  counter, the animation flag and the named nodes). Models already in progress go first; at least
+  one node is processed a frame. Resetting or removing the container drops the progress.
 - **The Explorer's slice.** `scene_runner::scene_spawn_slice` sets the deadline 4 ms after it runs
   each frame (`SpawnScene`, before `scene_spawner_system`), shared by spawning and processing, and
   none while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
@@ -90,9 +105,17 @@ next frame, and a model stays hidden until both steps are done.
   first needs the spawner to know which components render, the second moves the hierarchy twice
   and breaks the Explorer's roots-under-the-container assumption, and the third is the same work
   as `Visibility` with lights and gizmos filtered differently.
+- **A list of the scene's entities and a cursor into it** (this change's first version): it walks
+  every archetype of the scene world into a second collection of entities beside the instance's
+  map, and writes in archetype order, which shows children written before their parents.
+- **A cursor over the scene world's archetypes, without the list**: the same walk, done lazily,
+  and the same archetype order.
+- **A marker on every allocated entity**: progress on the entities, but the query hands them out
+  in archetype order, not parents first.
 - **Reading asset events to notice a replaced scene**: asset events reach readers after
-  `PostUpdate`, so the spawner would write one more slice from the new scene with the old cursor;
-  the scene world's `WorldId` changes when the asset is replaced and is checked before every slice.
+  `PostUpdate`, so the spawner would write one more slice from the new scene with the old
+  entities; the scene world's `WorldId` changes when the asset is replaced and is checked before
+  every slice.
 - **Separate deadlines for spawning and processing**: one deadline bounds the frame's whole
   instantiation, which is what a hitch is made of; at least one entity and one node a frame keep
   both moving.
