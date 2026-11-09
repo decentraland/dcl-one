@@ -931,7 +931,8 @@ pub async fn deploy_scene_with(
 /// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
 /// timestamp counts no later than its row's write (a future-dated entity cannot lock the
 /// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks. Both
-/// timestamps are compared as the numbers they are, fractions included.
+/// timestamps are compared as doubles, as upstream compares JS numbers: a `numeric` cast of a
+/// double keeps only 15 significant digits, two decimals of an epoch-ms value.
 pub async fn newer_scene_deployed(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
@@ -943,14 +944,13 @@ pub async fn newer_scene_deployed(
         r#"WITH stored AS (
              SELECT entity_id,
                     CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
-                         THEN LEAST((entity->>'timestamp')::numeric,
-                                    extract(epoch FROM updated_at) * 1000)
+                         THEN LEAST((entity->>'timestamp')::float8,
+                                    (extract(epoch FROM updated_at) * 1000)::float8)
                     END AS ts
              FROM worlds.world_scenes
              WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
            SELECT EXISTS (SELECT 1 FROM stored
-             WHERE ts > $4::float8::numeric
-                OR (ts = $4::float8::numeric AND entity_id COLLATE "C" > $3))"#,
+             WHERE ts > $4::float8 OR (ts = $4::float8 AND entity_id COLLATE "C" > $3))"#,
     )
     .bind(world.key())
     .bind(parcels)

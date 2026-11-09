@@ -262,8 +262,12 @@ fn pins(state: &CoreState) -> catalyst_storage::gc::Pins<'_> {
     catalyst_storage::gc::Pins::new(&state.storage, &state.settings.global_scenes_urn)
 }
 
+/// A database failure while staging; the `partial upload` span of [`stage`] names the entity.
 fn db_error(error: impl std::fmt::Display) -> Response {
-    internal(format!("Failed to stage the deployment: {error}")).into_response()
+    internal(format!(
+        "partial upload: failed to stage the deployment: {error}"
+    ))
+    .into_response()
 }
 
 /// 429 for a staging budget other uploads or traffic filled; `reason` is the metric label.
@@ -430,7 +434,14 @@ pub(super) async fn stage(
     files: &[SpooledFile],
     now_ms: i64,
 ) -> Response {
-    match stage_batch(state, headers, entity_id, chain, signer, files, now_ms).await {
+    // Every log line of the batch, the one 500 line of `rejection` included, names the entity.
+    let span = tracing::error_span!("partial upload", entity_id = %entity_id);
+    match tracing::Instrument::instrument(
+        stage_batch(state, headers, entity_id, chain, signer, files, now_ms),
+        span,
+    )
+    .await
+    {
         Ok(resp) | Err(resp) => resp,
     }
 }
@@ -626,7 +637,7 @@ async fn stage_batch(
     for file in &to_store {
         if let Err(e) = state.storage.store_file(&file.hash, &file.path).await {
             return Err(internal(format!(
-                "Failed to persist deployment content {}: {e}",
+                "partial upload: failed to persist deployment content {}: {e}",
                 file.hash
             ))
             .into_response());

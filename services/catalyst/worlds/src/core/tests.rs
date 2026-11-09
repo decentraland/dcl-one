@@ -1111,8 +1111,9 @@ fn assert_newer_refusal(result: Result<(), super::http::ApiError>) {
     );
 }
 
-/// Upstream compares entity timestamps as the numbers they are: a fractional one is newer than
-/// a stored one a fraction below it, and an equal one falls to the entity-id tie-break.
+/// Upstream compares entity timestamps as JS numbers (doubles): an epoch-ms timestamp with three
+/// decimals is newer than one a thousandth below it, and an equal one falls to the entity-id
+/// tie-break.
 #[tokio::test]
 async fn fractional_timestamps_compare_as_numbers() {
     let Some(f) = fixture().await else { return };
@@ -1121,41 +1122,23 @@ async fn fractional_timestamps_compare_as_numbers() {
         json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"],
                 "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } })
     };
-    deploy(
-        &f,
-        &world,
-        &owner,
-        "bafyb",
-        &at(1000.5),
-        &["0,0"],
-        &Deploy::Owner,
-    )
-    .await
-    .unwrap();
-    assert_newer_refusal(
-        deploy(
-            &f,
-            &world,
-            &owner,
-            "bafya",
-            &at(1000.5),
-            &["0,0"],
-            &Deploy::Owner,
-        )
-        .await,
-    );
-    deploy(
-        &f,
-        &world,
-        &owner,
-        "bafyc",
-        &at(1000.7),
-        &["0,0"],
-        &Deploy::Owner,
-    )
-    .await
-    .expect("1000.7 is newer than 1000.5");
-    assert_eq!(entity_ids(&f, &world).await, vec!["bafyc".to_string()]);
+    let publish = |id: &'static str, timestamp: f64| {
+        let (f, world, owner, entity) = (&f, &world, &owner, at(timestamp));
+        async move { deploy(f, world, owner, id, &entity, &["0,0"], &Deploy::Owner).await }
+    };
+    const T: f64 = 1_731_100_000_000.123;
+    publish("bafyb", T).await.unwrap();
+    // Equal: the greater entity id wins.
+    assert_newer_refusal(publish("bafya", T).await);
+    publish("bafyc", T)
+        .await
+        .expect("an equal timestamp with a greater id");
+    // A thousandth older loses whatever its id; a thousandth newer wins.
+    assert_newer_refusal(publish("bafyz", 1_731_100_000_000.122).await);
+    publish("bafyd", 1_731_100_000_000.124)
+        .await
+        .expect("a thousandth newer");
+    assert_eq!(entity_ids(&f, &world).await, vec!["bafyd".to_string()]);
 }
 
 #[tokio::test]
@@ -6939,11 +6922,14 @@ async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure(
 }
 
 /// The upload-slot cap (`MAX_CONCURRENT_UPLOADS`, this tree's) refuses `POST /entities` with
-/// upstream's byte-budget 503 (`multipart/errors.ts`), as the in-flight bytes do (WD-11).
+/// upstream's byte-budget 503 (`multipart/errors.ts`), as the in-flight bytes do (WD-11): with a
+/// cap of one and a slot held, the publish is shed.
 #[tokio::test]
 async fn a_publish_past_the_upload_slots_gets_the_byte_budget_503() {
     let mut settings = test_settings();
-    settings.upload_limits.max_concurrent_uploads = 0;
+    settings.upload_limits.max_concurrent_uploads = 1;
+    // The slot counter is process-wide: other tests' uploads only make the shed more certain.
+    let _held = super::upload_limits::try_acquire_upload_slot(u64::MAX).expect("a slot");
     let Some(f) = fixture_full(PersonalWorldsPolicy::disabled(), None, None, settings).await else {
         return;
     };
