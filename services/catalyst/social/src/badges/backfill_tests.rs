@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use chrono::{DateTime, NaiveDateTime};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{AssertSqlSafe, PgPool};
 use tower::ServiceExt;
 
 use super::{Settings, SharedState, State, router};
@@ -443,4 +443,61 @@ async fn an_archived_or_unpublished_badge_is_refused() {
     let (status, _) = post(&state, "halloweeks_2026", progress).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(row(&pool, &addr, "halloweeks_2026").await.is_none());
+}
+
+#[tokio::test]
+async fn a_database_error_fails_only_that_wallet() {
+    let Some(state) = state().await else {
+        return;
+    };
+    let pool = state.badges.pool();
+    let (before, broken, after) = (fresh_address(), fresh_address(), fresh_address());
+    let name = format!("backfill_fail_{}", &broken.as_str()[2..]);
+    sqlx::query(AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.address = '{}' THEN RAISE EXCEPTION 'forced'; END IF; RETURN NEW; END $$",
+        broken.as_str()
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(AssertSqlSafe(format!(
+        "CREATE TRIGGER {name} BEFORE INSERT OR UPDATE ON social.user_badge_progress \
+         FOR EACH ROW EXECUTE FUNCTION social.{name}()"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let at = 1_780_000_000_000_i64;
+    let (status, body) = post(
+        &state,
+        "halloweeks_2026",
+        json!([
+            registry(&before, json!({ "completedAt": at })),
+            registry(&broken, json!({ "completedAt": at })),
+            registry(&after, json!({ "completedAt": at })),
+        ]),
+    )
+    .await;
+
+    sqlx::query(AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON social.user_badge_progress"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(AssertSqlSafe(format!("DROP FUNCTION social.{name}()")))
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["userProgressesMerged"], json!(2));
+    assert_eq!(
+        body["data"]["failures"],
+        json!([{ "address": broken.as_str(), "errors": ["could not write the progress"] }])
+    );
+    assert!(row(pool, &before, "halloweeks_2026").await.is_some());
+    assert!(row(pool, &broken, "halloweeks_2026").await.is_none());
+    assert!(row(pool, &after, "halloweeks_2026").await.is_some());
 }

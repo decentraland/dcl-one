@@ -11,7 +11,9 @@
 //! request with 400 before anything is written. Each registry is then merged
 //! with the wallet's stored progress by the badge's merger and checked
 //! (`validateUserProgress`); a check that fails, or a badge archived since,
-//! is a `failures` entry, the rest are written and counted.
+//! is a `failures` entry, the rest are written and counted. A database error
+//! on one wallet is a `failures` entry too (logged, generic message), so the
+//! wallets written before it are still reported.
 //!
 //! Each wallet is one transaction: the badge row `FOR SHARE`, the progress
 //! advisory lock of [`apply_progress`], the stored progress read under it,
@@ -888,19 +890,28 @@ pub async fn backfill_badge(
             continue;
         };
         let now = chrono::Utc::now().naive_utc();
-        let mut tx = state.badges.pool().begin().await?;
-        match backfill_one(&mut tx, &address, &badge_id, kind, input, now).await? {
-            Written::Merged => {
-                tx.commit().await?;
-                merged += 1;
+        // a database error fails this wallet only: earlier wallets are
+        // committed and the response must still say which
+        let written = async {
+            let mut tx = state.badges.pool().begin().await?;
+            let written = backfill_one(&mut tx, &address, &badge_id, kind, input, now).await?;
+            match written {
+                Written::Merged => tx.commit().await?,
+                Written::Failed(_) => tx.rollback().await?,
             }
-            Written::Failed(errors) => {
-                tx.rollback().await?;
-                failures.push(Failure {
-                    address: address.into_string(),
-                    errors,
-                });
-            }
+            Ok::<_, sqlx::Error>(written)
+        }
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(badge = %badge_id, address = %address, %error, "badges: backfill write failed");
+            Written::Failed(vec!["could not write the progress".into()])
+        });
+        match written {
+            Written::Merged => merged += 1,
+            Written::Failed(errors) => failures.push(Failure {
+                address: address.into_string(),
+                errors,
+            }),
         }
     }
     tracing::info!(badge = %badge_id, merged, failed = failures.len(), "badges: backfill");
