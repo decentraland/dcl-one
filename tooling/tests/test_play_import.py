@@ -1211,7 +1211,6 @@ class HudSharedSourcesTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('bevy_ci', root / 'tooling/bevy-ci.py')
         ci = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ci)
-        self.assertEqual(set(ci.HUD_SHARED), set(contract.HUD_SHARED))
         for library in sorted(expected):
             with self.subTest(library=library):
                 self.assertIn(library, ci.INPUTS)

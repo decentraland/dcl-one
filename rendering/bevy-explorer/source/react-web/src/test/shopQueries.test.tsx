@@ -44,7 +44,7 @@ describe('ShopQueries', () => {
   it('treats signing out as a replaced account', () => {
     const view = render(<ShopQueries account="0xabc"><Probe /></ShopQueries>)
     seen[0]!.setQueryData(['purchases', '0xabc'], ['urn'])
-    view.rerender(<ShopQueries account={null}><Probe /></ShopQueries>)
+    view.rerender(<ShopQueries account={undefined}><Probe /></ShopQueries>)
     expect(seen).toHaveLength(2)
     expect(seen[0]!.getQueryData(['purchases', '0xabc'])).toBeUndefined()
   })

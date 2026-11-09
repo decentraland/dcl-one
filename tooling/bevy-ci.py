@@ -17,8 +17,11 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
-# Sources the web HUD compiles from library/ (HUD_SHARED in tooling/play-artifact.py).
-HUD_SHARED = ('library/shop/', 'library/catalyst-api/')
+# Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
+_ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
+_artifact = importlib.util.module_from_spec(_ARTIFACT)
+_ARTIFACT.loader.exec_module(_artifact)
+HUD_SHARED = _artifact.HUD_SHARED
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.

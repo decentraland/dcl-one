@@ -21,7 +21,8 @@ HUD = SOURCE + 'react-web/src/'
 # Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
 # matching tsconfig.json paths). They build into the HUD, never the engine. They are not part of the
 # Sites HUD review (`hud_inputs`) either: /play compiles these same files, so there is no adaptation of
-# them to review. tooling/bevy-ci.py and infra/packages/play.nix list them too; a test keeps them together.
+# them to review. tooling/bevy-ci.py reads them from here; infra/packages/play.nix lists them too, and a test
+# keeps it and the HUD's aliases together with this.
 HUD_SHARED = ('library/shop/', 'library/catalyst-api/')
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')

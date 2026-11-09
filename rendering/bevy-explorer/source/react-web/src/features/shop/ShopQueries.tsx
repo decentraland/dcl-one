@@ -6,12 +6,13 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { profileKey } from '../session/profileStore'
 
 // The reference defaults (docs/web-app-standards.md, "QueryClient"), as /play's in-world Shop uses them.
 const newClient = (): QueryClient => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } })
 
-export function ShopQueries({ account, children }: { account: string | null | undefined; children: ReactNode }): React.JSX.Element {
-  const current = account?.toLowerCase() ?? ''
+export function ShopQueries({ account, children }: { account: string | undefined; children: ReactNode }): React.JSX.Element {
+  const current = account == null ? '' : profileKey(account)
   const [session, setSession] = useState(() => ({ account: current, client: newClient(), generation: 0 }))
   if (session.account !== current) {
     setSession(
