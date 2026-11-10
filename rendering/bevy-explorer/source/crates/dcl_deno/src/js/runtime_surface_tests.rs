@@ -346,6 +346,37 @@ fn blob_storage_is_capped_per_scene() {
     }
 }
 
+/// A structured clone stores a part under a second id; its bytes count until the last id goes.
+#[test]
+fn a_cloned_blob_part_counts_once() {
+    const MIB: usize = 1024 * 1024;
+    let cap = super::super::blob_store::MAX_BLOB_BYTES / MIB;
+    let script = format!(
+        r#"
+        const ops = Deno.core.ops;
+        const tryCreate = (bytes) => {{
+            try {{ return ops.op_blob_create_part(new Uint8Array(bytes)); }} catch {{ return null; }}
+        }};
+        const original = ops.op_blob_create_part(new Uint8Array({} * 1024 * 1024));
+        const clones = [ops.op_blob_clone_part(original).uuid, ops.op_blob_clone_part(original).uuid];
+        const small = tryCreate(512 * 1024) !== null;
+        ops.op_blob_remove_part(original);
+        ops.op_blob_remove_part(clones[0]);
+        const whileHeld = tryCreate(2 * 1024 * 1024) !== null;
+        ops.op_blob_remove_part(clones[1]);
+        const afterRelease = tryCreate(2 * 1024 * 1024) !== null;
+        JSON.stringify({{ small, whileHeld, afterRelease }})
+        "#,
+        cap - 1
+    );
+    let outcome = in_scene(|runtime| eval(runtime, script).unwrap());
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(
+        outcome,
+        serde_json::json!({ "small": true, "whileHeld": false, "afterRelease": true })
+    );
+}
+
 #[test]
 fn broadcast_channels_do_not_cross_scenes() {
     use std::sync::mpsc;

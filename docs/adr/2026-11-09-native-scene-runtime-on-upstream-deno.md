@@ -33,8 +33,8 @@ rest.
 - **Scripts are compiled in.** The deno_web and deno_webidl scripts the runtime loads are vendored
   byte-identical under `crates/dcl_deno/src/js/vendor/` (MIT, versions and hashes in
   `upstream.lock.json`), so no build-machine path is read at run time.
-- **Per scene, nothing shared:** a BroadcastChannel and a Blob store (capped at 64 MiB) per
-  runtime; Web Locks and the broadcast ops disabled; the web classes whose constructors cannot be
+- **Per scene, nothing shared:** a BroadcastChannel and a Blob store (capped at 64 MiB of distinct
+  parts) per runtime; Web Locks and the broadcast ops disabled; the web classes whose constructors cannot be
   wrapped are not installed. No persistent storage of any kind.
 - **Hardening:** an op never panics or exits on scene input (`security.md`). Upstream ops that do
   are overridden with ops of the same shape, structured arguments go through `Plain<T>`, and op

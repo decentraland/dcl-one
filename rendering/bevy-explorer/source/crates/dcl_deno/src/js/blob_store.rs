@@ -12,8 +12,8 @@ pub const MAX_BLOB_BYTES: usize = 64 * 1024 * 1024;
 
 type Part = Arc<dyn BlobPart + Send + Sync>;
 
-/// One scene's Blob parts, capped at [`MAX_BLOB_BYTES`]. Object URLs are not available to
-/// scenes, so none are stored.
+/// One scene's Blob parts, capped at [`MAX_BLOB_BYTES`]. A part stored under several ids (a
+/// structured clone) counts once. Object URLs are not available to scenes, so none are stored.
 #[derive(Debug)]
 pub struct CappedBlobStore {
     cap: usize,
@@ -23,7 +23,32 @@ pub struct CappedBlobStore {
 #[derive(Debug, Default)]
 struct Parts {
     parts: HashMap<Uuid, Part>,
+    /// How many ids hold each distinct part, keyed by its address.
+    holders: HashMap<usize, usize>,
     bytes: usize,
+}
+
+fn address(part: &Part) -> usize {
+    Arc::as_ptr(part) as *const () as usize
+}
+
+impl Parts {
+    /// The bytes in use once a part at `part_address` is stored; a stored part adds nothing.
+    fn bytes_with(&self, part_address: usize, size: usize) -> usize {
+        if self.holders.contains_key(&part_address) {
+            self.bytes
+        } else {
+            self.bytes.saturating_add(size)
+        }
+    }
+
+    fn insert(&mut self, part: Part) -> Uuid {
+        let id = Uuid::new_v4();
+        self.bytes = self.bytes_with(address(&part), part.size());
+        *self.holders.entry(address(&part)).or_default() += 1;
+        self.parts.insert(id, part);
+        id
+    }
 }
 
 impl Default for CappedBlobStore {
@@ -44,35 +69,40 @@ impl CappedBlobStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Inserts a part of `size` bytes built only once the cap allows it.
+    /// Inserts a new part of `size` bytes, built only once the cap allows it.
     pub fn try_insert_with(
         &self,
         size: usize,
         part: impl FnOnce() -> Part,
     ) -> Result<Uuid, AnyError> {
         let mut parts = self.parts();
-        let total = parts.bytes.saturating_add(size);
-        if total > self.cap {
-            deno_core::anyhow::bail!(
-                "scene Blob storage is full ({} of {} bytes in use)",
-                parts.bytes,
-                self.cap
-            );
+        if parts.bytes.saturating_add(size) > self.cap {
+            return Err(full(&parts, self.cap));
         }
-        let id = Uuid::new_v4();
-        parts.parts.insert(id, part());
-        parts.bytes = total;
-        Ok(id)
+        Ok(parts.insert(part()))
     }
+
+    /// Stores `part` under another id; it counts against the cap only if it is not stored yet.
+    pub fn try_insert_shared(&self, part: Part) -> Result<Uuid, AnyError> {
+        let mut parts = self.parts();
+        if parts.bytes_with(address(&part), part.size()) > self.cap {
+            return Err(full(&parts, self.cap));
+        }
+        Ok(parts.insert(part))
+    }
+}
+
+fn full(parts: &Parts, cap: usize) -> AnyError {
+    deno_core::anyhow::anyhow!(
+        "scene Blob storage is full ({} of {} bytes in use)",
+        parts.bytes,
+        cap
+    )
 }
 
 impl BlobStoreTrait for CappedBlobStore {
     fn insert_part(&self, part: Part) -> Uuid {
-        let id = Uuid::new_v4();
-        let mut parts = self.parts();
-        parts.bytes = parts.bytes.saturating_add(part.size());
-        parts.parts.insert(id, part);
-        id
+        self.parts().insert(part)
     }
 
     fn get_part(&self, id: &Uuid) -> Option<Part> {
@@ -82,7 +112,14 @@ impl BlobStoreTrait for CappedBlobStore {
     fn remove_part(&self, id: &Uuid) -> Option<Part> {
         let mut parts = self.parts();
         let part = parts.parts.remove(id)?;
-        parts.bytes = parts.bytes.saturating_sub(part.size());
+        let part_address = address(&part);
+        if let Some(holders) = parts.holders.get_mut(&part_address) {
+            *holders -= 1;
+            if *holders == 0 {
+                parts.holders.remove(&part_address);
+                parts.bytes = parts.bytes.saturating_sub(part.size());
+            }
+        }
         Some(part)
     }
 
@@ -100,6 +137,7 @@ impl BlobStoreTrait for CappedBlobStore {
     fn clear(&self) {
         let mut parts = self.parts();
         parts.parts.clear();
+        parts.holders.clear();
         parts.bytes = 0;
     }
 }

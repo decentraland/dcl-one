@@ -476,7 +476,7 @@ fn op_blob_clone_part(state: &mut OpState, #[string] id: &str) -> Result<ClonedP
         .get_part(&blob_part_id(id)?)
         .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
     let size = part.size();
-    let uuid = store.try_insert_with(size, || part)?.to_string();
+    let uuid = store.try_insert_shared(part)?.to_string();
     Ok(ClonedPart { uuid, size })
 }
 
@@ -498,8 +498,9 @@ fn op_blob_slice_part(
     // every part in a scene runtime is in memory, so its read is ready at once
     let bytes = deno_core::futures::FutureExt::now_or_never(part.read())
         .ok_or_else(|| anyhow::anyhow!("Blob part is not in memory"))?;
-    let sliced = bytes[start..start + len].to_vec();
-    let id = store.try_insert_with(len, || Arc::new(InMemoryBlobPart::from(sliced)))?;
+    let id = store.try_insert_with(len, || {
+        Arc::new(InMemoryBlobPart::from(bytes[start..start + len].to_vec()))
+    })?;
     Ok(id.to_string())
 }
 
@@ -509,9 +510,7 @@ async fn op_blob_read_part(
     #[string] id: String,
 ) -> Result<Uint8Array, OpError> {
     let id = blob_part_id(&id)?;
-    let part = state
-        .borrow()
-        .borrow::<Arc<dyn BlobStoreTrait>>()
+    let part = capped_store(&state.borrow())?
         .get_part(&id)
         .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
     let bytes = part.read().await;
@@ -521,7 +520,7 @@ async fn op_blob_read_part(
 #[op2(fast)]
 fn op_blob_remove_part(state: &mut OpState, #[string] id: &str) -> Result<(), OpError> {
     let id = blob_part_id(id)?;
-    state.borrow::<Arc<dyn BlobStoreTrait>>().remove_part(&id);
+    capped_store(state)?.remove_part(&id);
     Ok(())
 }
 
