@@ -244,7 +244,16 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
     gpuGuideOffered.current = true
     gpuGuideClose.current = openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
   }, [gpuGuideDue, integratedGpu])
-  useEffect(() => () => gpuGuideClose.current?.(), [])
+  // Resetting the refs lets StrictMode's simulated unmount in dev remount with a clean slate, or
+  // `?gpuGuide=1` would open on the first pass, close, and never come back.
+  useEffect(
+    () => () => {
+      gpuGuideClose.current?.()
+      gpuGuideClose.current = null
+      gpuGuideOffered.current = false
+    },
+    []
+  )
 
   // A world that doesn't exist, or a HUD bridge that never answered, isn't a crash — it's an ordinary
   // dialog on the popup layer, so it gets Escape/scrim-click for free and freezes nothing behind it
