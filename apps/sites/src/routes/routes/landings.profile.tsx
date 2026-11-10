@@ -39,6 +39,7 @@ import {
   type PhotoVM,
   type ProfileAssets,
 } from "@/data/lib/profile/view";
+import { PROFILE_PAGE, PROFILE_PLACES_LIMIT } from "@/data/lib/profile/queries";
 import {
   fetchProfilePlaces,
   withContactName,
@@ -139,7 +140,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         try {
           const creations = await fetchCreations(
             address,
-            { first: 48 },
+            { first: PROFILE_PAGE },
             { signal: request.signal },
           );
           return { creations, creationsFallback: false };
@@ -148,17 +149,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         }
       })(),
       wantPlaces && ethAddr
-        ? fetchProfilePlaces(address, { limit: 100 }, { signal: request.signal }).catch(
+        ? fetchProfilePlaces(address, { limit: PROFILE_PLACES_LIMIT }, { signal: request.signal }).catch(
             () => [] as ProfilePlace[],
           )
         : Promise.resolve([] as ProfilePlace[]),
     (async (): Promise<ProfileAssets> => {
       if (!wantAssets || !ethAddr) return EMPTY_ASSETS;
       const [ownedW, ownedN] = await Promise.all([
-        fetchOwnedWearables(address, { first: 48 }, { signal: request.signal }).catch(
+        fetchOwnedWearables(address, { first: PROFILE_PAGE }, { signal: request.signal }).catch(
           () => ({ elements: [] as OwnedItem[], total: 0 }),
         ),
-        fetchOwnedNames(address, { first: 48 }, { signal: request.signal }).catch(
+        fetchOwnedNames(address, { first: PROFILE_PAGE }, { signal: request.signal }).catch(
           () => ({ elements: [] as OwnedName[], total: 0 }),
         ),
       ]);

@@ -14,8 +14,9 @@ import {
 } from "../catalyst/social/profile";
 import { mapPhotos } from "./view";
 
-const PAGE = 48;
-const PLACES_LIMIT = 100;
+/** Page sizes the profile reads use; the loader shares them until it reads through these factories. */
+export const PROFILE_PAGE = 48;
+export const PROFILE_PLACES_LIMIT = 100;
 
 /** The Sites root default, declared here so a loader's dehydrated data and the page agree on freshness. */
 export const PROFILE_STALE_MS = 30_000;
@@ -54,7 +55,7 @@ export const creationsQuery = (address: string) =>
     queryKey: profileKeys.creations(address),
     staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
-      fetchCreations(normalizeAddress(address), { first: PAGE }, { signal }),
+      fetchCreations(normalizeAddress(address), { first: PROFILE_PAGE }, { signal }),
   });
 
 export const placesQuery = (address: string) =>
@@ -62,7 +63,7 @@ export const placesQuery = (address: string) =>
     queryKey: profileKeys.places(address),
     staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
-      fetchProfilePlaces(normalizeAddress(address), { limit: PLACES_LIMIT }, { signal }),
+      fetchProfilePlaces(normalizeAddress(address), { limit: PROFILE_PLACES_LIMIT }, { signal }),
   });
 
 export const photosQuery = (address: string) =>
@@ -78,7 +79,7 @@ export const ownedWearablesQuery = (address: string) =>
     queryKey: profileKeys.ownedWearables(address),
     staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
-      fetchOwnedWearables(normalizeAddress(address), { first: PAGE }, { signal }),
+      fetchOwnedWearables(normalizeAddress(address), { first: PROFILE_PAGE }, { signal }),
   });
 
 export const ownedNamesQuery = (address: string) =>
@@ -86,7 +87,7 @@ export const ownedNamesQuery = (address: string) =>
     queryKey: profileKeys.ownedNames(address),
     staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
-      fetchOwnedNames(normalizeAddress(address), { first: PAGE }, { signal }),
+      fetchOwnedNames(normalizeAddress(address), { first: PROFILE_PAGE }, { signal }),
   });
 
 /** The identity signs the request and is never cached; the key names only its account. */
