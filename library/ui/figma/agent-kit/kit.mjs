@@ -90,7 +90,11 @@ async function agentsLinkState(target) {
 
 async function skillNames(kitRoot) {
   const entries = await readdir(path.join(kitRoot, 'skills'), { withFileTypes: true })
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  // Sorted, so install results and checks do not depend on the file system's listing order.
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
 }
 
 // Copies the skills of this library version into <target>/.claude/skills. A skill directory the kit did

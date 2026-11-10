@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "18aafea5aa468e0877a19d26d47dd833f51200b4a8fc0ee848f7faadbe3f4112",
+          "sha256": "35bd314e3937339005b3c7daa8bf5c0f87a50f87a555d236a98da51072c0aead",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -615,7 +615,8 @@
             "port-input-binding",
             "resolver-contract",
             "consumer-skill",
-            "name-identity"
+            "name-identity",
+            "port-command"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -639,25 +640,27 @@
           ]
         },
         "library/ui/figma/agent-kit/kit.mjs": {
-          "sha256": "271f0f3bbdd5c261d9292016d569b80fcd76ea81b05be5c893f3188e2e07a9c9",
+          "sha256": "62ff3de4d643ba0c3c89dedb1fd13a5269c6ed66340e59f8ce1f2414d4bc3a5a",
           "fds": {
             "path": "component-library/agent-kit/kit.mjs",
             "sha256": "923bb25ba02f183f6e5f4b19e21089d20a0c1fc4f80f43aa40a146d696345f54"
           },
           "deviation": [
             "predates",
-            "consumer-skill"
+            "consumer-skill",
+            "port-command"
           ]
         },
         "library/ui/figma/agent-kit/kit.test.ts": {
-          "sha256": "09ca46ec1c75e5b6546260bfdca560dc941a9662102a7fcd04015edc05d2bb51",
+          "sha256": "4b8287d255a74701475ab6a9bd0e48a5f246ac8d5051c0b9a7b5a39e8ce0b05d",
           "fds": {
             "path": "component-library/agent-kit/kit.test.ts",
             "sha256": "4c58e979525c809c07f82c9ee366876b1cf4d266435434b63886b9497005f433"
           },
           "deviation": [
             "predates",
-            "consumer-skill"
+            "consumer-skill",
+            "port-command"
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
@@ -671,6 +674,13 @@
             "resolver-contract",
             "consumer-skill",
             "name-identity"
+          ]
+        },
+        "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
+          "sha256": "3ceef92a756d8f194c801859aa0f812d871a492a51e1907e0df0fb710285f9aa",
+          "fds": null,
+          "deviation": [
+            "port-command"
           ]
         },
         "library/ui/figma/component-generation.mjs": {
@@ -707,21 +717,23 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/key-guard.mjs": {
-          "sha256": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
+          "sha256": "42fa80d4220953735be5a71dc8f5888c7410bc60e105a38c2f9c4aeb2049ffb0",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "bot-review-279",
-            "key-guard-integrity"
+            "key-guard-integrity",
+            "port-command"
           ]
         },
         "library/ui/figma/key-guard.test.ts": {
-          "sha256": "63fa70c6542b815acfdec37a3310d1ed1cbe57f32c94b5db0463ee8a7583e4af",
+          "sha256": "0a334a078f9196ce32beb9e2eabf94399f14fbdd1e1087824ccf22653efbe5d8",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "bot-review-279",
-            "key-guard-integrity"
+            "key-guard-integrity",
+            "port-command"
           ]
         },
         "library/ui/figma/ledger/orphaned-assets.json": {
@@ -2407,7 +2419,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "e6f1534834b89707811873ff084473d4d43deeb4bedc22711c396db1d4770269",
+          "sha256": "48638d2629850595f5f4c6637fd9722780043bf742eb991e66a1236af21647c4",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2421,7 +2433,8 @@
             "seal-removed",
             "component-install-integrity",
             "resolver-contract",
-            "name-identity"
+            "name-identity",
+            "port-command"
           ]
         },
         "library/ui/figma/src/component-generation.test.ts": {
@@ -3517,6 +3530,20 @@
             "sha256": "989392aebde3bf5addd3f1e22da5cf2d02787ec5a40fe563ea3ed87cef6e8dc6"
           }
         },
+        "library/ui/figma/src/port.test.ts": {
+          "sha256": "c7e36c35c276773743243f23c44a62099a6869f7f2b4536f97378ce500e7b837",
+          "fds": null,
+          "deviation": [
+            "port-command"
+          ]
+        },
+        "library/ui/figma/src/port.ts": {
+          "sha256": "8d3f5efaa6e88dc479ad5a51d3ec4667110dc8c7a190f08d076a5d7e850365c9",
+          "fds": null,
+          "deviation": [
+            "port-command"
+          ]
+        },
         "library/ui/figma/src/probe.test.ts": {
           "sha256": "13b8ddebf203ae5af187da9c978c53f535cb7192971aa83ca420bd173daeb71c",
           "fds": {
@@ -4225,6 +4252,7 @@
         "local-components-plan": "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
         "name-identity": "Component identity across files (owner decision: component keys are never committed). In a design file a library instance carries neither the library node ids nor anything the capture records except its set name and variant properties, so without a capture a set name resolves to exactly one mapping (component header, template id, or the code name componentNames gives it, read with the contract block) and only after the instance's variant properties fit that mapping; an unconfirmed or incompatible name is identity-uncertain, two matches are identity-ambiguous, and every name match carries the identity-name-match warning. With a capture, sets captured on two pages count once and a name shared by distinct sets resolves only when the variant properties fit exactly one. The fallback is marked TODO(figma-identity) in src/contract/name-identity.ts. resolve --batch resolves a JSON list in input order with a summary and exits 1 on any failure. Review follow-up: two mappings answering to one name are identity-ambiguous name-mappings with a report action; a name is confirmed only when at least one enum property the mapping reads is given; the fallback lives in src/contract/name-identity.ts; a batch repeat shares the earlier answer and node ids are normalized for that comparison; a refused entry echoes only accepted fields and the names of others; an unreadable batch exits 2; the skill script returns name, variantProperties and texts and the example reads standard input.",
         "note": null,
+        "port-command": "dcl-one owns the maintainer path. dcl-figma port prepare runs fetch-source, diff, sync, a second sync that must change nothing, install foundations and components, and lock-digests --write, stopping at the first failed stage; port verify refuses uncommitted changes, runs the seven real-capture checks and only when all pass writes port-verification.json from their own output (a failed check writes nothing and git errors fail closed), while port-verification.mjs stays validate-only. The record states what a local run reported, not proof of execution, an attestation or live parity. A maintainer skill (maintain-figma-library) covers intake, needs-manual first, the template fallback, both commands and the two pull request order for a public Figma URL, which the key guard now prints as a hint when a URL fails. The kit sorts skill names.",
         "port-input-binding": "The port verification record binds the port inputs instead of the whole lock and figma/ tree: the whole lock except its provenance text (license, imported, changes, deviation reasons, per-file notes), plus every tracked file under figma/ except files under figma/test and figma/review/test, *.test and *.spec files and Markdown; exempt files keep their lock entry and FDS counterpart bound (docs/adr/2026-11-10-port-verification-binds-port-inputs.md). Record schema 2 replaces lockHash and figmaTree with portInputHash. port-verification.mjs scans each head for port inputs that name an exempt file and limits its own imports. Both scripts parse git -z listings at the first tab and refuse control characters, duplicate paths and non-regular modes. Deviation codes map to their reasons under stable sorted ids instead of indices into changes.",
         "port:15940fd7": "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header. The public foundations icons and foundations/source.json are regenerated through the supported installer with the ported generator, and the public foundations table records their new digests.",
         "port:30ca0608": "Selective port of figma-design-system 30ca0608 (#104, imageFills): the imageFills config option, replaceRasterFills with its content rule (raster fills only), the components and index wiring, svg-safety and the tests. figma.config.json selects 'placeholder': image fills render as a neutral fill and the 23 pure-vector generated assets stay, byte-identical to the ones at 67a95f89. Adapted: the generator context is keyless, the tests use this tree's testConfig, and the repository-config case expects 'placeholder'. Not taken: promote.ts and its test, because promotion lives in figma-design-system.",
@@ -4633,7 +4661,7 @@
         }
       },
       "generation.json": {
-        "sha256": "206ec0061ffa9ab5ee9d503df63c3a76daa3e49513228138b6f9f9a3f56ef158",
+        "sha256": "c93018aa4aea6a4885a12158eabf4ea9e9c1ec58358bd08273d79bd73a89a400",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
