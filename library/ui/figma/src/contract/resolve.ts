@@ -1,5 +1,6 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { libraryComponentEntries } from '../guard/library.js'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
 import { normalizeNodeId, type FigmaSet } from './figma-index.js'
 import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } from './library.js'
@@ -60,6 +61,8 @@ type Resolved = {
     // The capture revision the library's tracked lock pins, in both modes; absent when the library has no lock.
     capture?: { revision: string }
   }
+  // Gaps the library owners accepted for this component (components/promotion.json), repeated verbatim.
+  limits: { id: string; text: string }[]
 }
 
 // What a contributor report needs from a failure: the library and the capture it was checked against.
@@ -321,6 +324,22 @@ async function mappingSource(
   return { library, mappingRoot }
 }
 
+// The accepted limits the registry next to the mappings records for a public component. A library without a
+// registry has none; a registry that is not valid fails, as the installer would.
+async function acceptedLimits(mappingRoot: string, component: string) {
+  let text: string
+  try {
+    text = await readFile(path.join(mappingRoot, 'promotion.json'), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const entry = libraryComponentEntries(JSON.parse(text)).find(
+    (candidate) => candidate.name === component && candidate.visibility === 'public'
+  )
+  return entry?.limits ?? []
+}
+
 async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promise<ResolveResult> {
   const root = await mappingSource(ctx.mappingRoot)
   if ('error' in root) return fail([root.error])
@@ -577,6 +596,16 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   const rendered = renderUsage(mapping, selection, input)
   if (rendered.errors.length) return failure(rendered.errors)
 
+  const limits = await acceptedLimits(ctx.mappingRoot!, mapping.header.component!)
+  if (limits.length)
+    warnings.push(
+      diagnostic(
+        'accepted-limits',
+        `${mapping.header.component} has ${limits.length} accepted ${limits.length === 1 ? 'limit' : 'limits'}.`,
+        { ids: limits.map((limit) => limit.id) }
+      )
+    )
+
   const specifier = importSpecifier(mapping)!
   return {
     ok: true,
@@ -591,6 +620,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
       usageFor: { variantProperties: selection, basis },
       propTranslation: translate(mapping, selection),
       interactionStates: mapping.header.states,
+      limits,
       provenance: {
         figma: {
           fileKey: mapping.figma!.fileKey,

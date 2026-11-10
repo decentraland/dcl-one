@@ -132,6 +132,12 @@ const DIAGNOSTICS = {
     action:
       'The export could not be confirmed statically. Let the application typecheck confirm the import.'
   },
+  'accepted-limits': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The library owners accepted these gaps for this component (resolved.limits). Repeat each limit verbatim when you report the result and do not claim parity on those aspects; they are accepted, not blockers.'
+  },
   'figma-identity-unverified': {
     severity: 'warning',
     audience: 'consumer',
