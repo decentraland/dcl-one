@@ -520,7 +520,7 @@ button.autoTranslateOff:hover {
   padding: 0;
   border: none;
   cursor: pointer;
-  background: url('../../assets/chat/emoji-idle.png') center / contain no-repeat;
+  background: url('@hud/assets/chat/emoji-idle.png') center / contain no-repeat;
   visibility: hidden;
 }
 /* Translate by hand: beside the reaction button, shown on hover. */
@@ -551,11 +551,11 @@ button.autoTranslateOff:hover {
   visibility: visible;
 }
 .reactBtn:hover {
-  background-image: url('../../assets/chat/emoji-hover.png');
+  background-image: url('@hud/assets/chat/emoji-hover.png');
 }
 .reactBtnOn,
 .reactBtnOn:hover {
-  background-image: url('../../assets/chat/emoji-selected.png');
+  background-image: url('@hud/assets/chat/emoji-selected.png');
 }
 
 /* A reaction pill's tooltip: over the panel, its bottom just above the pill. */
@@ -679,12 +679,12 @@ button.autoTranslateOff:hover {
 .toBottom::before {
   inset: 0;
   background: var(--black);
-  mask-image: url('../../assets/chat/scroll-bottom-solid.png');
+  mask-image: url('@hud/assets/chat/scroll-bottom-solid.png');
 }
 .toBottom::after {
   inset: -2px;
   background: var(--white);
-  mask-image: url('../../assets/chat/scroll-bottom-outline.png');
+  mask-image: url('@hud/assets/chat/scroll-bottom-outline.png');
 }
 .toBottomShown {
   opacity: 1;
@@ -821,14 +821,14 @@ button.autoTranslateOff:hover {
   padding: 0;
   border: none;
   cursor: pointer;
-  background: url('../../assets/chat/emoji-idle.png') center / contain no-repeat;
+  background: url('@hud/assets/chat/emoji-idle.png') center / contain no-repeat;
 }
 .emojiBtn:hover {
-  background-image: url('../../assets/chat/emoji-hover.png');
+  background-image: url('@hud/assets/chat/emoji-hover.png');
 }
 .emojiOn,
 .emojiOn:hover {
-  background-image: url('../../assets/chat/emoji-selected.png');
+  background-image: url('@hud/assets/chat/emoji-selected.png');
 }
 
 /* Members view: covers the panel with its own title bar and list; the feed and input hide under it. */

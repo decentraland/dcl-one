@@ -141,7 +141,7 @@
   width: 16px;
   height: 16px;
   background: currentColor;
-  mask: url('../../assets/backpack/icon-close.webp') center / contain no-repeat;
+  mask: url('@hud/assets/backpack/icon-close.webp') center / contain no-repeat;
 }
 .close:hover {
   background: var(--fill-faint);

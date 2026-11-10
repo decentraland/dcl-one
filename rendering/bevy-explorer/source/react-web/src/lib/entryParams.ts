@@ -4,7 +4,7 @@
 // embedding page's to set, never a link's) and this page's own switches — the user-facing ones
 // with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
 
-import { WEB_PARAMS } from '../engine/generated'
+import { WEB_PARAMS } from '@hud/engine/generated'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from './analytics'
 import { BENCHMARK_PARAMS } from './bootMode'
 

@@ -2,12 +2,12 @@
 // Speak toggle. Closes on an outside click or Cancel; turning hearing off closes it too.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { MaskIcon, Slider, Toggle } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import hearIcon from '../../assets/voice/hear.webp'
-import speakerIcon from '../../assets/voice/speaker.webp'
-import speakIcon from '../../assets/voice/speak.webp'
-import speakingIcon from '../../assets/voice/speaking.webp'
+import { MaskIcon, Slider, Toggle } from '@hud/design'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
+import hearIcon from '@hud/assets/voice/hear.webp'
+import speakerIcon from '@hud/assets/voice/speaker.webp'
+import speakIcon from '@hud/assets/voice/speak.webp'
+import speakingIcon from '@hud/assets/voice/speaking.webp'
 import styles from './NearbyVoiceWidget.module.css'
 
 export function NearbyVoiceWidget({

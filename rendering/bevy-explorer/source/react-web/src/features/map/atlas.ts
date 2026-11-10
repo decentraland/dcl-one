@@ -11,7 +11,7 @@
 // world z increase in the same direction, while screen y grows downward — hence the flip in
 // `atlasPx`. "Atlas px" is the untransformed tile-grid space, before any pan/zoom/rotation.
 
-import type { SatelliteView } from '../../engine/generated'
+import type { SatelliteView } from '@hud/engine/generated'
 import { serviceUrl } from '../../lib/baseDomain'
 
 export const PARCEL_METERS = 16

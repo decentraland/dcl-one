@@ -153,9 +153,8 @@ class PlayImportTests(unittest.TestCase):
         self.build = self.root / 'build'
         for name in contract.INPUTS:
             self.write(name, 'build input')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;\n')
-        self.write('rendering/bevy-explorer/source/react-web/src/engine/generated/Example.ts',
-                   'export type Example = string;\n')
+        self.write(contract.BINDINGS + '/Example.ts', 'export type Example = string;\n')
+        self.write(contract.HUD + 'App.tsx', 'export {}\n')
         self.write(contract.SOURCE + 'src/lib.rs', 'fn engine() {}\n')
         self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         for name in contract.REQUIRED:
@@ -275,7 +274,7 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
             play.install(self.build)
         self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 
@@ -393,14 +392,13 @@ class PlayImportTests(unittest.TestCase):
         self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         play.install(self.build)
 
-    def test_producer_build_does_not_require_sites_lock_or_bindings(self):
+    def test_producer_build_does_not_require_the_sites_lock(self):
         (self.root / contract.LOCK).unlink()
-        shutil.rmtree(self.root / 'apps/ui3')
         meta = contract.pack(self.build, self.root)
         self.assertEqual(meta['files']['bindings/Example.ts'],
                          contract.digest(b'export type Example = string;\n'))
         self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 

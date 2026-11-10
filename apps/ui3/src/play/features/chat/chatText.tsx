@@ -4,7 +4,7 @@
 // function so it's unit-testable; <MessageText> renders the tokens with handlers.
 
 import { MENTION_PATTERN, mentionName, mentionsName } from '../../engine/mention'
-import type { NearbyMember } from '../../engine/protocol'
+import type { NearbyMember } from '@hud/engine/protocol'
 
 export type Token =
   | { type: 'text'; value: string }

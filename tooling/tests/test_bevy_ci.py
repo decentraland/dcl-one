@@ -359,7 +359,7 @@ class SelectionTest(unittest.TestCase):
     def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
         for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
                      'apps/ui3/src/play/lib/baseDomain.ts',
-                     'apps/ui3/src/play/engine/generated/serviceTable.ts'):
+                     'library/ui/apps/hud/engine/generated/serviceTable.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

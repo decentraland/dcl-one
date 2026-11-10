@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { BridgeChannel } from '../engine/bridgeChannel'
-import type { Envelope, PageToScene, SceneToPage } from '../engine/protocol'
+import type { Envelope, PageToScene, SceneToPage } from '@hud/engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 
 // TRANSPORT: the page↔scene handshake. A BroadcastChannel drops anything posted before the other

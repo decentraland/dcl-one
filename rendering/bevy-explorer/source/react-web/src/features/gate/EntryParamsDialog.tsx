@@ -2,7 +2,7 @@
 // layer (nothing is broken, the params were just ignored), listing what was dropped and, so the
 // author can fix the link, everything the entry url does accept (lib/entryParams.ts).
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell, Button } from '@hud/design'
 import { acceptedEntryParams } from '../../lib/entryParams'
 import styles from './EntryParamsDialog.module.css'
 

@@ -12,6 +12,12 @@
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with sites and the Explorer HUD.
       "@shop/*": ["../../library/shop/*"],
+      // The Explorer HUD UI both HUD hosts compile, and the behaviours /play supplies to it.
+      "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@hud-host": ["./src/play/host.ts"],
+      // library/ui/apps/hud has no node_modules of its own: React resolves to this app's copy.
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
       "vitest": ["./node_modules/vitest"]

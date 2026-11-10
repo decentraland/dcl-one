@@ -11,7 +11,7 @@ import type { Ctx } from '../bridge'
 import { catalystBase } from '../http'
 import { resolveDefsByUrn } from './collections'
 import { itemUrn } from './urns'
-import { lookDeploy, sameLook, type AvatarLook } from '../../../src/engine/avatarEquip'
+import { lookDeploy, sameLook, type AvatarLook } from '@hud/engine/avatarEquip'
 import { bodyShapesOf, isCompatible } from '../../../src/engine/bodyShape'
 import { identity } from '../identity'
 

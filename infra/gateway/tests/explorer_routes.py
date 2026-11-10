@@ -21,15 +21,16 @@ def check(rows, root):
         import { resolve } from 'node:path';
         const root = process.argv[1];
         const play = resolve(root, 'apps/ui3/src/play');
+        const generated = resolve(root, 'library/ui/apps/hud/engine/generated');
         registerHooks({ resolve(specifier, context, next) {
-            if (specifier === '../engine/generated') {
-                return { url: pathToFileURL(resolve(play, 'engine/generated/serviceTable.ts')).href, shortCircuit: true };
+            if (specifier === '@hud/engine/generated') {
+                return { url: pathToFileURL(resolve(generated, 'serviceTable.ts')).href, shortCircuit: true };
             }
             return next(specifier, context);
         }});
         globalThis.window = { location: new URL('https://example.test/play'), __DCL_PUBLIC__: {} };
         const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
-        const { SERVICES } = await import(pathToFileURL(resolve(play, 'engine/generated/serviceTable.ts')));
+        const { SERVICES } = await import(pathToFileURL(resolve(generated, 'serviceTable.ts')));
         console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions() }));
     """, str(root)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

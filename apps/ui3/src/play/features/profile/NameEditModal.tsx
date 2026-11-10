@@ -6,7 +6,7 @@
 // (Mirrors unity-explorer's Edit Username dialog.)
 
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
+import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '@hud/design'
 import { useSession } from '../session/SessionContext'
 import { splitName } from '../../lib/identity'
 import { NAME_MAX, isValidName } from './profileFields'

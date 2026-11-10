@@ -4,11 +4,11 @@
 // Data comes from the bridge relay of camera-reel-service (see bridge-scene/domains/gallery).
 
 import { useMemo, useState } from 'react'
-import { EmptyState, Icon, Spinner } from '../../design'
+import { EmptyState, Icon, Spinner } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { PhotoDetail } from './PhotoDetail'
 import { photoTime, type GalleryState, type ProfileState } from '../session/useEngineSession'
-import type { GalleryPhoto } from '../../engine/protocol'
+import type { GalleryPhoto } from '@hud/engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 

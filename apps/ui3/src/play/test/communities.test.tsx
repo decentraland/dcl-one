@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { ToastHost } from '../design'
-import type { Community } from '../engine/protocol'
+import { ToastHost } from '@hud/design'
+import type { Community } from '@hud/engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 import { peekProfile } from '../features/session/profileStore'
 

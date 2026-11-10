@@ -1,6 +1,6 @@
 // The editor host's own requests to the bridge scene; ids start above the HUD session's travel ids.
 
-import { bridgeChannelName, type Envelope, type PageToScene, type SceneToPage } from '../../../engine/protocol'
+import { bridgeChannelName, type Envelope, type PageToScene, type SceneToPage } from '@hud/engine/protocol'
 
 let seq = 1_000_000
 const waiting = new Map<number, { resolve: () => void; reject: (e: Error) => void }>()

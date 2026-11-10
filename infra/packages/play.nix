@@ -18,6 +18,7 @@ let
       # The HUD's shared sources (HUD_SHARED in tooling/play-artifact.py, which leaves the
       # HUD_UNREAD files under them unhashed).
       /library/shop /library/catalyst-api /library/ui/index.ts /library/ui/foundations
+      /library/ui/apps/hud
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
@@ -25,7 +26,6 @@ let
       /tooling/play-artifact.py
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
-      /apps/ui3/src/play/engine/generated
     ]);
   };
 in runCommand "foundation-built-play-web" {

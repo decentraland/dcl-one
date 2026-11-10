@@ -6,7 +6,7 @@
 
 import { useEffect } from 'react'
 import type { EngineRpc } from '../../engine/engineRpc'
-import { bridgeChannelName } from '../../engine/protocol'
+import { bridgeChannelName } from '@hud/engine/protocol'
 import { BASE_DOMAIN, SERVICE_OVERRIDES } from '../../lib/baseDomain'
 import { benchmarkSwitchesHonoured, bootMode } from '../../lib/bootMode'
 import { perfStreamPath } from '../../lib/entryParams'

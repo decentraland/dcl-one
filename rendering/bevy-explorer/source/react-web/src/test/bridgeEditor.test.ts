@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@hud/engine/protocol'
 
 const consoleCommand = vi.fn(async () => '')
 vi.mock('../../bridge-scene/src/bevy-api', () => ({

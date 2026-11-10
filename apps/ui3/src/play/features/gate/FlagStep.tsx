@@ -4,7 +4,7 @@
 // address bar themselves. Rendered inside the gate's and the GPU guide's <ol>.
 
 import { useEffect, useState } from 'react'
-import { Copy, Check } from '../../design'
+import { Copy, Check } from '@hud/design'
 import styles from './FlagStep.module.css'
 
 export function FlagStep({ hint, target }: { hint: React.ReactNode; target: string }): React.JSX.Element {

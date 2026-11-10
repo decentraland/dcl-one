@@ -6,7 +6,7 @@
 
 import { mobilePlatform } from '../../lib/isMobile'
 import { publicUrl } from '../../lib/publicUrl'
-import { Button, Spinner } from '../../design'
+import { Button, Spinner } from '@hud/design'
 import { FlagStep } from './FlagStep'
 import styles from './MobileGate.module.css'
 

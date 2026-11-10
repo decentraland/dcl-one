@@ -2,7 +2,7 @@
 // (the creator's scenes) into it. Opening a scene closes the page and takes the screen.
 
 import { useEffect, useRef } from 'react'
-import { showToast, Spinner } from '../../design'
+import { showToast, Spinner } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { EditorOffered } from './config'
 import type { EngineSession, ProfileState } from '../session/useEngineSession'

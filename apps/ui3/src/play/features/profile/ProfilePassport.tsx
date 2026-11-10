@@ -8,12 +8,12 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '@hud/design'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '../shop/shopApi'
-import { CategoryIcon } from '../backpack/categoryIcons'
+import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
-import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '../../engine/protocol'
+import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@hud/engine/protocol'
 import { PROFILE_FIELDS } from './profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'

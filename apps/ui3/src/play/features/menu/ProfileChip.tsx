@@ -2,7 +2,7 @@
 // Profile, Sign Out, Exit). Matches the Explorer 2.0 menu profile popover.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, HeaderButton } from '../../design'
+import { Avatar, HeaderButton } from '@hud/design'
 import { shortAddr } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import styles from './ProfileChip.module.css'

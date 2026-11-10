@@ -6,7 +6,7 @@
 // works the same on every Chromium and needs no Windows settings; pasted, never linked: Chromium
 // blocks web pages from opening chrome:// targets (see FlagStep).
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell, Button } from '@hud/design'
 import type { GpuAdapterInfo } from '../../lib/gpu'
 import { chromiumBrowser } from '../../lib/integratedGpu'
 import { FlagStep } from './FlagStep'

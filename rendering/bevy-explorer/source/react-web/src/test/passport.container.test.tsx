@@ -5,9 +5,9 @@ import { Passport, openPassport } from '../features/profile/Passport'
 import { SessionProvider } from '../features/session/SessionContext'
 import { fakeProfileState, fakeSession, renderSettled } from './harness'
 import { receiveProfile, seedProfiles, setProfileRequester } from '../features/session/profileStore'
-import { PopupHost, closeTopPopup, resetPopups } from '../design'
+import { PopupHost, closeTopPopup, resetPopups } from '@hud/design'
 import type { EngineSession } from '../features/session/useEngineSession'
-import type { Profile } from '../engine/protocol'
+import type { Profile } from '@hud/engine/protocol'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from
 // the profile store until it lands, and shows the presentational ProfilePassport; openPassport mounts it.

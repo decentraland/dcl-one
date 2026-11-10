@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { CrashModal } from '../features/error/CrashModal'
 import { openRealmError } from '../features/error/RealmErrorModal'
 import { ErrorBoundary } from '../features/error/ErrorBoundary'
-import { isInputLocked } from '../lib/inputLock'
-import { PopupHost, closeTopPopup, resetPopups } from '../design'
+import { isInputLocked } from '@hud/lib/inputLock'
+import { PopupHost, closeTopPopup, resetPopups } from '@hud/design'
 
 afterEach(resetPopups)
 

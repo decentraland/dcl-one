@@ -4,9 +4,9 @@
 // Markers are modelled as the full category list even though the menu only offers three
 // presets, so per-category toggles stay a UI change rather than a data change.
 
-import { Check } from '../../design'
+import { Check } from '@hud/design'
 import { ALL_MARKER_CATEGORIES } from './minimapPrefs'
-import type { MinimapRotation, MinimapStyle } from '../../engine/protocol'
+import type { MinimapRotation, MinimapStyle } from '@hud/engine/protocol'
 import styles from './MinimapSettings.module.css'
 
 const ROTATION_LABELS: Array<{ value: MinimapRotation; label: string }> = [

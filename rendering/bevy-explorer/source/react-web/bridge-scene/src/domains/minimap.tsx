@@ -15,7 +15,7 @@ import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import type { MinimapRotation, MinimapStyle } from '../../../src/engine/protocol'
+import type { MinimapRotation, MinimapStyle } from '@hud/engine/protocol'
 
 type Rect = { x: number; y: number; width: number; height: number }
 

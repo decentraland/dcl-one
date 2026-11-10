@@ -2,12 +2,12 @@
 // The stage and the avatar are drawn by the engine behind this transparent page.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import backdrop from '../../assets/lobby/background.jpg'
-import vignette from '../../assets/lobby/vignette.png'
-import logo from '../../assets/lobby/logo.png'
-import mouseLeft from '../../assets/lobby/mouse-left.png'
-import notificationsIcon from '../../assets/lobby/notifications.png'
-import { Close, HeaderButton, MaskIcon, Rail } from '../../design'
+import backdrop from '@hud/assets/lobby/background.jpg'
+import vignette from '@hud/assets/lobby/vignette.png'
+import logo from '@hud/assets/lobby/logo.png'
+import mouseLeft from '@hud/assets/lobby/mouse-left.png'
+import notificationsIcon from '@hud/assets/lobby/notifications.png'
+import { Close, HeaderButton, MaskIcon, Rail } from '@hud/design'
 import { ProfileChip } from '../menu/ProfileChip'
 import { BACKDROP_EDGE_FADE, FLOOR, backdropRect, floorShadeGradient } from '../../engine/lobbyStage'
 import { clickButton } from '../../lib/analytics'

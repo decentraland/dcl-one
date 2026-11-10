@@ -1,7 +1,7 @@
 // How a notification reads: title, body and image derived from its type-specific metadata, its
 // age, and where clicking it leads. Shared by the panel and the new-notification toast.
 
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState } from '../session/useEngineSession'
 import { nativeProfileImage } from '../../lib/baseDomain'
 import { notificationTimeMs } from '../../lib/notificationTime'

@@ -1,6 +1,6 @@
 // Confirmations shared by the friends panel, the profile card and the passport, worded like the
 // reference client.
-import { Avatar, showConfirm } from '../../design'
+import { Avatar, showConfirm } from '@hud/design'
 import { siteUrl } from '../../lib/baseDomain'
 import { knownUserColor } from '../session/profileStore'
 import styles from './FriendRequestPopup.module.css'

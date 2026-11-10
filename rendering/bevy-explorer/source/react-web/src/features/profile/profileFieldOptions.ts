@@ -8,7 +8,7 @@
 //
 // The blank "not set" choice isn't listed — the edit form adds it to every dropdown.
 
-import type { ProfileInfo } from '../../engine/protocol'
+import type { ProfileInfo } from '@hud/engine/protocol'
 
 export const FIELD_OPTIONS: Partial<Record<keyof ProfileInfo, string[]>> = {
   country: [

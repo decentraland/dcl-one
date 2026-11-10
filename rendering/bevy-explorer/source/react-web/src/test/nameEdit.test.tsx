@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { NameEditModal, openNameEdit } from '../features/profile/NameEditModal'
 import { SessionProvider } from '../features/session/SessionContext'
 import { fakeProfileState, fakeSession } from './harness'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 import type { EngineSession } from '../features/session/useEngineSession'
-import type { Profile } from '../engine/protocol'
+import type { Profile } from '@hud/engine/protocol'
 
 // COMPONENT: the name editor. A NAME is a different kind of choice from the rest of the profile —
 // a claimed one is picked from what the wallet owns, anything else is free text that the protocol

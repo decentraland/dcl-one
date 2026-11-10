@@ -1,16 +1,16 @@
 // Loading-screen tips: which ones new and returning players see, and each tip's text, art and
 // action pill.
 
-import type { IconName } from '../../design'
-import addFriends from '../../assets/loading-tips/add-friends.webp'
-import earnBadges from '../../assets/loading-tips/earn-badges.webp'
-import hangOutPlaza from '../../assets/loading-tips/hang-out-plaza.webp'
-import liveNow from '../../assets/loading-tips/live-now.webp'
-import makeMove from '../../assets/loading-tips/make-move.webp'
-import sayHi from '../../assets/loading-tips/say-hi.webp'
-import yourPeople from '../../assets/loading-tips/your-people.webp'
-import addFriendIcon from '../../assets/loading/icon-add-friend.webp'
-import favPlaceIcon from '../../assets/loading/icon-fav-place.webp'
+import type { IconName } from '@hud/design'
+import addFriends from '@hud/assets/loading-tips/add-friends.webp'
+import earnBadges from '@hud/assets/loading-tips/earn-badges.webp'
+import hangOutPlaza from '@hud/assets/loading-tips/hang-out-plaza.webp'
+import liveNow from '@hud/assets/loading-tips/live-now.webp'
+import makeMove from '@hud/assets/loading-tips/make-move.webp'
+import sayHi from '@hud/assets/loading-tips/say-hi.webp'
+import yourPeople from '@hud/assets/loading-tips/your-people.webp'
+import addFriendIcon from '@hud/assets/loading/icon-add-friend.webp'
+import favPlaceIcon from '@hud/assets/loading/icon-fav-place.webp'
 
 /** Plain text, a highlighted word (a key: `binding` names the system action whose live key
  *  replaces it), or an inline icon. */

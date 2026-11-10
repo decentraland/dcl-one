@@ -8,8 +8,8 @@
 // the dice would show next is fetched ahead, so the stage can load it out of sight.
 
 import { useEffect, useState } from 'react'
-import logo from '../../assets/lobby/logo.png'
-import { Button, ControlButton, Icon, TextInput } from '../../design'
+import logo from '@hud/assets/lobby/logo.png'
+import { Button, ControlButton, Icon, TextInput } from '@hud/design'
 import { randomDefaultLook, randomGuestName } from '../../lib/guestName'
 import { EngineViewport } from '../engine/EngineViewport'
 import { StandInStage } from '../lobby/LobbyHome'

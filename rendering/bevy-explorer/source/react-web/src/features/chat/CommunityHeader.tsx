@@ -3,11 +3,11 @@
 // Community, Notification Ping, Delete chat history, Close.
 
 import type { CommunityConversation } from '../session/useEngineSession'
-import { Avatar, ControlButton, MaskIcon } from '../../design'
+import { Avatar, ControlButton, MaskIcon } from '@hud/design'
 import { openCommunityModal } from '../communities/CommunityModal'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
-import playersIcon from '../../assets/chat/players.png'
+import playersIcon from '@hud/assets/chat/players.png'
 import styles from './Chat.module.css'
 
 export function CommunityHeader({

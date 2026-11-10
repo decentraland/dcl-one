@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, FakeDriver } from './harness'
 import { openProfileCard } from '../features/profileCard/ProfileCard'
-import { resetPopups } from '../design'
+import { resetPopups } from '@hud/design'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 import { leave, visit } from './entryUrl'
 

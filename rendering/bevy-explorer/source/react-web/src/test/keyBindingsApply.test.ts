@@ -3,7 +3,7 @@
 // (push orients the axis — inverted look is capturing stick-up on Camera Down). Same-axis
 // entries on the pair are replaced; other axes and perpendicular siblings are untouched.
 import { describe, it, expect } from 'vitest'
-import type { BindingEntry } from '../engine/protocol'
+import type { BindingEntry } from '@hud/engine/protocol'
 import { applyCapture } from '../features/settings/KeyBindingsTab'
 
 const row = (table: BindingEntry[], name: string): string[] | undefined =>

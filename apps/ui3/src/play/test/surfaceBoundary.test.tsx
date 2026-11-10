@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import { SurfaceBoundary } from '../features/error/SurfaceBoundary'
-import { PopupHost, resetPopups, openPopup, closeTopPopup, hasOpenPopup } from '../design/popups'
+import { PopupHost, resetPopups, openPopup, closeTopPopup, hasOpenPopup } from '@hud/design/popups'
 
 let broken = true
 function Page(): React.JSX.Element {

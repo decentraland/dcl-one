@@ -218,8 +218,9 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                if (id.includes('/src/design/') && !id.includes('Showcase')) return 'design'
-                if (/\/src\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                // The shared HUD UI (library/ui/apps/hud) is split the same way as this app's own sources.
+                if (/\/(src|apps\/hud)\/design\//.test(id) && !id.includes('Showcase')) return 'design'
+                if (/\/(src|apps\/hud)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
                 return null
               }
             }

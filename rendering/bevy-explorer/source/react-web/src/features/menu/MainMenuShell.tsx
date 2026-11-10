@@ -3,19 +3,19 @@
 // the top bar is identical and consistent. Pages pass their content as children.
 
 import { useContext, useEffect, useState } from 'react'
-import { Button, DclLogo, Icon, type IconName } from '../../design'
+import { Button, DclLogo, Icon, type IconName } from '@hud/design'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { EDITOR_BUILD, EditorOffered } from '../editorHost/config'
 import { ProfileChip } from './ProfileChip'
 import styles from './MainMenuShell.module.css'
-import onBackpack from '../../assets/menu-on/backpack.webp'
-import onEvents from '../../assets/menu-on/events.webp'
-import onPlaces from '../../assets/menu-on/places.webp'
-import onCommunities from '../../assets/menu-on/communities.webp'
-import onShop from '../../assets/menu-on/shop.webp'
-import onMap from '../../assets/menu-on/map.webp'
-import onSettings from '../../assets/menu-on/settings.webp'
-import onGallery from '../../assets/menu-on/gallery.webp'
+import onBackpack from '@hud/assets/menu-on/backpack.webp'
+import onEvents from '@hud/assets/menu-on/events.webp'
+import onPlaces from '@hud/assets/menu-on/places.webp'
+import onCommunities from '@hud/assets/menu-on/communities.webp'
+import onShop from '@hud/assets/menu-on/shop.webp'
+import onMap from '@hud/assets/menu-on/map.webp'
+import onSettings from '@hud/assets/menu-on/settings.webp'
+import onGallery from '@hud/assets/menu-on/gallery.webp'
 
 // The selected tab's full-colour artwork, and its display size (the map and settings art sit in a
 // larger canvas).

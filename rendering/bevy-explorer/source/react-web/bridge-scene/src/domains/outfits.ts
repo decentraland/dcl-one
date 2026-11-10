@@ -10,9 +10,9 @@ import { catalystBase, getJson } from '../http'
 import { sendEquipped } from './wearables'
 import { currentLook, editLook } from './avatarDraft'
 import { captureAvatarThumbnail, waitFrames } from './avatarPreview'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
+import type { AvatarLook } from '@hud/engine/avatarEquip'
 import type { Ctx } from '../bridge'
-import type { Outfit, OutfitsMetadata, RGBColor } from '../../../src/engine/protocol'
+import type { Outfit, OutfitsMetadata, RGBColor } from '@hud/engine/protocol'
 
 // The Bevy engine injects a persistent localStorage into system scenes (same as bevy-ui-scene).
 declare const localStorage: {

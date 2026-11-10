@@ -4,15 +4,15 @@
 // into the Gallery button). The engine owns the camera and the capture; this reads its stream
 // and sends it the buttons. Sizes are reference pixels (1080p canvas) scaled by --ui-scale.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Close, ControlButton, MaskIcon, MouseIcon, ScrollIcon } from '../../design'
+import { Close, ControlButton, MaskIcon, MouseIcon, ScrollIcon } from '@hud/design'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import type { ActionWire } from '../../engine/protocol'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
+import type { ActionWire } from '@hud/engine/protocol'
 import type { PhotoModeState } from '../session/useEngineSession'
 import { normalizedFrameSize } from './frame'
-import shootArt from '../../assets/photo-mode/shoot.png'
-import keyboardArt from '../../assets/photo-mode/keyboard.png'
-import galleryArt from '../../assets/photo-mode/gallery.png'
+import shootArt from '@hud/assets/photo-mode/shoot.png'
+import keyboardArt from '@hud/assets/photo-mode/keyboard.png'
+import galleryArt from '@hud/assets/photo-mode/gallery.png'
 import styles from './PhotoModeOverlay.module.css'
 
 const NO_STORAGE_TEXT =

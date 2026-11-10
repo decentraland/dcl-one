@@ -12,7 +12,7 @@
 // boundary.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '../../design'
+import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '@hud/design'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '../map/atlas'
 import { pinForCategories } from '../map/mapArt'
@@ -35,7 +35,7 @@ import {
 } from './minimapPrefs'
 import { MinimapSettings } from './MinimapSettings'
 import type { MapState, MinimapState } from '../session/useEngineSession'
-import type { MinimapStyle } from '../../engine/protocol'
+import type { MinimapStyle } from '@hud/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Minimap.module.css'
 

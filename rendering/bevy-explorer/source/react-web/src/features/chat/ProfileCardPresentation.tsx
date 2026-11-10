@@ -7,7 +7,7 @@
 // moderators' actions, then Block · Report.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
+import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '@hud/design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
 import { peekProfile } from '../session/profileStore'

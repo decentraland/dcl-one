@@ -3,8 +3,8 @@
 // save, so a field-by-field save would deploy eleven times for one visit.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, DateField, FieldLabel, Select, TextArea, TextInput, Trash } from '../../design'
-import type { Profile, ProfileEdit, ProfileInfo } from '../../engine/protocol'
+import { Button, DateField, FieldLabel, Select, TextArea, TextInput, Trash } from '@hud/design'
+import type { Profile, ProfileEdit, ProfileInfo } from '@hud/engine/protocol'
 import { FIELD_OPTIONS } from './profileFieldOptions'
 import {
   DESCRIPTION_MAX,

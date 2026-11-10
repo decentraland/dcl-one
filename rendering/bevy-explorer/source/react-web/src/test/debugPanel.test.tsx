@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import { PopupHost, resetPopups } from '../design/popups'
+import { PopupHost, resetPopups } from '@hud/design/popups'
 import { Sidebar } from '../features/sidebar/Sidebar'
 import { requestDebugPanel } from '../features/debug/useDebugPanel'
 import { fakeSession } from './harness'

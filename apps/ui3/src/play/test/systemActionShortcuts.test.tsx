@@ -4,10 +4,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from './harness'
-import { openPopup, resetPopups, PopupHost } from '../design'
+import { openPopup, resetPopups, PopupHost } from '@hud/design'
 import { setBindingsSnapshot } from '../lib/bindingLabels'
-import { registerCancelLayer } from '../lib/cancelLayers'
-import { lockInput } from '../lib/inputLock'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
+import { lockInput } from '@hud/lib/inputLock'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })

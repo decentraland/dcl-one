@@ -3,7 +3,7 @@
 // them in batches, so the count can jump back up), the player spawn and the render settle. Each
 // stage has a floor, and the shown value only ever rises until the loader goes away.
 
-import type { SceneLoadingState } from '../../engine/protocol'
+import type { SceneLoadingState } from '@hud/engine/protocol'
 
 export interface LoadingInput {
   scene: SceneLoadingState | null

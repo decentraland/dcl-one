@@ -11,7 +11,7 @@
 // `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
 import { looksClaimed } from '../../engine/mention'
 import { useCallback, useSyncExternalStore } from 'react'
-import type { Profile } from '../../engine/protocol'
+import type { Profile } from '@hud/engine/protocol'
 import { userColor } from '../../lib/identity'
 
 /** Addresses are matched lowercased: the same wallet reaches the page in either case. */

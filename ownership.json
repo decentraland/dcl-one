@@ -254,12 +254,13 @@
     },
     {
       "id": "explorer-client",
-      "description": "Explorer source, local app builds and component workflows",
+      "description": "Explorer source, its HUD UI, local app builds and component workflows",
       "owners": [
         "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
+        "/library/ui/apps/hud/",
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"

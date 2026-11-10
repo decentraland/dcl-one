@@ -4,8 +4,8 @@
 // violet card as the scene permission prompt.
 
 import { useState } from 'react'
-import { Button, TextInput, openPopup } from '../../design'
-import type { WorldPasswordRequestMessage } from '../../engine/protocol'
+import { Button, TextInput, openPopup } from '@hud/design'
+import type { WorldPasswordRequestMessage } from '@hud/engine/protocol'
 import styles from './WorldPasswordDialog.module.css'
 
 function LockIcon(): React.JSX.Element {

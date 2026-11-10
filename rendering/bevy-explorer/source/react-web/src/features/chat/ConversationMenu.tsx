@@ -3,8 +3,8 @@
 // None), which only decides whether a line landing there sounds.
 
 import { useEffect, useRef, useState } from 'react'
-import { ContextMenu, ControlButton, Kebab, type ContextMenuItem } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { ContextMenu, ControlButton, Kebab, type ContextMenuItem } from '@hud/design'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
 import styles from './Chat.module.css'
 

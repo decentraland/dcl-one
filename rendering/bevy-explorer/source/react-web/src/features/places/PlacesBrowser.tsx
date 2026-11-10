@@ -8,7 +8,7 @@
 // PlacesPage and the post-jump-in PlacesPicker; the host supplies an `onPick(place)` action.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverGrid, Dropdown, EmptyState, Heart, Pin, SearchField, Tabs, type TabItem } from '../../design'
+import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverGrid, Dropdown, EmptyState, Heart, Pin, SearchField, Tabs, type TabItem } from '@hud/design'
 import { PlaceCard } from './PlaceCard'
 import { FeaturedCarousel } from './FeaturedCarousel'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'

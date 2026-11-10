@@ -2,7 +2,7 @@
 // lobby, with its own close button and no menu bar, so the lobby is still where you return to.
 
 import { useRef } from 'react'
-import { Close, HeaderButton } from '../../design'
+import { Close, HeaderButton } from '@hud/design'
 import { useSession } from '../session/SessionContext'
 import { holeClip } from '../../lib/holeClip'
 import styles from './BackpackModal.module.css'

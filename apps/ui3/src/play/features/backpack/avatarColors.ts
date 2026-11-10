@@ -1,6 +1,6 @@
 // Which categories edit which avatar color, and the presets for each.
 
-import type { AvatarColorTarget } from '../../engine/protocol'
+import type { AvatarColorTarget } from '@hud/engine/protocol'
 
 export const COLOR_TARGET: Readonly<Record<string, AvatarColorTarget>> = {
   body_shape: 'skin',

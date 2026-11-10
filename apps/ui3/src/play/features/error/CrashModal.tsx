@@ -6,9 +6,9 @@
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { ModalShell, Button } from '../../design'
-import { useFocusTrap } from '../../lib/useFocusTrap'
-import { lockInput } from '../../lib/inputLock'
+import { ModalShell, Button } from '@hud/design'
+import { useFocusTrap } from '@hud/lib/useFocusTrap'
+import { lockInput } from '@hud/lib/inputLock'
 import type { CrashSource } from './fatalError'
 import styles from './CrashModal.module.css'
 

@@ -12,7 +12,7 @@ import { inShell, shellRequest } from '../lib/shell'
 import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
 import type { EngineRpc, LaunchHostOptions } from './engineRpc'
 import { BridgeChannel } from './bridgeChannel'
-import { bridgeChannelName, type PageToScene, type SceneToPage } from './protocol'
+import { bridgeChannelName, type PageToScene, type SceneToPage } from '@hud/engine/protocol'
 
 // Two thirdweb round-trips.
 const CREATE_GUEST_TIMEOUT_MS = 30_000

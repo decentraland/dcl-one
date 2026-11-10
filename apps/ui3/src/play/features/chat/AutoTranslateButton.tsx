@@ -1,6 +1,6 @@
 // Switches a conversation's auto-translation on or off, on its title bar.
 
-import { ControlButton, Tooltip, Translate } from '../../design'
+import { ControlButton, Tooltip, Translate } from '@hud/design'
 import { autoTranslates, setAutoTranslate, useTranslationPrefs } from './translation'
 import styles from './Chat.module.css'
 

@@ -3,10 +3,10 @@
 // (captureCancelInputs). This is also what lets a gamepad-bound Cancel abort a capture.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 import { setBindingsSnapshot } from '../lib/bindingLabels'
 import { KeyBindingsTab } from '../features/settings/KeyBindingsTab'
-import type { BindingEntry } from '../engine/protocol'
+import type { BindingEntry } from '@hud/engine/protocol'
 import type { BindingsState } from '../features/session/useEngineSession'
 
 afterEach(() => {

@@ -24,10 +24,10 @@ import {
   type SceneToPage,
   type Setting,
   type Wearable
-} from './protocol'
+} from '@hud/engine/protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
-import type { Color3 } from './generated'
+import type { Color3 } from '@hud/engine/generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 

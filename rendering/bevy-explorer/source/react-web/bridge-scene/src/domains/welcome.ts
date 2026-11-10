@@ -12,7 +12,7 @@ import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
 import { expectLook, syncShape, waitFrames } from './avatarPreview'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
+import type { AvatarLook } from '@hud/engine/avatarEquip'
 import { sendEquipped } from './wearables'
 
 const LEGAL = {

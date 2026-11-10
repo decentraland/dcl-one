@@ -57,7 +57,7 @@ let
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
-      (root + /library/catalyst-api) (root + /library/shop)
+      (root + /library/catalyst-api) (root + /library/shop) (root + /library/ui/apps/hud)
     ];
   };
 in stdenv.mkDerivation {

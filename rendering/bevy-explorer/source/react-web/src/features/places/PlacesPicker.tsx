@@ -3,7 +3,7 @@
 // card click resolves a destination (parcel teleport / world realm) and a Skip button takes home
 // (the default realm at 0,0 — Genesis Plaza — unless the user pinned one).
 
-import { Button } from '../../design'
+import { Button } from '@hud/design'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from './placesApi'
 import type { Destination } from '../session/useEngineSession'

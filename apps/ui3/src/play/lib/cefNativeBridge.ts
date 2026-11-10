@@ -5,7 +5,7 @@
 //
 // No-op when window.cef is absent (web).
 
-import { bridgeChannelName } from '../engine/protocol'
+import { bridgeChannelName } from '@hud/engine/protocol'
 import { answerHudRequest, answerHudWait, type HudRequest } from './hudAutomation'
 
 interface CefApi {

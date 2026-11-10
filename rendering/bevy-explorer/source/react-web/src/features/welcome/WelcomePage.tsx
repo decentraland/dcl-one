@@ -4,8 +4,8 @@
 // The stage and the avatar are the lobby's, drawn by the engine behind this transparent page.
 
 import { useEffect, useRef, useState } from 'react'
-import logo from '../../assets/lobby/logo.png'
-import { Button, TextInput } from '../../design'
+import logo from '@hud/assets/lobby/logo.png'
+import { Button, TextInput } from '@hud/design'
 import { splitName } from '../../lib/identity'
 import { EngineViewport } from '../engine/EngineViewport'
 import { StandInStage } from '../lobby/LobbyHome'

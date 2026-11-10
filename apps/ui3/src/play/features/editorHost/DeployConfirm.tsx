@@ -1,7 +1,7 @@
 // The page's own "sign this deployment?" and "sign this undeploy?" dialogs: the editor asks, the
 // player answers here, and only a yes reaches the signer (host/host.ts).
 
-import { showDialog } from '../../design'
+import { showDialog } from '@hud/design'
 import type { DeploymentRequest, UndeployRequest } from './host/host'
 import styles from './DeployConfirm.module.css'
 

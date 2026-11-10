@@ -1,5 +1,5 @@
-import { Avatar, showToast } from '../../design'
-import type { FriendAction } from '../../engine/protocol'
+import { Avatar, showToast } from '@hud/design'
+import type { FriendAction } from '@hud/engine/protocol'
 import { shortAddr, splitName } from '../../lib/identity'
 import { knownUserColor, peekProfile } from '../session/profileStore'
 

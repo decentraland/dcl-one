@@ -18,12 +18,14 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - `/play/engine/`, `/play/bridge-scene/`, `/play/service_worker.js`, `/play/preview_realm.js`: the
   web artifact imported by `tooling/fetch-play.py` into `.cache/play/<manifest-hash>` (production:
   `build/client/play`, described by `/play/sites-play.json`).
-- `apps/ui3/src/play/engine/generated`: bindings from `crates/system_api_types`; regenerate with
-  `tooling/play-bindings.sh`.
+- `library/ui/apps/hud/engine/generated`: bindings from `crates/system_api_types`, which both HUD
+  hosts compile; regenerate with `source/scripts/gen-ts-bindings.sh` and commit the result.
 
 ## The HUD
 
-`apps/ui3/src/play` adapts `source/react-web/src` with these changes:
+The HUD UI both hosts share lives in `library/ui/apps/hud` (`@hud/*`); where they differ, it reads
+the behaviour from `@hud-host`, each host's `host.ts` (`docs/ui-standards.md`, "Explorer HUD
+transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes:
 
 - `main.tsx` → `mount.tsx` (`mountPlayApp`), `shell/main.ts` → `shell/mount.ts` (`mountPlayShell`).
 - Same-origin paths resolve against `/play/`: `features/engine/EngineHost.tsx`, `lib/systemScene.ts`
@@ -34,15 +36,17 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
   fragment becomes the sandbox channel suffix, the engine runs with `editor`, and no bridge is
   reported. The shell mounts its app once per document.
 - The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
-  CEF routes eligible snapshot images when displaying profiles and notifications. Sites uses its
-  web service configuration and the snapshot URLs returned by its backend.
+  CEF routes eligible snapshot images when displaying profiles and notifications (`@hud-host`'s
+  `nativeProfileImage`, `react-web/src/host.ts`). Sites uses its web service configuration and the
+  snapshot URLs returned by its backend (`apps/ui3/src/play/host.ts` returns them as given).
 - The shared UI foundations: `react-web` loads `@dcl/one-ui/foundations.css` in `main.tsx`; `/play`
   does not, as its HUD adaptation stays as it is until Sites migrates (`docs/ui-standards.md`).
 - The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
   client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
   keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
-  in `apps/ui3` under `tsconfig.play.json`. `?native=1` is not built.
+  in `apps/ui3` under `tsconfig.play.json`. Tests of the shared HUD UI that need no host run once,
+  in `library/ui` (`pnpm exec vitest run --project hud`). `?native=1` is not built.
 - The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and
   its sign-in in `features/session/useEngineSession.ts`, the shell's local guest
   (`shell/localGuest.ts`) and the stream params (`perfStream`, `perfCsv`). `/play` never runs the

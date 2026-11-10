@@ -3,8 +3,8 @@
 // engine reports an interactable under it. The "press E to interact" prompt comes from the engine
 // hover stream (relayed by the bridge's pointer domain) — InputAction → key label is mapped here.
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { CameraIcon, WalkIcon } from '../../design'
-import type { HoverAction, ProximityTip } from '../../engine/protocol'
+import { CameraIcon, WalkIcon } from '@hud/design'
+import type { HoverAction, ProximityTip } from '@hud/engine/protocol'
 import { bindingsForAction, labelForInput, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { subscribeCursor, getCursor, setCursorNotify } from './cursorStore'
 import styles from './Pointer.module.css'

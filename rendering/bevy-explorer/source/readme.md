@@ -107,7 +107,7 @@ just native-release --places http://localhost:5000 --realm-provider http://local
 Doing it by hand instead of via `just`:
 
 ```bash
-./scripts/gen-ts-bindings.sh                     # TS types for the system API (generated, gitignored)
+./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
 cd react-web && npm ci && (cd bridge-scene && npm ci) && npm run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef

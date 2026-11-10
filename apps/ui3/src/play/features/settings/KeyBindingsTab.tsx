@@ -9,8 +9,8 @@
 // action's opposite partner to the mirrored direction — see applyCapture. IaAny is not
 // listed: it means "any scene button" and is handled in code, not a binding of its own.
 import { useEffect } from 'react'
-import { ModalShell, openPopup } from '../../design'
-import type { ActionWire, BindingEntry, InputIdentifierWire } from '../../engine/protocol'
+import { ModalShell, openPopup } from '@hud/design'
+import type { ActionWire, BindingEntry, InputIdentifierWire } from '@hud/engine/protocol'
 import {
   bindingsForAction,
   getBindingsSnapshot,

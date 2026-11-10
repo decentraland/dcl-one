@@ -2,7 +2,7 @@
 // the presentational card. Opened as a popup via openProfileCard() (see the avatarClick handler in
 // useEngineSession); because <PopupHost/> is mounted inside Hud's <SessionProvider>, the popup can
 // read the session with useSession() even though it renders through a portal.
-import { openPopup } from '../../design'
+import { openPopup } from '@hud/design'
 import { relationshipOf } from '../../lib/relationship'
 import { useSession } from '../session/SessionContext'
 import { useProfile } from '../session/profileStore'

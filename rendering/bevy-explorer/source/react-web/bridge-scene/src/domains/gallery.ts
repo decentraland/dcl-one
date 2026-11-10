@@ -5,7 +5,7 @@
 //     DELETE /api/images/:id                          remove a photo (own only)
 import { getPlayer } from '@dcl/sdk/players'
 import { serviceBase, signed } from '../http'
-import type { GalleryPhoto, GalleryPhotoMeta } from '../../../src/engine/protocol'
+import type { GalleryPhoto, GalleryPhotoMeta } from '@hud/engine/protocol'
 import type { Ctx } from '../bridge'
 
 async function base(): Promise<string> {

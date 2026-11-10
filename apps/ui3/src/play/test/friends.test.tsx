@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { FriendAction } from '../engine/protocol'
+import type { FriendAction } from '@hud/engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 
 // DOMAIN: friends — friends/requests/blocked snapshot + every social action.

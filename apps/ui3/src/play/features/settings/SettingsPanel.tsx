@@ -4,9 +4,9 @@
 // of BevyApi.getSettings / setSetting.
 
 import { memo, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
+import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import type { Setting } from '../../engine/protocol'
+import type { Setting } from '@hud/engine/protocol'
 import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
 import { clearAutoTranslate, setAutoTranslateDefault, useTranslationPrefs } from '../chat/translation'

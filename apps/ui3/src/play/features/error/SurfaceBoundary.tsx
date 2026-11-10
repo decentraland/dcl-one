@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react'
-import { showDialog } from '../../design/popups'
+import { showDialog } from '@hud/design/popups'
 
 interface Props {
   /** Shown to the user, e.g. "Backpack". */

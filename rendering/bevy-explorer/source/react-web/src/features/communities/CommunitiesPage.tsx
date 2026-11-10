@@ -6,12 +6,12 @@
 // offers Join, Request to Join or Cancel, the user's friends in it, and its description on hover.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, SearchField, Spinner, Tooltip } from '../../design'
+import { Avatar, Button, SearchField, Spinner, Tooltip } from '@hud/design'
 import { nameColor } from '../../lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
-import type { Community } from '../../engine/protocol'
+import type { Community } from '@hud/engine/protocol'
 import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
 import styles from './CommunitiesPage.module.css'
 

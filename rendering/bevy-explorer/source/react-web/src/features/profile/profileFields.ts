@@ -2,7 +2,7 @@
 // builds its controls from it, and the tests assert against it. Splitting the label list from the
 // input list is how the old scene ended up with fields you could see but not edit.
 
-import type { ProfileInfo } from '../../engine/protocol'
+import type { ProfileInfo } from '@hud/engine/protocol'
 
 /** How a field is edited. Text fields are free-form; select fields come from FIELD_OPTIONS. */
 export type FieldKind = 'text' | 'select' | 'date'

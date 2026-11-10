@@ -4,7 +4,7 @@ import { renderSession, enterAsGuest, type Harness } from './harness'
 import { PREF, getPref, setPref } from '../lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingMode } from '../features/chat/ping'
 import { setAutoTranslate } from '../features/chat/translation'
-import type { CommunityChannel, CommunityMember } from '../engine/protocol'
+import type { CommunityChannel, CommunityMember } from '@hud/engine/protocol'
 
 // DOMAIN: community chat — the user's communities as chat tabs (fed at world entry, kept by
 // presence), lines routed to them by their `community:<id>` channel and read from the engine's

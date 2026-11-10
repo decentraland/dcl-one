@@ -37,11 +37,12 @@ reference: `getBlockUpdateStream` (#844). The file set:
    two ops.
 8. `react-web/bridge-scene/src/bevy-api.ts`: the method on `BevyApiInterface`, importing the
    generated type; a relay domain under `bridge-scene/src/domains/`; a message kind in
-   `react-web/src/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
+   `library/ui/apps/hud/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
 
-Run `just ts-bindings` before touching the TypeScript: the generated types under
-`react-web/src/engine/generated/` are gitignored, and CI regenerates them before every TS
-build, so a Rust struct change that breaks the page fails `tsc` there.
+Run `just ts-bindings` before touching the TypeScript: it regenerates the types under
+`library/ui/apps/hud/engine/generated/`, which both HUD hosts compile. Commit them with the
+Rust struct change. CI regenerates them before every TS build, so a Rust struct change that
+breaks the page fails `tsc` there, and the Sites import fails while the committed copy differs.
 
 ## The ts-rs boundary
 

@@ -4,7 +4,7 @@
 // Clicking a toast opens where it leads (a friend request, a passport) or the notifications panel.
 
 import { useSyncExternalStore } from 'react'
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
 import { friendshipTarget, summarize } from './summary'
 import styles from './NotificationToast.module.css'

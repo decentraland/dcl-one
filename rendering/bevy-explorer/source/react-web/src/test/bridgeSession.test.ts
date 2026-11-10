@@ -1,7 +1,7 @@
 import { expectConsoleOutput } from './console'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@hud/engine/protocol'
 
 // A frame loop shaped like @dcl/ecs: systems run from the live array, which removal splices.
 const systems: Array<(dt: number) => void> = []

@@ -18,13 +18,16 @@ SOURCE = 'rendering/bevy-explorer/source/'
 BEVY = 'rendering/bevy-explorer/bevy/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
+# The ts-rs bindings both HUD hosts compile (scripts/gen-ts-bindings.sh writes them; tracked).
+BINDINGS = 'library/ui/apps/hud/engine/generated'
 # Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
 # matching tsconfig.json paths). A trailing slash names a tree, anything else one file. They build into
 # the HUD, never the engine. They are not part of the Sites HUD review (`hud_inputs`) either: they are
 # shared code, with no adaptation of them to review. tooling/bevy-ci.py reads them from here;
 # infra/packages/play.nix lists them too, and tests keep it, the HUD's aliases and library/ui's import
 # graph together with this.
-HUD_SHARED = ('library/shop/', 'library/catalyst-api/', 'library/ui/index.ts', 'library/ui/foundations/')
+HUD_SHARED = ('library/shop/', 'library/catalyst-api/', 'library/ui/index.ts', 'library/ui/foundations/',
+              'library/ui/apps/hud/')
 # Inside those, what the HUD never reads, so no input: library/ui's Inter files. They are Git LFS objects,
 # which a checkout without LFS holds as pointers and a `git+file:.?lfs=1` Nix source as their bytes, so
 # hashing them would key one tree two ways. The HUD takes the same faces from its own
@@ -56,7 +59,7 @@ REQUIRED = ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg/webgpu_build.js',
 ENGINE_PARTS = {
     'pkg': SOURCE + 'deploy/web/engine/pkg',
     'pkg-scene': SOURCE + 'deploy/web/engine/pkg-scene',
-    'bindings': HUD + 'engine/generated',
+    'bindings': BINDINGS,
 }
 ENGINE_REQUIRED = ('pkg/webgpu_build_bg.wasm', 'pkg/webgpu_build.js',
                    'pkg/manifest.json', 'pkg-scene/dcl_scene_wasm_bg.wasm',
@@ -79,8 +82,10 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
     def selected(path):
         if hud_only:
             return path.startswith(HUD)
-        # Native npm packaging is not consumed by the web builder or WASM.
-        if path.startswith((SOURCE + 'deploy/headless/', *HUD_UNREAD)):
+        # Native npm packaging is not consumed by the web builder or WASM. The tracked bindings are not
+        # either: the build regenerates them from crates/system_api_types, and verify() compares the
+        # tracked copy with the ones it built.
+        if path.startswith((SOURCE + 'deploy/headless/', BINDINGS + '/', *HUD_UNREAD)):
             return False
         if engine_only and (path.startswith(SOURCE + 'react-web/') or hud_shared(path) or path in (
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
@@ -280,18 +285,18 @@ def verify(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_in
     lock = read_json(root / LOCK)
     if lock.get('hud_source_sha256') != hud_inputs(root):
         raise ValueError('Sites HUD adaptation must be reviewed against the current Explorer HUD source')
-    bindings = root / 'apps/ui3/src/play/engine/generated'
+    bindings = root / BINDINGS
     expected = {p.relative_to(bindings).as_posix(): digest(p.read_bytes())
                 for p in bindings.rglob('*.ts')}
     actual = {p.removeprefix('bindings/'): h for p, h in meta['files'].items() if p.startswith('bindings/')}
     if not expected or expected != actual:
-        raise ValueError('Sites engine bindings differ from this build; regenerate with tooling/play-bindings.sh')
+        raise ValueError('Sites engine bindings differ from this build; regenerate with rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh')
     return meta
 
 
 def pack(directory, root=ROOT, optimized=True):
     info = read_json(directory / 'build-info.json')
-    source = root / 'rendering/bevy-explorer/source/react-web/src/engine/generated'
+    source = root / BINDINGS
     target = directory / 'bindings'
     if target.exists():
         shutil.rmtree(target)

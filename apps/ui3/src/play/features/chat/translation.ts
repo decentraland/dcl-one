@@ -5,8 +5,8 @@
 // nothing here is stored with the DM history. A failed request just leaves the original.
 
 import { useSyncExternalStore } from 'react'
-import { LANGUAGES } from '../../engine/generated'
-import type { Setting } from '../../engine/protocol'
+import { LANGUAGES } from '@hud/engine/generated'
+import type { Setting } from '@hud/engine/protocol'
 import { serviceUrl } from '../../lib/baseDomain'
 import { PREF, getPref, setPref } from '../../lib/prefs'
 import { parseMessage } from './chatText'

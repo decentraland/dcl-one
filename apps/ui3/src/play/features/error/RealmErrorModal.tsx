@@ -7,7 +7,7 @@
 // matters. OK returns the user to the destination picker; there's no Reload, it would re-hit the
 // same URL.
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell, Button } from '@hud/design'
 import styles from './RealmErrorModal.module.css'
 
 /** Open the world-not-found dialog. `onDismiss` runs exactly once, on any USER close path (OK,

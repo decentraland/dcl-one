@@ -1,6 +1,6 @@
 // Outcome of each friend action as the bridge reports it, for surfaces that wait on one (the
 // request popups show "Friend Request Sent" only once the service accepted it).
-import type { FriendAction } from '../../engine/protocol'
+import type { FriendAction } from '@hud/engine/protocol'
 
 export interface FriendEvent {
   op: FriendAction

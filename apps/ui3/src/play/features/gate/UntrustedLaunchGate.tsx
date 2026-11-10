@@ -13,7 +13,7 @@
 // here having already clicked something the attacker gave them.
 
 import { useState } from 'react'
-import { Button, DclLogo, ModalShell } from '../../design'
+import { Button, DclLogo, ModalShell } from '@hud/design'
 import type { UntrustedParam } from '../../lib/launchGate'
 import { inShell, postToShell } from '../../lib/shell'
 import styles from './UntrustedLaunchGate.module.css'

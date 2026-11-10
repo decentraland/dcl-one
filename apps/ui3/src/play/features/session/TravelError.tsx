@@ -1,7 +1,7 @@
 // "Can't travel there" — an in-world realm change the destination check refused. The player stays
 // where they are (Unity's RealmNavigator shows the same kind of notice instead of leaving).
 
-import { Button, ModalShell, openPopup } from '../../design'
+import { Button, ModalShell, openPopup } from '@hud/design'
 
 export function openTravelError(message: string, onClose: () => void): () => void {
   return openPopup(

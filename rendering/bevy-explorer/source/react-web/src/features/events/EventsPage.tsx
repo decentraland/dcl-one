@@ -2,7 +2,7 @@
 // events from the public events API; a card jumps to the event's parcel or world.
 
 import { useCallback, useEffect, useState } from 'react'
-import { BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverCard, DiscoverGrid, EmptyState, Tabs, type TabItem } from '../../design'
+import { BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverCard, DiscoverGrid, EmptyState, Tabs, type TabItem } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { EventsState, ProfileState } from '../session/useEngineSession'
 import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from './eventsApi'

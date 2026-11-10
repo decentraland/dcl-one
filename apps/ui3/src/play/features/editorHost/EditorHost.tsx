@@ -1,7 +1,7 @@
 // The scene editor's host and Create page: a chunk of its own, loaded only once Create is wanted.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { bridgeChannelName } from '../../engine/protocol'
+import { bridgeChannelName } from '@hud/engine/protocol'
 import { BASE_DOMAIN, DEFAULT_REALM } from '../../lib/baseDomain'
 import { PAGE_DIR } from '../../lib/publicUrl'
 import { getLogin, rootAddress } from '../auth/sso'

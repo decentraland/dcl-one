@@ -8,9 +8,9 @@
 // can change the name, membership and discoverability.
 
 import { useEffect, useRef, useState } from 'react'
-import { CharCounter, MaskIcon, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
-import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../../engine/protocol'
-import closeIcon from '../../assets/backpack/icon-close.webp'
+import { CharCounter, MaskIcon, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '@hud/design'
+import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@hud/engine/protocol'
+import closeIcon from '@hud/assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
 import styles from './CommunityCreateModal.module.css'

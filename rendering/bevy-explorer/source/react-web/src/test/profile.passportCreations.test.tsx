@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfilePassport } from '../features/profile/ProfilePassport'
 import { marketplaceUrl, type ShopItem } from '../features/shop/shopApi'
-import type { Profile } from '../engine/protocol'
+import type { Profile } from '@hud/engine/protocol'
 
 // The passport's Creations tab (unity-explorer's CreationsDetailsPassportModuleController): the
 // creator's wearables and emotes from the marketplace catalog, Buy with a Credits price on items on

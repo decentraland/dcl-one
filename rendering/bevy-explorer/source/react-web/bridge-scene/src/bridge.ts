@@ -11,7 +11,7 @@
 // the same file the React page uses — so changing a message on either side breaks the other.
 
 import { engine } from '@dcl/sdk/ecs'
-import type { Envelope, PageToScene, SceneToPage } from '../../src/engine/protocol'
+import type { Envelope, PageToScene, SceneToPage } from '@hud/engine/protocol'
 
 // The bare name: the sandbox's injected BroadcastChannel appends a per-tab session suffix
 // (sandbox_worker.js), matching the page's bridgeChannelName() — so two tabs never share a bridge.

@@ -2,8 +2,8 @@
 // the new ones its poll pushes (`notificationsNew`). Title/body/image come from `summary.ts`.
 // Mark-all-read clears the badge and persists through the bridge's signed PUT.
 
-import { ControlButton } from '../../design'
-import type { AppNotification } from '../../engine/protocol'
+import { ControlButton } from '@hud/design'
+import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
 import { ago, friendshipTarget, summarize } from './summary'
 import styles from './NotificationsPanel.module.css'

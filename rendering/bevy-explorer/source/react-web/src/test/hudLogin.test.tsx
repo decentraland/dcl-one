@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { NewAccountPick } from '../engine/driver'
-import type { PageToScene } from '../engine/protocol'
+import type { PageToScene } from '@hud/engine/protocol'
 import type { AuthIdentity } from '../features/auth/sso'
 import { LOGIN_COMMANDS, loginThroughHud, parseLoginArgs, provideHudLogin } from '../lib/hudAutomation'
 import { FakeDriver, renderSession } from './harness'

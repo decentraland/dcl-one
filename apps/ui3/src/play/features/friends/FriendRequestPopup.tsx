@@ -2,7 +2,7 @@
 // result screens ("Friend Request Sent To", "You And X Are Now Friends!") show only once the
 // friends service accepted the action, then close by themselves.
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '../../design'
+import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '@hud/design'
 import { splitName, userColor } from '../../lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfileCardPresentation } from '../features/chat/ProfileCardPresentation'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 
 // The popup store is a module singleton — clear it between tests so open dialogs don't leak.
 afterEach(resetPopups)

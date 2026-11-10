@@ -160,7 +160,7 @@ class EngineCacheTests(unittest.TestCase):
                      'bridge-scene/static/BevyExplorerUI/about', 'service_worker.js', 'preview_realm.js'):
             self.write(artifact.SOURCE + 'deploy/web/' + name, 'fixture')
         self.write(artifact.SOURCE + 'LICENSE', 'fixture')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;')
+        self.write(artifact.BINDINGS + '/Example.ts', 'export type Example = string;')
         self.write(artifact.LOCK, json.dumps({'hud_source_sha256': artifact.hud_inputs(self.root)}))
 
         def command(*args, **kwargs):

@@ -32,6 +32,9 @@
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with ui3.
       "@shop/*": ["../../library/shop/*"],
+      // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it.
+      "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@hud-host": ["../ui3/src/play/host.ts"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
       // The validation seam ui3 owns. Types always resolve to the checking

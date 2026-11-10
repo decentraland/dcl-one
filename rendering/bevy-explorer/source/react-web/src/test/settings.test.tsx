@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { Setting } from '../engine/protocol'
+import type { Setting } from '@hud/engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 
 // DOMAIN: settings — fetch ExplorerSettings on open, change a setting.

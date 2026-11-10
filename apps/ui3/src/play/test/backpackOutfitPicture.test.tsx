@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BackpackPage } from '../features/backpack/BackpackPage'
-import type { Outfit } from '../engine/protocol'
+import type { Outfit } from '@hud/engine/protocol'
 import { fakeProfileState, fakeSession } from './harness'
 
 const grey = { r: 0.5, g: 0.5, b: 0.5 }

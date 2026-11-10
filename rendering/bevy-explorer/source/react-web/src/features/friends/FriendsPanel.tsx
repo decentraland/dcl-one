@@ -4,9 +4,9 @@
 // relay of the scene social state (BevyApi.social.*), guest-disabled.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
+import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '@hud/design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
-import type { BlockedUser as Blocked, Friend, FriendRequest } from '../../engine/protocol'
+import type { BlockedUser as Blocked, Friend, FriendRequest } from '@hud/engine/protocol'
 import type { FriendsState } from '../session/useEngineSession'
 import type { MenuContext } from '../chat/ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'

@@ -11,7 +11,7 @@
 // modal's focus trap already takes focus away) — this is only for listeners on window/document.
 
 import { useEffect, useRef } from 'react'
-import { isInputLocked } from './inputLock'
+import { isInputLocked } from '@hud/lib/inputLock'
 
 export interface WindowKeyDownOptions {
   /** Capture phase — needed to beat the engine's own handlers on the shared window. Default true. */

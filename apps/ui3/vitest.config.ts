@@ -10,10 +10,15 @@ export default defineConfig({
       ...validateAlias(),
       { find: "@catalyst-api", replacement: fileURLToPath(new URL("../../library/catalyst-api", import.meta.url)) },
       { find: "@shop", replacement: fileURLToPath(new URL("../../library/shop", import.meta.url)) },
+      // The Explorer HUD UI (library/ui/apps/hud) and the behaviours /play supplies to it.
+      { find: "@hud-host", replacement: fileURLToPath(new URL("./src/play/host.ts", import.meta.url)) },
+      { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
     ],
-    // library/shop has no node_modules of its own: its viem imports resolve to ui3's copy.
-    dedupe: ["viem"],
+    // library/ has no node_modules of its own: viem and React resolve to ui3's copies.
+    dedupe: ["viem", "react", "react-dom"],
   },
+  // The HUD UI lives outside this app; its assets load through the dev server like ui3's own.
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",

@@ -2,7 +2,7 @@
 // "Time progression" lets the engine's day cycle run.
 
 import { useEffect } from 'react'
-import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
+import { Panel, Slider, Toggle, hasOpenPopup } from '@hud/design'
 import type { SkyboxState } from '../session/useEngineSession'
 import styles from './SkyboxMenu.module.css'
 

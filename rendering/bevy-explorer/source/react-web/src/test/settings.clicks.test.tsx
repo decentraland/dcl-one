@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SettingsPanel } from '../features/settings/SettingsPanel'
-import type { Setting } from '../engine/protocol'
+import type { Setting } from '@hud/engine/protocol'
 import type { SettingsState } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 

@@ -3,15 +3,15 @@
 // openPassport() (from the profile card's "View Passport" and the sidebar's own profile), so it lives
 // in the HUD-wide popup layer and reads the session via useSession() like the profile card.
 import { useEffect, useRef, useState } from 'react'
-import { openPopup, showConfirm } from '../../design'
+import { openPopup, showConfirm } from '@hud/design'
 import { useSession } from '../session/SessionContext'
 import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '../../lib/relationship'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport } from './ProfilePassport'
-import type { Profile } from '../../engine/protocol'
+import type { Profile } from '@hud/engine/protocol'
 import { splitName, userColor } from '../../lib/identity'
-import { hexToColor3 } from '../../lib/color'
+import { hexToColor3 } from '@hud/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 

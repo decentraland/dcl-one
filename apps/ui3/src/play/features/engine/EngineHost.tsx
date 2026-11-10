@@ -6,7 +6,7 @@
 
 import { useEffect } from 'react'
 import type { EngineRpc } from '../../engine/engineRpc'
-import { bridgeChannelName } from '../../engine/protocol'
+import { bridgeChannelName } from '@hud/engine/protocol'
 import { engineServiceOptions } from '../../lib/baseDomain'
 import { bootMode } from '../../lib/bootMode'
 import { EDITOR_SCENE, editorSession, isEditorScene } from '../../lib/editorEmbed'

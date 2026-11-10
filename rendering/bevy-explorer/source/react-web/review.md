@@ -17,8 +17,10 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app
+npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
 npm test                   # tier 1 — the unit tests present at this revision
+(cd ../../../../library/ui && pnpm install --frozen-lockfile && pnpm exec vitest run --project hud)
+                           # tier 1 — the shared HUD UI's own tests
 # With the authorized visual suite and configuration present:
 npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
 (cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
@@ -179,7 +181,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 
 - [ ] **Design system** — no new hardcoded brand/status hex, `rgba()`, radius, or type size in a
       component (`grep` your diff for `#` and `rgba(`); each must be a `tokens.css` var or justified.
-      No bespoke `<button>`/control where a `src/design/` primitive exists.
+      No bespoke `<button>`/control where a `@hud/design` primitive exists.
 - [ ] **No dead code** — no unused exports/CSS classes/imports; no commented-out blocks; comments are
       sparse and explain *why*, not *what*.
 - [ ] **Structure** — one concern per file; reuse a primitive or *create* one rather than inlining a
@@ -198,13 +200,13 @@ Run through this on every diff (it encodes `AGENTS.md`):
       `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
       widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
       paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
-      `DateField` and `showConfirm`/`showDialog` from `src/design/`.
+      `DateField` and `showConfirm`/`showDialog` from `@hud/design`.
 
 ---
 
 ## 6. Adding a domain
 
-1. Build it (token-driven, reusing `src/design/` primitives).
+1. Build it (token-driven, reusing `@hud/design` primitives).
 2. Add the mock data in `src/engine/mockBridge.ts` so `?mock=1` renders it richly.
 3. Add a tier-1 test (`src/test/<domain>.test.tsx`) for its API contract + clicks.
 4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.

@@ -7,7 +7,7 @@ import { openFriendRequest } from '../features/friends/FriendRequestPopup'
 import { SessionProvider } from '../features/session/SessionContext'
 import { fakeSession } from './harness'
 import { seedProfiles } from '../features/session/profileStore'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 import type { EngineSession } from '../features/session/useEngineSession'
 
 // View Profile opens the passport popup, Add Friend the request popup; stub both to assert the trigger.

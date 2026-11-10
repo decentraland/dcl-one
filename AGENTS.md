@@ -103,8 +103,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
 ## UI standards
 
 Before changing web UI in `apps/` (including the Play HUD in
-`apps/ui3/src/play/`, which keeps its current design primitives until Sites
-migrates), `library/ui/` or
+`apps/ui3/src/play/`), `library/ui/` (including the Explorer HUD UI in
+`library/ui/apps/hud/`, shared by both HUD hosts) or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.

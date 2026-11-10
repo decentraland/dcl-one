@@ -5,8 +5,8 @@ import { ProfilePassport, type PassportEditing } from '../features/profile/Profi
 import { isValidLinkUrl, isValidName } from '../features/profile/profileFields'
 import { applyProfileEdit } from '../engine/profileEdit'
 import { FIELD_OPTIONS } from '../features/profile/profileFieldOptions'
-import type { Profile, ProfileEdit } from '../engine/protocol'
-import { resetPopups, PopupHost } from '../design'
+import type { Profile, ProfileEdit } from '@hud/engine/protocol'
+import { resetPopups, PopupHost } from '@hud/design'
 
 const profile: Profile = {
   address: '0xme',

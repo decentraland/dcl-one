@@ -1,6 +1,6 @@
 // Community membership roles, as the social-api names them.
 
-import type { CommunityMemberAction } from '../../engine/protocol'
+import type { CommunityMemberAction } from '@hud/engine/protocol'
 
 export function isMemberRole(role: string): boolean {
   return role === 'owner' || role === 'moderator' || role === 'member'

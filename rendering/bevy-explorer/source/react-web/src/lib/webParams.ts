@@ -3,7 +3,7 @@
 // reaches the engine and which ones a link may not set silently are all decided THERE; this
 // module only derives the HUD's handling from it. Leaf module: imports nothing but the table.
 
-import { WEB_PARAMS, type WebParam } from '../engine/generated'
+import { WEB_PARAMS, type WebParam } from '@hud/engine/generated'
 
 /** A table row by name. Throws so a renamed/removed row fails at module load, not at launch. */
 export function webParam(name: string): WebParam {

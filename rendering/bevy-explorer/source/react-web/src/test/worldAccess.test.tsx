@@ -3,8 +3,8 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from './harness'
 import { WorldPasswordDialog, openWorldPasswordDialog } from '../features/worldAccess/WorldPasswordDialog'
-import { closeTopPopup, resetPopups } from '../design'
-import type { WorldPasswordRequestMessage } from '../engine/protocol'
+import { closeTopPopup, resetPopups } from '@hud/design'
+import type { WorldPasswordRequestMessage } from '@hud/engine/protocol'
 
 const REQ: WorldPasswordRequestMessage = { kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }
 

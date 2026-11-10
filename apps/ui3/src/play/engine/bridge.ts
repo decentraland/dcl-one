@@ -18,7 +18,7 @@ import {
   type RpcMethod,
   type RpcRequest,
   type SceneToPage
-} from './protocol'
+} from '@hud/engine/protocol'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }
 

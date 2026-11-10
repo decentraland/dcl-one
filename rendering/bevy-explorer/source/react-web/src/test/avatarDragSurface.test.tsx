@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { useLayoutEffect } from 'react'
 import { fireEvent, render, waitFor } from '@testing-library/react'
 import { AvatarDragSurface, DEGREES_PER_PX } from '../features/engine/AvatarDragSurface'
-import { PREVIEW_MAX_ZOOM } from '../engine/protocol'
+import { PREVIEW_MAX_ZOOM } from '@hud/engine/protocol'
 
 function surface(box?: () => DOMRect | null) {
   const onRotate = vi.fn()

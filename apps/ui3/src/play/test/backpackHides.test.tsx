@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BackpackPage } from '../features/backpack/BackpackPage'
-import type { Wearable } from '../engine/protocol'
+import type { Wearable } from '@hud/engine/protocol'
 import type { BackpackState } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 

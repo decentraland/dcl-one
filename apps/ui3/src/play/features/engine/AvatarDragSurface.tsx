@@ -6,7 +6,7 @@
 // still waiting for its frame), so the next page to show the preview starts at its own facing and framing.
 
 import { useLayoutEffect, useRef } from 'react'
-import { PREVIEW_MAX_ZOOM } from '../../engine/protocol'
+import { PREVIEW_MAX_ZOOM } from '@hud/engine/protocol'
 import styles from './AvatarDragSurface.module.css'
 
 /** Degrees the avatar turns per CSS pixel dragged; negative turns it the way the pointer goes, as the

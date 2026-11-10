@@ -37,7 +37,7 @@
 .patternY {
   position: absolute;
   inset: -650px 0 -650px 0;
-  background: url('../../assets/loading/logo-pattern.webp') 0 0 / 650px 650px repeat;
+  background: url('@hud/assets/loading/logo-pattern.webp') 0 0 / 650px 650px repeat;
   animation: drift-y 8.02s linear infinite;
 }
 @keyframes drift-x {

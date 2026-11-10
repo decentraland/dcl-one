@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from './harness'
 import { PermissionDialog } from '../features/permissions/PermissionDialog'
 import { Sidebar } from '../features/sidebar/Sidebar'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 import { fakeSession } from './harness'
-import type { PermissionRequestMessage, PermissionUsedMessage } from '../engine/protocol'
+import type { PermissionRequestMessage, PermissionUsedMessage } from '@hud/engine/protocol'
 import type { PermissionSubject } from '../features/session/useEngineSession'
 
 const REQ: PermissionRequestMessage = {

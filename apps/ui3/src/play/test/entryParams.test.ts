@@ -2,7 +2,7 @@
 // what a link carried that nothing reads (features/gate/EntryParamsDialog.tsx).
 
 import { describe, expect, it } from 'vitest'
-import { WEB_PARAMS } from '../engine/generated'
+import { WEB_PARAMS } from '@hud/engine/generated'
 import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from '../lib/entryParams'
 
 describe('acceptedEntryParams', () => {

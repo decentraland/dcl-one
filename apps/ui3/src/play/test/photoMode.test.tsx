@@ -1,9 +1,9 @@
 import { afterEach, describe, it, expect } from 'vitest'
 import { act, render } from '@testing-library/react'
-import type { PhotoModeSnapshot } from '../engine/protocol'
+import type { PhotoModeSnapshot } from '@hud/engine/protocol'
 import { renderSession, enterAsGuest, type Harness } from './harness'
 import { normalizedFrameSize, FRAME_SCALE, PHOTO_ASPECT } from '../features/photoMode/frame'
-import { openPopup, resetPopups, PopupHost } from '../design'
+import { openPopup, resetPopups, PopupHost } from '@hud/design'
 
 afterEach(() => {
   resetPopups()

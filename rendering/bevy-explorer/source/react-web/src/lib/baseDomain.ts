@@ -17,7 +17,7 @@
 // loader (deploy/web/engine/boot.js), which composes the default realm / worlds prefix for its
 // url sync exactly as the HUD does.
 
-import { SERVICES, type ServiceDef } from '../engine/generated'
+import { SERVICES, type ServiceDef } from '@hud/engine/generated'
 import { isNativeHud } from './bootMode'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a

@@ -2,7 +2,7 @@
 // chat panel's pieces.
 
 import { displayName } from '../../engine/mention'
-import type { NearbyMember } from '../../engine/protocol'
+import type { NearbyMember } from '@hud/engine/protocol'
 import { knownUserColor, useProfile } from '../session/profileStore'
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{6,}$/

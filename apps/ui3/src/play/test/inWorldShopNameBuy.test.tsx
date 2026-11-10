@@ -26,8 +26,8 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import { webNameUrl } from '../features/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
-import type { Profile } from '../engine/protocol'
-import { PopupHost, resetPopups, ToastHost } from '../design'
+import type { Profile } from '@hud/engine/protocol'
+import { PopupHost, resetPopups, ToastHost } from '@hud/design'
 import { fakeProfileState } from './harness'
 
 const BUYER = '0x00000000000000000000000000000000000ab47f'

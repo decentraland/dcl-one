@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '@hud/design'
 import { nameColor, splitName } from '../../lib/identity'
 import { relationshipOf, type Relationship } from '../../lib/relationship'
 import { knownUserColor } from '../session/profileStore'
@@ -25,7 +25,7 @@ import type {
   CommunityPhoto,
   CommunityPlace,
   CommunityPost
-} from '../../engine/protocol'
+} from '@hud/engine/protocol'
 import styles from './CommunityModal.module.css'
 import { siteUrl } from '../../lib/baseDomain'
 

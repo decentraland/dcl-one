@@ -10,7 +10,7 @@ import { renderHook, act, waitFor, type RenderHookResult } from '@testing-librar
 import { expect, vi } from 'vitest'
 import type { LoginDriver, NewAccountPick } from '../engine/driver'
 import type { AuthIdentity } from '../features/auth/sso'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@hud/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
 

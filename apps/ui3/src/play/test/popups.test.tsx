@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import { PopupHost, openPopup, closeTopPopup, showConfirm, showDialog, resetPopups } from '../design'
+import { PopupHost, openPopup, closeTopPopup, showConfirm, showDialog, resetPopups } from '@hud/design'
 import { CrashModal } from '../features/error/CrashModal'
 
 // The popup layer has NO keyboard handling of its own: the cancel key flows to the engine

@@ -7,9 +7,9 @@
 // nearby-voice popover.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Button, showConfirm } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import type { PermissionRuleItem, PermissionRuleLevel } from '../../engine/protocol'
+import { Button, showConfirm } from '@hud/design'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
+import type { PermissionRuleItem, PermissionRuleLevel } from '@hud/engine/protocol'
 import type { PermissionRules, PermissionSubject, TriggeredPermission, VisitAnswer } from '../session/useEngineSession'
 import { describePermission, openPermissionReview } from './PermissionDialog'
 import styles from './PermissionsPopover.module.css'

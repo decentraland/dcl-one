@@ -2,7 +2,7 @@
 // the deploy is in flight) and the mock bridge (its stand-in for the catalyst). Lives beside the
 // protocol rather than in features/: it describes the wire's semantics, not a screen.
 
-import type { Profile, ProfileEdit, ProfileInfo } from './protocol'
+import type { Profile, ProfileEdit, ProfileInfo } from '@hud/engine/protocol'
 
 /** What the protocol appends to a non-claimed name: `#` and the last four characters of the address (the
  *  engine builds nametags the same way, `crates/avatar`); empty without an address. */

@@ -5,9 +5,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PopupHost, closeTopPopup, resetPopups } from '../design'
+import { PopupHost, closeTopPopup, resetPopups } from '@hud/design'
 import { openIntegratedGpuGuide } from '../features/gate/IntegratedGpuGuide'
-import { isInputLocked } from '../lib/inputLock'
+import { isInputLocked } from '@hud/lib/inputLock'
 
 // One host per test: a second `render(<PopupHost />)` would show every popup twice.
 beforeEach(() => {

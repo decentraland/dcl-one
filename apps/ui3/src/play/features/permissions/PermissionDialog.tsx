@@ -9,8 +9,8 @@
 // (permissionRule) for next time.
 
 import { useState } from 'react'
-import { Button, openPopup } from '../../design'
-import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '../../engine/protocol'
+import { Button, openPopup } from '@hud/design'
+import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '@hud/engine/protocol'
 import type { PermissionSubject } from '../session/useEngineSession'
 import styles from './PermissionDialog.module.css'
 

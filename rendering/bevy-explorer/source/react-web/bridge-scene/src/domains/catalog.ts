@@ -5,7 +5,7 @@
 import { getPlayer } from '@dcl/sdk/players'
 import { fetchWearablesPage } from './wearables'
 import type { Ctx } from '../bridge'
-import type { Wearable } from '../../../src/engine/protocol'
+import type { Wearable } from '@hud/engine/protocol'
 
 export function registerCatalog(ctx: Ctx): void {
   ctx.on('catalogQuery', async (msg) => {

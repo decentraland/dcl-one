@@ -5,7 +5,7 @@
 // Every read validates and falls back to a default: a stale or hand-edited value must never
 // leave the minimap in a state it can't render.
 
-import type { MinimapRotation, MinimapStyle } from '../../engine/protocol'
+import type { MinimapRotation, MinimapStyle } from '@hud/engine/protocol'
 import { getPref, PREF, setPref } from '../../lib/prefs'
 
 const STYLE_KEY = PREF.minimapStyle

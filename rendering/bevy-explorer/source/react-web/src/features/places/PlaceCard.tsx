@@ -1,6 +1,6 @@
 // PlaceCard — a place from the places API on the shared DiscoverCard.
 
-import { DiscoverCard } from '../../design'
+import { DiscoverCard } from '@hud/design'
 import {
   placeCoords,
   placeCreator,

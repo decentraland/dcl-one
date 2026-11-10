@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, TextInput, Toggle, openPopup } from '../../design'
+import { Button, ModalShell, Select, TextInput, Toggle, openPopup } from '@hud/design'
 import styles from './DebugPanel.module.css'
 
 type RunCommand = (line: string) => Promise<string>

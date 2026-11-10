@@ -20,7 +20,7 @@ describe('native HUD snapshot presentation', () => {
       vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
       params(base)
       vi.stubGlobal('fetch', async () => Response.json({ avatars: [{ avatar: { snapshots: { body: image } } }] }))
-      const { Avatar } = await import('../design/Avatar')
+      const { Avatar } = await import('@hud/design/Avatar')
       const { fetchStoredProfile } = await import('../features/login/useStoredProfile')
       const { ProfilePassport } = await import('../features/profile/ProfilePassport')
       const expected = base + '/avatar%2Fface?q=1'
@@ -102,7 +102,7 @@ describe('native HUD snapshot presentation', () => {
 
   it('ignores a browser-supplied image route', async () => {
     params('https://gateway.example.org/profile-images')
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     render(<Avatar name="Friend" src={image} />)
     expect(screen.getByRole('img')).toHaveAttribute('src', image)
   })
@@ -111,7 +111,7 @@ describe('native HUD snapshot presentation', () => {
     params('https://gateway.example.org/profile-images')
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
     vi.stubGlobal('__NATIVE_HUD__', false)
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     render(<Avatar name="Friend" src={image} />)
     expect(screen.getByRole('img')).toHaveAttribute('src', image)
   })
@@ -119,7 +119,7 @@ describe('native HUD snapshot presentation', () => {
   it('retains external or ambiguous image URLs in CEF', async () => {
     params('https://gateway.example.org/profile-images')
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     const { rerender } = render(<Avatar name="Friend" src={image} />)
     for (const raw of [
       'https://cdn.example.org/a',

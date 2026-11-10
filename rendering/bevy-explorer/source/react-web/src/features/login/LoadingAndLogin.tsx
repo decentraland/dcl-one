@@ -4,7 +4,7 @@
 // (./GuestStartPage), whose "Continue with an account" bounces to the same-domain auth site.
 
 import { useEffect, useState } from 'react'
-import { Button } from '../../design'
+import { Button } from '@hud/design'
 import { prefetchPlaces } from '../places/placesApi'
 import type { LoginFlow, LoginStatus } from '../session/useEngineSession'
 import styles from './LoadingAndLogin.module.css'

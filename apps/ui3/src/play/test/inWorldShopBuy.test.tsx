@@ -26,9 +26,9 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import shopStyles from '../features/shop/InWorldShop.module.css'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
-import type { Wearable } from '../engine/protocol'
+import type { Wearable } from '@hud/engine/protocol'
 import { fakeProfileState } from './harness'
-import { PopupHost, resetPopups } from '../design'
+import { PopupHost, resetPopups } from '@hud/design'
 
 const CONTRACT = '0x1111111111111111111111111111111111111111'
 const CREATOR = '0x2222222222222222222222222222222222222222'

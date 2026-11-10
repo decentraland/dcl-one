@@ -9,11 +9,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { serviceUrl } from '../../lib/baseDomain'
-import { Avatar, Button } from '../../design'
+import { Avatar, Button } from '@hud/design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import { photoTime } from '../session/useEngineSession'
-import type { GalleryPhoto, GalleryPhotoMeta } from '../../engine/protocol'
+import type { GalleryPhoto, GalleryPhotoMeta } from '@hud/engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { BackpackPage } from '../features/backpack/BackpackPage'
-import type { Wearable } from '../engine/protocol'
+import type { Wearable } from '@hud/engine/protocol'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from './harness'
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'

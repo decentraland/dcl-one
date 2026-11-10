@@ -1,6 +1,7 @@
+import { searchForWorkspaceRoot } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
-import { SHARED_ALIASES, SHARED_DEDUPE } from './vite.shared'
+import { SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Deterministic integration tests (tier 1): render the real session/components with a
 // fake bridge driver, assert every domain's wire API calls + response handling. No engine.
@@ -12,6 +13,8 @@ export default defineConfig({
     resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
   }],
   resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
+  // The shared sources live outside this app (vite.shared.ts), like in vite.config.ts.
+  server: { fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES] } },
   test: {
     environment: 'jsdom',
     globals: true,

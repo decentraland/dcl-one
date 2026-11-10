@@ -828,7 +828,7 @@
   height: 436px;
   border-style: solid;
   border-width: 34.7px 25.9px 32.4px 25.3px;
-  border-image: url('../../assets/backpack/hover-bg.webp') 59 44 55 43 fill / 34.7px 25.9px 32.4px 25.3px stretch;
+  border-image: url('@hud/assets/backpack/hover-bg.webp') 59 44 55 43 fill / 34.7px 25.9px 32.4px 25.3px stretch;
   transform: scale(0);
   transition: transform var(--dur-tap) linear;
   pointer-events: none;
@@ -873,8 +873,8 @@
   width: 251px;
   height: 374px;
   background: var(--accent);
-  -webkit-mask-box-image: url('../../assets/backpack/equipped-outline.webp') 43 / 21.5px stretch;
-  mask-border: url('../../assets/backpack/equipped-outline.webp') 43 / 21.5px stretch;
+  -webkit-mask-box-image: url('@hud/assets/backpack/equipped-outline.webp') 43 / 21.5px stretch;
+  mask-border: url('@hud/assets/backpack/equipped-outline.webp') 43 / 21.5px stretch;
   display: none;
   pointer-events: none;
 }
@@ -1048,7 +1048,7 @@
   top: 0;
   bottom: 0;
   width: 126px;
-  background: url('../../assets/backpack/gradient-loading.webp') center / 100% 100% no-repeat;
+  background: url('@hud/assets/backpack/gradient-loading.webp') center / 100% 100% no-repeat;
   animation: shimmer var(--dur-shimmer) linear infinite;
 }
 @keyframes shimmer {

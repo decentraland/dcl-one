@@ -2,7 +2,7 @@
 // emotes on sale; Buy opens the item on the web marketplace, where the wallet transaction happens.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Dropdown, EmptyState, EquippedItemCard, SearchField, Tabs, type TabItem } from '../../design'
+import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Dropdown, EmptyState, EquippedItemCard, SearchField, Tabs, type TabItem } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
 import { fetchShop, marketplaceUrl, shopItemPrice, type ShopCategory, type ShopItem, type ShopSort } from './shopApi'
