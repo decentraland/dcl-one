@@ -31,7 +31,9 @@ enabled; you rarely need to run it by hand.
 
 `--orchestrated` starts the engine in multi-scene worker mode: no realm needed, scenes are
 added and removed over stdin (JSON lines) with pre-minted comms adapters, and control
-events come back on stdout with the `@bevy-ctl ` prefix.
+events come back on stdout with the `@bevy-ctl ` prefix. Scene host processes get an empty
+stdin, and their output goes to the engine's log (stderr) a line at a time, so stdout carries
+only the engine's own lines.
 
 With `--scene-hosts per-scene`, a lost scene host process (it exited, closed its connection, or
 the engine ended it over a message it could not accept) ends only its scenes. The engine prints

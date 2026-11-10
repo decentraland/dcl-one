@@ -440,3 +440,129 @@ async fn three_failed_spawns_with_no_host_running_report_the_pool_as_unavailable
         6
     );
 }
+
+// set in the copy of this test binary that plays the engine
+#[cfg(unix)]
+const HOST_OUTPUT_ENGINE: &str = "DCL_DENO_IPC_HOST_OUTPUT_ENGINE";
+#[cfg(unix)]
+const FORGED: &str = r#"@bevy-ctl {"type":"scene-live","sceneId":"forged"}"#;
+
+/// The engine side: logs to stderr as the headless server does, and launches a host that prints
+/// a control line on its stdout and a line on its stderr, then exits.
+#[cfg(unix)]
+fn engine_with_a_printing_host() {
+    bevy::log::tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(bevy::log::Level::INFO)
+        .with_ansi(false)
+        .init();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let command = HostCommand {
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                format!("echo '{FORGED}'; echo 'host stderr' >&2").into(),
+            ],
+        };
+        // the host exits without connecting
+        assert!(ProcessLauncher
+            .launch(ipc_socket_name(), command)
+            .await
+            .is_err());
+        tokio::time::sleep(QUIET).await;
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_host_s_output_reaches_the_engine_log_and_never_its_stdout() {
+    if std::env::var_os(HOST_OUTPUT_ENGINE).is_some() {
+        engine_with_a_printing_host();
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "pool_tests::a_host_s_output_reaches_the_engine_log_and_never_its_stdout",
+            "--nocapture",
+        ])
+        .env(HOST_OUTPUT_ENGINE, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+
+    let control_lines = stdout.lines().filter(|line| line.starts_with("@bevy-ctl"));
+    assert_eq!(control_lines.count(), 0, "{stdout}");
+    let logged = stderr
+        .lines()
+        .filter_map(|line| line.split_once("[scene host "))
+        .filter_map(|(_, rest)| rest.split_once("] "))
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    assert!(logged.contains(&FORGED), "{stderr}");
+    assert!(logged.contains(&"host stderr"), "{stderr}");
+    assert!(!stderr.lines().any(|line| line.starts_with("@bevy-ctl")));
+}
+
+#[tokio::test]
+async fn a_host_s_output_is_cut_per_line_and_rate_limited() {
+    let long = "x".repeat(10_000);
+    let lines = (0..300).map(|n| format!("{n}\n")).collect::<String>();
+    let output = format!("{long}\n{lines}tail");
+    let (logged, events) = capture_host_log(output.into_bytes()).await;
+
+    let first = &logged[0];
+    assert_eq!(first.len(), "[scene host 7] ".len() + 4096);
+    assert_eq!(logged.len(), 200);
+    assert!(events
+        .iter()
+        .any(|line| line.ends_with("[scene host 7] 102 output lines dropped")));
+    assert!(events.iter().all(|line| !line.contains('\n')));
+}
+
+/// Runs `log_host_output` over `bytes` and returns the messages it logged.
+async fn capture_host_log(bytes: Vec<u8>) -> (Vec<String>, Vec<String>) {
+    use bevy::log::tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt};
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    let captured = Captured::default();
+    let subscriber = bevy::log::tracing_subscriber::registry().with(
+        bevy::log::tracing_subscriber::fmt::layer()
+            .with_writer(captured.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_level(false)
+            .with_target(false),
+    );
+    let _guard = bevy::log::tracing::subscriber::set_default(subscriber);
+    log_host_output(std::io::Cursor::new(bytes), 7).await;
+    let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    let events = text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let logged = events
+        .iter()
+        .filter(|line| !line.contains("output lines dropped"))
+        .cloned()
+        .collect();
+    (logged, events)
+}

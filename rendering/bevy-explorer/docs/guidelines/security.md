@@ -17,7 +17,7 @@ How this lands on each platform:
 
 | | Native | Web |
 |---|---|---|
-| Scene isolation | V8 isolates inside `dcl_deno_ipc` sidecar processes: one process for all scenes by default; one process per scene with the headless server's `--scene-hosts per-scene` | One sandbox worker per scene, each with its own wasm memory |
+| Scene isolation | V8 isolates inside `dcl_deno_ipc` sidecar processes: one process for all scenes by default; one process per scene with the headless server's `--scene-hosts per-scene`. A sidecar's stdin is empty and its output goes to the engine's log line by line, never to the engine's stdout, which carries the headless server's control channel | One sandbox worker per scene, each with its own wasm memory |
 | Engine boundary | Process boundary; the sidecar talks to the engine over a pipe | The `dcl_wasm` relay runs in the engine's memory and copies messages wasm to wasm |
 | Signing key | Engine process (`wallet`) | The shell page, a separate process from the app page; the engine asks it for each signature through `wallet::remote_signer` |
 | SystemApi sender | Given to the scene the engine marks `is_super`; the engine forwards `SystemApi` only from the sidecar running that scene | Held by the engine-side relay for the one scene the engine marked super; any other scene that sends a `SystemApi` message is ended |

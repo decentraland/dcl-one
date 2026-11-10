@@ -17,6 +17,10 @@ it is lost, so that its orchestrator restarts the engine and re-adds every scene
   frame it cannot read, and accepts from a host only responses for the scenes it gave that host
   and `SystemApi` messages from a host it gave a system scene
   (`rendering/bevy-explorer/docs/guidelines/security.md`).
+- **A host never reaches the server's control channel.** The headless server's stdin and stdout
+  carry the orchestrator protocol. A host gets an empty stdin, and its stdout and stderr are read
+  by the engine and logged a line at a time, cut at 4 KiB and at 200 lines a second, with the
+  host's pid; nothing a host prints reaches the engine's stdout.
 - **The server can place each scene in its own host.** The engine starts scene hosts through a
   pool (`crates/dcl_deno_ipc/src/pool.rs`). The placement is `shared`, one host for every scene,
   or `per-scene`, a host for each scene that is never given another one. The headless server

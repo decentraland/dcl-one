@@ -3,7 +3,10 @@ use super::{
     EXIT_ON_SIDECAR_LOSS, KILL_GRACE_PERIOD,
 };
 use anyhow::{anyhow, Context};
-use bevy::{ecs::entity::Entity, log::error};
+use bevy::{
+    ecs::entity::Entity,
+    log::{error, info, warn},
+};
 use dcl_types::{SceneId, SceneResponse};
 use futures_util::future::BoxFuture;
 use interprocess::local_socket::{
@@ -23,7 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite},
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
 };
 
@@ -31,6 +34,10 @@ use tokio::{
 const SPAWN_FAILURES_UNAVAILABLE: u32 = 3;
 // a host that neither connects nor exits by then has failed to start
 const HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+// a host's output line is cut to this many bytes in the engine's log
+const HOST_LOG_LINE_BYTES: usize = 4096;
+// lines over this many per second of one host stream are dropped and counted
+const HOST_LOG_LINES_PER_SECOND: u32 = 200;
 // how often a host whose scenes were all removed checks whether its grace period is over
 const RETIRE_POLL: Duration = Duration::from_millis(250);
 
@@ -200,7 +207,7 @@ pub(crate) trait Launch: Send + Sync {
 }
 
 /// Starts the `dcl_deno_ipc` binary and accepts its connection on a local socket.
-struct ProcessLauncher;
+pub(crate) struct ProcessLauncher;
 
 impl Launch for ProcessLauncher {
     fn launch(
@@ -213,14 +220,16 @@ impl Launch for ProcessLauncher {
             let listener = ListenerOptions::new().name(name).create_tokio()?;
 
             let mut process = tokio::process::Command::new(&command.program);
+            // the headless server's stdin and stdout are its control channel: a host reads
+            // neither, and its output goes to the engine's log
             process
                 .args(&command.args)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .kill_on_drop(true);
             // A console-subsystem child spawned by the GUI-subsystem app has no console to
-            // inherit, so windows pops a visible one; suppress it. The inherited handles
-            // still carry output to the parent's console when it has one (console builds).
+            // inherit, so windows pops a visible one; suppress it.
             #[cfg(windows)]
             {
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -229,6 +238,13 @@ impl Launch for ProcessLauncher {
             let mut child = process
                 .spawn()
                 .with_context(|| format!("failed to spawn deno binary at {:?}", command.program))?;
+            let pid = child.id().unwrap_or_default();
+            if let Some(stdout) = child.stdout.take() {
+                tokio::spawn(log_host_output(stdout, pid));
+            }
+            if let Some(stderr) = child.stderr.take() {
+                tokio::spawn(log_host_output(stderr, pid));
+            }
 
             let stream = tokio::select! {
                 stream = listener.accept() => stream?,
@@ -247,6 +263,68 @@ impl Launch for ProcessLauncher {
             })
         })
     }
+}
+
+/// Forwards a host's output to the engine's log, a line per event, with control characters
+/// replaced: never to the engine's stdout. Lines are cut at [`HOST_LOG_LINE_BYTES`], and lines over
+/// [`HOST_LOG_LINES_PER_SECOND`] are dropped and counted.
+pub(crate) async fn log_host_output(output: impl AsyncRead + Unpin, pid: u32) {
+    let mut output = tokio::io::BufReader::new(output);
+    let mut line = Vec::with_capacity(256);
+    let mut window = (tokio::time::Instant::now(), 0u32, 0u64);
+    loop {
+        let (consumed, complete) = match output.fill_buf().await {
+            Ok([]) | Err(_) => (0, false),
+            Ok(buffer) => {
+                let end = buffer.iter().position(|b| *b == b'\n');
+                let chunk = &buffer[..end.unwrap_or(buffer.len())];
+                let room = HOST_LOG_LINE_BYTES.saturating_sub(line.len());
+                line.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                (end.map_or(buffer.len(), |end| end + 1), end.is_some())
+            }
+        };
+        if consumed == 0 {
+            if !line.is_empty() {
+                emit_host_line(pid, &line, &mut window);
+            }
+            if window.2 > 0 {
+                warn!(target: "scene_host", "[scene host {pid}] {} output lines dropped", window.2);
+            }
+            return;
+        }
+        output.consume(consumed);
+        if complete {
+            emit_host_line(pid, &line, &mut window);
+            line.clear();
+        }
+    }
+}
+
+// `window`: when the current second started, the lines logged in it, the lines dropped in it
+fn emit_host_line(pid: u32, line: &[u8], window: &mut (tokio::time::Instant, u32, u64)) {
+    let now = tokio::time::Instant::now();
+    if now.duration_since(window.0) >= Duration::from_secs(1) {
+        if window.2 > 0 {
+            warn!(target: "scene_host", "[scene host {pid}] {} output lines dropped", window.2);
+        }
+        *window = (now, 0, 0);
+    }
+    if window.1 >= HOST_LOG_LINES_PER_SECOND {
+        window.2 += 1;
+        return;
+    }
+    window.1 += 1;
+    let text: String = String::from_utf8_lossy(line)
+        .chars()
+        .map(|c| {
+            if c.is_control() && c != '\t' {
+                '\u{fffd}'
+            } else {
+                c
+            }
+        })
+        .collect();
+    info!(target: "scene_host", "[scene host {pid}] {text}");
 }
 
 impl HostProcess for tokio::process::Child {
