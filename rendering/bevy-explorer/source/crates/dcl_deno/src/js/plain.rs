@@ -1,3 +1,5 @@
+use std::{cell::Cell, sync::Once};
+
 use deno_core::{serde_v8, v8, FromV8};
 use serde::de::DeserializeOwned;
 
@@ -31,14 +33,36 @@ impl<'a, T: DeserializeOwned> FromV8<'a> for Plain<T> {
         let mut budget = MAX_NODES;
         let copy = plain_copy(scope, value, 0, &mut budget)?;
         let scope = &mut v8::TryCatch::new(scope);
+        quiet_decode_panics();
+        // a getter on a buffer's prototype can decode another op's argument meanwhile
+        let outer = DECODING.replace(true);
         // a panic here unwinds through serde_v8's Rust frames only; V8 has returned by then
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             serde_v8::from_v8(scope, copy)
-        }))
-        .map_err(|_| PlainError("reading the argument threw".to_owned()))?
-        .map(Plain)
-        .map_err(|e| PlainError(e.to_string()))
+        }));
+        DECODING.set(outer);
+        decoded
+            .map_err(|_| PlainError("reading the argument threw".to_owned()))?
+            .map(Plain)
+            .map_err(|e| PlainError(e.to_string()))
     }
+}
+
+thread_local! {
+    static DECODING: Cell<bool> = const { Cell::new(false) };
+}
+
+// a scene can trigger the caught decode panic at will, so it must not reach the log
+fn quiet_decode_panics() {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !DECODING.get() {
+                previous(info);
+            }
+        }));
+    });
 }
 
 const MAX_DEPTH: usize = 64;

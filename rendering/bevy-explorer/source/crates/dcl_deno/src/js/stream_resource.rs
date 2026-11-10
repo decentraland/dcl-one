@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     future::{poll_fn, Future},
     rc::Rc,
@@ -33,9 +33,9 @@ pub fn override_ops() -> Vec<OpDecl> {
 }
 
 const MAX_BUFFERED_CHUNKS: usize = 1024;
-// readers preallocate the hinted length; a larger stream is read without a hint
-const MAX_SIZE_HINT: u64 = 16 * 1024 * 1024;
 const MAX_BUFFERED_BYTES: usize = 64 * 1024;
+// a pending `op_read_all` holds up to 64 KiB of native memory per stream
+const MAX_OPEN_STREAMS: usize = 256;
 
 #[derive(Default)]
 struct Channel {
@@ -140,23 +140,46 @@ struct Completion {
     waker: Option<Waker>,
 }
 
+/// Counts a runtime's live stream resources.
+#[derive(Clone, Default)]
+struct OpenStreams(Rc<Cell<usize>>);
+
+struct OpenStream(OpenStreams);
+
+impl Drop for OpenStream {
+    fn drop(&mut self) {
+        let count = &self.0 .0;
+        count.set(count.get() - 1);
+    }
+}
+
 struct ReadableStreamResource {
     channel: Rc<RefCell<Channel>>,
     read_queue: Rc<TaskQueue>,
     cancel_handle: CancelHandle,
     completion: Rc<RefCell<Completion>>,
-    size_hint: (u64, Option<u64>),
+    length: Option<u64>,
+    _open: OpenStream,
 }
 
 impl ReadableStreamResource {
-    fn new(size_hint: (u64, Option<u64>)) -> Self {
-        Self {
+    fn add(state: &mut OpState, length: Option<u64>) -> Result<ResourceId, AnyError> {
+        if !state.has::<OpenStreams>() {
+            state.put(OpenStreams::default());
+        }
+        let open = state.borrow::<OpenStreams>().clone();
+        if open.0.get() >= MAX_OPEN_STREAMS {
+            return Err(type_error("too many open streams"));
+        }
+        open.0.set(open.0.get() + 1);
+        Ok(state.resource_table.add(Self {
             channel: Default::default(),
             read_queue: Default::default(),
             cancel_handle: Default::default(),
             completion: Default::default(),
-            size_hint,
-        }
+            length,
+            _open: OpenStream(open),
+        }))
     }
 
     async fn read(self: Rc<Self>, limit: usize) -> Result<BufView, AnyError> {
@@ -196,8 +219,9 @@ impl Resource for ReadableStreamResource {
         self.close_channel();
     }
 
+    // only an upper bound: an exact hint makes `op_read_all` preallocate the whole length
     fn size_hint(&self) -> (u64, Option<u64>) {
-        self.size_hint
+        (0, self.length)
     }
 }
 
@@ -232,10 +256,8 @@ fn sink_channel(state: &OpState, sink: ResourceId) -> Result<Rc<RefCell<Channel>
 
 #[op2(fast)]
 #[smi]
-fn op_readable_stream_resource_allocate(state: &mut OpState) -> ResourceId {
-    state
-        .resource_table
-        .add(ReadableStreamResource::new((0, None)))
+fn op_readable_stream_resource_allocate(state: &mut OpState) -> Result<ResourceId, AnyError> {
+    ReadableStreamResource::add(state, None)
 }
 
 #[op2(fast)]
@@ -243,15 +265,8 @@ fn op_readable_stream_resource_allocate(state: &mut OpState) -> ResourceId {
 fn op_readable_stream_resource_allocate_sized(
     state: &mut OpState,
     #[number] length: u64,
-) -> ResourceId {
-    let size_hint = if length <= MAX_SIZE_HINT {
-        (length, Some(length))
-    } else {
-        (0, None)
-    };
-    state
-        .resource_table
-        .add(ReadableStreamResource::new(size_hint))
+) -> Result<ResourceId, AnyError> {
+    ReadableStreamResource::add(state, Some(length))
 }
 
 #[op2(fast)]
