@@ -57,7 +57,8 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                         if manifest.lanes.is_empty() {
                             String::new()
                         } else {
-                            let lanes: Vec<_> = manifest.lanes.values().map(String::as_str).collect();
+                            let lanes: Vec<_> =
+                                manifest.lanes.values().map(String::as_str).collect();
                             format!(" ({})", lanes.join(", "))
                         }
                     ),

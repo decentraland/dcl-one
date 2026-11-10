@@ -1082,11 +1082,9 @@ fn spawn_scenes(
                     // a model variant that failed is reloaded from the original, which the
                     // asset server only reports as loading once the reload starts: wait for it
                     // rather than finishing the body with an error or dropping the wearable
-                    Some(bevy::asset::LoadState::Failed(_)) => {
-                        asset_server.get_path(h_model).is_some_and(|path| {
-                            ipfs.bevy_variant_fallback_pending(path.path())
-                        })
-                    }
+                    Some(bevy::asset::LoadState::Failed(_)) => asset_server
+                        .get_path(h_model)
+                        .is_some_and(|path| ipfs.bevy_variant_fallback_pending(path.path())),
                     _ => false,
                 }
             });

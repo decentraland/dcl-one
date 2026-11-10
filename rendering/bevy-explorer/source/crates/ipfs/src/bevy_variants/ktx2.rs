@@ -280,9 +280,18 @@ pub(crate) mod tests {
     fn the_bc_format_is_read_from_the_header() {
         let (bc7, _, _) = bc7_two_levels();
         assert_eq!(bc_format(&bc7), Ok(BcFormat::Bc7));
-        assert_eq!(bc_format(&ktx2(131, 4, 4, &[vec![0; 8]])), Ok(BcFormat::Bc1));
-        assert_eq!(bc_format(&ktx2(133, 4, 4, &[vec![0; 8]])), Ok(BcFormat::Bc1));
-        assert_eq!(bc_format(&ktx2(141, 4, 4, &[vec![0; 16]])), Ok(BcFormat::Bc5));
+        assert_eq!(
+            bc_format(&ktx2(131, 4, 4, &[vec![0; 8]])),
+            Ok(BcFormat::Bc1)
+        );
+        assert_eq!(
+            bc_format(&ktx2(133, 4, 4, &[vec![0; 8]])),
+            Ok(BcFormat::Bc1)
+        );
+        assert_eq!(
+            bc_format(&ktx2(141, 4, 4, &[vec![0; 16]])),
+            Ok(BcFormat::Bc5)
+        );
         // sRGB BC7, and anything that is not a KTX2
         assert!(bc_format(&ktx2(146, 4, 4, &[vec![0; 16]]))
             .unwrap_err()

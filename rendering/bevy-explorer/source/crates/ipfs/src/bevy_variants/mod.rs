@@ -259,7 +259,6 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     })
 }
 
-
 /// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
 /// alphanumeric or `_`. No dots, slashes or escapes can reach the url.
 fn is_variant_path(path: &str) -> bool {

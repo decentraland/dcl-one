@@ -86,7 +86,11 @@ fn parses_a_v3_manifest() {
     assert_eq!(
         variants,
         [
-            (&*format!("bevy/t2/{ORIGINAL_CID}_srgb"), "texture", "ktx2-bc"),
+            (
+                &*format!("bevy/t2/{ORIGINAL_CID}_srgb"),
+                "texture",
+                "ktx2-bc"
+            ),
             (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-meshopt"),
             (&*format!("bevy/g1/{ORIGINAL_CID}"), "model", "glb"),
         ]
