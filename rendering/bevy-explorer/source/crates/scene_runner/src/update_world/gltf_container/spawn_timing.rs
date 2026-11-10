@@ -27,8 +27,14 @@ pub(super) fn register(app: &mut App) {
                 .after(scene_spawner_system)
                 .before(update_ready_gltfs),
             finish_processing.after(update_ready_gltfs),
-        ),
+        )
+            .run_if(logged),
     );
+}
+
+/// Whether the log takes `spawn_timing` lines: otherwise nothing is timed.
+fn logged() -> bool {
+    bevy::log::tracing::enabled!(target: "spawn_timing", bevy::log::Level::DEBUG)
 }
 
 fn start_spawner(mut timing: ResMut<SpawnTiming>) {
