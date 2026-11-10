@@ -104,86 +104,157 @@ describe("useSubscription", () => {
   });
 });
 
-describe("useUpdateSubscription", () => {
-  it("shows the new details at once and keeps them after the write", async () => {
-    client.setQueryData(subscriptionKey, subscription);
-    let finish!: () => void;
-    api.putSubscription.mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+const OTHER = "0x1111111111111111111111111111111111111111";
+const other: AuthIdentity = { ...identity, signer: OTHER };
+const otherSubscription: SubscriptionResponse = { address: OTHER, email: "john.doe@example.com", details };
+const otherSubscriptionKey = accountKeys.subscription(OTHER);
+const otherCreditsKey = accountKeys.creditsStatus(OTHER);
 
-    const { result } = renderHook(() => useUpdateSubscription(identity), { wrapper });
-    act(() => result.current.mutate(muted));
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("useUpdateSubscription", () => {
+  it("shows the new details at once and reads the subscription again once the write settles", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    renderHook(() => useSubscription(identity), { wrapper });
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
+    const write = deferred();
+    api.putSubscription.mockReturnValue(write.promise);
+    api.fetchSubscription.mockResolvedValue({ ...subscription, details: muted });
+
+    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
+    act(() => result.current.mutate({ identity, details: muted }));
 
     await waitFor(() =>
       expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted),
     );
-    await act(async () => finish());
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted);
+    expect(api.fetchSubscription).toHaveBeenCalledTimes(1);
+    await act(async () => write.resolve());
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
     expect(api.putSubscription).toHaveBeenCalledWith(identity, muted);
+    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted);
   });
 
-  it("reads the subscription again when the write fails", async () => {
+  it("rolls back to the details before the write when it fails", async () => {
     client.setQueryData(subscriptionKey, subscription);
     api.putSubscription.mockRejectedValue(new Error("500"));
-    api.fetchSubscription.mockResolvedValue(subscription);
-    renderHook(() => useSubscription(identity), { wrapper });
 
-    const { result } = renderHook(() => useUpdateSubscription(identity), { wrapper });
-    act(() => result.current.mutate(muted));
+    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
+    act(() => result.current.mutate({ identity, details: muted }));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    await waitFor(() =>
-      expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details),
-    );
-    expect(api.fetchSubscription).toHaveBeenCalled();
+    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
   });
 
-  it("refuses to write when signed out", async () => {
-    const { result } = renderHook(() => useUpdateSubscription(null), { wrapper });
-    act(() => result.current.mutate(muted));
+  it("sends the second write only after the first one settles", async () => {
+    client.setQueryData(subscriptionKey, subscription);
+    const first = deferred();
+    api.putSubscription.mockReturnValueOnce(first.promise).mockResolvedValueOnce(undefined);
+    const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
+
+    const one = renderHook(() => useUpdateSubscription(), { wrapper });
+    const two = renderHook(() => useUpdateSubscription(), { wrapper });
+    act(() => one.result.current.mutate({ identity, details: muted }));
+    act(() => two.result.current.mutate({ identity, details: both }));
+
+    await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(api.putSubscription).toHaveBeenCalledTimes(1);
+    await act(async () => first.resolve());
+
+    await waitFor(() => expect(two.result.current.isSuccess).toBe(true));
+    expect(api.putSubscription.mock.calls.map(([, sent]) => sent)).toEqual([muted, both]);
+  });
+
+  it("reads the subscription again only once the last pending write settles", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    renderHook(() => useSubscription(identity), { wrapper });
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
+    const first = deferred();
+    const second = deferred();
+    api.putSubscription.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const one = renderHook(() => useUpdateSubscription(), { wrapper });
+    const two = renderHook(() => useUpdateSubscription(), { wrapper });
+    act(() => one.result.current.mutate({ identity, details: muted }));
+    act(() => two.result.current.mutate({ identity, details }));
+    await act(async () => first.reject(new Error("500")));
+    await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(2));
+
+    expect(api.fetchSubscription).toHaveBeenCalledTimes(1);
+    await act(async () => second.resolve());
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
+  });
+
+  it("signs and rolls back as the account in its variables, leaving another cached account alone", async () => {
+    client.setQueryData(subscriptionKey, subscription);
+    client.setQueryData(otherSubscriptionKey, otherSubscription);
+    const write = deferred();
+    api.putSubscription.mockReturnValue(write.promise);
+
+    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
+    act(() => result.current.mutate({ identity, details: muted }));
+    await act(async () => write.reject(new Error("500")));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.error?.message).toBe("Sign in to manage your account.");
-    expect(api.putSubscription).not.toHaveBeenCalled();
+    expect(api.putSubscription).toHaveBeenCalledWith(identity, muted);
+    expect(client.getQueryData(otherSubscriptionKey)).toEqual(otherSubscription);
+    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
   });
 });
 
 describe("useSetEmail", () => {
-  it("marks the new address as pending once the server accepts it", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+  it("reads the subscription again once the server accepts the address", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    renderHook(() => useSubscription(identity), { wrapper });
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
     api.putEmail.mockResolvedValue(undefined);
+    api.fetchSubscription.mockResolvedValue({ ...subscription, unconfirmedEmail: "new@example.com" });
 
-    const { result } = renderHook(() => useSetEmail(identity), { wrapper });
-    act(() => result.current.mutate("new@example.com"));
+    const { result } = renderHook(() => useSetEmail(), { wrapper });
+    act(() => result.current.mutate({ identity, email: "new@example.com" }));
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(client.getQueryData(subscriptionKey)).toEqual({ ...subscription, unconfirmedEmail: "new@example.com" });
+    await waitFor(() =>
+      expect(client.getQueryData(subscriptionKey)).toEqual({ ...subscription, unconfirmedEmail: "new@example.com" }),
+    );
+    expect(api.putEmail).toHaveBeenCalledWith(identity, "new@example.com");
   });
 
-  it("leaves the subscription as it was when the server refuses", async () => {
+  it("leaves the subscription as it was and reads nothing when the server refuses", async () => {
     client.setQueryData(subscriptionKey, subscription);
     api.putEmail.mockRejectedValue(new Error("invalid email"));
 
-    const { result } = renderHook(() => useSetEmail(identity), { wrapper });
-    act(() => result.current.mutate("nope"));
+    const { result } = renderHook(() => useSetEmail(), { wrapper });
+    act(() => result.current.mutate({ identity, email: "nope" }));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(client.getQueryData(subscriptionKey)).toEqual(subscription);
+    expect(api.fetchSubscription).not.toHaveBeenCalled();
   });
 
-  it("does not bring back an entry removed by an account switch", async () => {
-    let finish!: () => void;
-    api.putEmail.mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
-    client.setQueryData(subscriptionKey, subscription);
+  it("re-reads only the account that sent the address, not the one signed in since", async () => {
+    api.fetchSubscription.mockImplementation(async (who: AuthIdentity) =>
+      who.signer === OTHER ? otherSubscription : subscription,
+    );
+    renderHook(() => useSubscription(other), { wrapper });
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
+    const write = deferred();
+    api.putEmail.mockReturnValue(write.promise);
 
-    const { result } = renderHook(() => useSetEmail(identity), { wrapper });
-    act(() => result.current.mutate("new@example.com"));
-    await waitFor(() => expect(api.putEmail).toHaveBeenCalled());
-    client.removeQueries({ queryKey: ["private", SIGNER.toLowerCase()] });
-    await act(async () => finish());
+    const { result } = renderHook(() => useSetEmail(), { wrapper });
+    act(() => result.current.mutate({ identity, email: "new@example.com" }));
+    await act(async () => write.resolve());
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(client.getQueryData(subscriptionKey)).toBeUndefined();
+    expect(api.fetchSubscription).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(otherSubscriptionKey)).toEqual(otherSubscription);
   });
 });
 
@@ -199,23 +270,41 @@ describe("credits", () => {
     expect(api.fetchCreditsStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the member as opted out after leaving", async () => {
+  it("shows as opted out only the account that left", async () => {
     client.setQueryData(creditsKey, { status: "enrolled", optedOutAt: null });
+    client.setQueryData(otherCreditsKey, { status: "enrolled", optedOutAt: null });
     api.optOutOfCredits.mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useOptOutOfCredits(identity), { wrapper });
-    act(() => result.current.mutate());
+    const { result } = renderHook(() => useOptOutOfCredits(), { wrapper });
+    act(() => result.current.mutate({ identity }));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(api.optOutOfCredits).toHaveBeenCalledWith(identity);
     expect(client.getQueryData(creditsKey)).toMatchObject({ status: "opted_out", optedOutAt: expect.any(String) });
+    expect(client.getQueryData(otherCreditsKey)).toEqual({ status: "enrolled", optedOutAt: null });
+  });
+
+  it("does not bring back an entry removed by an account switch", async () => {
+    client.setQueryData(creditsKey, { status: "enrolled", optedOutAt: null });
+    const write = deferred();
+    api.optOutOfCredits.mockReturnValue(write.promise);
+
+    const { result } = renderHook(() => useOptOutOfCredits(), { wrapper });
+    act(() => result.current.mutate({ identity }));
+    await waitFor(() => expect(api.optOutOfCredits).toHaveBeenCalled());
+    client.removeQueries({ queryKey: ["private", SIGNER.toLowerCase()] });
+    await act(async () => write.resolve());
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(creditsKey)).toBeUndefined();
   });
 
   it("keeps the enrolled status when leaving fails", async () => {
     client.setQueryData(creditsKey, { status: "enrolled", optedOutAt: null });
     api.optOutOfCredits.mockRejectedValue(new Error("500"));
 
-    const { result } = renderHook(() => useOptOutOfCredits(identity), { wrapper });
-    act(() => result.current.mutate());
+    const { result } = renderHook(() => useOptOutOfCredits(), { wrapper });
+    act(() => result.current.mutate({ identity }));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(client.getQueryData(creditsKey)).toEqual({ status: "enrolled", optedOutAt: null });

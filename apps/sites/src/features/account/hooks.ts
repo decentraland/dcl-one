@@ -17,8 +17,6 @@ import {
 } from "@/data/lib/account/notifications";
 import { accountKeys, creditsStatusQuery, subscriptionQuery } from "@/data/lib/account/queries";
 
-const SIGNED_OUT = "Sign in to manage your account.";
-
 /**
  * Writes into a cached entry only while it holds data: an updater returning `undefined` leaves the
  * cache alone. After an account switch the previous account's entries are removed, and a late
@@ -26,11 +24,6 @@ const SIGNED_OUT = "Sign in to manage your account.";
  */
 function updateIfCached<T>(client: QueryClient, key: QueryKey, update: (current: T) => T) {
   client.setQueryData<T>(key, (current) => (current === undefined ? current : update(current)));
-}
-
-function requireIdentity(identity: AuthIdentity | null): AuthIdentity {
-  if (!identity) throw new Error(SIGNED_OUT);
-  return identity;
 }
 
 export function useSubscription(identity: AuthIdentity | null) {
@@ -41,41 +34,57 @@ export function useSubscription(identity: AuthIdentity | null) {
   });
 }
 
-/**
- * Applies the new details to the cache at once so the switches stay where the member put them.
- * The PUT reply is not read back: the server can answer with partial details. On failure the
- * subscription is read again, since the last good state may include a later toggle.
+/*
+ * Every write takes the signing identity as a variable, not from the hook's props. A pending
+ * mutation picks up the latest options on re-render, so after an account switch a callback that
+ * read the props would sign or write as the new account. The variables stay the ones it started with.
  */
-export function useUpdateSubscription(identity: AuthIdentity | null) {
+
+export type SubscriptionUpdate = { identity: AuthIdentity; details: SubscriptionDetails };
+const UPDATE_SUBSCRIPTION = ["account", "update-subscription"] as const;
+
+/**
+ * Applies the new details to the cache at once and rolls back to the value before them on failure.
+ * Each PUT sends the whole object, so the writes run one at a time (`scope`): a later toggle cannot
+ * land before an earlier one and lose it. The PUT reply is not read back, since the server can answer
+ * with partial details; once the last pending write settles the subscription is read again.
+ */
+export function useUpdateSubscription() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (details: SubscriptionDetails) => putSubscription(requireIdentity(identity), details),
-    onMutate: async (details) => {
-      if (!identity) return;
+    mutationKey: UPDATE_SUBSCRIPTION,
+    scope: { id: "account-subscription" },
+    mutationFn: ({ identity, details }: SubscriptionUpdate) => putSubscription(identity, details),
+    onMutate: async ({ identity, details }) => {
       const key = accountKeys.subscription(identity.signer);
       await client.cancelQueries({ queryKey: key });
+      const previous = client.getQueryData<SubscriptionResponse>(key);
       updateIfCached<SubscriptionResponse>(client, key, (current) => ({ ...current, details }));
+      return { previous };
     },
-    onError: () => {
-      if (!identity) return;
-      void client.invalidateQueries({ queryKey: accountKeys.subscription(identity.signer) });
+    onError: (_error, { identity }, context) => {
+      const previous = context?.previous;
+      if (!previous) return;
+      updateIfCached<SubscriptionResponse>(client, accountKeys.subscription(identity.signer), () => previous);
+    },
+    onSettled: (_result, _error, { identity }) => {
+      if (client.isMutating({ mutationKey: UPDATE_SUBSCRIPTION }) > 1) return;
+      return client.invalidateQueries({ queryKey: accountKeys.subscription(identity.signer) });
     },
   });
 }
 
-/** The new address stays pending until the member follows the confirmation link. */
-export function useSetEmail(identity: AuthIdentity | null) {
+/**
+ * The server decides whether a confirmation is pending: the same address sends none, an empty one
+ * clears it, and the input is trimmed. So the subscription is read again instead of guessed.
+ */
+export function useSetEmail() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (email: string) => putEmail(requireIdentity(identity), email),
-    onSuccess: (_result, email) => {
-      if (!identity) return;
-      updateIfCached<SubscriptionResponse>(
-        client,
-        accountKeys.subscription(identity.signer),
-        (current) => ({ ...current, unconfirmedEmail: email }),
-      );
-    },
+    mutationFn: ({ identity, email }: { identity: AuthIdentity; email: string }) =>
+      putEmail(identity, email),
+    onSuccess: (_result, { identity }) =>
+      client.invalidateQueries({ queryKey: accountKeys.subscription(identity.signer) }),
   });
 }
 
@@ -87,12 +96,11 @@ export function useCreditsStatus(identity: AuthIdentity | null) {
   });
 }
 
-export function useOptOutOfCredits(identity: AuthIdentity | null) {
+export function useOptOutOfCredits() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => optOutOfCredits(requireIdentity(identity)),
-    onSuccess: () => {
-      if (!identity) return;
+    mutationFn: ({ identity }: { identity: AuthIdentity }) => optOutOfCredits(identity),
+    onSuccess: (_result, { identity }) => {
       updateIfCached<CreditsStatus>(client, accountKeys.creditsStatus(identity.signer), () => ({
         status: "opted_out",
         optedOutAt: new Date().toISOString(),
