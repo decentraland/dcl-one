@@ -39,6 +39,9 @@ const MAX_HOST_IPC_CHANNELS: usize = 65536;
 /// Reply channels one scene may hold open at once. The scene host ends a scene over it, so that
 /// sixteen scenes at their limit fill a host's.
 pub const MAX_SCENE_IPC_CHANNELS: usize = 4096;
+/// The scene host's exit status when it cannot apply the sandbox it was asked for. EX_CONFIG, as
+/// the headless launcher reads it: unavailable here, not worth a retry.
+pub const HOST_EXIT_SANDBOX: i32 = 78;
 // decoding recurses on the engine's stack, and scene RPC parameters are arbitrary JSON
 const MAX_DECODE_DEPTH: usize = 32;
 

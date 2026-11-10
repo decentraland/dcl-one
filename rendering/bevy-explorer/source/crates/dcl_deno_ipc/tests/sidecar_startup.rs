@@ -139,11 +139,12 @@ fn the_scene_host_reports_its_sandbox_before_any_scene() {
 
 #[cfg(not(target_os = "linux"))]
 #[test]
-fn a_required_sandbox_without_kernel_support_ends_the_host_before_it_reports() {
+fn a_required_sandbox_without_kernel_support_is_reported_and_ends_the_host() {
     let (frame, status) = first_frame(&["--sandbox", "require"]);
 
-    assert!(frame.is_none(), "the host reported without its sandbox");
-    assert!(!status.success());
+    let sandbox = reported_sandbox(frame);
+    assert!(!sandbox.satisfies(dcl_deno_ipc::SandboxMode::Require));
+    assert_eq!(status.code(), Some(dcl_deno_ipc::HOST_EXIT_SANDBOX));
 }
 
 #[cfg(not(target_os = "linux"))]

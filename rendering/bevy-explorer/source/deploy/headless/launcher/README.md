@@ -70,14 +70,17 @@ spawn(resolveBinary(), ['--orchestrated'], { stdio: ['pipe', 'pipe', 'inherit'] 
 
 On Linux each scene host sandboxes itself (Landlock and seccomp) after it connects to the engine
 and before it reads a scene. Sandboxed, it cannot start programs, read or write files beyond the
-system libraries, TLS and resolver configuration and time zone data, open Unix sockets, or
-signal, trace or read the memory of another process. It still opens its own TCP connections for
+system libraries, TLS and resolver configuration and time zone data, change file metadata, open
+Unix sockets, or signal, trace, reschedule or read the memory of another process. It still opens its own TCP connections for
 fetch and WebSocket, and the address rules for those stay inside the host.
 
-**With `--orchestrated` on Linux the default is `require`.** An engine that cannot start a
-sandboxed shared host exits with status `78`; with `per-scene`, each host that does not report the
-required sandbox ends its scene with `reason: "sandbox"`, and three in a row exit the engine with
-`78`. `--scene-host-sandbox off` runs hosts unsandboxed. The kernel needs Landlock (5.13 or later,
+**With `--orchestrated` on Linux the default is `require`.** A host that cannot meet it reports
+what the kernel offered and exits with status `78`. An engine that cannot start a sandboxed
+shared host exits with status `78` and prints that report on stderr; with `per-scene`, each such
+host ends its scene with `reason: "sandbox"`, and three in a row, with no host running, exit the
+engine with `78`. A host that ends before its report for another reason (V8 failed to start, it
+was killed), or that does not report within 30 seconds of connecting, is a failed start
+(`reason: "spawn"`, engine exit status `1`). `--scene-host-sandbox off` runs hosts unsandboxed. The kernel needs Landlock (5.13 or later,
 enabled in the LSM list) and seccomp, and a container runtime whose seccomp profile allows
 `landlock_*` and `seccomp` (the default profile of Docker 29 does). macOS and Windows hosts are not
 sandboxed: `require` refuses to start there.

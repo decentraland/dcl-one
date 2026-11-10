@@ -10,7 +10,7 @@ use bevy::{
 use common::rpc::{rmp_encode, IpcMessage, RequestContext, SCENE_IPC_CONTEXT};
 use dcl_deno_ipc::{
     write_frame, write_msg, EngineToScene, SandboxMode, SceneChannels, SceneToEngine,
-    KILL_GRACE_PERIOD, MAX_SCENE_IPC_CHANNELS,
+    HOST_EXIT_SANDBOX, KILL_GRACE_PERIOD, MAX_SCENE_IPC_CHANNELS,
 };
 use dcl_types::{
     SceneId, SceneResponse, SceneResponseReceiver, SceneResponseSender, TaggedSceneResponseSender,
@@ -77,17 +77,31 @@ fn main() -> Result<()> {
     // connect ipc stream
     let stream = rt.block_on(async move { Stream::connect(name).await.unwrap() });
 
+    let (recv_half, mut send_half) = stream.split();
+
     // after the connect, which the sandbox would refuse, and before V8 starts its threads, which
-    // must start under it
-    let sandbox = match scene_host_sandbox::apply(sandbox) {
+    // must start under it. `require` is checked here, so that the engine gets the report.
+    let required = sandbox;
+    let applied = match required {
+        SandboxMode::Require => SandboxMode::On,
+        mode => mode,
+    };
+    let sandbox = match scene_host_sandbox::apply(applied) {
         Ok(status) => status,
         Err(e) => {
             error!("scene host sandbox not applied: {e:#}");
-            std::process::exit(1);
+            std::process::exit(HOST_EXIT_SANDBOX);
         }
     };
-
-    let (recv_half, mut send_half) = stream.split();
+    if !sandbox.satisfies(required) {
+        error!(
+            "scene host sandbox {sandbox:?} does not meet {}",
+            required.as_str()
+        );
+        let report = SceneToEngine::HostReady { sandbox };
+        let _ = rt.block_on(write_msg(&mut send_half, &report));
+        std::process::exit(HOST_EXIT_SANDBOX);
+    }
 
     // init engine
     dcl_deno::init_runtime(v8_threads);

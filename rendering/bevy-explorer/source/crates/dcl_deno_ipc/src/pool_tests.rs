@@ -36,6 +36,8 @@ struct FakeLauncher {
     next_pid: AtomicU32,
     // what each new host reports as its first frame; `None` leaves the report to the test
     report: Mutex<Option<SandboxStatus>>,
+    // the status a new host exits with when the engine has not killed it
+    exit_code: Mutex<i32>,
 }
 
 impl FakeLauncher {
@@ -46,6 +48,7 @@ impl FakeLauncher {
             failures: AtomicU32::new(0),
             next_pid: AtomicU32::new(1),
             report: Mutex::new(Some(SANDBOXED)),
+            exit_code: Mutex::new(0),
         };
         (Arc::new(launcher), hosts)
     }
@@ -78,6 +81,7 @@ impl Launch for FakeLauncher {
         let pid = self.next_pid.fetch_add(1, Ordering::SeqCst);
         let mut host = FakeHost { pid, ..host };
         let report = *self.report.lock().unwrap();
+        let exit_code = *self.exit_code.lock().unwrap();
         Box::pin(async move {
             if let Some(sandbox) = report {
                 host.report(sandbox).await;
@@ -88,7 +92,11 @@ impl Launch for FakeLauncher {
             Ok(HostLink {
                 inbound: Box::pin(inbound),
                 outbound: Box::pin(outbound),
-                process: Box::new(FakeProcess { pid, killed }),
+                process: Box::new(FakeProcess {
+                    pid,
+                    killed,
+                    exit_code,
+                }),
             })
         })
     }
@@ -97,6 +105,7 @@ impl Launch for FakeLauncher {
 struct FakeProcess {
     pid: u32,
     killed: Arc<AtomicBool>,
+    exit_code: i32,
 }
 
 impl HostProcess for FakeProcess {
@@ -115,7 +124,7 @@ impl HostProcess for FakeProcess {
                 signal: Some(9),
             },
             false => HostStatus {
-                code: Some(0),
+                code: Some(self.exit_code),
                 signal: None,
             },
         };
@@ -770,10 +779,11 @@ async fn a_host_meeting_the_required_sandbox_gets_its_scene() {
     assert!(pool.drain_exits().is_empty());
 }
 
-#[tokio::test]
-async fn a_host_that_ends_before_its_sandbox_report_loses_its_scene_to_the_sandbox() {
+/// The exit of a host that closes its connection before it reports, in `require` mode.
+async fn early_end(exit_code: i32) -> HostExit {
     let (pool, mut launched, launcher) = required_sandbox_pool();
     *launcher.report.lock().unwrap() = None;
+    *launcher.exit_code.lock().unwrap() = exit_code;
     let (responses, mut receiver) = scene_response_channel();
     let _scene = place(&pool, &responses, [1]);
     let host = tokio::time::timeout(TIMEOUT, launched.recv())
@@ -785,8 +795,47 @@ async fn a_host_that_ends_before_its_sandbox_report_loses_its_scene_to_the_sandb
 
     let (errored, _) = delivered(&mut receiver).await;
     assert_eq!(errored, scene_id(1));
-    assert_eq!(pool.drain_exits()[0].reason, HostExitReason::Sandbox);
     assert_eq!(pool.first_sandbox(), None);
+    pool.drain_exits().remove(0)
+}
+
+#[tokio::test]
+async fn a_host_that_exits_with_the_sandbox_status_loses_its_scene_to_the_sandbox() {
+    let exit = early_end(HOST_EXIT_SANDBOX).await;
+
+    assert_eq!(exit.reason, HostExitReason::Sandbox);
+    assert_eq!(exit.code, Some(HOST_EXIT_SANDBOX));
+}
+
+#[tokio::test]
+async fn a_host_that_ends_otherwise_before_its_report_is_a_failed_start() {
+    let exit = early_end(1).await;
+
+    assert_eq!(exit.reason, HostExitReason::Spawn);
+    assert_eq!(exit.code, Some(1));
+}
+
+#[tokio::test]
+async fn a_host_that_never_reports_ready_is_ended_as_a_failed_start() {
+    let (mut pool, mut launched, launcher) = required_sandbox_pool();
+    pool.ready_timeout = Duration::from_millis(200);
+    *launcher.report.lock().unwrap() = None;
+    let (responses, mut receiver) = scene_response_channel();
+    let _scene = place(&pool, &responses, [1]);
+    let host = tokio::time::timeout(TIMEOUT, launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let (errored, response) = delivered(&mut receiver).await;
+
+    assert_eq!(errored, scene_id(1));
+    assert!(is_error_starting_with(
+        &response,
+        "scene host failed to start: it did not report ready"
+    ));
+    assert!(host.killed());
+    assert_eq!(pool.drain_exits()[0].reason, HostExitReason::Spawn);
 }
 
 #[tokio::test]

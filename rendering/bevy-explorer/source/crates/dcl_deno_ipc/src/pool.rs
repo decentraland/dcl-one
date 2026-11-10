@@ -1,6 +1,7 @@
 use super::{
     ipc_socket_name, read_frame, run_host_connection, ConnectionEnd, HostScenes, NewSceneCommand,
-    Rejected, SandboxMode, SandboxStatus, SceneToEngine, EXIT_ON_SIDECAR_LOSS, KILL_GRACE_PERIOD,
+    Rejected, SandboxMode, SandboxStatus, SceneToEngine, EXIT_ON_SIDECAR_LOSS, HOST_EXIT_SANDBOX,
+    KILL_GRACE_PERIOD,
 };
 use anyhow::{anyhow, Context};
 use bevy::{
@@ -42,6 +43,10 @@ const HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HOST_LOG_LINE_BYTES: usize = 4096;
 // lines over this many per second of one host stream are dropped and counted
 const HOST_LOG_LINES_PER_SECOND: u32 = 200;
+// a connected host that has not reported ready by then (V8 is starting) has failed to start
+const HOST_READY_TIMEOUT: Duration = Duration::from_secs(30);
+// how long a host that closed its connection before reporting gets to exit with its own status
+const HOST_EXIT_WAIT: Duration = Duration::from_secs(2);
 // The headless launcher's "permanently unavailable here" status (EX_CONFIG), for hosts that keep
 // failing the required sandbox.
 const EXIT_SANDBOX_UNAVAILABLE: i32 = 78;
@@ -557,6 +562,8 @@ pub struct HostPool {
     events: Arc<PoolEvents>,
     // how long a per-scene host outlives the removal of its scene
     pub(crate) retire_after: Duration,
+    // how long a connected host has to report ready
+    pub(crate) ready_timeout: Duration,
     memory: Mutex<Option<Box<dyn SampleMemory>>>,
     pub(crate) sample_every: Duration,
     inspect_refused: AtomicBool,
@@ -574,6 +581,7 @@ impl HostPool {
             hosts: Default::default(),
             events: Default::default(),
             retire_after: KILL_GRACE_PERIOD,
+            ready_timeout: HOST_READY_TIMEOUT,
             memory: Mutex::new(Some(memory)),
             sample_every: MEMORY_SAMPLE_PERIOD,
             inspect_refused: AtomicBool::new(false),
@@ -706,6 +714,7 @@ impl HostPool {
             placement: self.options.placement,
             sandbox: self.options.sandbox,
             retire_after: self.retire_after,
+            ready_timeout: self.ready_timeout,
         };
         let spawned = std::thread::Builder::new()
             .name("scene-host-ipc".to_owned())
@@ -783,6 +792,7 @@ struct HostThread {
     placement: Placement,
     sandbox: SandboxMode,
     retire_after: Duration,
+    ready_timeout: Duration,
 }
 
 /// Why a scene host did not become ready.
@@ -924,8 +934,9 @@ impl HostThread {
                 status: HostStatus::default(),
                 error,
             })?;
-        let (reason, error) = match host_ready(&mut link.inbound).await {
-            Ok(Some(sandbox)) => {
+        let ready = tokio::time::timeout(self.ready_timeout, host_ready(&mut link.inbound)).await;
+        let (reason, error) = match ready {
+            Ok(Ok(Some(sandbox))) => {
                 self.events
                     .first_sandbox
                     .lock()
@@ -941,19 +952,40 @@ impl HostThread {
                 ));
                 (HostExitReason::Sandbox, refused.into())
             }
-            // the host applies its sandbox between connecting and reporting it
-            Ok(None) if self.sandbox != SandboxMode::Off => {
-                let refused = SandboxRefused(format!(
-                    "it ended before reporting a {} sandbox",
-                    self.sandbox.as_str()
-                ));
-                (HostExitReason::Sandbox, refused.into())
+            // a host that cannot apply its sandbox says so with its exit status; any other early
+            // end (V8 failing to start, a kill) is a failed start
+            Ok(Ok(None)) => {
+                let status = match tokio::time::timeout(HOST_EXIT_WAIT, link.process.wait()).await {
+                    Ok(status) => status.unwrap_or_default(),
+                    Err(_) => {
+                        link.process.start_kill();
+                        link.process.wait().await.unwrap_or_default()
+                    }
+                };
+                let failure = if status.code == Some(HOST_EXIT_SANDBOX) {
+                    StartFailure {
+                        reason: HostExitReason::Sandbox,
+                        status,
+                        error: SandboxRefused(format!(
+                            "it could not apply the {} sandbox",
+                            self.sandbox.as_str()
+                        ))
+                        .into(),
+                    }
+                } else {
+                    StartFailure {
+                        reason: HostExitReason::Spawn,
+                        status,
+                        error: anyhow!("it ended before reporting ready ({status})"),
+                    }
+                };
+                return Err(failure);
             }
-            Ok(None) => (
+            Ok(Err(e)) => (HostExitReason::Protocol, e),
+            Err(_) => (
                 HostExitReason::Spawn,
-                anyhow!("it ended before reporting ready"),
+                anyhow!("it did not report ready within {:?}", self.ready_timeout),
             ),
-            Err(e) => (HostExitReason::Protocol, e),
         };
         link.process.start_kill();
         let status = link.process.wait().await.unwrap_or_default();
