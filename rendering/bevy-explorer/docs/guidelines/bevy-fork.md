@@ -116,12 +116,11 @@ across workers:
   decode), bytes plus the format to decode them as instead (with the caller's `is_srgb`,
   sampler and asset usage), or an error. A global because `Image::from_buffer` has no plugin
   or loader to carry it. `image_processing` sets it to transcode UASTC to BC7, and uses the
-  path to cache the result. Alongside it: KTX2 bytes are taken by their magic whatever
-  type was declared (also under the `Guess` format setting, which the `image` crate can't
-  guess for KTX2), but only with no path (embedded) or at a `.ktx2` path: the cache write keys
-  on that extension, so an extension-less KTX2 fails to load rather than being transcoded on
-  every visit. A DDS where a KTX2 was declared decodes as DDS (a cached transcode at a
-  `.ktx2` path).
+  path to cache the result. Alongside it: KTX2 bytes are taken by their magic at any path,
+  whatever type was declared (also under the `Guess` format setting, which the `image` crate
+  can't guess for KTX2), so a KTX2 without a file extension or under another one loads too.
+  DDS bytes decode as DDS whatever was declared, so a transcode the host cached over the KTX2
+  bytes reads back from the same path.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.

@@ -31,8 +31,8 @@ impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
         app.add_systems(Update, (check_assets, pipe_events));
-        // every KTX2 bevy decodes (a `.ktx2` through its `ImageLoader`, or an image embedded
-        // in a glTF) goes through `ktx2::transcode_ktx2_image`
+        // every KTX2 bevy decodes (one loaded by path through its `ImageLoader`, or an image
+        // embedded in a glTF) goes through `ktx2::transcode_ktx2_image`
         crate::ktx2::install_ktx2_transcoder();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -104,7 +104,7 @@ struct ImgReprocessStats {
     swapped: usize,
 }
 
-/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
+/// Frees a ktx2 transcode the loader stashed when its cache write is not going to happen
 /// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
 /// is evicted by `ktx2::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
@@ -155,20 +155,12 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            // a `.ktx2` loads compressed already; when bevy's image loader transcoded it
+            // a ktx2 loads compressed already; when bevy's image loader transcoded it
             // (`ktx2::transcode_ktx2_image`), the dds is waiting in `KTX2_RESULTS` to be
-            // written over the cached ktx2 bytes. a cached ktx2 has nothing waiting and is
-            // left as it is
-            let ktx2 = crate::ktx2::is_cached_ktx2_path(asset_path);
-            if ktx2 {
-                let waiting = crate::ktx2::KTX2_RESULTS
-                    .lock()
-                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
-                if !waiting {
-                    stats.already_compressed += 1;
-                    continue;
-                }
-            } else if image.is_compressed() {
+            // written over the cached ktx2 bytes, whatever the path's extension. a cached
+            // ktx2 has nothing waiting and is skipped as compressed, like any cached image
+            let ktx2 = crate::ktx2::has_waiting_transcode(asset_path);
+            if !ktx2 && image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
                 continue;

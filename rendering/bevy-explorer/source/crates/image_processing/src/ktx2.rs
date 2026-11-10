@@ -1,13 +1,14 @@
 //! KTX2 (`KHR_texture_basisu`) textures: Basis Universal UASTC transcoded to BC7 on load, by the
 //! same `transcode_ktx2` the gltf repair uses. [`install_ktx2_transcoder`] sets
 //! [`transcode_ktx2_image`] as `bevy_image`'s KTX2 transcoder, so every KTX2 bevy decodes takes
-//! this one route: a `.ktx2` loaded by path through bevy's `ImageLoader`, and an image embedded
-//! in a glTF (glb buffer view or `data:` URI) through `Image::from_buffer`.
+//! this one route: a KTX2 loaded by path through bevy's `ImageLoader` (by its magic, whatever
+//! the extension), and an image embedded in a glTF (glb buffer view or `data:` URI) through `Image::from_buffer`.
 //!
-//! A `.ktx2` loaded by path is cached: the dds its transcode produces is kept in `KTX2_RESULTS`
-//! until `engine::check_assets` queues it as a `ProcessingAssetType::Ktx2Cache` and the processor
-//! writes it over the cached ktx2 bytes, so the next load reads a dds (`DDS ` magic), which
-//! `bevy_image` decodes as a dds without calling the transcoder. A transcode whose write never
+//! A KTX2 loaded by path is cached, whatever its extension (`bevy_image` takes KTX2 by its
+//! magic): the dds its transcode produces is kept in `KTX2_RESULTS` until `engine::check_assets`
+//! queues it as a `ProcessingAssetType::Ktx2Cache` and the processor writes it over the cached
+//! ktx2 bytes, so the next load reads a dds (`DDS ` magic), which `bevy_image` decodes as a dds
+//! without calling the transcoder. A transcode whose write never
 //! comes (the image was dropped before it loaded, or it has no cache entry) is evicted after
 //! `RESULT_LIFETIME`. An embedded KTX2 is transcoded on every load: the glTF holding it is not
 //! rewritten in the cache.
@@ -42,14 +43,18 @@ pub(crate) fn evict_stale_results() {
     }
 }
 
-/// Whether `check_assets` takes an image loaded from `path` as a `.ktx2` to cache: an unlabelled
-/// `.ktx2` path. A transcode for any other path is not stashed, as no cache write would take it.
-pub(crate) fn is_cached_ktx2_path(path: &AssetPath<'_>) -> bool {
+/// Whether a transcode for `path` is stashed for a cache write: an unlabelled path, which has a
+/// cache entry of its own. A labelled image is part of another file and has none.
+fn is_cacheable_path(path: &AssetPath<'_>) -> bool {
     path.label().is_none()
-        && path
-            .path()
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"))
+}
+
+/// Whether a transcode of the image loaded from `path` is waiting for its cache write, which is
+/// how `check_assets` tells a freshly transcoded KTX2 from an image already compressed.
+pub(crate) fn has_waiting_transcode(path: &AssetPath<'_>) -> bool {
+    KTX2_RESULTS
+        .lock()
+        .is_ok_and(|results| results.contains_key(&path.to_string()))
 }
 
 /// Sets [`transcode_ktx2_image`] as the process's `bevy_image` KTX2 transcoder. A second call
@@ -62,7 +67,7 @@ pub(crate) fn install_ktx2_transcoder() {
 /// dds, which bevy decodes with the `is_srgb`, sampler and asset usage the KTX2 was loaded with.
 ///
 /// - Loaded by path (`path` is `Some`): a fresh transcode is stashed for the cache write when
-///   the path is a `.ktx2` one. A KTX2 that can't be transcoded (not UASTC, malformed) fails to
+///   the path is unlabelled. A KTX2 that can't be transcoded (not UASTC, malformed) fails to
 ///   load, as it did with the former `Ktx2Loader`.
 /// - Embedded, or any other `Image::from_buffer` caller (`path` is `None`): a KTX2 that can't be
 ///   transcoded is left to bevy's own KTX2 decode, as the former glTF image transcoder left it.
@@ -73,7 +78,7 @@ pub(crate) fn transcode_ktx2_image(
 ) -> Option<Ktx2Transcoded> {
     match crate::processor::transcode_ktx2(bytes) {
         Ok(dds) => {
-            if let Some(path) = path.filter(|path| is_cached_ktx2_path(path)) {
+            if let Some(path) = path.filter(|path| is_cacheable_path(path)) {
                 if let Ok(mut results) = KTX2_RESULTS.lock() {
                     results.insert(path.to_string(), (Instant::now(), dds.clone()));
                 }
@@ -141,10 +146,15 @@ mod tests {
     }
 
     #[test]
-    fn only_cacheable_ktx2_paths_are_stashed() {
-        let path = AssetPath::from("ktx2_tests/no_extension");
-        assert!(transcode_ktx2_image(UASTC_8, Some(&path)).is_some());
-        assert!(!stashed("ktx2_tests/no_extension"));
+    fn ktx2_is_stashed_at_any_unlabelled_path() {
+        // no extension (an NFT image, a URL texture) or another one: cached all the same
+        for path in ["ktx2_tests/no_extension", "ktx2_tests/albedo.png"] {
+            let asset_path = AssetPath::from(path);
+            assert!(transcode_ktx2_image(UASTC_8, Some(&asset_path)).is_some());
+            assert!(has_waiting_transcode(&asset_path));
+            assert!(unstash(path).is_some());
+        }
+        // part of another file: no cache entry of its own
         let path = AssetPath::from("ktx2_tests/model.glb#Texture0");
         assert!(transcode_ktx2_image(UASTC_8, Some(&path)).is_some());
         assert!(!stashed("ktx2_tests/model.glb#Texture0"));
@@ -164,13 +174,19 @@ mod tests {
     #[test]
     fn cached_dds_passes_through() {
         let (dds, _) = transcode_ktx2_image(UASTC_8, None).unwrap().unwrap();
-        // a dds where a ktx2 was declared (the cache entry of a `.ktx2` path) decodes as a dds
-        let image = decode(&dds, ImageType::Extension("ktx2"), true).unwrap();
-        assert_eq!(
-            image.texture_descriptor.format,
-            TextureFormat::Bc7RgbaUnormSrgb
-        );
-        assert_eq!((image.width(), image.height()), (8, 8));
+        // the cache entry read back decodes as a dds whatever its path declares
+        for image_type in [
+            ImageType::Extension("ktx2"),
+            ImageType::Extension("png"),
+            ImageType::MimeType("application/octet-stream"),
+        ] {
+            let image = decode(&dds, image_type, true).unwrap();
+            assert_eq!(
+                image.texture_descriptor.format,
+                TextureFormat::Bc7RgbaUnormSrgb
+            );
+            assert_eq!((image.width(), image.height()), (8, 8));
+        }
     }
 
     #[test]

@@ -960,9 +960,9 @@ impl Image {
     /// [`Image::from_buffer`] for an asset read from `asset_path`, which the host's KTX2
     /// transcoder is given (see [`Ktx2Transcoder`](crate::Ktx2Transcoder)).
     ///
-    /// The KTX2 magic wins over `image_type` where KTX2 is allowed (no path, or a `.ktx2` path;
-    /// see `ktx2_magic_applies`), and a DDS where a KTX2 was declared decodes as DDS: a host
-    /// that caches its transcode over the KTX2 bytes reads it back from the same path.
+    /// The bytes win over `image_type`: KTX2 bytes decode as KTX2 and DDS bytes as DDS, whatever
+    /// was declared. A host that caches its transcode over the KTX2 bytes reads the DDS back from
+    /// the same path, whatever its extension.
     #[expect(clippy::too_many_arguments, reason = "from_buffer's arguments and the path")]
     pub(crate) fn from_buffer_at(
         #[cfg(all(debug_assertions, feature = "dds"))] name: String,
@@ -975,7 +975,7 @@ impl Image {
         asset_path: Option<&AssetPath<'_>>,
     ) -> Result<Image, TextureError> {
         #[cfg(feature = "ktx2")]
-        let format = if ktx2_magic_applies(buffer, asset_path) {
+        let format = if has_ktx2_magic(buffer) {
             ImageFormat::Ktx2
         } else {
             image_type.to_image_format()?
@@ -983,9 +983,10 @@ impl Image {
         #[cfg(not(feature = "ktx2"))]
         let format = image_type.to_image_format()?;
         #[cfg(all(feature = "ktx2", feature = "dds"))]
-        let format = match format {
-            ImageFormat::Ktx2 if buffer.starts_with(b"DDS ") => ImageFormat::Dds,
-            format => format,
+        let format = if buffer.starts_with(b"DDS ") {
+            ImageFormat::Dds
+        } else {
+            format
         };
         Self::decode_buffer(
             #[cfg(all(debug_assertions, feature = "dds"))]
