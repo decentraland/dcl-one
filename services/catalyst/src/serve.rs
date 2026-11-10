@@ -1376,6 +1376,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "/events-notifier",
             shop::market::tips::router(market.clone()),
         )
+        .nest(
+            "/asset-bundle-registry",
+            shop::market::profiles::registry::router(market.clone()),
+        )
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
         .merge(economy_routes(&economy_state))
