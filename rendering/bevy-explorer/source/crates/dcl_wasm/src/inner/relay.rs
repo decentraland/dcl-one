@@ -23,6 +23,7 @@ use dcl_js::{
 };
 use dcl_types::{
     RendererResponse, SceneId, SceneResponse, SceneResponseSender, MAX_RPC_CALLS_PER_TICK,
+    MAX_TOPIC_MESSAGE_BYTES,
 };
 use system_bridge::SystemApi;
 use tokio::sync::{broadcast, mpsc};
@@ -236,14 +237,24 @@ fn tick_limit_broken(calls: &[RpcCall]) -> Option<&'static str> {
     if calls.len() > MAX_RPC_CALLS_PER_TICK {
         return Some("too many rpc calls");
     }
+    // message bus sends and topic publishes share the scene's per-tick send budget
     let mut sends = 0;
     for call in calls {
-        if let RpcCall::SendMessageBus { data, .. } = call {
-            sends += 1;
-            // the message plus its one-byte type tag
-            if data.len() > MAX_COMMS_MESSAGE_BYTES + 1 {
-                return Some("message bus send too large");
+        match call {
+            RpcCall::SendMessageBus { data, .. } => {
+                sends += 1;
+                // the message plus its one-byte type tag
+                if data.len() > MAX_COMMS_MESSAGE_BYTES + 1 {
+                    return Some("message bus send too large");
+                }
             }
+            RpcCall::PublishSceneTopic { data } => {
+                sends += 1;
+                if data.len() > MAX_TOPIC_MESSAGE_BYTES {
+                    return Some("topic publish too large");
+                }
+            }
+            _ => (),
         }
     }
     if sends > MAX_SEND_MESSAGES_PER_TICK {

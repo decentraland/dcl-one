@@ -1344,12 +1344,6 @@ fn process_messagebus(
         return;
     }
 
-    if scene.data[0] == CommsMessageType::CommsData as u8 {
-        scene.data.remove(0);
-        scene_topics.deliver(transport, &scene.scene_id, address, scene.data);
-        return;
-    }
-
     let comms_type = match *scene.data.first().unwrap() {
         c if c == CommsMessageType::String as u8 => {
             scene.data.remove(0);
@@ -1358,6 +1352,10 @@ fn process_messagebus(
         c if c == CommsMessageType::Binary as u8 => {
             scene.data.remove(0);
             CommsMessageType::Binary
+        }
+        c if c == CommsMessageType::CommsData as u8 => {
+            scene.data.remove(0);
+            CommsMessageType::CommsData
         }
         _ => CommsMessageType::String,
     };
@@ -1384,7 +1382,9 @@ fn process_messagebus(
                 let _ = sender.send((address, scene.data));
             }
         }
-        CommsMessageType::CommsData => (),
+        CommsMessageType::CommsData => {
+            scene_topics.deliver(transport, &scene.scene_id, address, scene.data);
+        }
     }
 }
 
@@ -1669,6 +1669,85 @@ mod tests {
                 .into(),
             )
             .unwrap();
+    }
+
+    fn spawn_running_scene_room(app: &mut App, context: Entity, hash: &str) -> Entity {
+        let (sender, _receiver) = mpsc::channel(1);
+        app.world_mut()
+            .spawn((
+                Transport {
+                    transport_type: crate::TransportType::Livekit,
+                    sender,
+                    control: None,
+                    context,
+                },
+                crate::SceneRoom(hash.to_owned()),
+                crate::scene_topics::TestRoomRunning,
+            ))
+            .id()
+    }
+
+    /// Subscribes a scene with `hash` to topic messages and returns its inbox.
+    fn subscribe_scene_topics(
+        app: &mut App,
+        hash: &str,
+    ) -> common::rpc::RpcStreamReceiver<(String, Vec<u8>)> {
+        let (topics, topics_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: hash.into(),
+            },
+            call: RpcCall::SubscribeSceneTopics { sender: topics },
+        });
+        app.update();
+        topics_rx
+    }
+
+    #[test]
+    fn topic_messages_reach_the_scene_on_its_own_room_only() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let own = spawn_running_scene_room(&mut app, context, "bafyscene");
+        let other = spawn_running_scene_room(&mut app, context, "bafyother");
+        queue_joined(&mut app, context, own, peer);
+        queue_joined(&mut app, context, other, peer);
+        app.update();
+        let mut topics_rx = subscribe_scene_topics(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, own, peer, vec![3, 1, 0, b't', b'x']);
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().unwrap(),
+            (format!("{peer:#x}"), vec![1, 0, b't', b'x'])
+        );
+
+        // rooms are isolated per scene in Genesis City: another scene's room carries nothing
+        queue_scene_message(&mut app, context, other, peer, vec![3, 1, 0, b't', b'x']);
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn topic_messages_over_the_size_limit_are_dropped() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let room = spawn_running_scene_room(&mut app, context, "bafyscene");
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let mut topics_rx = subscribe_scene_topics(&mut app, "bafyscene");
+
+        let mut at_limit = vec![3, 1, 0, b't'];
+        at_limit.resize(dcl_types::MAX_TOPIC_MESSAGE_BYTES, b'd');
+        let mut over_limit = at_limit.clone();
+        over_limit.push(b'd');
+        queue_scene_message(&mut app, context, room, peer, over_limit);
+        queue_scene_message(&mut app, context, room, peer, at_limit);
+        app.update();
+        let (_, payload) = topics_rx.try_recv().unwrap();
+        assert_eq!(payload.len(), dcl_types::MAX_TOPIC_MESSAGE_BYTES - 1);
+        assert!(topics_rx.try_recv().is_err());
     }
 
     #[test]

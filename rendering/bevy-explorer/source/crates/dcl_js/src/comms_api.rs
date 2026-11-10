@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::State;
 use dcl_types::{CommsMessageType, RpcCalls, SceneResourceCounters};
+pub use dcl_types::{MAX_TOPIC_BYTES, MAX_TOPIC_MESSAGE_BYTES};
 
 pub async fn op_get_active_video_streams(
     state: Rc<RefCell<impl State>>,
@@ -27,15 +28,17 @@ pub async fn op_get_active_video_streams(
 
 pub const MAX_TOPIC_MESSAGES_PER_WINDOW: u32 = 10;
 pub const TOPIC_RATE_WINDOW: Duration = Duration::from_millis(1000);
-/// Longest topic, in UTF-8 bytes.
-pub const MAX_TOPIC_BYTES: usize = 512;
-/// Includes the type byte and the topic length prefix.
-pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
 /// Per subscribed topic; past it the oldest message is dropped.
 pub const TOPIC_QUEUE_CAPACITY: usize = 1024;
+/// Topics a scene may subscribe to at once.
+pub const MAX_SUBSCRIBED_TOPICS: usize = 256;
+/// Sender and data bytes queued across all of a scene's topics; past it new messages are dropped.
+pub const MAX_QUEUED_TOPIC_BYTES: usize = 8 * 1024 * 1024;
 /// Drained every tick, so it only has to hold one tick's traffic.
 const TOPIC_INBOX_CAPACITY: usize = 4096;
 const TOPIC_LENGTH_PREFIX_BYTES: usize = 2;
+/// Expired rate windows are pruned once this many are held, then at twice what is left.
+const RATE_WINDOW_PRUNE_MIN: usize = 64;
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 pub struct TopicMessage {
@@ -43,34 +46,55 @@ pub struct TopicMessage {
     pub data: String,
 }
 
+impl TopicMessage {
+    fn bytes(&self) -> usize {
+        self.sender.len() + self.data.len()
+    }
+}
+
 /// Lives in the scene's op state, so a reloaded scene starts with no subscriptions.
 #[derive(Default)]
 pub struct SceneTopics {
     queues: HashMap<String, VecDeque<TopicMessage>>,
+    queued_bytes: usize,
     rate_windows: HashMap<String, (u32, Instant)>,
+    prune_rate_windows_at: usize,
     inbox: Option<RpcStreamReceiver<(String, Vec<u8>)>>,
 }
 
 impl SceneTopics {
-    pub fn subscribe(&mut self, topic: String) {
-        self.queues.entry(topic).or_default();
+    /// A topic longer than any message can carry is accepted and never receives anything.
+    pub fn subscribe(&mut self, topic: String) -> Result<(), anyhow::Error> {
+        if topic.len() > MAX_TOPIC_BYTES || self.queues.contains_key(&topic) {
+            return Ok(());
+        }
+        if self.queues.len() >= MAX_SUBSCRIBED_TOPICS {
+            anyhow::bail!("too many subscribed topics ({MAX_SUBSCRIBED_TOPICS})");
+        }
+        self.queues.insert(topic, VecDeque::new());
+        Ok(())
     }
 
     pub fn unsubscribe(&mut self, topic: &str) {
-        self.queues.remove(topic);
+        if let Some(queue) = self.queues.remove(topic) {
+            self.queued_bytes -= queue.iter().map(TopicMessage::bytes).sum::<usize>();
+        }
     }
 
     pub fn consume(&mut self, topic: &str) -> Vec<TopicMessage> {
-        self.queues
+        let messages: Vec<_> = self
+            .queues
             .get_mut(topic)
             .map(|queue| queue.drain(..).collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        self.queued_bytes -= messages.iter().map(TopicMessage::bytes).sum::<usize>();
+        messages
     }
 
     /// A publish that reaches the rate check spends the topic's budget even if its size then
     /// drops it.
     pub fn frame_publish(&mut self, topic: &str, data: &str, now: Instant) -> Option<Vec<u8>> {
-        if data.is_empty() || !self.spend_rate(topic, now) || topic.len() > MAX_TOPIC_BYTES {
+        if data.is_empty() || topic.len() > MAX_TOPIC_BYTES || !self.spend_rate(topic, now) {
             return None;
         }
         let len = 1 + TOPIC_LENGTH_PREFIX_BYTES + topic.len() + data.len();
@@ -85,24 +109,35 @@ impl SceneTopics {
         Some(framed)
     }
 
-    /// A fixed window, opened by the first publish after the previous one ended.
+    /// A fixed window, opened by the first publish after the previous one ended. An expired
+    /// window and a missing one behave the same, so expired ones are pruned.
     fn spend_rate(&mut self, topic: &str, now: Instant) -> bool {
+        let open = |start: &Instant| now.saturating_duration_since(*start) < TOPIC_RATE_WINDOW;
         match self.rate_windows.get_mut(topic) {
-            Some((count, start)) if now.saturating_duration_since(*start) < TOPIC_RATE_WINDOW => {
+            Some((count, start)) if open(start) => {
                 if *count >= MAX_TOPIC_MESSAGES_PER_WINDOW {
                     return false;
                 }
                 *count += 1;
             }
             _ => {
+                if self.rate_windows.len() >= self.prune_rate_windows_at.max(RATE_WINDOW_PRUNE_MIN)
+                {
+                    self.rate_windows.retain(|_, (_, start)| open(start));
+                    self.prune_rate_windows_at = 2 * self.rate_windows.len();
+                }
                 self.rate_windows.insert(topic.to_owned(), (1, now));
             }
         }
         true
     }
 
-    /// `payload` is `[u16 LE topic length][topic][data]`.
+    /// `payload` is `[u16 LE topic length][topic][data]`. A payload no conforming publisher
+    /// can send is dropped.
     pub fn receive(&mut self, sender: String, payload: &[u8]) -> bool {
+        if 1 + payload.len() > MAX_TOPIC_MESSAGE_BYTES {
+            return false;
+        }
         let Some(len_bytes) = payload.get(..TOPIC_LENGTH_PREFIX_BYTES) else {
             return false;
         };
@@ -119,20 +154,29 @@ impl SceneTopics {
         else {
             return false;
         };
+        let data = &payload[TOPIC_LENGTH_PREFIX_BYTES + topic_len..];
+        let message = TopicMessage {
+            sender,
+            data: String::from_utf8_lossy(data).into_owned(),
+        };
+        let freed = match queue.front() {
+            Some(oldest) if queue.len() >= TOPIC_QUEUE_CAPACITY => oldest.bytes(),
+            _ => 0,
+        };
+        if self.queued_bytes - freed + message.bytes() > MAX_QUEUED_TOPIC_BYTES {
+            return false;
+        }
         if queue.len() >= TOPIC_QUEUE_CAPACITY {
             queue.pop_front();
         }
-        let data = &payload[TOPIC_LENGTH_PREFIX_BYTES + topic_len..];
-        queue.push_back(TopicMessage {
-            sender,
-            data: String::from_utf8_lossy(data).into_owned(),
-        });
+        self.queued_bytes = self.queued_bytes - freed + message.bytes();
+        queue.push_back(message);
         true
     }
 }
 
-/// Runs before every topic op and once per tick, so a message is matched against the
-/// subscriptions of the moment it arrived.
+/// Runs before subscribe, unsubscribe and consume, and once per tick, so a message is matched
+/// against the subscriptions of the moment it arrived.
 pub fn drain_topic_inbox(state: &mut impl State) {
     let Some(topics) = state.try_borrow_mut::<SceneTopics>() else {
         return;
@@ -178,8 +222,7 @@ pub async fn op_comms_subscribe_topic(
             .push(RpcCall::SubscribeSceneTopics { sender: sx })?;
         scene_topics(&mut *state).inbox = Some(rx);
     }
-    scene_topics(&mut *state).subscribe(topic);
-    Ok(())
+    scene_topics(&mut *state).subscribe(topic)
 }
 
 pub async fn op_comms_unsubscribe_topic(
@@ -193,23 +236,24 @@ pub async fn op_comms_unsubscribe_topic(
     Ok(())
 }
 
-/// Never fails: an invalid or over-limit publish is dropped.
+/// Never fails: an invalid or over-limit publish is dropped. A publish that passes its topic's
+/// limits also spends the per-tick budget the message bus sends share.
 pub async fn op_comms_publish_data(
     state: Rc<RefCell<impl State>>,
     topic: Option<String>,
     data: Option<String>,
 ) {
-    let (Some(data), mut state) = (data, state.borrow_mut()) else {
+    let (Some(topic), Some(data)) = (topic, data) else {
         return;
     };
-    let Some(topic) = topic.filter(|_| !data.is_empty()) else {
-        return;
-    };
-    drain_topic_inbox(&mut *state);
+    let mut state = state.borrow_mut();
     let Some(framed) = scene_topics(&mut *state).frame_publish(&topic, &data, Instant::now())
     else {
         return;
     };
+    if !crate::comms::try_spend_budget(&mut *state) {
+        return;
+    }
     let bytes = framed.len() as u64;
     if state
         .borrow_mut::<RpcCalls>()
@@ -439,7 +483,7 @@ mod tests {
     #[test]
     fn a_full_queue_drops_its_oldest_message() {
         let mut topics = SceneTopics::default();
-        topics.subscribe("t".to_owned());
+        topics.subscribe("t".to_owned()).unwrap();
         for i in 0..=TOPIC_QUEUE_CAPACITY {
             assert!(topics.receive("0x1".to_owned(), &wire("t", i.to_string().as_bytes())));
         }
@@ -455,8 +499,8 @@ mod tests {
     #[test]
     fn malformed_payloads_are_dropped_and_empty_data_is_kept() {
         let mut topics = SceneTopics::default();
-        topics.subscribe("t".to_owned());
-        topics.subscribe(String::new());
+        topics.subscribe("t".to_owned()).unwrap();
+        topics.subscribe(String::new()).unwrap();
         assert!(!topics.receive("0x1".to_owned(), &[1]));
         assert!(!topics.receive("0x1".to_owned(), &[5, 0, b't']));
         assert!(topics.receive("0x1".to_owned(), &wire("t", b"")));
@@ -477,5 +521,98 @@ mod tests {
         ));
         assert!(block_on(op_comms_consume_messages(state.clone(), None)).is_empty());
         assert_eq!(take_calls(&state).0.len(), 0);
+    }
+
+    #[test]
+    fn an_oversized_topic_opens_no_rate_window() {
+        let mut topics = SceneTopics::default();
+        let long_topic = "t".repeat(MAX_TOPIC_BYTES + 1);
+        assert!(topics
+            .frame_publish(&long_topic, "x", Instant::now())
+            .is_none());
+        assert!(topics.rate_windows.is_empty());
+    }
+
+    #[test]
+    fn expired_rate_windows_are_pruned() {
+        let mut topics = SceneTopics::default();
+        let start = Instant::now();
+        for i in 0..RATE_WINDOW_PRUNE_MIN {
+            assert!(topics.frame_publish(&i.to_string(), "x", start).is_some());
+        }
+        let later = start + TOPIC_RATE_WINDOW;
+        assert!(topics.frame_publish("new", "x", later).is_some());
+        assert_eq!(topics.rate_windows.len(), 1);
+    }
+
+    #[test]
+    fn publishes_share_the_message_bus_send_budget() {
+        let state = state();
+        publish(&state, "t", "x");
+        assert_eq!(
+            state
+                .borrow_mut()
+                .borrow_mut::<crate::comms::CommsSendBudget>()
+                .sent,
+            1
+        );
+        state
+            .borrow_mut()
+            .borrow_mut::<crate::comms::CommsSendBudget>()
+            .sent = crate::comms::MAX_SEND_MESSAGES_PER_TICK;
+        publish(&state, "u", "x");
+        assert_eq!(take_calls(&state).0.len(), 1);
+    }
+
+    #[test]
+    fn subscriptions_are_capped_and_overlong_topics_never_subscribe() {
+        let mut topics = SceneTopics::default();
+        for i in 0..MAX_SUBSCRIBED_TOPICS {
+            topics.subscribe(i.to_string()).unwrap();
+        }
+        assert!(topics.subscribe("one more".to_owned()).is_err());
+        assert!(
+            topics.subscribe("0".to_owned()).is_ok(),
+            "already subscribed"
+        );
+        topics.unsubscribe("0");
+        let long_topic = "t".repeat(MAX_TOPIC_BYTES + 1);
+        assert!(topics.subscribe(long_topic.clone()).is_ok());
+        assert!(!topics.queues.contains_key(&long_topic));
+        assert!(topics.subscribe("one more".to_owned()).is_ok());
+    }
+
+    #[test]
+    fn received_payloads_over_the_message_limit_are_dropped() {
+        let mut topics = SceneTopics::default();
+        topics.subscribe("t".to_owned()).unwrap();
+        let fits = vec![b'd'; MAX_TOPIC_MESSAGE_BYTES - 1 - 2 - 1];
+        assert!(topics.receive("0x1".to_owned(), &wire("t", &fits)));
+        let mut over = fits.clone();
+        over.push(b'd');
+        assert!(!topics.receive("0x1".to_owned(), &wire("t", &over)));
+        assert_eq!(topics.consume("t").len(), 1);
+    }
+
+    #[test]
+    fn queued_bytes_are_capped_across_topics_and_freed_by_consume() {
+        let mut topics = SceneTopics::default();
+        topics.subscribe("a".to_owned()).unwrap();
+        topics.subscribe("b".to_owned()).unwrap();
+        let data = vec![b'd'; MAX_TOPIC_MESSAGE_BYTES - 1 - 2 - 1];
+        let per_message = "0x1".len() + data.len();
+        let fit = MAX_QUEUED_TOPIC_BYTES / per_message;
+        let accepted = (0..fit + 10)
+            .filter(|i| {
+                let topic = if i % 2 == 0 { "a" } else { "b" };
+                topics.receive("0x1".to_owned(), &wire(topic, &data))
+            })
+            .count();
+        assert_eq!(accepted, fit);
+        assert!(!topics.receive("0x1".to_owned(), &wire("a", &data)));
+        topics.unsubscribe("b");
+        assert!(topics.receive("0x1".to_owned(), &wire("a", &data)));
+        topics.consume("a");
+        assert_eq!(topics.queued_bytes, 0);
     }
 }
