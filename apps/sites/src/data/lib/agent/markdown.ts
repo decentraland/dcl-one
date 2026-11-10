@@ -51,7 +51,7 @@ function heading(level: number, text: string): string {
   return `${prefix}${clean(text)}`;
 }
 
-function bulletList(items: readonly string[]): string {
+function bulletList(items: string[]): string {
   return items
     .map((i) => clean(i))
     .filter((i) => i.length > 0)

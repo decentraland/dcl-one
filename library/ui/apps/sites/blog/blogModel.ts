@@ -25,7 +25,7 @@ export type BlogBlock =
   | { type: 'h3'; content: string }
   | { type: 'h4'; content: string }
   | { type: 'quote'; content: string }
-  | { type: 'ul'; items: readonly string[] }
+  | { type: 'ul'; items: string[] }
 
 export type BlogArticle = BlogCard & { body: readonly BlogBlock[] }
 
