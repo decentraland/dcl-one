@@ -65,6 +65,9 @@ describe('when the offline component guard checks a staged internal plan', () =>
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'dcl-component-guard-'))
     git('init', '--quiet')
+    mkdirSync(path.join(root, 'library/ui'), { recursive: true })
+    symlinkSync(path.resolve('node_modules'), path.join(root, 'library/ui/node_modules'))
+    put('.gitignore', 'node_modules/\n')
     source = {
       repository: 'https://github.com/decentraland/figma-design-system',
       revision: 'a'.repeat(40),

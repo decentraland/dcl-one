@@ -824,7 +824,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "8146a5f8676b47bd7a1fb24582932dbb766f02eaed11341854f1ad7ba581cc4f"
+          "sha256": "167790e0961f1cfc6a0559522840be149e7f84c042da9e8d1620f132d7086542"
         },
         "library/ui/figma/review/dcl-ui-review/index.html": {
           "sha256": "1637b3d7491fcd7deb7a1aa43396ba05289dce8fa94a51004298120eae8201d0",
@@ -3227,7 +3227,7 @@
             "verified-install",
             "component-install-integrity"
           ],
-          "sha256": "d054f1c12c4dfa229d9977e8146995bd922eef4b47e572734a8144698025819d"
+          "sha256": "5ed7a915a2b61a480d32576ee33e35aa2dac02a76f8893b18551b81e9e1fab14"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -3238,7 +3238,7 @@
             "verified-install",
             "component-install-integrity"
           ],
-          "sha256": "70ae052b2c0709b8f46cdff0e5042c4eeb7033da88ea46ee8b99522982d4222e"
+          "sha256": "cfbb7325dcf5a96d38c79113967fa14ea2a08f489dd0d8e7b6acecf37cd7eb08"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
@@ -3496,7 +3496,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "39c8fd3d8bf15b0f6f90155b71aa87af082c9d455859a1a229dc606508f79317"
+          "sha256": "5158ac5f36af95e5319ddb20c11e26d818e607d016443a8affaef3b1d975cd20"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,
@@ -3511,7 +3511,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "527213ada86cf084c201527aed28a73c7339e3d15bc2f89c9d0df12e1c3f8756"
+          "sha256": "ac2ce81731d050b9bd6102934a0bb769df0c1a13017684029c52e9b0594d6194"
         },
         "library/ui/figma/src/retirement-selection.test.ts": {
           "sha256": "8c5dbcf6e85932426d8bb3376330180c209ffc0abb3b769bdba4c5f047f755c1",

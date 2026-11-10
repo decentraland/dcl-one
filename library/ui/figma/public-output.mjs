@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 
 const POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1')
@@ -145,6 +146,97 @@ function componentImplementations(root, problems) {
   }
   if (visit(prefix, false)) visit(prefix + '/src', true)
   return files
+}
+
+/** Resolver controls are checked independently of origin claims and executable-file exclusions. */
+function componentResolverBoundary(root, inputFiles, problems) {
+  const prefix = 'library/ui/figma'
+  const executable = (file) => /\.(?:[cm]?[jt]sx?)$/i.test(file)
+  const controls = (name) =>
+    name.toLowerCase() === 'package.json' || /^(?:tsconfig|jsconfig)(?:\.[^/]*)?\.json$/i.test(name)
+  const runtime = new Set(
+    ['figma-module-runtime.tsx', 'figma-view-state.ts', 'figma-interactions.tsx'].map(
+      (name) => prefix + '/review/src/components/' + name
+    )
+  )
+  const checked = new Set()
+  const productionDirectories = new Set([prefix])
+  const inspect = (relative, recurse = false, helpers = false) => {
+    const directory = path.join(root, relative)
+    const stat = lstatSync(directory, { throwIfNoEntry: false })
+    if (!stat) return
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      problems.push('unsafe component resolver directory: ' + relative)
+      return
+    }
+    productionDirectories.add(relative)
+    const first = !checked.has(relative)
+    checked.add(relative)
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = relative + '/' + entry.name
+      if (first && (controls(entry.name) || entry.name.toLowerCase() === 'node_modules')) {
+        if (file !== prefix + '/tsconfig.json' || !inputFiles.has(file))
+          problems.push('unexpected component resolver control: ' + file)
+        else if (!entry.isFile() || entry.isSymbolicLink())
+          problems.push('unsafe component resolver control: ' + file)
+      }
+      if (entry.name.toLowerCase() === 'node_modules') continue
+      if (recurse && !entry.isFile() && !entry.isDirectory() && !entry.isSymbolicLink())
+        problems.push('unsafe component resolver entry: ' + file)
+      if (helpers && executable(entry.name) && !inputFiles.has(file))
+        problems.push('unpinned component helper implementation: ' + file)
+      if (recurse && entry.isDirectory() && !entry.isSymbolicLink()) inspect(file, true)
+    }
+  }
+  inspect(prefix)
+  inspect(prefix + '/src', true)
+  for (const file of inputFiles.keys()) {
+    if (
+      !file.startsWith(prefix + '/') ||
+      !executable(file) ||
+      runtime.has(file) ||
+      file.startsWith(prefix + '/src/') ||
+      path.posix.dirname(file) === prefix
+    )
+      continue
+    let directory = path.posix.dirname(file)
+    while (directory.startsWith(prefix + '/')) {
+      inspect(directory, false, true)
+      directory = path.posix.dirname(directory)
+    }
+  }
+  if (inputFiles.has(prefix + '/src/install-components.ts')) {
+    const dependencies = ['postcss', 'postcss-modules', 'svgo', 'zod', 'semver', 'typescript']
+    try {
+      const ui = path.join(root, 'library/ui')
+      const installed = realpathSync(path.join(ui, 'node_modules'))
+      const resolveUi = createRequire(path.join(ui, 'package.json'))
+      for (const dependency of dependencies) {
+        const expected = realpathSync(resolveUi.resolve(dependency))
+        const relative = path.relative(installed, expected)
+        if (
+          !relative ||
+          relative === '..' ||
+          relative.startsWith('..' + path.sep) ||
+          path.isAbsolute(relative)
+        ) {
+          problems.push('component dependency is outside UI node_modules: ' + dependency)
+          continue
+        }
+        for (const directory of productionDirectories) {
+          const actual = realpathSync(
+            createRequire(path.join(root, directory, '__resolver__.cjs')).resolve(dependency)
+          )
+          if (actual !== expected)
+            problems.push(
+              'component dependency resolution differs from UI: ' + dependency + ' at ' + directory
+            )
+        }
+      }
+    } catch {
+      problems.push('component production dependencies cannot be resolved within UI node_modules')
+    }
+  }
 }
 
 /**
@@ -303,6 +395,8 @@ export function inspectPublicOutput(
       const found = identity(file, inputFiles.get(file).sha256, 'public input: ' + file, false)
       if (found) inputs.set(file, found)
     }
+    if (sourceScope.length && !problems.length)
+      componentResolverBoundary(root, inputFiles, problems)
   } catch (error) {
     problems.push(
       'public output inspection failed: ' + (error instanceof Error ? error.name : 'unknown error')

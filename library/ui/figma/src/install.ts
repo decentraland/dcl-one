@@ -13,6 +13,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import type { App, SourceKind } from './app.js'
 import { generateFoundations } from './generators/tokens.js'
@@ -161,6 +162,42 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
       verifyCache,
       assertLock
     )
+  const repository = (
+    await execute('git', ['-C', root, 'rev-parse', '--show-toplevel'])
+  ).stdout.trim()
+  const canonicalUi = await canonicalPath(root)
+  const resolverFiles = [
+    'package.json',
+    'pnpm-lock.yaml',
+    'tsconfig.json',
+    'figma/tsconfig.json'
+  ].map((file) => toPosix(path.relative(repository, path.join(canonicalUi, file))))
+  const resolverSource = lock.sources.find(
+    (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
+  )
+  if (!resolverSource) throw new Error('Missing foundation resolver source pin')
+  const maintainedResolvers = new Set(resolverFiles.slice(0, 3))
+  const resolverInputs = await lockedInputs(
+    repository,
+    resolverFiles,
+    resolverSource,
+    maintainedResolvers
+  )
+  const verifyResolvers = async () => {
+    await assertInstallResolverBoundary(root)
+    const current = await lockedInputs(
+      repository,
+      resolverFiles,
+      resolverSource,
+      maintainedResolvers
+    )
+    for (const [file, input] of resolverInputs) {
+      const actual = current.get(file)!
+      if (input.indexBlobSha !== actual.indexBlobSha || !input.bytes.equals(actual.bytes))
+        throw new Error('Foundation resolver input changed during install: ' + file)
+    }
+  }
+  await assertInstallResolverBoundary(root)
   const [collections, textStyles, gradients, icons] = await Promise.all([
     source.getTokenCollections(),
     source.getTextStyles(),
@@ -219,6 +256,7 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   }
   const verifyInputs = async () => {
     await verifyCache()
+    await verifyResolvers()
     for (const [file, entry] of Object.entries(publicFiles)) {
       if (
         entry.origin.kind !== 'generated' &&
@@ -352,6 +390,59 @@ async function lockedInputs(
   return inputs
 }
 
+/** Reject resolver scopes outside the pinned UI package before allowing publication. */
+async function assertInstallResolverBoundary(ui: string, modules: readonly string[] = []) {
+  const prefix = 'figma'
+  const directories = new Set<string>()
+  const visit = async (relative: string, recursive: boolean) => {
+    const directory = await resolveContained(ui, relative)
+    directories.add(relative)
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const file = relative + '/' + entry.name
+      if (
+        /^(?:package\.json|(?:tsconfig|jsconfig)(?:\.[^/]*)?\.json|node_modules)$/i.test(
+          entry.name
+        ) &&
+        file !== prefix + '/tsconfig.json'
+      )
+        throw new Error('Unexpected component resolver scope: ' + file)
+      if (!recursive) continue
+      if (entry.isDirectory()) await visit(file, true)
+      else if (entry.isSymbolicLink())
+        throw new Error('Component resolver scope contains a symlink: ' + file)
+      else if (!entry.isFile()) throw new Error('Component resolver scope contains a special file')
+    }
+  }
+  // The root also contains the verified cache and review tools. Only generation src is recursive.
+  await visit(prefix, false)
+  await visit(prefix + '/src', true)
+  for (const module of modules) {
+    const file = module.startsWith('library/ui/') ? module.slice('library/ui/'.length) : module
+    if (file.startsWith(prefix + '/review/')) continue // Runtime sources are read as bytes.
+    if (!/\.(?:js|jsx|ts|tsx|mjs|mts|cjs|cts)$/i.test(file)) continue
+    let directory = path.posix.dirname(file)
+    while (directory.startsWith(prefix + '/')) {
+      if (!directories.has(directory)) await visit(directory, false)
+      directory = path.posix.dirname(directory)
+    }
+  }
+  const dependencies = ['postcss', 'postcss-modules', 'svgo', 'zod', 'semver', 'typescript']
+  const installed = await canonicalPath(path.join(ui, 'node_modules'))
+  const sanctioned = createRequire(path.join(ui, 'package.json'))
+  for (const relative of directories) {
+    const directory = await resolveContained(ui, relative)
+    const resolver = createRequire(path.join(directory, '__component_resolution__.cjs'))
+    for (const dependency of dependencies) {
+      const expected = await canonicalPath(sanctioned.resolve(dependency))
+      const actual = await canonicalPath(resolver.resolve(dependency))
+      if (!expected.startsWith(installed + path.sep) || actual !== expected)
+        throw new Error(
+          'Component dependency resolves outside the sanctioned UI installation: ' + dependency
+        )
+    }
+  }
+}
+
 /** Physical overrides must be checked independently of the helper they can shadow under TSX. */
 async function componentPhysicalInventory(
   repository: string
@@ -417,6 +508,7 @@ async function installComponents(
   const configPath = toPosix(path.relative(repository, await canonicalPath(configFile)))
   const modulePaths = componentModulePaths(pinned)
   const assertInventory = async () => {
+    await assertInstallResolverBoundary(root, modulePaths)
     const listing = (
       await execute('git', [
         '--no-replace-objects',

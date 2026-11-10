@@ -102,6 +102,22 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     await mkdir(path.join(root, 'foundations'))
     await writeFile(path.join(root, 'foundations/foundations.css'), entry)
     await writeFile(path.join(root, 'foundations/source.json'), metadata)
+    await symlink(path.resolve('node_modules'), path.join(root, 'node_modules'), 'dir')
+    await writeFile(path.join(root, '.gitignore'), 'node_modules/\n')
+    for (const file of ['package.json', 'tsconfig.json', 'figma/tsconfig.json'])
+      await writeFile(
+        path.join(root, file),
+        file === 'package.json' ? '{"name":"fixture-ui"}' : '{"compilerOptions":{}}'
+      )
+    await writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9')
+    lock.sources[0].files = {
+      'figma/tsconfig.json': {
+        sha256: createHash('sha256')
+          .update(await readFile(path.join(figma, 'tsconfig.json')))
+          .digest('hex')
+      }
+    }
+    await writeFile(lockPath, JSON.stringify(lock))
     await initializeFixtureGit(root)
     app = await createApp(figma)
     baseline = await readdir(path.join(root, 'foundations'))
@@ -122,6 +138,62 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     expect(first.files.some((file) => file.path.startsWith('icons/'))).toBe(true)
     expect(await readdir(root)).not.toContain('foundations.install-lock')
   })
+
+  it('should reject a foundation dependency package scope without changing the prior tree', async () => {
+    const original = await readFile(path.join(root, 'foundations/source.json'))
+    await mkdir(path.join(figma, 'audit-dependency'), { recursive: true })
+    await writeFile(
+      path.join(figma, 'audit-dependency/svgo.mjs'),
+      'export const optimize = () => ({data:"injected"})'
+    )
+    await writeFile(
+      path.join(figma, 'package.json'),
+      '{"name":"svgo","exports":"./audit-dependency/svgo.mjs"}'
+    )
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'Unexpected component resolver scope'
+    )
+    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+    expect(await readFile(path.join(root, 'foundations/source.json'))).toEqual(original)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+    expect(await readdir(root)).not.toContain('foundations.install-lock')
+  })
+
+  it('should reject a foundation resolver scope introduced during planning without publication', async () => {
+    const source = app.createSource('snapshot')
+    const getIcons = source.getIcons.bind(source)
+    source.getIcons = async () => {
+      const icons = await getIcons()
+      await writeFile(
+        path.join(figma, 'src/package.json'),
+        '{"name":"svgo","exports":"./injected.mjs"}'
+      )
+      return icons
+    }
+    app.createSource = () => source
+    const original = await readFile(path.join(root, 'foundations/source.json'))
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'Unexpected component resolver scope'
+    )
+    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+    expect(await readFile(path.join(root, 'foundations/source.json'))).toEqual(original)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+  })
+
+  it.each(['package.json', 'tsconfig.json', 'figma/tsconfig.json'])(
+    'should reject dirty known foundation resolver input %s before publication',
+    async (file) => {
+      await writeFile(
+        path.join(root, file),
+        '{"compilerOptions":{"paths":{"svgo":["./injected.ts"]}}}'
+      )
+      await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+        'Commit component source changes'
+      )
+      expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+      expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+    }
+  )
 
   it('should reproduce a clean private stage without changing the public target', async () => {
     const options = {
@@ -439,6 +511,8 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(root, 'package.json'), '{"name":"@fixture/ui","version":"0.0.0"}')
     await writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9')
     await writeFile(path.join(root, 'tsconfig.json'), '{"compilerOptions":{}}')
+    await symlink(path.resolve('node_modules'), path.join(root, 'node_modules'), 'dir')
+    await writeFile(path.join(repository, '.gitignore'), 'node_modules/\n')
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     lock.sources[0].files = {}
     for (const file of [...modulePaths, 'library/ui/figma/figma.config.json'])
@@ -732,6 +806,70 @@ describe('when component installation owns its verified input read-set and trans
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
+  })
+
+  it.each(['', 'src/', 'src/generators/'])(
+    'should reject a package self-reference in %s with a non-src helper without publication',
+    async (scope) => {
+      await mkdir(path.join(figma, scope), { recursive: true })
+      await mkdir(path.join(figma, 'audit-dependency'), { recursive: true })
+      await writeFile(path.join(figma, 'audit-dependency/postcss.mjs'), 'export default {}')
+      await writeFile(
+        path.join(figma, scope, 'package.json'),
+        JSON.stringify({
+          name: 'postcss',
+          exports: { '.': './audit-dependency/postcss.mjs' }
+        })
+      )
+      options.outDir = stage
+      await expect(runInstall(app, options)).rejects.toThrow('Unexpected component resolver scope')
+      expect(planComponents).not.toHaveBeenCalled()
+      expect(await readFile(registryPath)).toEqual(originalRegistry)
+      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
+    }
+  )
+
+  it.each([
+    'src/node_modules',
+    'src/generators/node_modules',
+    'node_modules',
+    'src/jsconfig.json',
+    'src/tsconfig.paths.json'
+  ])('should reject an ignored resolver override %s without publication', async (override) => {
+    await writeFile(path.join(repository, '.gitignore'), 'node_modules/\n*.json\n')
+    await mkdir(path.dirname(path.join(figma, override)), { recursive: true })
+    if (override.endsWith('node_modules'))
+      await symlink(path.resolve('node_modules'), path.join(figma, override), 'dir')
+    else await writeFile(path.join(figma, override), '{}')
+    await expect(runInstall(app, options)).rejects.toThrow('Unexpected component resolver scope')
+    expect(planComponents).not.toHaveBeenCalled()
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+  })
+
+  it('should reject a UI package self-reference outside its installed dependency tree', async () => {
+    await writeFile(path.join(root, 'audit-postcss.cjs'), 'module.exports = {}')
+    await writeFile(
+      path.join(root, 'package.json'),
+      '{"name":"postcss","exports":"./audit-postcss.cjs"}'
+    )
+    await expect(runInstall(app, options)).rejects.toThrow('outside the sanctioned UI installation')
+    expect(planComponents).not.toHaveBeenCalled()
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+    expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
+  })
+
+  it('should recheck package resolution scopes after planning and preserve the old tree', async () => {
+    vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+      const plan = await actualPlan(context)
+      await writeFile(
+        path.join(figma, 'package.json'),
+        '{"name":"postcss","exports":"./audit-dependency/postcss.mjs"}'
+      )
+      return plan
+    })
+    await expect(runInstall(app, options)).rejects.toThrow('Unexpected component resolver scope')
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+    expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
   })
 
   it.each(['figma/tsconfig.json', 'tsconfig.json'])(

@@ -7,6 +7,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -130,6 +131,132 @@ describe('when inspecting independently pinned public outputs and inputs', () =>
   it('should not treat an ignored gallery build as executable component source', () => {
     put('library/ui/figma/review/review-dist/assets/gallery.js', 'compiled gallery')
     expect(inspect().problems).toEqual([])
+  })
+
+  describe.each([
+    'library/ui/figma/package.json',
+    'library/ui/figma/PACKAGE.JSON',
+    'library/ui/figma/jsconfig.json',
+    'library/ui/figma/src/nested/package.json',
+    'library/ui/figma/src/test/fixtures/package.json',
+    'library/ui/figma/src/__tests__/tsconfig.paths.json',
+    'library/ui/figma/review/package.json'
+  ])('and an unapproved resolver control exists at %s', (control) => {
+    beforeEach(() => {
+      put(
+        control,
+        JSON.stringify({ name: 'postcss', exports: { '.': './audit-dependency/postcss.mjs' } })
+      )
+      put(
+        'library/ui/figma/audit-dependency/postcss.mjs',
+        'export default () => ({ auditDependencyShadow: true })'
+      )
+    })
+    it('should reject the resolver redirect without evaluating its non-source target', () => {
+      expect(inspect().problems).toContain('unexpected component resolver control: ' + control)
+    })
+    it('should reject the control even if it is staged and supplied a pin', () => {
+      inputFiles.set(control, { sha256: hash(readFileSync(path.join(root, control))) })
+      git('add', '--', control)
+      expect(inspect().problems).toContain('unexpected component resolver control: ' + control)
+    })
+  })
+  describe.each([
+    'library/ui/figma/node_modules',
+    'library/ui/figma/src/NODE_MODULES',
+    'library/ui/figma/src/generators/node_modules',
+    'library/ui/figma/src/test/fixtures/node_modules',
+    'library/ui/figma/review/node_modules'
+  ])('and a nearer dependency directory exists at %s', (directory) => {
+    beforeEach(() => {
+      mkdirSync(path.join(root, directory), { recursive: true })
+    })
+    it('should reject an alternate package lookup location even when empty', () => {
+      expect(inspect().problems).toContain('unexpected component resolver control: ' + directory)
+    })
+  })
+  it('should reject special entries in normally excluded source fixture directories', () => {
+    mkdirSync(path.join(root, 'library/ui/figma/src/test/fixtures'), { recursive: true })
+    execFileSync('mkfifo', [path.join(root, 'library/ui/figma/src/test/fixtures/pipe')])
+    expect(inspect().problems).toContain(
+      'unsafe component resolver entry: library/ui/figma/src/test/fixtures/pipe'
+    )
+  })
+
+  it('should permit only the existing pinned root Figma tsconfig control', () => {
+    put('library/ui/figma/tsconfig.json', '{"compilerOptions":{}}')
+    inputFiles.set('library/ui/figma/tsconfig.json', { sha256: hash('{"compilerOptions":{}}') })
+    git('add', '.')
+    expect(inspect().problems).toEqual([])
+  })
+  it('should reject an unpinned Figma tsconfig even when tracked', () => {
+    put('library/ui/figma/tsconfig.json', '{"compilerOptions":{}}')
+    git('add', '.')
+    expect(inspect().problems).toContain(
+      'unexpected component resolver control: library/ui/figma/tsconfig.json'
+    )
+  })
+  it('should inspect executable siblings of a locked non-source helper', () => {
+    put('library/ui/figma/review/shadow.mjs', 'export const shadow = true')
+    git('add', '.')
+    expect(inspect().problems).toContain(
+      'unpinned component helper implementation: library/ui/figma/review/shadow.mjs'
+    )
+  })
+  it('should permit a tracked non-source helper sibling included in the read-set', () => {
+    put('library/ui/figma/review/helper.mjs', 'export const helper = true')
+    inputFiles.set('library/ui/figma/review/helper.mjs', {
+      sha256: hash('export const helper = true')
+    })
+    git('add', '.')
+    expect(inspect().problems).toEqual([])
+  })
+  it('should treat the fixed review runtime as byte input without admitting gallery implementations', () => {
+    const runtime = 'library/ui/figma/review/src/components/figma-view-state.ts'
+    inputFiles.delete(input)
+    put(runtime, 'runtime bytes')
+    inputFiles.set(runtime, { sha256: hash('runtime bytes') })
+    put('library/ui/figma/review/review.vite.config.ts', 'gallery config')
+    git('add', '.')
+    expect(inspect().problems).toEqual([])
+  })
+  describe('and the component producer is part of the supplied read-set', () => {
+    beforeEach(() => {
+      put('library/ui/figma/src/install-components.ts', 'producer bytes')
+      inputFiles.set('library/ui/figma/src/install-components.ts', {
+        sha256: hash('producer bytes')
+      })
+      symlinkSync(path.resolve('node_modules'), path.join(root, 'library/ui/node_modules'))
+      put('.gitignore', 'node_modules/\n')
+      git('add', '.')
+    })
+    it('should accept the same production dependency resolution as the sanctioned UI installation', () => {
+      expect(inspect().problems).toEqual([])
+    })
+    it('should fail closed when the UI dependency installation is missing', () => {
+      unlinkSync(path.join(root, 'library/ui/node_modules'))
+      expect(inspect().problems).toContain(
+        'component production dependencies cannot be resolved within UI node_modules'
+      )
+    })
+    it('should reject a package self-reference resolving outside the installed UI dependencies', () => {
+      put(
+        'library/ui/package.json',
+        '{"name":"postcss","exports":{".":"./audit-dependency/postcss.mjs"}}'
+      )
+      put('library/ui/audit-dependency/postcss.mjs', 'export default {}')
+      expect(inspect().problems).toContain(
+        'component dependency is outside UI node_modules: postcss'
+      )
+    })
+    it('should reject dependency resolution differing from the UI package root', () => {
+      put('library/ui/figma/src/node_modules/postcss/package.json', '{"main":"index.cjs"}')
+      put('library/ui/figma/src/node_modules/postcss/index.cjs', 'module.exports = {}')
+      git('add', '-f', '--', 'library/ui/figma/src/node_modules')
+      expect(inspect().problems).toContain(
+        'component dependency resolution differs from UI: postcss at library/ui/figma/src'
+      )
+    })
   })
 
   describe.each([
