@@ -167,6 +167,8 @@ struct SceneInProgress {
     parent: Option<Entity>,
     /// The scene's world when writing began: another one means the asset was replaced.
     scene_world: WorldId,
+    /// The world the instance is written into: its entity ids mean nothing in another.
+    world: WorldId,
     /// The instance's entity for every scene entity, all allocated before the first write so
     /// that references between them map. It becomes the instance's [`InstanceInfo`].
     entity_map: EntityHashMap<Entity>,
@@ -205,6 +207,7 @@ impl SceneInProgress {
             instance_id,
             parent,
             scene_world: scene.world.id(),
+            world: world.id(),
             total: entity_map.len(),
             unwritten: entity_map.len(),
             entity_map,
@@ -367,22 +370,29 @@ impl SceneInProgress {
     /// Drops from the written entities' `Children` those despawned before they were written:
     /// writes skip relationship hooks, so their parent still lists them.
     fn prune_dead_children(&self, world: &mut World) {
+        let gone = |world: &World, child: &Entity| world.get_entity(*child).is_err();
         for entity in self.entity_map.values() {
             let Some(children) = world.get::<Children>(*entity) else {
                 continue;
             };
-            let dead: Vec<Entity> = children
-                .to_vec()
-                .into_iter()
-                .filter(|child| world.get_entity(*child).is_err())
-                .collect();
-            if dead.is_empty() {
+            let listed: &[Entity] = children;
+            if !listed.iter().any(|child| gone(world, child)) {
                 continue;
             }
-            if let Some(mut children) = world.get_mut::<Children>(*entity) {
-                children
-                    .collection_mut_risky()
-                    .retain(|child| !dead.contains(child));
+            let dead: Vec<Entity> = listed
+                .iter()
+                .copied()
+                .filter(|child| gone(world, child))
+                .collect();
+            let Some(mut children) = world.get_mut::<Children>(*entity) else {
+                continue;
+            };
+            children
+                .collection_mut_risky()
+                .retain(|child| !dead.contains(child));
+            if children.is_empty() {
+                // as Bevy's hooks leave a parent whose last child goes
+                world.entity_mut(*entity).remove::<Children>();
             }
         }
     }
@@ -833,6 +843,13 @@ impl SceneSpawner {
     /// until the [spawn deadline](Self::set_spawn_deadline); without one, writes them whole.
     /// Instances whose scene is not loaded wait.
     fn spawn_queued_real_scenes(&mut self, world: &mut World) -> Result<(), SceneSpawnError> {
+        if let Some(progress) = &self.scene_in_progress {
+            assert!(
+                progress.world == world.id(),
+                "this SceneSpawner has an instance part-written in another World: run it there \
+                 until that instance completes"
+            );
+        }
         if self.scene_in_progress.is_none() && self.scenes_to_spawn.is_empty() {
             return Ok(());
         }

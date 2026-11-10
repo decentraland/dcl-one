@@ -141,6 +141,8 @@ across workers:
     some are unwritten, those whose parent was despawned go too and the instance completes with
     what is left (its ready event fires); those the hierarchy does not reach are written in
     slices. An instance that fails to write, sliced or whole, is despawned and forgotten.
+  - A part-written instance is finished in the world it started in: running the spawner on
+    another world meanwhile panics.
   - `spawn_progress` reports the queue and the instance being written, for diagnostics.
   - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
     `reveal_instance_sync`.

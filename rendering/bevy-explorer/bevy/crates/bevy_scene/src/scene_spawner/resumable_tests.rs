@@ -247,10 +247,9 @@ fn an_unwritten_entity_despawned_by_others_mid_spawn_stays_gone_with_its_subtree
     // and no dead id among the root's children
     assert!(is_ready(&app, instance));
     assert_eq!(nodes(&mut app), [0]);
+    // its only child gone, the root has no `Children` left, as Bevy's own hooks would leave it
     let root = children(&app, parent)[0];
-    assert!(children(&app, root)
-        .iter()
-        .all(|child| app.world().get_entity(*child).is_ok()));
+    assert!(app.world().get::<Children>(root).is_none());
 }
 
 #[test]
@@ -270,6 +269,21 @@ fn a_spawner_can_spawn_into_another_world() {
     }
 
     assert!(spawner.instance_is_ready(instance));
+}
+
+#[test]
+#[should_panic(expected = "part-written in another World")]
+fn a_spawner_will_not_finish_an_instance_in_another_world() {
+    let mut first = app();
+    let mut second = app();
+    let scene = add_scene(&mut first, tree(0, 3));
+    let mut spawner = SceneSpawner::default();
+    spawner.set_spawn_deadline(Some(Instant::now()));
+    spawner.spawn(scene);
+    spawner.spawn_queued_scenes(first.world_mut()).unwrap();
+
+    // its entity ids mean nothing there
+    let _ = spawner.spawn_queued_scenes(second.world_mut());
 }
 
 #[test]
