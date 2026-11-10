@@ -46,7 +46,7 @@ use crate::{
     props::PropsPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
-    sky_preset::{ambient_trilight, fog_color, FOG_DENSITY_PER_METRE},
+    sky_preset::{ambient_trilight, fog_color, fog_falloff_density, FOG_DENSITY_PER_METRE},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
     trees::TreesPlugin,
@@ -63,6 +63,7 @@ impl Plugin for VisualsPlugin {
         debug_panel::register(app);
         app.insert_resource(DirectionalLightShadowMap { size: 4096 })
             .init_resource::<SceneGlobalLight>()
+            .init_resource::<FogDensity>()
             .insert_resource(CloudCover {
                 cover: 0.375,
                 speed: 5.0,
@@ -156,7 +157,7 @@ fn setup(
         directional_light_color: Color::NONE,
         directional_light_exponent: 0.0,
         falloff: FogFalloff::Exponential {
-            density: FOG_DENSITY_PER_METRE,
+            density: fog_falloff_density(FOG_DENSITY_PER_METRE),
         },
     });
 
@@ -192,6 +193,7 @@ fn apply_global_light(
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
     envmap_settings: Res<SkyEnvmapSettings>,
+    fog_density: Res<FogDensity>,
     mut sky_ambient: ResMut<SkyAmbient>,
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
@@ -293,6 +295,7 @@ fn apply_global_light(
     let skip_writes = settled
         && !setting.is_changed()
         && !envmap_settings.is_changed()
+        && !fog_density.is_changed()
         && !fog_added
         && *last_day_fraction == clock_fraction;
     *last_day_fraction = clock_fraction;
@@ -382,7 +385,7 @@ fn apply_global_light(
         fog.falloff = FogFalloff::Exponential {
             density: match setting.graphics.fog {
                 FogSetting::Off => 0.0,
-                FogSetting::On => FOG_DENSITY_PER_METRE,
+                FogSetting::On => fog_falloff_density(fog_density.0),
             },
         };
     }
@@ -448,18 +451,35 @@ fn shadow_console_command(
     }
 }
 
+/// The fog density in Unity's units (`RenderSettings.fogDensity`), the sky preset's by default;
+/// `/fog` sets it live.
+#[derive(Resource)]
+struct FogDensity(f32);
+
+impl Default for FogDensity {
+    fn default() -> Self {
+        Self(FOG_DENSITY_PER_METRE)
+    }
+}
+
+/// switch the fog on or off, and optionally set its density in Unity's units (default 0.0005)
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/fog")]
 struct FogConsoleCommand {
     on: Option<bool>,
+    density: Option<f32>,
 }
 
 fn fog_console_command(
     mut input: ConsoleCommand<FogConsoleCommand>,
     mut config: ResMut<AppConfig>,
+    mut fog_density: ResMut<FogDensity>,
 ) {
     if let Some(Ok(command)) = input.take() {
         let activate = command.on.unwrap_or(true);
+        if let Some(density) = command.density {
+            fog_density.0 = density.max(0.0);
+        }
 
         config.graphics.fog = if activate {
             FogSetting::On
@@ -468,11 +488,12 @@ fn fog_console_command(
         };
 
         input.reply_ok(format!(
-            "fog {}",
+            "fog {}, density {}",
             match activate {
                 true => "enabled",
                 false => "disabled",
-            }
+            },
+            fog_density.0
         ));
     }
 }

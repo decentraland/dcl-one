@@ -4,8 +4,18 @@
 
 use bevy::prelude::*;
 
-/// Fog density at every phase (`fogDensityByPhase` default), `FogFalloff::Exponential`.
+/// Fog density at every phase (`fogDensityByPhase` default), as Unity's `RenderSettings.fogDensity`.
 pub const FOG_DENSITY_PER_METRE: f32 = 0.0005;
+
+/// urp: exponential fog reads `unity_FogParams.x`, which is density / sqrt(ln 2), and takes
+/// `exp2(-x * depth)` (`ComputeFogFactorZ0ToFar`, `ComputeFogIntensity`), so it falls off as
+/// `exp(-sqrt(ln 2) * density * depth)`, not `exp(-density * depth)`.
+pub const URP_EXP_FOG_SCALE: f32 = 0.832_554_6;
+
+/// `RenderSettings.fogDensity` as the density of bevy's `FogFalloff::Exponential`.
+pub fn fog_falloff_density(unity_density: f32) -> f32 {
+    unity_density * URP_EXP_FOG_SCALE
+}
 
 /// `(day fraction, phase)`: phase 0 night, 0.25 sunrise, 0.5 day, 0.75 sunset, 1 night.
 pub const TIME_TO_PHASE: [(f32, f32); 10] = [
@@ -198,6 +208,15 @@ mod tests {
         assert!((sky - expected).length() < 1e-6);
         assert!(sky.z < 0.738 && sky.z > 0.5); // linearised, not the sRGB value
         assert!(equator.x > ground.x && ground.y < 0.02); // a dark red ground
+    }
+
+    #[test]
+    fn fog_falls_off_as_urp_exponential() {
+        // urp: exp2(-(density / sqrt(ln 2)) * z)
+        let (density, z) = (FOG_DENSITY_PER_METRE, 200.0);
+        let urp = (-(density / std::f32::consts::LN_2.sqrt()) * z).exp2();
+        let bevy = (-fog_falloff_density(density) * z).exp();
+        assert!((urp - bevy).abs() < 1e-6, "{urp} vs {bevy}");
     }
 
     #[test]

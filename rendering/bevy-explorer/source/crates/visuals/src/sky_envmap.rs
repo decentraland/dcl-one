@@ -224,16 +224,27 @@ fn ambient_image() -> Image {
     image
 }
 
-/// unity: the Trilight gradient at a surface normal `y` up: the sky colour straight up, the
-/// equator at the horizon, the ground straight down, linear in between. Unity projects the three
-/// colours onto second-order spherical harmonics, which rounds the gradient slightly; the
-/// gradient itself is what the editor previews and what the ramps were authored against.
+/// unity: the Trilight gradient as a surface with normal `y` up receives it. The environment is
+/// the sky colour straight up, the equator at the horizon and the ground straight down, linear
+/// in between; Unity projects it onto the ambient SH probe, which URP evaluates at the normal as
+/// irradiance (`SampleSH`), so a surface sees the cosine-weighted mean of the hemisphere it
+/// faces, not the colour straight along its normal. An up-facing surface gets 2/3 sky and 1/3
+/// equator, a wall a fifth of each of sky and ground. The L2 projection's slight rounding of this
+/// is left out.
 fn trilight_gradient(y: f32, [sky, equator, ground]: [Vec3; 3]) -> Vec3 {
-    if y >= 0.0 {
-        equator.lerp(sky, y.min(1.0))
-    } else {
-        equator.lerp(ground, (-y).min(1.0))
-    }
+    equator
+        + (sky - equator) * clamped_cosine_overlap(y)
+        + (ground - equator) * clamped_cosine_overlap(-y)
+}
+
+/// (1/pi) * the integral over the sphere of max(up . w, 0) * max(n . w, 0), for a normal `n`
+/// with `y = n . up`: the share a surface receives of a light that rises linearly from the
+/// horizon to 1 straight up. `(2 / 3pi) * ((pi - a) cos a + sin a)` with `a` the angle between
+/// them: 2/3 facing up, 2/(3pi) on a wall, 0 facing down.
+fn clamped_cosine_overlap(y: f32) -> f32 {
+    let y = y.clamp(-1.0, 1.0);
+    let angle = y.acos();
+    2.0 / (3.0 * PI) * ((PI - angle) * y + angle.sin())
 }
 
 /// sky_envmap.wgsl `cube_texel_dir`: the direction a cube texel at `uv` of `face` covers, in the
@@ -789,13 +800,60 @@ mod tests {
         Vec3::new(1.0, 0.0, 0.0),
     ];
 
+    fn close(a: Vec3, b: Vec3) -> bool {
+        (a - b).abs().max_element() < 1e-5
+    }
+
     #[test]
-    fn gradient_runs_sky_equator_ground() {
-        assert_eq!(trilight_gradient(1.0, BANDS), Vec3::new(0.0, 0.0, 1.0));
-        assert_eq!(trilight_gradient(0.0, BANDS), Vec3::new(0.0, 1.0, 0.0));
-        assert_eq!(trilight_gradient(-1.0, BANDS), Vec3::new(1.0, 0.0, 0.0));
-        assert_eq!(trilight_gradient(0.5, BANDS), Vec3::new(0.0, 0.5, 0.5));
-        assert_eq!(trilight_gradient(-0.25, BANDS), Vec3::new(0.25, 0.75, 0.0));
+    fn gradient_is_the_cosine_weighted_hemisphere() {
+        let wall = 2.0 / (3.0 * PI);
+        // up: 2/3 sky, 1/3 equator, no ground
+        assert!(close(
+            trilight_gradient(1.0, BANDS),
+            Vec3::new(0.0, 1.0 / 3.0, 2.0 / 3.0)
+        ));
+        // wall: equator, plus a share of sky and ground
+        assert!(close(
+            trilight_gradient(0.0, BANDS),
+            Vec3::new(wall, 1.0 - 2.0 * wall, wall)
+        ));
+        // down: 2/3 ground, 1/3 equator, no sky
+        assert!(close(
+            trilight_gradient(-1.0, BANDS),
+            Vec3::new(2.0 / 3.0, 1.0 / 3.0, 0.0)
+        ));
+        // one colour everywhere stays that colour at every normal
+        for y in [-1.0, -0.4, 0.0, 0.3, 1.0] {
+            assert!(close(trilight_gradient(y, [Vec3::ONE; 3]), Vec3::ONE));
+        }
+    }
+
+    #[test]
+    fn overlap_matches_a_numeric_integral() {
+        // (1/pi) * integral of max(w.y, 0) * max(n . w, 0) over the sphere, n in the xy plane
+        for y in [-0.8_f32, -0.2, 0.0, 0.45, 0.9] {
+            let n = Vec3::new((1.0 - y * y).sqrt(), y, 0.0);
+            let steps = 400;
+            let mut sum = 0.0;
+            for i in 0..steps {
+                let theta = (i as f32 + 0.5) / steps as f32 * PI;
+                for j in 0..steps {
+                    let phi = (j as f32 + 0.5) / steps as f32 * 2.0 * PI;
+                    let w = Vec3::new(
+                        theta.sin() * phi.cos(),
+                        theta.cos(),
+                        theta.sin() * phi.sin(),
+                    );
+                    sum += w.y.max(0.0) * n.dot(w).max(0.0) * theta.sin();
+                }
+            }
+            let integral = sum * (PI / steps as f32) * (2.0 * PI / steps as f32) / PI;
+            assert!(
+                (integral - clamped_cosine_overlap(y)).abs() < 2e-3,
+                "y {y}: numeric {integral} vs {}",
+                clamped_cosine_overlap(y)
+            );
+        }
     }
 
     #[test]
@@ -820,24 +878,20 @@ mod tests {
             [0, 2, 4, 6]
                 .map(|c| half::f16::from_le_bytes([bytes[at + c], bytes[at + c + 1]]).to_f32())
         };
-        // the +y face near its centre is the sky band, scaled, with alpha 1 (only the exact
-        // centre points straight up: the texel next to it leans a little to the equator)
+        // the +y face near its centre is about 2/3 sky and 1/3 equator, scaled, with alpha 1, and
+        // no ground
         let [r, g, b, a] = texel(2, 3, 3);
         assert!(
-            r == 0.0 && g < 0.1 && b > 1.9 && a == 1.0,
+            r < 0.01 && (g - 2.0 / 3.0).abs() < 0.1 && (b - 4.0 / 3.0).abs() < 0.1 && a == 1.0,
             "{:?}",
             [r, g, b, a]
         );
-        // the -y face is the ground band, still dominant at a corner
+        // the -y face is mostly ground, still dominant at a corner
         let [r, g, b, a] = texel(3, 0, 0);
-        assert!(
-            b == 0.0 && r > 1.0 && r > g && a == 1.0,
-            "{:?}",
-            [r, g, b, a]
-        );
+        assert!(r > g && r > b && b < 0.2 && a == 1.0, "{:?}", [r, g, b, a]);
         // a side face's top row leans to the sky, its bottom row to the ground
         let (top, bottom) = (texel(0, 4, 0), texel(0, 4, AMBIENT_SIZE - 1));
-        assert!(top[2] > top[1] && top[0] == 0.0);
-        assert!(bottom[0] > bottom[1] && bottom[2] == 0.0);
+        assert!(top[2] > top[1] && top[2] > top[0], "{top:?}");
+        assert!(bottom[0] > bottom[1] && bottom[0] > bottom[2], "{bottom:?}");
     }
 }
