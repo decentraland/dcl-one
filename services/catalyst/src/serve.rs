@@ -1587,7 +1587,7 @@ async fn ops_states(
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http_client.clone(),
-        crate::index::credits_settings(config, true)?,
+        crate::index::credits_settings(config)?,
         shop::credits::Sources {
             market: Some(sources.market.clone()),
             price: Some(sources.price.clone()),

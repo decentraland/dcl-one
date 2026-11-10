@@ -42,23 +42,13 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     shop::rentals::index::spawn_job(&market, &jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(
         pool.clone(),
-        http.clone(),
+        http,
         land_settings(&config)?,
         Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
-    let credits = Arc::new(shop::credits::State::new(
-        pool.clone(),
-        http,
-        credits_settings(&config, false)?,
-        shop::credits::Sources {
-            market: Some(market),
-            price: None,
-            economy: None,
-        },
-        None,
-    ));
-    credits.spawn_usage_index(&jobs);
+    // The CreditUsed index is not here: its fold debits the credits ledger, so it runs in
+    // `serve`, under the restore stamps `serve` installs (`credits::State::spawn_jobs`).
     let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
     shutdown.await;
@@ -174,13 +164,11 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
     Ok(land_settings)
 }
 
-/// `trial_applies`: whether this process takes `CREDITS_TRIAL_MODE`'s start requirements. `serve`
-/// issues, revokes and takes top-ups, so it does; `index` only folds the CreditUsed index, so it
-/// starts without the trial's signing keys.
-pub(crate) fn credits_settings(
-    config: &Config,
-    trial_applies: bool,
-) -> anyhow::Result<shop::credits::Settings> {
+/// `serve`'s credits settings, `CREDITS_TRIAL_MODE`'s start requirements included. `index` builds
+/// no credits state and runs no credits job, but still resolves every `*_FILE` it is given at start
+/// (`resolve_secret_files`): the credits configuration and its key files belong to `serve`'s
+/// environment only.
+pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> {
     let non_empty = Config::non_empty;
     shop::credits::Settings::parse(shop::credits::RawSettings {
         writes_enabled: config.ops.ops_writes_enabled,
@@ -225,7 +213,7 @@ pub(crate) fn credits_settings(
         credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
         credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
         credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
-        trial_mode: trial_applies && config.shop.credits_trial_mode,
+        trial_mode: config.shop.credits_trial_mode,
         trial_buyers: non_empty(&config.shop.credits_trial_buyers),
         shop_base_url: config.shop.shop_base_url.clone(),
     })

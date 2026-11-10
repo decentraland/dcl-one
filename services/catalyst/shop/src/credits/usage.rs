@@ -688,6 +688,20 @@ impl UsageIndex {
         Ok(())
     }
 
+    /// The `credits-usage-index` job's pass ([`super::State::spawn_jobs`]):
+    /// [`Self::run_pass`], folding only when `gate` lets this pass write. The
+    /// gate is asked as the pass starts, so `OPS_WRITES_ENABLED` and the
+    /// restore stamps the process installed decide each pass.
+    pub async fn gated_pass(
+        &self,
+        ctx: Option<&JobContext>,
+        gate: &crate::shared::writes::PassGate,
+        writes_enabled: bool,
+    ) -> anyhow::Result<PassOutcome> {
+        let fold = gate.check(writes_enabled).is_none();
+        self.run_pass(ctx, fold).await
+    }
+
     /// One pass: replay if asked, catch up to the finalized block under the
     /// request budget, fold the new usages, publish when still at the head.
     /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off or held by the
