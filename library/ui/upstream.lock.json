@@ -73,9 +73,9 @@
         "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
         "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails.",
         "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
-        "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key. Key-holding jobs may not rewrite a checkout with git, may pass only allowlisted action inputs (same repository, no parent paths, artifacts only under runner.temp or a workspace dot directory), may not map the key into an action step, interpolate expressions in the key step, write GITHUB_ENV or GITHUB_PATH, or use parent path segments or loader assignments in the key step.",
+        "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, and have only the steps the key guard integrity entry lists.",
         "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header. The public foundations icons and foundations/source.json are regenerated through the supported installer with the ported generator, and the public foundations table records their new digests.",
-        "Key guard integrity: the key step runs a fresh copy of key-guard.mjs read by object id from TRUSTED_SHA (github.sha) into RUNNER_TEMP, so a step that rewrote the working tree, HEAD, the index or refs before it cannot change the program that reads the key; the policy test requires that copy in every key step and rejects any step before the key step that writes into a checkout (cp, mv, install, rsync, ln, dd, sed -i, tee, tar -x, unzip, redirects). The copy is read with --no-replace-objects, every parsed command of the key step is validated (the fresh copy is the only node command), writes to any spelling of the copy path are rejected, earlier steps may not create replace refs, rewrite refs or git config, or write into .git or .github, and FIGMA_TOKEN is a guarded secret no workflow may read. The url allowlist is read from TRUSTED_SHA too, and the guard names TRUSTED_SHA (--revision) in its summary. Key-holding jobs may not change directory or write to HOME, other variables or absolute paths, and the import check covers export from and dynamic loads. The policy requires every key step to set GIT_NO_REPLACE_OBJECTS, GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL to their hardening values and to pass --allowlist-from and --revision only TRUSTED_SHA; it rejects git config, HOME, XDG_CONFIG_HOME and GIT_EXEC_PATH overrides, reads checkout writes past redirects, background and grouping operators and command prefixes (timeout, env, time, sudo), and also rejects curl, wget and gh downloads into a checkout, inline node, perl or ruby code, git lfs install and fetch refspecs that can cover refs/replace before the key step.",
+        "Key guard integrity: the key scan runs in two jobs. prepare holds no secret: it validates the triggering run, fetches the scanned commits and prefetches their LFS objects, checks the Review artifact, posts the failed check for every skip or failure, and uploads the commits as a git bundle (prerequisites: the parents of the default branch commit it checked out) and the LFS objects as the key-scan-input artifact. key-scan holds FIGMA_FILE_KEY and has only pinned actions/checkout of the default branch into trusted/ without persisted credentials, actions/setup-node, actions/download-artifact into runner.temp, the key step and a report step. The policy test requires a key step's run to equal, once trimmed, one of the fixed templates in figma/test/key-step.ts (the trusted/ scan, or an artifact scan over a workspace root checkout with the build in .preview/input), and its env to hold exactly FIGMA_FILE_KEY, TRUSTED_SHA (github.sha or github.workflow_sha), GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL and GIT_NO_REPLACE_OBJECTS at their hardening values, and the template's data variables, each from an allowlisted expression; the optional report step must equal the report template and come last. Any other step, action, action input or step key in a key job is rejected, so no shell runs before the key step and no command is parsed. The key step copies key-guard.mjs from TRUSTED_SHA by object id with --no-replace-objects before it fetches the bundle (into refs/key-scan/ only), reads the url allowlist from TRUSTED_SHA, names it with --revision, and reads LFS objects from the downloaded store (--lfs-store), each verified against its oid. Key jobs run on GitHub-hosted runners, and the import check covers export from and dynamic loads.",
         "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
         "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "Install components through the verified-cache transaction and check emitted output provenance, complete input identities, CSS Modules exports and internal registry lifecycle."
@@ -713,7 +713,7 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/key-guard.mjs": {
-          "sha256": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+          "sha256": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -722,7 +722,7 @@
           ]
         },
         "library/ui/figma/key-guard.test.ts": {
-          "sha256": "9d52f1e20ce197b713ce89899b413a110de60327c28c114b7c05f006b65850db",
+          "sha256": "63fa70c6542b815acfdec37a3310d1ed1cbe57f32c94b5db0463ee8a7583e4af",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4076,7 +4076,7 @@
           ]
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "881e95efe10caecdccfe4fe7feb036b99d2806465c2cba404bbf50f0000ff97c",
+          "sha256": "43a7307bee1f6d3393ae40a067131aca92f453b2a2e3c5612c7d7a04f6b05250",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4088,7 +4088,7 @@
           ]
         },
         "library/ui/figma/test/key-step.ts": {
-          "sha256": "f0537c2c41e2d889deb2d9d1b8d9e1645d9c4ae36a900552246507c54aab3bbe",
+          "sha256": "2bc9e767a09839a7dd243216c61ca4938c38dc60b63d057220cfaeb00bf3998b",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4112,7 +4112,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "1c10a82dd61241a236fc59293720223cb1b3ef6903733695d365e744cefca243",
+          "sha256": "25baf7b99b3bc4e8a71f0cb3b52505c068369406aa1a494235a6a991c189213c",
           "fds": null,
           "deviation": [
             "capture-removed",
@@ -4478,7 +4478,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4596,7 +4596,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4714,7 +4714,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4839,7 +4839,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4959,7 +4959,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5079,7 +5079,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5197,7 +5197,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5317,7 +5317,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5429,7 +5429,7 @@
         }
       },
       "generation.json": {
-        "sha256": "a15747adb42af268874f9bf2f87a1aeca6314c4731adaed06fceb72966e4d68a",
+        "sha256": "d87d00e275ca1844f6fb33c7dae00a788d844d0dacdbf5a9bf3e86421ea4332d",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -5437,7 +5437,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
