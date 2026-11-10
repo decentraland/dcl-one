@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import type { AuthIdentity } from "../auth/types";
+import { NOTIFICATIONS_PREFIX } from "../catalyst/bases";
 import { postJSON, signedGetJSON } from "../catalyst/client";
 
-/** The notifications routes are nested under `/notifications` on the node. */
-const BASE = "/notifications";
+const BASE = NOTIFICATIONS_PREFIX;
 
 const ChannelSchema = z.object({ email: z.boolean(), in_app: z.boolean() });
 
