@@ -1777,10 +1777,11 @@ async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry(
         estate_registry: "0x00000000000000000000000000000000000000bb".into(),
         ..crate::land_authz::Settings::for_tests()
     };
-    assert!(
+    assert_eq!(
         crate::land_authz::indexer::begin_replay(&db.pool, &other, other.start_block)
             .await
-            .unwrap()
+            .unwrap(),
+        crate::land_authz::indexer::ReplayStart::Begun
     );
     sqlx::query(
         "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, estate_id) \
@@ -1933,4 +1934,53 @@ async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
     let (status, body) = get(&state, &names_uri).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
+}
+
+/// The nft leg of `/v1/prices` reads after its gate; if the land index
+/// stops being ready in between, the route answers the land index's
+/// envelope, as `/v1/nfts` does, and any other failure stays internal.
+#[tokio::test]
+async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_after_the_gate() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let parcels = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Parcel),
+        ..Default::default()
+    };
+    let read = super::nft_reads::nft_prices(&state, &parcels).await;
+    assert!(read.is_ok(), "{read:?}");
+
+    // The mainnet cursor is rebound to other registries.
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = '0x00000000000000000000000000000000000000aa' \
+         WHERE network = 'ethereum-mainnet'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let refused = super::nft_reads::nft_prices(&state, &parcels)
+        .await
+        .unwrap_err();
+    assert_eq!(refused, super::nft_reads::NFT_PRICES_LAND_UNAVAILABLE);
+    let answer = |e: String| async move {
+        let response = super::prices::nft_prices_error(e);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+    let (status, body) = answer(refused).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    let (status, body) = answer("statement timeout".into()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
 }

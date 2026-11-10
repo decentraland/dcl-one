@@ -121,15 +121,49 @@ operations probe the resolved deployment by primary/unique key on every
 request; redeployment without the wallet revokes that grant. Collaborator
 access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
-It derives membership at read time through `worlds.logs_permissions`, with no
-stored projection. The partial GIN `world_scenes_logs_permissions_idx` covers
-local world scenes; `deployments_scene_logs_permissions_idx` covers live
+It derives membership at read time through `worlds.logs_permissions_decoded`, with no
+stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
+local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
 Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
-The function reads raw JSON text so even a stored JSON `\u0000` cannot fail an
-insert through an index. Expected traffic is low; measured dataset sizes,
-query timings and index write costs must be recorded in the task report.
+The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
+carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
+can fail an insert through an index. It reads the escapes as Unicode, so the database
+must use the `UTF8` server encoding (the one `catalyst` supports): under another
+encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
+and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
+superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
+status` does not report, until their release drops them. Run it once, with the
+administrative role, after `catalyst schema migrate` created the decoded function
+and every replica runs a binary that queries it (an older `serve` calls the old
+function from its storage grant and `GET /collaborator`, which fail after the
+drop); it refuses a database without the decoded function and both its indexes
+built and valid, and drops the old indexes concurrently, outside a transaction
+(rerun it if interrupted):
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
+```
+
+The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+`content.deployments` in the migrate transaction, not concurrently, so writes to
+that table wait for the build (unmeasured on production). To build it outside
+that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
+(the function first, then the index, which the object pass then skips):
+
+```sql
+CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
+CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+    ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
+```
+
+A failed concurrent build leaves an invalid index of that name: drop it before
+retrying.
+Expected traffic is low; measured dataset sizes, query timings and index write
+costs must be recorded in the task report.
 
 Genesis collaborator grants also require the configured LAND index to be
 complete and fresh. One shared SQL predicate checks the entire scene footprint
@@ -219,27 +253,25 @@ introduced.
 
 Preserve the reviewed method, path, scope and query authorization contract for scene-host storage requests. Handle security acceptance through the private review workflow.
 
-Storage value reads use PostgreSQL by default on every process. The optional
-`STORAGE_CACHE_ENABLED=true` memo is only suitable for one storage-serving
-process: invalidation is local, and even a primary can return stale values or
-environment secrets after a replica writes. `FLEET_JOBS_ENABLED` does not make
-that cache coherent. Explicit caching accepts a freshness window of
-`STORAGE_CACHE_TTL_SECONDS` and is unsuitable for immediate cross-process revocation.
-`STORAGE_CACHE_ENABLED` accepts only `true` or `false`; numeric values such as
-`1` and `0` are rejected at startup.
+Single world and player storage values (never env values or listings) are
+read through a per-process LRU, as upstream: on unless `STORAGE_CACHE_ENABLED`
+is exactly `false`, at most `STORAGE_CACHE_MAX` entries (8000, least recently
+used evicted first), each fresh for `STORAGE_CACHE_TTL_SECONDS` (60) after it
+was cached, values over `STORAGE_CACHE_MAX_VALUE_BYTES` (32768) never cached,
+misses never cached. Invalidation is local to the process that wrote: with
+several storage-serving processes, a read may return a value up to the TTL
+old after another process's write or delete, as on upstream's replicas.
+`FLEET_JOBS_ENABLED` does not make that cache coherent. A deployment needing
+immediate cross-process freshness sets `STORAGE_CACHE_ENABLED=false`.
 
 Permission-source outages deliberately return 503 instead of upstream's 401,
-without granting access. Transient permission/RPC outages and export database
-setup failures (connection acquisition, snapshot preparation or their deadlines)
-carry `Retry-After: 1`. Export setup failures occur before acceptance, so they do
-not consume the scene cooldown. The header is a minimum retry delay, not a promise
+without granting access. Transient permission/RPC outages carry
+`Retry-After: 1`. The header is a minimum retry delay, not a promise
 that capacity has recovered; clients should use backoff for repeated failures.
-Export concurrency caps continue to bound pending attempts. Invalid export
-timeout configuration is rejected at startup; a defensive out-of-range deadline
-failure carries no retry hint. Likewise,
-missing credentials (including `ENCRYPTION_KEY`) and unsupported EIP-1654
-validation require configuration and carry no timed retry instruction. This is
-an intentional wire divergence, not a claim of identical error responses.
+Unsupported EIP-1654 validation requires configuration and carries no timed
+retry instruction. `ENCRYPTION_KEY` is required: `serve` refuses to start
+without it. This is an intentional wire divergence, not a claim of identical
+error responses.
 
 A storage export (`POST /world-storage/exports`) holds one pooled connection
 while reading and serializing world rows and then player rows, never env. The
@@ -252,19 +284,19 @@ caps are per process, as upstream's are per pod.
 `export::produce` is rare and user-initiated. Its two row streams use the
 namespace primary-key prefix in key order: `world_storage`, then
 `player_storage` by `player_address, key`, in one read-only repeatable-read
-transaction. A connection is acquired before response headers (unavailable
-capacity returns 503), and the producer owns both it and its concurrency slot.
-One deadline bounds acquisition, SQL and channel backpressure; dropping the
-body cancels the producer. Completion uses a separate channel, so a failure or
-panic cannot masquerade as successful HTTP EOF. Transaction-local statement
-and idle-in-transaction timeouts match the export budget and reset before pool
-reuse. The configured timeout is 1–3600 seconds, defaulting to 120 seconds;
-deadline construction also rejects an unrepresentable duration. Scene cooldown
-begins only after database setup succeeds, with an atomic admission recheck:
-a pre-response 503 releases its reservation without consuming the cooldown.
-When cooldown is enabled, only one pending admission per scene can prepare a
-database transaction, even if the configured per-scene concurrency cap is higher.
-Disabling cooldown preserves concurrent admission up to the configured caps.
+transaction. As upstream, admission answers 200 and starts both the scene
+cooldown and the `EXPORT_TIMEOUT_SECONDS` timer before any database work; the
+producer then acquires the connection, owning it and its concurrency slot. A
+connection, snapshot or query failure after the headers cuts the stream (an
+HTTP body error, never a valid gzip trailer) and still consumes the cooldown.
+The timer bounds acquisition, SQL and channel backpressure; dropping the body
+cancels the producer. Completion uses a separate channel, so a failure or
+panic cannot masquerade as successful HTTP EOF. Transaction-local
+`statement_timeout` and `idle_in_transaction_session_timeout` are
+`PG_COMPONENT_STREAM_QUERY_TIMEOUT` (120000 ms; 0 disables them) and reset
+before pool reuse. The export settings take any value, as upstream's: a zero
+concurrency cap answers every export 429, a zero timeout or size cap aborts
+every stream, and a timeout too large to represent sets no deadline.
 Optional selections are
 `key = ANY` / `player_address = ANY` filters on that prefix. Not measured:
 a scene at its quota (10 MB world plus 1 MB per player).

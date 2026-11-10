@@ -839,6 +839,8 @@ where
 #[derive(Debug, Error)]
 pub enum MigrateError {
     #[error(transparent)]
+    Encoding(#[from] crate::EncodingError),
+    #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error("meta.schema is missing: an empty database takes `catalyst schema apply`, not migrate")]
     NotStamped,
@@ -1036,6 +1038,7 @@ fn view_replacement(sql: &str) -> Option<String> {
 /// what it did. `sql` and `migrations` are this binary's own texts (`db::SCHEMA_SQL`,
 /// `db::MIGRATIONS_SQL`), never input.
 pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migrated, MigrateError> {
+    crate::require_utf8(pool).await?;
     let steps = parse_steps(migrations);
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
