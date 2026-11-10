@@ -5,24 +5,19 @@ export function createSceneFetch(nativeFetch) {
 
   return function sceneFetch(input, init) {
     return new Promise((resolve, reject) => {
-      // Snapshot caller-owned headers, body and options before waiting for a slot. Scenes
-      // never send or store cookies and never read or fill the HTTP cache. A non-empty init
-      // resets the referrer, so carry it over.
-      const snapshot = new Request(input, init);
-      const request = new Request(snapshot, {
+      // Snapshot caller-owned headers, body and options before waiting for a slot.
+      const request = new Request(input, init);
+      const { signal } = request;
+      // Scenes never send or store cookies and never read or fill the HTTP cache. Chromium
+      // only exposes its local-network annotation on RequestInit. Passing a new init to fetch
+      // also resets the referrer unless we supply it again.
+      const addressSpace = init?.targetAddressSpace;
+      const options = {
         credentials: "omit",
         cache: "no-store",
-        referrer: snapshot.referrer,
-        referrerPolicy: snapshot.referrerPolicy,
-      });
-      const { signal } = request;
-      // Chromium only exposes its local-network annotation on RequestInit. Passing
-      // a new init to fetch also resets the referrer unless we supply it again.
-      const addressSpace = init?.targetAddressSpace;
-      const options = addressSpace === undefined ? undefined : {
-        targetAddressSpace: String(addressSpace),
         referrer: request.referrer,
         referrerPolicy: request.referrerPolicy,
+        ...(addressSpace === undefined ? {} : { targetAddressSpace: String(addressSpace) }),
       };
 
       function cancelQueued() {

@@ -66,9 +66,9 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     if (path.endsWith('/sandbox_worker.bundle.js')) return res.end(`
       import '/transport.js'
       import '/engine/sandbox_worker.js'
-      import { scrubSceneGlobal, isSceneGlobal } from '/engine/scene_global.js'
+      import { scrubSceneGlobal, createSceneScope } from '/engine/scene_global.js'
       self.scrubSceneGlobal = scrubSceneGlobal
-      self.isSceneGlobal = isSceneGlobal
+      self.createSceneScope = createSceneScope
       self.onmessage = ({data}) => postMessage({type:'INIT_COMPLETE', killToken:data.payload.killToken})
     `)
     if (path.endsWith('/dcl_scene_wasm.js')) return res.end('export default () => {}')
@@ -176,33 +176,32 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
   await t.test('a scene has no persistent storage and no request path around its fetch', async () => {
     const worker = await spawn('client')
     const result = await worker.evaluate(async () => {
-      scrubSceneGlobal()
       // Bare names resolve to the worker global, as they do in scene code.
       const reachable = new Function(`return {
-        localStorage: typeof localStorage, sessionStorage: typeof sessionStorage,
         indexedDB: typeof indexedDB, caches: typeof caches, storage: typeof navigator.storage,
-        XMLHttpRequest: typeof XMLHttpRequest, EventSource: typeof EventSource,
-        importScripts: typeof importScripts, cookieStore: typeof cookieStore,
-        webkitRequestFileSystem: typeof webkitRequestFileSystem,
-        webkitRequestFileSystemSync: typeof webkitRequestFileSystemSync,
-      }`)()
+        storageBuckets: typeof navigator.storageBuckets, locks: typeof navigator.locks,
+        serviceWorker: typeof navigator.serviceWorker, XMLHttpRequest: typeof XMLHttpRequest,
+        EventSource: typeof EventSource, importScripts: typeof importScripts,
+      }`)
+      const before = reachable()
+      scrubSceneGlobal()
+      const after = reachable()
       const cookie = await (await fetch('/cookie', { credentials: 'include' })).text()
       const cached = [
         await (await fetch('/cached')).text(),
         await (await fetch('/cached', { cache: 'force-cache' })).text(),
       ]
-      const timers = ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'].filter(isSceneGlobal)
-      return { reachable, cookie, cached, timers }
+      return { before, after, cookie, cached }
     })
+    // Chromium gives a dedicated worker no navigator.serviceWorker; the rest are there to remove.
+    for (const [name, type] of Object.entries(result.before)) {
+      if (name !== 'serviceWorker') assert.notEqual(type, 'undefined', `${name} before the scrub`)
+    }
     assert.deepEqual(result, {
-      reachable: {
-        localStorage: 'undefined', sessionStorage: 'undefined', indexedDB: 'undefined', caches: 'undefined',
-        storage: 'undefined', XMLHttpRequest: 'undefined', EventSource: 'undefined', importScripts: 'undefined',
-        cookieStore: 'undefined', webkitRequestFileSystem: 'undefined', webkitRequestFileSystemSync: 'undefined',
-      },
+      before: result.before,
+      after: Object.fromEntries(Object.keys(result.before).map(name => [name, 'undefined'])),
       cookie: '',
       cached: ['1', '2'],
-      timers: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'],
     })
     // The response's cookie was not stored either.
     assert.equal(await page.evaluate(() => document.cookie), 'page=1')
@@ -212,6 +211,29 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
       cached: [await (await fetch('/cached')).text(), await (await fetch('/cached')).text()],
     }))
     assert.deepEqual(page_, { cookie: 'page=1', cached: ['3', '3'] })
+  })
+
+  await t.test('scene code calls the timers as globals or as methods of globalThis', async () => {
+    const worker = await spawn('client')
+    const result = await worker.evaluate(async () => {
+      const { proxy, preamble } = createSceneScope(Object.create(null))
+      // Scene code runs as Function code with the scene's globalThis (sandbox_worker.js runWithScope).
+      const scene = new Function('globalThis', `${preamble}
+        return (async () => ({
+          same: globalThis.setTimeout === setTimeout && globalThis.clearTimeout === clearTimeout &&
+            globalThis.setInterval === setInterval && globalThis.clearInterval === clearInterval,
+          fired: await new Promise(resolve => globalThis.setTimeout(() => resolve(true), 1)),
+          cleared: await new Promise(resolve => {
+            globalThis.clearTimeout(globalThis.setTimeout(() => resolve(false), 1))
+            setTimeout(() => resolve(true), 20)
+          }),
+          ticked: await new Promise(resolve => {
+            const id = globalThis.setInterval(() => { globalThis.clearInterval(id); resolve(true) }, 1)
+          }),
+        }))()`)
+      return scene.call(proxy, proxy)
+    })
+    assert.deepEqual(result, { same: true, fired: true, cleared: true, ticked: true })
   })
 
   await t.test('headers release the slot and the caller can abort the response body', async () => {

@@ -5,7 +5,7 @@
 import initSceneRuntime, * as sceneRuntimeExports from "./pkg-scene/dcl_scene_wasm.js";
 import { relayCopyWasm } from "./relay_copy.js";
 import { createSceneFetch } from "./scene_fetch.js";
-import { allowListES2020, scrubSceneGlobal } from "./scene_global.js";
+import { createSceneScope, scrubSceneGlobal } from "./scene_global.js";
 
 // The capability the trusted super-user scene is given below. Captured before the scrub so the
 // constructor survives while the global does not.
@@ -166,28 +166,7 @@ function createJsContext(wasmApi, context) {
   //   })
   // }
 
-  jsProxy = new Proxy(jsContext, {
-    has() {
-      return true;
-    },
-    get(_target, propKey, _receiver) {
-      if (propKey === "eval") return eval;
-      if (propKey === "globalThis") return jsProxy;
-      if (propKey === "global") return jsProxy;
-      if (propKey === "undefined") return undefined;
-      if (jsContext[propKey] !== undefined) return jsContext[propKey];
-      if (allowListES2020.includes(propKey)) {
-        return globalThis[propKey];
-      }
-      return undefined;
-    },
-  });
-
-  const contextKeys = Object.getOwnPropertyNames(jsContext);
-  const allGlobals = [...new Set([...allowListES2020, ...contextKeys])];
-  jsPreamble = allGlobals
-    .map((key) => `const ${key} = globalThis.${key};`)
-    .join("\n");
+  ({ proxy: jsProxy, preamble: jsPreamble } = createSceneScope(jsContext));
 }
 
 const defer = Promise.resolve().then.bind(Promise.resolve());

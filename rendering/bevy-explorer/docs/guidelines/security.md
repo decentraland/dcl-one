@@ -51,13 +51,14 @@ in shell mode; HUD preferences go through `src/lib/prefs.ts` (IndexedDB). Only t
 anything secret: it must not be in the app process at all.
 
 **Scenes never get persistent storage**, on native or web, system scenes included: no
-`localStorage`, `sessionStorage`, IndexedDB, Cache Storage, OPFS or file system, and no
-cookies. Only the sites' own pages use `localStorage`. On web, `sandbox_worker.js` deletes the
-storage APIs and the request paths that bypass `createSceneFetch` (`XMLHttpRequest`,
-`EventSource`, `importScripts`) before scene code runs, and `createSceneFetch` sends every
-request with `credentials: "omit"` and `cache: "no-store"`. On native the runtime registers no
-storage extension. State a scene must keep goes through an engine API that scopes it, not a
-browser store.
+`localStorage`, `sessionStorage`, IndexedDB, Cache Storage, OPFS or file system. Only the
+sites' own pages use `localStorage`. On web, `sandbox_worker.js` deletes the storage APIs,
+`XMLHttpRequest`, `EventSource` and `importScripts` before scene code runs, and
+`createSceneFetch` sends every request with `credentials: "omit"` and `cache: "no-store"`.
+A `WebSocket` handshake, `WebTransport` and a dynamic `import()` do not go through
+`createSceneFetch`: the handshake carries the target host's cookies and a same-origin
+`import()` the origin's. On native the runtime registers no storage extension. State a scene
+must keep goes through an engine API that scopes it, not a browser store.
 
 **On native, never `Path::join` or `PathBuf::push` with a component from outside.** Content
 hashes, content-map keys, entity ids, scene file names, URLs, RPC arguments: anything that

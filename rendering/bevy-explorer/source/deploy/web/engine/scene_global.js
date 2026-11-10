@@ -8,8 +8,6 @@ export const allowListES2020 = [
   "BigInt64Array",
   "BigUint64Array",
   "Boolean",
-  "clearInterval",
-  "clearTimeout",
   "DataView",
   "Date",
   "decodeURI",
@@ -45,8 +43,6 @@ export const allowListES2020 = [
   "Reflect",
   "RegExp",
   "Set",
-  "setInterval",
-  "setTimeout",
   "SharedArrayBuffer",
   "String",
   "Symbol",
@@ -64,8 +60,37 @@ export const allowListES2020 = [
   "WeakSet",
 ];
 
-export function isSceneGlobal(name) {
-  return allowListES2020.includes(name);
+const TIMERS = ["setTimeout", "clearTimeout", "setInterval", "clearInterval"];
+
+// The scene's globalThis over `context`, and the preamble that declares each name it offers.
+export function createSceneScope(context) {
+  // A WebIDL timer called as `globalThis.setTimeout(...)` would get the proxy as `this` and throw.
+  for (const name of TIMERS) {
+    Object.defineProperty(context, name, { configurable: false, value: self[name].bind(self) });
+  }
+  const proxy = new Proxy(context, {
+    has() {
+      return true;
+    },
+    get(_target, propKey, _receiver) {
+      if (propKey === "eval") return eval;
+      if (propKey === "globalThis") return proxy;
+      if (propKey === "global") return proxy;
+      if (propKey === "undefined") return undefined;
+      if (context[propKey] !== undefined) return context[propKey];
+      if (allowListES2020.includes(propKey)) {
+        return globalThis[propKey];
+      }
+      return undefined;
+    },
+  });
+
+  const contextKeys = Object.getOwnPropertyNames(context);
+  const allGlobals = [...new Set([...allowListES2020, ...contextKeys])];
+  const preamble = allGlobals
+    .map((key) => `const ${key} = globalThis.${key};`)
+    .join("\n");
+  return { proxy, preamble };
 }
 
 // Remove an inherited property. Interface objects (BroadcastChannel, Worker) are own properties of
