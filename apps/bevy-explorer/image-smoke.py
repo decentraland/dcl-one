@@ -27,14 +27,22 @@ def main():
     name = 'bevy-image-smoke-' + uuid.uuid4().hex[:12]
     logs = Path(__file__).parent / 'dist' / f'image-smoke-{args.product}.log'
     logs.parent.mkdir(parents=True, exist_ok=True)
-    common = ['--name', name, '--network', 'none', '--read-only', '--cap-drop', 'ALL',
-              '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,size=512m']
+    hardened = ['--network', 'none', '--read-only', '--cap-drop', 'ALL',
+                '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,size=512m']
+    common = ['--name', name, *hardened]
     try:
         if args.product == 'headless':
-            result = docker('run', *common, '--tmpfs', '/data:rw,nosuid,uid=1000,gid=1000', image,
-                            '--realm', 'http://127.0.0.1:1', '--preview', '--server-mode', '--timeout', '20', check=False)
+            data = ['--tmpfs', '/data:rw,nosuid,uid=1000,gid=1000']
+            # the scene host's own check; --init keeps it off PID 1, which a PID 1 check would see
+            test = docker('run', '--rm', '--init', *hardened, *data, '--entrypoint', '/usr/local/bin/dcl_deno_ipc',
+                          image, '--sandbox-self-test', '--require', check=False)
+            assert test.returncode == 0, test.stdout + test.stderr
+            assert json.loads(test.stdout)['holds'] is True, test.stdout
+            # the engine exits 78 if its scene host cannot sandbox itself
+            result = docker('run', *common, *data, image, '--realm', 'http://127.0.0.1:1', '--preview',
+                            '--server-mode', '--scene-host-sandbox', 'require', '--timeout', '20', check=False)
             output = result.stdout + result.stderr
-            logs.write_text(output)
+            logs.write_text(output + '\n' + test.stdout)
             if result.returncode:
                 raise AssertionError(f'Headless exited with {result.returncode}:\n{output[-4000:]}')
             assert '[headless]' in output and 'panicked at' not in output, output[-4000:]
@@ -61,7 +69,9 @@ def main():
                 expected = hashlib.sha256((Path(__file__).parent / 'dist/web' / path).read_bytes()).hexdigest()
                 assert actual == expected, f'WASM bytes differ: {path}'
             logs.write_text(docker('logs', name).stdout + '\n' + json.dumps(headers, indent=2))
-        print(f'Image smoke passed: bevy-explorer-{args.product}, linux/{args.arch}, non-root, read-only, network isolated')
+        sandboxed = ', scene host sandboxed' if args.product == 'headless' else ''
+        print(f'Image smoke passed: bevy-explorer-{args.product}, linux/{args.arch}, non-root, read-only, '
+              f'network isolated{sandboxed}')
     finally:
         if not logs.exists():
             result = docker('logs', name, check=False)
