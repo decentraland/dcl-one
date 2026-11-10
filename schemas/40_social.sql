@@ -920,13 +920,16 @@ CREATE TABLE social.badge_cursors (
 -- every transaction that held an id when it was found has ended (`horizon`,
 -- the id of the transaction that found it, taken after its scan, at or
 -- below a later snapshot's xmin) and it is older than the processor's
--- grace. At most 5,000 per source: at the cap the cursor holds.
+-- grace, and then again for the transactions open when the grace ran out
+-- (`restamped`: `horizon` replaced by a later batch's id). At most 5,000
+-- per source: at the cap the cursor holds.
 CREATE TABLE social.badge_cursor_gaps (
     source text NOT NULL,
     lo bigint NOT NULL,
     hi bigint NOT NULL,
     horizon bigint NOT NULL,
     seen_at timestamp without time zone NOT NULL,
+    restamped boolean NOT NULL DEFAULT false,
     CONSTRAINT badge_cursor_gaps_pkey PRIMARY KEY (source, lo),
     CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
     CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)

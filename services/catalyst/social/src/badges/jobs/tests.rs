@@ -688,8 +688,26 @@ async fn a_rolled_back_id_is_a_gap_until_no_transaction_can_hold_it() {
     p.pinned_xmin = Some(0);
     client_events::batch(&p).await.unwrap();
     assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
-    // Both: dropped, the cursor where it was.
-    p.pinned_xmin = Some(i64::MAX);
+    // Both: re-stamped with this batch's id, for writers still waiting.
+    let first: i64 = sqlx::query_scalar("SELECT horizon FROM social.badge_cursor_gaps")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    p.pinned_xmin = Some(first);
+    client_events::batch(&p).await.unwrap();
+    assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
+    let (second, restamped): (i64, bool) =
+        sqlx::query_as("SELECT horizon, restamped FROM social.badge_cursor_gaps")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(restamped && second > first);
+    // Kept until every transaction open at the re-stamp has ended.
+    p.pinned_xmin = Some(second - 1);
+    client_events::batch(&p).await.unwrap();
+    assert_eq!(gaps(&pool, client_events::SOURCE).await, gap);
+    // Then dropped, the cursor where it was.
+    p.pinned_xmin = Some(second);
     assert_eq!(client_events::batch(&p).await.unwrap(), (0, false));
     assert!(gaps(&pool, client_events::SOURCE).await.is_empty());
     assert_eq!(cursor(&pool, client_events::SOURCE).await, Some((at, 0)));
@@ -702,6 +720,7 @@ fn gap(lo: i64, hi: i64) -> Gap {
         hi,
         horizon: 7,
         seen_at: NaiveDateTime::default(),
+        restamped: false,
     }
 }
 

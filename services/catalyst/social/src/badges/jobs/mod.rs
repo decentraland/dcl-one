@@ -65,6 +65,10 @@ pub struct ProcessorSettings {
     pub deployment_max_lag: Option<Duration>,
     /// How long an id cursor keeps a gap at least (see [`Gap`]).
     pub gap_grace: Duration,
+    /// The marketplace items mirror runs (`MARKETPLACE_MIRRORS_ENABLED`).
+    /// Without it the sales job would hold at the first sale, so it is not
+    /// started.
+    pub items_mirror_enabled: bool,
 }
 
 impl Default for ProcessorSettings {
@@ -75,6 +79,7 @@ impl Default for ProcessorSettings {
             max_event_age: None,
             deployment_max_lag: Some(Duration::from_secs(86_400)),
             gap_grace: Duration::from_secs(600),
+            items_mirror_enabled: false,
         }
     }
 }
@@ -130,12 +135,14 @@ const MAX_GAPS: usize = 5_000;
 ///   that scan, and so every one that could hold an id of the gap, has a
 ///   lower one; once a snapshot's `xmin` reaches it, all of them have ended,
 ///   and a committed row would be visible to the re-read.
-/// - `seen_at` is older than [`ProcessorSettings::gap_grace`]. A writer draws
-///   the value in its INSERT just before it takes its transaction id (the
-///   row's default runs before the heap insert assigns it): such a writer had
-///   no id at the scan and the horizon does not cover it. Neither source has
-///   a BEFORE INSERT trigger, so that window is one row's projection; the
-///   grace covers it by orders of magnitude.
+/// - `seen_at` is older than [`ProcessorSettings::gap_grace`], and the gap
+///   was then `restamped`: its `horizon` replaced by a later batch's id and
+///   reached by `xmin` again. A writer draws the value in its INSERT before
+///   it takes its transaction id (the row's default runs before the heap
+///   insert assigns it), so it had no id at the scan and the first horizon
+///   does not cover it. Usually that window is one row's projection, but an
+///   `ON CONFLICT` pre-check can wait in it on another open transaction; the
+///   second horizon covers that transaction, so the gap outlives it.
 ///
 /// Values that never commit (a rollback, an `ON CONFLICT DO NOTHING` that
 /// burned its value) are the gaps this drops.
@@ -145,6 +152,11 @@ pub(crate) struct Gap {
     pub hi: i64,
     pub horizon: i64,
     pub seen_at: NaiveDateTime,
+    pub restamped: bool,
+}
+
+fn grace(pass: &Pass) -> chrono::Duration {
+    chrono::Duration::from_std(pass.settings.gap_grace).unwrap_or(chrono::Duration::MAX)
 }
 
 /// `gaps` without the ids `found` (ascending), each split around them.
@@ -246,14 +258,16 @@ impl<R> IdBatch<R> {
         }
         if !added.is_empty() {
             sqlx::query(
-                "INSERT INTO social.badge_cursor_gaps (source, lo, hi, horizon, seen_at) \
-                 SELECT $1, * FROM unnest($2::bigint[], $3::bigint[], $4::bigint[], $5::timestamp[])",
+                "INSERT INTO social.badge_cursor_gaps (source, lo, hi, horizon, seen_at, restamped) \
+                 SELECT $1, * FROM unnest($2::bigint[], $3::bigint[], $4::bigint[], \
+                                          $5::timestamp[], $6::boolean[])",
             )
             .bind(self.source)
             .bind(added.iter().map(|g| g.lo).collect::<Vec<_>>())
             .bind(added.iter().map(|g| g.hi).collect::<Vec<_>>())
             .bind(added.iter().map(|g| g.horizon).collect::<Vec<_>>())
             .bind(added.iter().map(|g| g.seen_at).collect::<Vec<_>>())
+            .bind(added.iter().map(|g| g.restamped).collect::<Vec<_>>())
             .execute(&mut *conn)
             .await?;
         }
@@ -304,7 +318,7 @@ where
     };
     let limit = pass.batch();
     let loaded: Vec<Gap> = sqlx::query_as(
-        "SELECT lo, hi, horizon, seen_at FROM social.badge_cursor_gaps \
+        "SELECT lo, hi, horizon, seen_at, restamped FROM social.badge_cursor_gaps \
          WHERE source = $1 ORDER BY lo",
     )
     .bind(source.name)
@@ -313,6 +327,7 @@ where
     let mut rows: Vec<R> = Vec::new();
     let mut gaps = loaded.clone();
     let now = crate::shared::now_utc();
+    let mut restamp = false;
     if !loaded.is_empty() {
         rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{select} JOIN unnest($1::bigint[], $2::bigint[]) AS g(lo, hi) \
@@ -330,9 +345,11 @@ where
         // Expire only after a complete re-read: a truncated one did not look
         // at every gap.
         if (rows.len() as i64) < limit {
-            let grace = chrono::Duration::from_std(pass.settings.gap_grace)
-                .unwrap_or(chrono::Duration::MAX);
-            gaps.retain(|g| !(g.horizon <= xmin && g.seen_at <= now - grace));
+            let grace = grace(pass);
+            gaps.retain(|g| !(g.restamped && g.horizon <= xmin && g.seen_at <= now - grace));
+            restamp = gaps
+                .iter()
+                .any(|g| !g.restamped && g.horizon <= xmin && g.seen_at <= now - grace);
         }
     }
     let room = (limit - rows.len() as i64).max(0);
@@ -389,16 +406,26 @@ where
             more: false,
         }));
     }
-    if !new_gaps.is_empty() {
+    if !new_gaps.is_empty() || restamp {
         // Assigned by the lock, after the scan.
         let horizon: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
             .fetch_one(&mut *conn)
             .await?;
+        // Past the grace once: wait for every transaction open now as well.
+        for g in gaps
+            .iter_mut()
+            .filter(|g| restamp && !g.restamped && g.horizon <= xmin)
+            .filter(|g| g.seen_at <= now - grace(pass))
+        {
+            g.horizon = horizon;
+            g.restamped = true;
+        }
         gaps.extend(new_gaps.into_iter().map(|(lo, hi)| Gap {
             lo,
             hi,
             horizon,
             seen_at: now,
+            restamped: false,
         }));
     }
     Ok(Some(IdBatch {
@@ -582,13 +609,19 @@ pub fn spawn(state: &SharedState, jobs: &crate::jobs::Jobs) {
         pass.clone(),
         |p| Box::pin(async move { deployments::run(&p).await }),
     );
-    spawn_one(
-        jobs,
-        "badges-sales",
-        Duration::from_secs(60),
-        pass.clone(),
-        |p| Box::pin(async move { sales::run(&p).await }),
-    );
+    if pass.settings.items_mirror_enabled {
+        spawn_one(
+            jobs,
+            "badges-sales",
+            Duration::from_secs(60),
+            pass.clone(),
+            |p| Box::pin(async move { sales::run(&p).await }),
+        );
+    } else {
+        tracing::warn!(
+            "MARKETPLACE_MIRRORS_ENABLED=false: no badges-sales job (a sale waits for its item in the items mirror)"
+        );
+    }
     spawn_one(
         jobs,
         "badges-recount",

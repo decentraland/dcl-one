@@ -673,6 +673,23 @@ pub fn validate(user: &UserState, def: &Def) -> Vec<String> {
     errors
 }
 
+/// The database is out of reach, not refusing this statement.
+fn connection_lost(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_)
+        | sqlx::Error::Protocol(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => true,
+        // 08 connection exception; 57P01-03 shutdown or not accepting
+        sqlx::Error::Database(e) => e.code().is_some_and(|c| {
+            c.starts_with("08") || matches!(c.as_ref(), "57P01" | "57P02" | "57P03")
+        }),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 pub struct Failure {
     pub address: String,
@@ -881,7 +898,8 @@ pub async fn backfill_badge(
 
     let mut merged = 0;
     let mut failures = Vec::new();
-    for (raw, input) in &inputs {
+    let mut wallets = inputs.iter();
+    while let Some((raw, input)) = wallets.next() {
         let Ok(address) = Address::parse(raw) else {
             failures.push(Failure {
                 address: raw.clone(),
@@ -890,8 +908,9 @@ pub async fn backfill_badge(
             continue;
         };
         let now = chrono::Utc::now().naive_utc();
-        // a database error fails this wallet only: earlier wallets are
-        // committed and the response must still say which
+        // a statement error fails this wallet only: earlier wallets are
+        // committed and the response must still say which. A lost database
+        // fails the rest at once instead of waiting out the pool per wallet.
         let written = async {
             let mut tx = state.badges.pool().begin().await?;
             let written = backfill_one(&mut tx, &address, &badge_id, kind, input, now).await?;
@@ -901,11 +920,25 @@ pub async fn backfill_badge(
             }
             Ok::<_, sqlx::Error>(written)
         }
-        .await
-        .unwrap_or_else(|error| {
-            tracing::error!(badge = %badge_id, address = %address, %error, "badges: backfill write failed");
-            Written::Failed(vec!["could not write the progress".into()])
-        });
+        .await;
+        let written = match written {
+            Ok(written) => written,
+            Err(error) => {
+                tracing::error!(badge = %badge_id, address = %address, %error, "badges: backfill write failed");
+                failures.push(Failure {
+                    address: address.into_string(),
+                    errors: vec!["could not write the progress".into()],
+                });
+                if connection_lost(&error) {
+                    failures.extend(wallets.by_ref().map(|(raw, _)| Failure {
+                        address:
+                            Address::parse(raw).map_or_else(|_| raw.clone(), Address::into_string),
+                        errors: vec!["not attempted: the database is unavailable".into()],
+                    }));
+                }
+                continue;
+            }
+        };
         match written {
             Written::Merged => merged += 1,
             Written::Failed(errors) => failures.push(Failure {

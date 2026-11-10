@@ -1171,7 +1171,9 @@ agent, page and locale). The auth chain is verified at the ingress and not
 stored: no consumer reads it.
 
 Invariants: `key` is Segment's `messageId`, so an at-least-once redelivery
-inserts nothing (`INSERT ... ON CONFLICT (key) DO NOTHING`); `address` is the
+inserts nothing (`INSERT ... SELECT ... WHERE NOT EXISTS` on the key, then
+`ON CONFLICT (key) DO NOTHING` for a concurrent duplicate; the check comes
+first so a redelivery draws no `seq`); `address` is the
 owner of the auth chain the event carried (client: the chain proves that the
 wallet once delegated to a key, not that it sent this event, so a consumer
 reads the row as a claim about the wallet, not by it, and never flags a
@@ -1195,11 +1197,13 @@ nullable column, then its default (`nextval` of `social.client_events_seq`,
 named as text so the step precedes the object pass that creates the
 sequence): both change the catalog only, no row is rewritten, and the kept
 rows keep a NULL `seq` (they precede every cursor, which starts at the head).
+Both take ACCESS EXCLUSIVE on the table, and `migrate` runs the steps and the
+object pass in one transaction, so the lock is held until it commits: reads,
+the webhook inserts and the purge all wait for the rest of the migration.
 The object pass then builds `client_events_seq_idx` (`seq`) and
 `client_events_session_moves_idx` (`address, session_id, seq` over
-`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in the migrate
-transaction: the build holds SHARE on the table (the webhook inserts and the
-purge wait, reads do not) for one heap scan with nothing to sort. On 2M
+`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in that
+transaction, one heap scan each with nothing to sort. On 2M
 synthetic rows (822 MB, about two months at the expected rate) the step took
 22 ms and the two builds 0.24 s and 0.35 s with a warm cache; the identity
 column it replaces rewrote the same table in 27.7 s under ACCESS EXCLUSIVE.
@@ -1277,7 +1281,9 @@ the console revoke, then the document, the counter, the newly reached tiers,
 completion and, unless suppressed, one idempotent `badge_granted` notification
 per new tier. The console grant raises the steps to the requested tier's
 target through it. The backfill (`POST /badges/badges/{id}/backfill`,
-`social/src/badges/backfill.rs`) runs one such transaction per wallet: it
+`social/src/badges/backfill.rs`) runs one such transaction per wallet (a
+statement error fails that wallet; a lost connection fails it and reports
+every later wallet as not attempted, at once): it
 takes the same badge lock and advisory lock first, merges upstream's way over
 the progress it reads under them, writes through `apply_progress` without
 notifications, then sets the merger's instants on the earned tiers and the
@@ -1322,7 +1328,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   chain position standing in for its missing hash). A sale of an item
   `shop.items` lacks holds its log's cursor until the item is mirrored or the
   items mirror completes a pass an hour after the sale (a pass walks every
-  item, minutes at the defaults); then it is passed without effect;
+  item, minutes at the defaults); then it is passed without effect. Without
+  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
+  not started (logged at startup);
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for
@@ -1336,8 +1344,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   for 200 creators on 1M synthetic items (781 MB), where the unindexed
   per-creator read scanned the table once per creator. The candidate scan
   itself reads the table once per batch (150 ms on the same rows). The
-  object pass builds the index in the migrate transaction under SHARE on
-  `shop.items` (the mirror's upserts wait): 1.7 s on those rows; it can be
+  object pass builds the index non-concurrently in the migrate transaction,
+  SHARE on `shop.items` until it commits (the mirror's upserts wait): 1.7 s
+  on those rows; it can be
   built beforehand with `CREATE INDEX CONCURRENTLY` and the definition of
   `schemas/30_shop.sql`.
 
@@ -1371,19 +1380,24 @@ delivered them), then drops a gap only when both hold:
   reaches the horizon all of them have ended, and a committed row would have
   been visible to the re-read. A batch that finds the cursor row changed when
   it locks it (a second runner after a lease expiry) writes nothing;
-- it is older than the grace (600 s). A writer draws the value inside its
-  INSERT just before it takes its transaction id (the row's default is
-  evaluated before the heap insert assigns the id), so a writer between the
-  two at the scan is not under the horizon. Neither table has a BEFORE
-  INSERT trigger, so that window is one row's projection, microseconds; the
-  grace covers it by orders of magnitude.
+- it is older than the grace (600 s) and was then re-stamped. A writer draws
+  the value inside its INSERT before it takes its transaction id (the row's
+  default is evaluated before the heap insert assigns the id), so a writer
+  between the two at the scan is not under the horizon. Usually that window
+  is one row's projection, but an `ON CONFLICT` pre-check can wait in it on
+  another open transaction inserting the same key. So the first batch past
+  the grace replaces the gap's `horizon` with its own transaction id
+  (`restamped`), and the gap is dropped only once `xmin` reaches that one
+  too: every transaction such a writer could be waiting on has then ended.
 
 Values that never commit (a rolled-back flush, a value an `ON CONFLICT DO
-NOTHING` burned, as every redelivered Segment event does) are what expire. A long
+NOTHING` burned, as a concurrent duplicate Segment delivery does) are what
+expire. A long
 write transaction anywhere on the cluster delays expiry, never a row: rows
 are processed as soon as they are visible. A source holds at most 5,000 gap
 ranges; at the cap its cursor passes no row that would open another until
-gaps resolve (it holds, it does not skip). The first pass starts at the
+gaps resolve (it holds, it does not skip): alert on
+`badges_processor_cursor_gaps` well before 5,000. The first pass starts at the
 head, so a row still uncommitted below the head when a cursor is created is
 history and not read. Each tick publishes, per source,
 `badges_processor_cursor_lag` (ids behind the head; blocks behind the

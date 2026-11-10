@@ -22,7 +22,8 @@
 //! the sale: a complete pass walks every item and at the defaults takes
 //! minutes, so an item still missing then is not a collection item the
 //! mirror will ever hold (a bid on a foreign ERC721), and the sale is passed
-//! without effect. A mirror that stops completing passes holds the sales.
+//! without effect. A mirror that stops completing passes holds the sales,
+//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
 
 use std::collections::{HashMap, HashSet};
 

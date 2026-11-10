@@ -2493,6 +2493,7 @@ fn social_states(
                     .then(|| Duration::from_secs(config.social.badges_event_max_age_secs)),
                 deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
                     .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
+                items_mirror_enabled: config.marketplace.marketplace_mirrors_enabled,
                 ..badges::jobs::ProcessorSettings::default()
             },
         },

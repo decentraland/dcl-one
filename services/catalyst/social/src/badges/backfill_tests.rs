@@ -501,3 +501,64 @@ async fn a_database_error_fails_only_that_wallet() {
     assert!(row(pool, &broken, "halloweeks_2026").await.is_none());
     assert!(row(pool, &after, "halloweeks_2026").await.is_some());
 }
+
+#[tokio::test]
+async fn a_lost_database_fails_the_remaining_wallets_at_once() {
+    let Some(state) = state().await else {
+        return;
+    };
+    let pool = state.badges.pool();
+    let (before, broken, after) = (fresh_address(), fresh_address(), fresh_address());
+    let name = format!("backfill_lost_{}", &broken.as_str()[2..]);
+    // the write of `broken` fails as a dropped connection would
+    sqlx::query(AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.address = '{}' THEN RAISE EXCEPTION 'lost' USING ERRCODE = '08006'; END IF; \
+         RETURN NEW; END $$",
+        broken.as_str()
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(AssertSqlSafe(format!(
+        "CREATE TRIGGER {name} BEFORE INSERT OR UPDATE ON social.user_badge_progress \
+         FOR EACH ROW EXECUTE FUNCTION social.{name}()"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let at = 1_780_000_000_000_i64;
+    let (status, body) = post(
+        &state,
+        "halloweeks_2026",
+        json!([
+            registry(&before, json!({ "completedAt": at })),
+            registry(&broken, json!({ "completedAt": at })),
+            registry(&after, json!({ "completedAt": at })),
+        ]),
+    )
+    .await;
+
+    sqlx::query(AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON social.user_badge_progress"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(AssertSqlSafe(format!("DROP FUNCTION social.{name}()")))
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["userProgressesMerged"], json!(1));
+    assert_eq!(
+        body["data"]["failures"],
+        json!([
+            { "address": broken.as_str(), "errors": ["could not write the progress"] },
+            { "address": after.as_str(), "errors": ["not attempted: the database is unavailable"] },
+        ])
+    );
+    assert!(row(pool, &before, "halloweeks_2026").await.is_some());
+    assert!(row(pool, &after, "halloweeks_2026").await.is_none());
+}
