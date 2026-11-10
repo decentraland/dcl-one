@@ -34,6 +34,11 @@ const MAX_FRAME_BYTES: u64 = 1024 * 1024 * 1024;
 const FRAME_PREALLOCATION_BYTES: u64 = 1024 * 1024;
 // reply channels one scene host may hold open at once, across all its scenes
 const MAX_HOST_IPC_CHANNELS: usize = 65536;
+/// Reply channels one scene may hold open at once. The scene host ends a scene over it, so that
+/// sixteen scenes at their limit fill a host's.
+pub const MAX_SCENE_IPC_CHANNELS: usize = 4096;
+// decoding recurses on the engine's stack, and scene RPC parameters are arbitrary JSON
+const MAX_DECODE_DEPTH: usize = 32;
 
 /// How long a killed scene gets to exit cleanly (finish its in-flight tick after its
 /// renderer channel closes) before its isolate is forcibly terminated.
@@ -43,6 +48,64 @@ pub const KILL_GRACE_PERIOD: Duration = Duration::from_secs(5);
 const KILLED_SCENE_RETENTION: Duration = KILL_GRACE_PERIOD.saturating_add(Duration::from_secs(5));
 
 static REJECTED_HOST_MESSAGES: AtomicU64 = AtomicU64::new(0);
+
+/// The scene host's count of the reply channels each scene holds open, so that one scene over
+/// [`MAX_SCENE_IPC_CHANNELS`] ends alone instead of taking its host over the engine's limit.
+#[derive(Default)]
+pub struct SceneChannels {
+    owners: std::collections::HashMap<u64, u64>,
+    open: std::collections::HashMap<u64, usize>,
+    ended: std::collections::HashSet<u64>,
+}
+
+impl SceneChannels {
+    /// Records the channels a response of `scene` opened. False, recording nothing, when that
+    /// would take the scene over its limit.
+    pub fn open(&mut self, scene: u64, ids: std::ops::Range<u64>) -> bool {
+        let open = self.open.get(&scene).copied().unwrap_or(0);
+        let opened = ids.end.saturating_sub(ids.start) as usize;
+        if open + opened > MAX_SCENE_IPC_CHANNELS {
+            return false;
+        }
+        if opened > 0 {
+            self.open.insert(scene, open + opened);
+            self.owners.extend(ids.map(|id| (id, scene)));
+        }
+        true
+    }
+
+    pub fn close(&mut self, id: u64) {
+        let Some(scene) = self.owners.remove(&id) else {
+            return;
+        };
+        if let Some(open) = self.open.get_mut(&scene) {
+            *open -= 1;
+            if *open == 0 {
+                self.open.remove(&scene);
+            }
+        }
+    }
+
+    /// Marks the scene ended and returns the channels it still holds, which the caller closes.
+    pub fn end(&mut self, scene: u64) -> Vec<u64> {
+        self.ended.insert(scene);
+        self.open.remove(&scene);
+        let held: Vec<u64> = self
+            .owners
+            .iter()
+            .filter(|(_, owner)| **owner == scene)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &held {
+            self.owners.remove(id);
+        }
+        held
+    }
+
+    pub fn is_ended(&self, scene: u64) -> bool {
+        self.ended.contains(&scene)
+    }
+}
 
 /// Messages dropped because the scene host that sent them does not run the scene they are for:
 /// a scene response for a scene it was not given, or a `SystemApi` message from a host that
@@ -106,7 +169,9 @@ impl HostScenes {
         id: u64,
         responses: TaggedSceneResponseSender,
         system_api: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
+        now: Instant,
     ) {
+        self.0.retain(|_, scene| scene.is_tracked(now));
         self.0.insert(
             id,
             HostScene {
@@ -139,11 +204,11 @@ impl HostScenes {
     }
 }
 
-// Counts a message dropped because its scene host has no standing to send it. Warns once per
-// connection, since the host chooses how many it sends.
-fn reject_host_message(warned: &mut bool, message: std::fmt::Arguments) {
+// Counts a message dropped because its scene host has no standing to send it, for the process
+// and for this connection. Warns once per connection, since the host chooses how many it sends.
+fn reject_host_message(rejected: &AtomicU64, message: std::fmt::Arguments) {
     REJECTED_HOST_MESSAGES.fetch_add(1, Ordering::Relaxed);
-    if !std::mem::replace(warned, true) {
+    if rejected.fetch_add(1, Ordering::Relaxed) == 0 {
         warn!("dropping {message}; further drops from this scene host are only counted");
     }
 }
@@ -282,13 +347,14 @@ pub fn init_runtime() -> anyhow::Result<()> {
     init_rx.blocking_recv()?
 }
 
-// Serves one scene host until either direction ends. Runs on a current-thread runtime, since
-// the IPC context and the scene senders are thread-locals.
+// Serves one scene host until either direction ends, and returns how many of its messages were
+// rejected. Runs on a current-thread runtime, since the IPC context and the scene senders are
+// thread-locals.
 async fn run_host_connection(
     inbound: impl AsyncRead + Unpin + Send + 'static,
     outbound: impl AsyncWrite + Unpin + Send + 'static,
     new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
-) {
+) -> u64 {
     let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
     let channels_open = CancellationToken::new();
     ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
@@ -299,8 +365,9 @@ async fn run_host_connection(
     }));
     let _close_channels = channels_open.drop_guard();
 
+    let rejected = std::sync::Arc::new(AtomicU64::new(0));
     let mut f_out = tokio::spawn(renderer_ipc_out(outbound, new_scene, router_rx));
-    let mut f_in = tokio::spawn(renderer_ipc_in(inbound));
+    let mut f_in = tokio::spawn(renderer_ipc_in(inbound, rejected.clone()));
 
     let ended = tokio::select! {
         ended = &mut f_out => {
@@ -314,9 +381,10 @@ async fn run_host_connection(
     };
     match ended {
         Ok(Ok(())) => (),
-        Ok(Err(e)) => error!("scene host connection ended: {e:#}"),
+        Ok(Err(e)) => warn!("scene host connection ended: {e:#}"),
         Err(e) => error!("scene host connection task failed: {e}"),
     }
+    rejected.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -368,7 +436,7 @@ pub async fn renderer_ipc_out(
                     return Ok(());
                 };
 
-                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone(), system_api_sender));
+                HOST_SCENES.with_borrow_mut(|scenes| scenes.start(id, response_channel.channel().clone(), system_api_sender, Instant::now()));
 
                 let presence_context = info.presence_context;
                 if let Some(mut old_rx) = global_receivers.remove(&presence_context) {
@@ -463,13 +531,17 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
-// The next frame's body, or `None` once the host has closed the connection.
+// The next frame's body, or `None` once the host has closed the connection between frames.
 async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Option<Vec<u8>>> {
-    let len = match stream.read_u64_le().await {
-        Ok(len) => len,
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
+    let mut header = [0u8; 8];
+    if stream.read(&mut header[..1]).await? == 0 {
+        return Ok(None);
+    }
+    stream
+        .read_exact(&mut header[1..])
+        .await
+        .map_err(|e| anyhow!("frame length cut short: {e}"))?;
+    let len = u64::from_le_bytes(header);
     if len > MAX_FRAME_BYTES {
         bail!("frame of {len} bytes is over the {MAX_FRAME_BYTES}-byte limit");
     }
@@ -481,10 +553,14 @@ async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Opt
     Ok(Some(buffer))
 }
 
-pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Result<()> {
-    let mut warned = false;
+pub async fn renderer_ipc_in(
+    mut stream: impl AsyncRead + Unpin,
+    rejected: std::sync::Arc<AtomicU64>,
+) -> anyhow::Result<()> {
     while let Some(buffer) = read_frame(&mut stream).await? {
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer)
+        let mut decoder = rmp_serde::Deserializer::from_read_ref(&buffer);
+        decoder.set_max_depth(MAX_DECODE_DEPTH);
+        let msg = SceneToEngine::deserialize(&mut decoder)
             .map_err(|e| anyhow!("undecodable frame of {} bytes: {e}", buffer.len()))?;
 
         match msg {
@@ -492,7 +568,7 @@ pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Resu
                 HOST_SCENES.with_borrow(|scenes| {
                     let Some(sender) = scenes.responses(id.0.to_bits(), Instant::now()) else {
                         reject_host_message(
-                            &mut warned,
+                            &rejected,
                             format_args!(
                                 "a response for scene {id:?}, which this scene host does not run"
                             ),
@@ -537,7 +613,7 @@ pub async fn renderer_ipc_in(mut stream: impl AsyncRead + Unpin) -> anyhow::Resu
                 });
                 if forwarded.is_none() {
                     reject_host_message(
-                        &mut warned,
+                        &rejected,
                         format_args!(
                             "a system api message from a scene host that runs no system scene"
                         ),
@@ -606,10 +682,18 @@ pub async fn write_msg<T: Serialize>(
     value: &T,
 ) -> std::io::Result<()> {
     let bytes = rmp_encode(value).map_err(std::io::Error::other)?;
+    write_frame(stream, &bytes).await
+}
+
+/// Writes a message [`rmp_encode`] already encoded.
+pub async fn write_frame(
+    stream: &mut (impl AsyncWrite + Unpin),
+    bytes: &[u8],
+) -> std::io::Result<()> {
     stream
         .write_all(&(bytes.len() as u64).to_le_bytes())
         .await?;
-    stream.write_all(&bytes).await
+    stream.write_all(bytes).await
 }
 
 #[cfg(test)]

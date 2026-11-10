@@ -25,7 +25,8 @@ struct Host {
     global: tokio::sync::broadcast::Sender<GlobalCrdtStateUpdate>,
     // dropping a scene's renderer channel kills the scene
     renderer_channels: HashMap<u64, UnboundedSender<RendererResponse>>,
-    ended: tokio::sync::oneshot::Receiver<()>,
+    // the connection's count of rejected messages, once it has ended
+    ended: tokio::sync::oneshot::Receiver<u64>,
     next_entity: u32,
 }
 
@@ -41,8 +42,8 @@ impl Host {
                 .enable_all()
                 .build()
                 .unwrap();
-            rt.block_on(run_host_connection(engine_in, engine_out, new_scene_rx));
-            let _ = ended_sx.send(());
+            let rejected = rt.block_on(run_host_connection(engine_in, engine_out, new_scene_rx));
+            let _ = ended_sx.send(rejected);
         });
         // the context the host's reply channels are serialized in
         SCENE_IPC_CONTEXT.set(Some(RequestContext {
@@ -177,6 +178,15 @@ impl Host {
         tokio::time::timeout(TIMEOUT, &mut self.ended).await.is_ok()
     }
 
+    /// Closes the connection from the host's side and returns how many messages it rejected.
+    async fn close_and_count_rejected(mut self) -> u64 {
+        self.writer.shutdown().await.unwrap();
+        tokio::time::timeout(TIMEOUT, &mut self.ended)
+            .await
+            .expect("the connection did not end")
+            .unwrap()
+    }
+
     /// Whether the engine released its side: reading then finds the end of the stream.
     async fn engine_side_closed(&mut self) -> bool {
         matches!(
@@ -208,6 +218,56 @@ async fn truncated_frame_ends_the_host_connection() {
     host.send_raw(&100u64.to_le_bytes()).await;
     host.send_raw(&[0; 10]).await;
     host.writer.shutdown().await.unwrap();
+
+    assert!(host.connection_ends().await);
+}
+
+#[tokio::test]
+async fn frame_length_cut_short_ends_the_host_connection() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    host.respond(scene, 1).await;
+    assert_eq!(host.delivered().await, (scene, 1));
+
+    host.send_raw(&[1, 0, 0]).await;
+    host.writer.shutdown().await.unwrap();
+
+    assert!(host.connection_ends().await);
+}
+
+fn send_async_nested(
+    depth: usize,
+) -> (
+    SceneResponse,
+    common::rpc::RpcResultReceiver<Result<serde_json::Value, String>>,
+) {
+    let mut params = serde_json::Value::Null;
+    for _ in 0..depth {
+        params = serde_json::Value::Array(vec![params]);
+    }
+    let (response, receiver) = common::rpc::RpcResultSender::channel();
+    let call = RpcCall::SendAsync {
+        body: common::rpc::RPCSendableMessage {
+            method: "eth_call".to_owned(),
+            params: vec![params],
+        },
+        response,
+    };
+    (SceneResponse::ImmediateRpcCall(call), receiver)
+}
+
+#[tokio::test]
+async fn deeply_nested_frame_ends_the_host_connection() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (shallow, _shallow_reply) = send_async_nested(8);
+    host.send(&SceneToEngine::SceneResponse(scene, shallow))
+        .await;
+    let (_, delivered) = host.delivered_response().await;
+    assert!(matches!(delivered, SceneResponse::ImmediateRpcCall(_)));
+
+    let (deep, _deep_reply) = send_async_nested(MAX_DECODE_DEPTH * 2);
+    host.send(&SceneToEngine::SceneResponse(scene, deep)).await;
 
     assert!(host.connection_ends().await);
 }
@@ -267,6 +327,7 @@ async fn response_for_an_unknown_scene_is_dropped_and_counted() {
 
     assert_eq!(host.delivered().await, (scene, 2));
     assert!(rejected_host_messages() > rejected);
+    assert_eq!(host.close_and_count_rejected().await, 1);
 }
 
 #[tokio::test]
@@ -284,7 +345,7 @@ async fn response_after_kill_is_delivered_within_the_grace_period() {
 fn a_killed_scene_is_forgotten_after_the_grace_period() {
     let mut scenes = HostScenes::default();
     let killed_at = Instant::now();
-    scenes.start(1, scene_response_channel().0, None);
+    scenes.start(1, scene_response_channel().0, None, killed_at);
     scenes.kill(1, killed_at);
 
     let before = killed_at + KILLED_SCENE_RETENTION - Duration::from_millis(1);
@@ -292,6 +353,45 @@ fn a_killed_scene_is_forgotten_after_the_grace_period() {
     assert!(scenes
         .responses(1, killed_at + KILLED_SCENE_RETENTION)
         .is_none());
+}
+
+#[test]
+fn a_killed_scene_is_pruned_when_another_starts_after_the_grace_period() {
+    let mut scenes = HostScenes::default();
+    let killed_at = Instant::now();
+    scenes.start(1, scene_response_channel().0, None, killed_at);
+    scenes.kill(1, killed_at);
+
+    scenes.start(
+        2,
+        scene_response_channel().0,
+        None,
+        killed_at + KILLED_SCENE_RETENTION,
+    );
+
+    assert_eq!(scenes.0.len(), 1);
+    assert!(scenes.0.contains_key(&2));
+}
+
+#[test]
+fn a_scene_over_its_reply_channel_limit_is_refused_alone() {
+    let limit = MAX_SCENE_IPC_CHANNELS as u64;
+    let mut channels = SceneChannels::default();
+    assert!(channels.open(1, 0..limit));
+    assert!(channels.open(2, limit..limit + 10));
+
+    assert!(!channels.open(1, limit + 10..limit + 11));
+    assert!(channels.open(2, limit + 11..limit + 12));
+
+    channels.close(0);
+    assert!(channels.open(1, limit + 12..limit + 13));
+
+    let mut held = channels.end(1);
+    held.sort_unstable();
+    assert_eq!(held.len(), MAX_SCENE_IPC_CHANNELS);
+    assert_eq!((held[0], held[held.len() - 1]), (1, limit + 12));
+    assert!(channels.is_ended(1));
+    assert!(!channels.is_ended(2));
 }
 
 fn subscription() -> (RpcCall, common::rpc::RpcStreamReceiver<String>) {
@@ -380,6 +480,7 @@ async fn system_api_from_a_host_without_a_system_scene_is_dropped() {
 
     assert_eq!(host.delivered().await, (scene, 1));
     assert!(rejected_host_messages() > rejected);
+    assert_eq!(host.close_and_count_rejected().await, 1);
 }
 
 #[tokio::test]

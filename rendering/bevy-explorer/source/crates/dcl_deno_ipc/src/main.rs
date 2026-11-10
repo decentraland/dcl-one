@@ -7,9 +7,14 @@ use bevy::{
     },
     platform::collections::HashMap,
 };
-use common::rpc::{IpcMessage, RequestContext, SCENE_IPC_CONTEXT};
-use dcl_deno_ipc::{write_msg, EngineToScene, SceneToEngine, KILL_GRACE_PERIOD};
-use dcl_types::{SceneId, SceneResponseReceiver, SceneResponseSender, TaggedSceneResponseSender};
+use common::rpc::{rmp_encode, IpcMessage, RequestContext, SCENE_IPC_CONTEXT};
+use dcl_deno_ipc::{
+    write_frame, write_msg, EngineToScene, SceneChannels, SceneToEngine, KILL_GRACE_PERIOD,
+    MAX_SCENE_IPC_CHANNELS,
+};
+use dcl_types::{
+    SceneId, SceneResponse, SceneResponseReceiver, SceneResponseSender, TaggedSceneResponseSender,
+};
 use interprocess::local_socket::{
     tokio::{RecvHalf, SendHalf, Stream},
     traits::tokio::Stream as _,
@@ -21,6 +26,11 @@ use tokio::io::AsyncReadExt;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+thread_local! {
+    // both IPC tasks run on the main thread's current-thread runtime
+    static SCENE_CHANNELS: std::cell::RefCell<SceneChannels> = Default::default();
+}
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -62,7 +72,10 @@ fn main() -> Result<()> {
 
     info!("IPC scene host running");
 
-    let _ = rt.block_on(async move { tokio::join!(f_in, f_out) });
+    let (_, out) = rt.block_on(async move { tokio::join!(f_in, f_out) });
+    if let Ok(Err(e)) = out {
+        warn!("scene host stopped writing to the engine: {e}");
+    }
 
     Ok(())
 }
@@ -80,7 +93,36 @@ async fn scene_ipc_out(
                     warn!("scene_ipc_out exit on scene_rx closed");
                     return Ok(());
                 };
-                write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, response)).await?;
+                let scene = scene_id.0.to_bits();
+                if SCENE_CHANNELS.with_borrow(|channels| channels.is_ended(scene)) {
+                    continue;
+                }
+                let last_channel = || SCENE_IPC_CONTEXT.with_borrow(|ctx| ctx.as_ref().unwrap().next_id);
+                let before = last_channel();
+                let frame = rmp_encode(&SceneToEngine::SceneResponse(scene_id, response))
+                    .map_err(std::io::Error::other)?;
+                let opened = before + 1..last_channel() + 1;
+                if SCENE_CHANNELS.with_borrow_mut(|channels| channels.open(scene, opened.clone())) {
+                    write_frame(&mut stream, &frame).await?;
+                    continue;
+                }
+
+                warn!("[{scene_id:?}] ended: it holds more than {MAX_SCENE_IPC_CHANNELS} open reply channels");
+                let held = SCENE_CHANNELS.with_borrow_mut(|channels| channels.end(scene));
+                SCENE_IPC_CONTEXT.with_borrow_mut(|ctx| {
+                    let registry = &mut ctx.as_mut().unwrap().registry;
+                    for id in opened.chain(held.iter().copied()) {
+                        registry.remove(&id);
+                    }
+                });
+                for id in held {
+                    write_msg(&mut stream, &SceneToEngine::IpcMessage(id, IpcMessage::Closed)).await?;
+                }
+                let error = SceneResponse::Error(format!(
+                    "scene ended: more than {MAX_SCENE_IPC_CHANNELS} open reply channels"
+                ));
+                write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, error)).await?;
+                dcl_deno::terminate_scene(scene_id);
             }
             close_rx = close_rx.recv() => {
                 let Some(close_id) = close_rx else {
@@ -88,6 +130,7 @@ async fn scene_ipc_out(
                     return Ok(());
                 };
 
+                SCENE_CHANNELS.with_borrow_mut(|channels| channels.close(close_id));
                 let was_open = SCENE_IPC_CONTEXT.with(|ctx| {
                     let mut ctx = ctx.borrow_mut();
                     let ctx = ctx.as_mut().unwrap();
@@ -195,6 +238,7 @@ async fn scene_ipc_in(
                         }
                         common::rpc::IpcMessage::Closed => {
                             let _ = ctx.registry.remove(&id);
+                            SCENE_CHANNELS.with_borrow_mut(|channels| channels.close(id));
                         }
                     }
                 });

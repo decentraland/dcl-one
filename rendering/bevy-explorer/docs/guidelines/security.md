@@ -45,8 +45,10 @@ the app page anything derived from the key, and do not let scene-supplied metada
 signature.
 
 **The engine never panics or acts for another scene on what a scene host sends.** A frame over
-the size limit, cut short, undecodable, or opening more reply channels than a host may hold ends
-that host's connection, which the engine handles as a lost sidecar. A response for a scene the
+the size limit, cut short, nested too deep, undecodable, or opening more reply channels than a
+host may hold ends that host's connection, which the engine handles as a lost sidecar. The host
+ends a scene that holds more than its own share of reply channels
+(`dcl_deno_ipc::MAX_SCENE_IPC_CHANNELS`) first, so one scene does not cost its co-tenants. A response for a scene the
 host was not given, or a `SystemApi` message from a host running no system scene, is dropped and
 counted (`dcl_deno_ipc::rejected_host_messages`). `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
 plays a scene host against the engine side of the pipe; cover every new `SceneToEngine` message
