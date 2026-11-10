@@ -17,14 +17,15 @@ How this lands on each platform:
 
 | | Native | Web |
 |---|---|---|
-| Scene isolation | V8 isolates inside the `dcl_deno_ipc` sidecar process, one process for all scenes | One sandbox worker per scene, each with its own wasm memory |
+| Scene isolation | V8 isolates inside `dcl_deno_ipc` sidecar processes: one process for all scenes by default; one process per scene with the headless server's `--scene-hosts per-scene`. A sidecar's stdin is empty and its output goes to the engine's log line by line, never to the engine's stdout, which carries the headless server's control channel | One sandbox worker per scene, each with its own wasm memory |
 | Engine boundary | Process boundary; the sidecar talks to the engine over a pipe | The `dcl_wasm` relay runs in the engine's memory and copies messages wasm to wasm |
 | Signing key | Engine process (`wallet`) | The shell page, a separate process from the app page; the engine asks it for each signature through `wallet::remote_signer` |
 | SystemApi sender | Given to the scene the engine marks `is_super`; the engine forwards `SystemApi` only from the sidecar running that scene, while it runs. On the desktop every scene shares the sidecar that runs the system scene, so this separates nothing there; it does where scenes get their own sidecar | Held by the engine-side relay for the one scene the engine marked super; any other scene that sends a `SystemApi` message is ended |
 
 The engine validates every frame the native sidecar sends: a frame it cannot read ends that
 sidecar, and a sidecar speaks only for the scenes the engine gave it. Scenes that share a sidecar
-rely on V8 isolation between them.
+rely on V8 isolation between them. With `--scene-hosts per-scene` no two scenes share one, and
+losing a sidecar ends only its scene (`crates/dcl_deno_ipc/src/pool.rs`).
 
 ## Rules
 
@@ -54,7 +55,9 @@ more than its own share (`dcl_deno_ipc::MAX_SCENE_IPC_CHANNELS`), so an honest h
 scene, not its connection; only the per-host limit is the engine's. A response for a scene the
 host was not given, a `SystemApi` message from a host running no system scene, or IPC data from a
 host is dropped and counted (`dcl_deno_ipc::rejected_host_messages`), with one warning per
-connection. `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
+connection. The engine takes a host's connection only from the process it started; every host's
+responses share one bounded queue, which a host waits on rather than shedding into, so a flood
+holds back only the flooding host; a host that reads nothing for 10 s is ended. `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
 plays a scene host against the engine side of the pipe; cover every new `SceneToEngine` message
 there.
 

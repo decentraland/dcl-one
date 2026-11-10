@@ -20,13 +20,13 @@ struct Host {
     reader: ReadHalf<DuplexStream>,
     writer: WriteHalf<DuplexStream>,
     new_scene: Option<UnboundedSender<NewSceneCommand>>,
+    scenes: Arc<Mutex<HostScenes>>,
     responses_sx: TaggedSceneResponseSender,
     responses: SceneResponseReceiver,
     global: tokio::sync::broadcast::Sender<GlobalCrdtStateUpdate>,
     // dropping a scene's renderer channel kills the scene
     renderer_channels: HashMap<u64, UnboundedSender<RendererResponse>>,
-    // the connection's count of rejected messages, once it has ended
-    ended: tokio::sync::oneshot::Receiver<u64>,
+    ended: tokio::sync::oneshot::Receiver<()>,
     next_entity: u32,
 }
 
@@ -37,13 +37,20 @@ impl Host {
         let (reader, writer) = tokio::io::split(host_end);
         let (new_scene_sx, new_scene_rx) = unbounded_channel();
         let (ended_sx, ended) = tokio::sync::oneshot::channel();
+        let scenes = Arc::new(Mutex::new(HostScenes::default()));
+        let engine_scenes = scenes.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
-            let rejected = rt.block_on(run_host_connection(engine_in, engine_out, new_scene_rx));
-            let _ = ended_sx.send(rejected);
+            rt.block_on(run_host_connection(
+                engine_in,
+                engine_out,
+                new_scene_rx,
+                engine_scenes,
+            ));
+            let _ = ended_sx.send(());
         });
         // the context the host's reply channels are serialized in
         SCENE_IPC_CONTEXT.set(Some(RequestContext {
@@ -52,10 +59,40 @@ impl Host {
             next_id: 1,
         }));
         let (responses_sx, responses) = scene_response_channel();
+        Self::with_responses(
+            reader,
+            writer,
+            new_scene_sx,
+            scenes,
+            responses_sx,
+            responses,
+            ended,
+        )
+    }
+
+    /// A second host whose scenes respond into `first`'s channel, as every scene does in the
+    /// engine; its scene ids start after `first`'s.
+    fn connect_sharing_responses_with(first: &Host) -> Self {
+        let mut host = Self::connect();
+        host.responses_sx = first.responses_sx.clone();
+        host.next_entity = 1000;
+        host
+    }
+
+    fn with_responses(
+        reader: ReadHalf<DuplexStream>,
+        writer: WriteHalf<DuplexStream>,
+        new_scene_sx: UnboundedSender<NewSceneCommand>,
+        scenes: Arc<Mutex<HostScenes>>,
+        responses_sx: TaggedSceneResponseSender,
+        responses: SceneResponseReceiver,
+        ended: tokio::sync::oneshot::Receiver<()>,
+    ) -> Self {
         Self {
             reader,
             writer,
             new_scene: Some(new_scene_sx),
+            scenes,
             responses_sx,
             responses,
             global: tokio::sync::broadcast::channel(16).0,
@@ -65,7 +102,7 @@ impl Host {
         }
     }
 
-    /// Queues a scene as `spawn_scene` does and reads the `NewScene` the engine writes.
+    /// Assigns and queues a scene as the pool does and reads the `NewScene` the engine writes.
     async fn start_scene(
         &mut self,
         is_super: bool,
@@ -105,6 +142,7 @@ impl Host {
             response_channel: SceneResponseSender::new(scene, self.responses_sx.clone()),
             system_api_sender: system_api_sx,
         };
+        assert!(command.assign_to(&self.scenes));
         let Ok(()) = self.new_scene.as_ref().unwrap().send(command) else {
             panic!("the engine stopped taking scenes");
         };
@@ -178,13 +216,9 @@ impl Host {
         tokio::time::timeout(TIMEOUT, &mut self.ended).await.is_ok()
     }
 
-    /// Closes the connection from the host's side and returns how many messages it rejected.
-    async fn close_and_count_rejected(mut self) -> u64 {
-        self.writer.shutdown().await.unwrap();
-        tokio::time::timeout(TIMEOUT, &mut self.ended)
-            .await
-            .expect("the connection did not end")
-            .unwrap()
+    /// Messages this connection rejected so far.
+    fn rejected(&self) -> u64 {
+        self.scenes.lock().unwrap().rejected
     }
 
     /// Whether the engine released its side: reading then finds the end of the stream.
@@ -327,7 +361,7 @@ async fn response_for_an_unknown_scene_is_dropped_and_counted() {
 
     assert_eq!(host.delivered().await, (scene, 2));
     assert!(rejected_host_messages() > rejected);
-    assert_eq!(host.close_and_count_rejected().await, 1);
+    assert_eq!(host.rejected(), 1);
 }
 
 #[tokio::test]
@@ -369,8 +403,8 @@ fn a_killed_scene_is_pruned_when_another_starts_after_the_grace_period() {
         killed_at + KILLED_SCENE_RETENTION,
     );
 
-    assert_eq!(scenes.0.len(), 1);
-    assert!(scenes.0.contains_key(&2));
+    assert_eq!(scenes.scenes.len(), 1);
+    assert!(scenes.scenes.contains_key(&2));
 }
 
 #[test]
@@ -563,6 +597,61 @@ fn system_api_is_taken_only_while_the_system_scene_runs() {
 }
 
 #[tokio::test]
+async fn a_host_flooding_the_shared_response_channel_holds_back_only_itself() {
+    let mut flooding = Host::connect();
+    let mut other = Host::connect_sharing_responses_with(&flooding);
+    let (flooded, _) = flooding.start_scene(false).await;
+    let (waiting, _) = other.start_scene(false).await;
+    // more than the channel holds
+    let flood = 1200;
+
+    for marker in 0..flood {
+        flooding.respond(flooded, marker).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    other.respond(waiting, 7).await;
+
+    let mut flooded_delivered = 0;
+    let mut waiting_delivered = false;
+    while flooded_delivered < flood || !waiting_delivered {
+        match flooding.delivered().await {
+            (scene, _) if scene == waiting => waiting_delivered = true,
+            _ => flooded_delivered += 1,
+        }
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut flooding.ended)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_stops_reading_is_ended_and_a_removed_scene_counts_as_killed_at_once() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let renderer = host.renderer_channels.remove(&scene.0.to_bits()).unwrap();
+    // far more than the pipe holds, so the engine's writer waits on the host
+    for _ in 0..20_000 {
+        let _ = renderer.send(RendererResponse::GetCrdtSnapshot);
+    }
+
+    drop(renderer);
+
+    tokio::time::timeout(TIMEOUT, async {
+        while host.scenes.lock().unwrap().scenes[&scene.0.to_bits()]
+            .killed_at
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the kill was not recorded");
+    assert!(host.connection_ends().await);
+}
+
+#[tokio::test]
 async fn system_api_from_a_host_with_a_system_scene_is_forwarded() {
     let mut host = Host::connect();
     host.start_scene(false).await;
@@ -588,7 +677,7 @@ async fn system_api_from_a_host_without_a_system_scene_is_dropped() {
 
     assert_eq!(host.delivered().await, (scene, 1));
     assert!(rejected_host_messages() > rejected);
-    assert_eq!(host.close_and_count_rejected().await, 1);
+    assert_eq!(host.rejected(), 1);
 }
 
 #[tokio::test]

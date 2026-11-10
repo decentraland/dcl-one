@@ -72,10 +72,17 @@ fn main() -> Result<()> {
 
     info!("IPC scene host running");
 
-    let (_, out) = rt.block_on(async move { tokio::join!(f_in, f_out) });
-    if let Ok(Err(e)) = out {
-        warn!("scene host stopped writing to the engine: {e}");
-    }
+    // the engine closing its end ends the host, even with a scene stuck in a loop
+    rt.block_on(async move {
+        tokio::select! {
+            _ = f_in => (),
+            out = f_out => {
+                if let Ok(Err(e)) = out {
+                    warn!("scene host stopped writing to the engine: {e}");
+                }
+            }
+        }
+    });
 
     Ok(())
 }

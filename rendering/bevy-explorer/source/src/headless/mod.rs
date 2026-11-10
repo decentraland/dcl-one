@@ -7,6 +7,8 @@
 
 mod app;
 mod logs;
+#[cfg(not(target_arch = "wasm32"))]
+mod scene_hosts;
 mod stats;
 pub use stats::{scene_stats_sample, source_window_seconds, EmittedSceneStats};
 #[cfg(target_arch = "wasm32")]
@@ -14,3 +16,5 @@ mod web;
 
 pub use app::{assemble, config};
 pub use logs::{drain_scene_logs, scene_log_level, SceneLogReceivers};
+#[cfg(not(target_arch = "wasm32"))]
+pub use scene_hosts::scene_host_exited_event;
