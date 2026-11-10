@@ -312,3 +312,8 @@ export { NavBar } from '@dcl/one-ui'
 export type { NavBarProps } from '@dcl/one-ui'
 // @ts-expect-error The package export map does not expose component deep imports.
 export { NavBar as DeepNavBar } from '@dcl/one-ui/components/NavBar/NavBar'
+
+// Foundations have their own public entry without generated components.
+export { ShopCart, theme as foundationTheme } from '@dcl/one-ui/foundations'
+// @ts-expect-error Generated components are not exported by the foundations entry.
+export { NavBar as FoundationNavBar } from '@dcl/one-ui/foundations'

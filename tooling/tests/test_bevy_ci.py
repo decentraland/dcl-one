@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, SHARED
 
 SPEC = importlib.util.spec_from_file_location('bevy_ci', Path(__file__).parents[1] / 'bevy-ci.py')
 ci = importlib.util.module_from_spec(SPEC)
@@ -94,6 +95,7 @@ class SelectionTest(unittest.TestCase):
         path.write_text(value)
 
     def commit(self):
+        seal(self.root)
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture', '--allow-empty')
         return self.git('rev-parse', 'HEAD')
@@ -196,8 +198,7 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web'})
 
     def test_shared_hud_sources_validate_web_only(self):
-        for name in (ci.HUD_SHARED[0] + 'model/money.ts', ci.HUD_SHARED[1] + 'credits/BalanceOut.ts',
-                     'library/ui/index.ts', 'library/ui/foundations/colors/colors.css'):
+        for name in SHARED:
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -206,7 +207,9 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web'})
 
     def test_library_ui_outside_the_hud_entries_selects_nothing(self):
-        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.tsx', 'library/ui/upstream.lock.json'):
+        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
+                     'library/ui/components/NavBar/NavBar.tsx',
+                     'library/ui/components/runtime/figma-module-runtime.module.css', 'library/ui/upstream.lock.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

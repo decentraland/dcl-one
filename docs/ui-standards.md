@@ -235,6 +235,10 @@ dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
 Sharing components with it does not extend to Rust Bevy widgets or SDK scene
 UI.
 
+Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
+
+The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. After changing HUD imports or resolver configuration, run `npm run gen:shared-inputs` from that HUD directory with its locked dependencies and canonical Rust-generated bindings available. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. This does not change the separate engine-generated binding inputs or the Sites HUD adaptation review hash.
+
 ### Structure
 
 ```text

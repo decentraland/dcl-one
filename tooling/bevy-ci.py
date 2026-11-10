@@ -21,15 +21,13 @@ GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
 _ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
 _artifact = importlib.util.module_from_spec(_ARTIFACT)
 _ARTIFACT.loader.exec_module(_artifact)
-HUD_SHARED = _artifact.HUD_SHARED
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          *(path.rstrip('/') for path in HUD_SHARED),
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -228,8 +226,17 @@ def changed_inputs(base, head, inputs):
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
-    paths = changed_inputs(base, head, INPUTS)
+    shared = _artifact.shared_inputs.input_hashes(ROOT, head)
+    bootstrap = False
+    try:
+        previous = _artifact.shared_inputs.input_hashes(ROOT, base)
+    except _artifact.shared_inputs.MissingManifest:
+        previous, bootstrap = {}, True
+    shared_paths = set(shared) | set(previous)
+    paths = changed_inputs(base, head, (*INPUTS, *sorted(shared_paths)))
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    if bootstrap:
+        selected['web'] = True
     for path in paths:
         if path == SCENES_WORKFLOW:
             affected = ('scenes',)
@@ -240,7 +247,7 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path == 'tooling/play-artifact.py':
+        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
@@ -258,7 +265,7 @@ def select(base, head):
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
-        elif _artifact.hud_shared(path):
+        elif path in shared_paths:
             # The web HUD compiles them (react-web/vite.shared.ts); the engine never reads them.
             affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
@@ -311,6 +318,8 @@ def plan(event, base, head, repo):
         if event not in ('pull_request', 'local'):
             raise ValueError('Unknown event')
         return select(base, head)
+    except _artifact.shared_inputs.ManifestError:
+        raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative full build: {exc}')
         return full_selection('Comparison unavailable; full run')

@@ -1,6 +1,73 @@
 { lib, runCommand, python3 }:
 let
   root = ../..;
+  manifestPath = "rendering/bevy-explorer/source/react-web/shared-inputs.json";
+  manifest = builtins.fromJSON (builtins.readFile (root + "/${manifestPath}"));
+  safe = path: builtins.isString path && path != "" && !(lib.hasPrefix "/" path)
+    && lib.all (part: part != "" && part != "." && part != "..") (lib.splitString "/" path)
+    && !(lib.hasInfix "\\" path);
+  rows = manifest.controls ++ manifest.files;
+  requiredControls = [
+    "rendering/bevy-explorer/source/react-web/package.json"
+    "rendering/bevy-explorer/source/react-web/package-lock.json"
+    "rendering/bevy-explorer/source/react-web/tsconfig.json"
+    "rendering/bevy-explorer/source/react-web/vite.config.ts"
+    "rendering/bevy-explorer/source/react-web/vitest.config.ts"
+    "rendering/bevy-explorer/source/react-web/vite.shared.ts"
+    "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs"
+    "library/ui/package.json"
+    "library/ui/foundations/typography/font-source.json"
+  ];
+  regular = path:
+    let parts = lib.splitString "/" path;
+      walk = parent: remaining:
+        let name = builtins.head remaining;
+          entries = builtins.readDir parent;
+          kind = entries.${name} or "missing";
+        in if builtins.length remaining == 1 then kind == "regular"
+          else kind == "directory" && walk (parent + "/${name}") (builtins.tail remaining);
+    in safe path && walk root parts;
+  sourceRoots = prefix:
+    let entries = builtins.readDir (root + "/${prefix}");
+    in lib.concatMap (name:
+      let path = "${prefix}/${name}"; kind = entries.${name};
+      in if path == "rendering/bevy-explorer/source/react-web/src/engine/generated" || name == "node_modules" then []
+        else if kind == "directory" then sourceRoots path
+        else assert kind == "regular"; [ path ]) (builtins.attrNames entries);
+  rootInventory = builtins.sort builtins.lessThan
+    ((sourceRoots "rendering/bevy-explorer/source/react-web/src") ++
+      (builtins.filter (path: builtins.pathExists (root + "/${path}")) [
+        "rendering/bevy-explorer/source/react-web/app.html"
+        "rendering/bevy-explorer/source/react-web/index.html"
+      ]));
+  valid = row:
+    regular row.path
+    && (let
+      path = root + "/${row.path}";
+      bytes = builtins.readFile path;
+      # Hash first: readFile rejects binary NUL bytes; the Python verifier also checks payload size.
+      payload = builtins.hashFile "sha256" path == row.sha256;
+      pointer = if row ? lfs then
+        "version https://git-lfs.github.com/spec/v1\noid sha256:${row.lfs.oid}\nsize ${toString row.lfs.size}\n"
+        else "";
+    in if row ? lfs then row.lfs.oid == row.sha256 &&
+      (payload || bytes == pointer || bytes == lib.removeSuffix "\n" pointer)
+    else payload);
+  resolverControls = file:
+    let directory = builtins.dirOf file;
+    in (builtins.filter (path: builtins.pathExists (root + "/${path}"))
+        (map (name: (if directory == "." then "" else directory + "/") + name) [ "package.json" "tsconfig.json" "jsconfig.json" ]))
+      ++ (if directory == "." then [] else resolverControls directory);
+  currentResolverControls = lib.unique (lib.concatMap resolverControls
+    (manifest.roots ++ map (row: row.path) manifest.files));
+  checked = assert manifest.schema == 1;
+    assert lib.all valid rows;
+    assert lib.all (path: lib.any (row: row.path == path) manifest.controls) currentResolverControls;
+    assert lib.all (path: lib.any (row: row.path == path) manifest.controls) requiredControls;
+    assert manifest.roots == rootInventory;
+    assert lib.all (path: lib.any (row: row.path == path) rows) manifest.roots;
+    manifest;
+  sharedFiles = map (row: root + "/${row.path}") (checked.controls ++ checked.files);
   supplied = builtins.getEnv "PLAY_WEB_DIR";
   artifact = if supplied == "" then null else builtins.path {
     path = /. + supplied;
@@ -10,23 +77,20 @@ let
   # build output. Verify the first-party source directly without a snapshot pin.
   contract = lib.fileset.toSource {
     inherit root;
-    fileset = lib.fileset.unions (map (p: lib.fileset.maybeMissing (root + p)) [
+    fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/upstream.lock.json
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto
-      # The HUD's shared sources (HUD_SHARED in tooling/play-artifact.py, which leaves the
-      # HUD_UNREAD files under them unhashed).
-      /library/shop /library/catalyst-api /library/ui/index.ts /library/ui/foundations
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
-      /tooling/play-artifact.py
+      /tooling/play-artifact.py /tooling/hud_shared_inputs.py
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
       /apps/ui3/src/play/engine/generated
-    ]);
+    ]));
   };
 in runCommand "foundation-built-play-web" {
   src = artifact;
