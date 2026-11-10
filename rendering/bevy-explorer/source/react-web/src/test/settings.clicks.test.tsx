@@ -145,6 +145,22 @@ describe('settings panel disabled controls', () => {
     rerender(panel([{ ...FPS, disabled: true }]))
     expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeDisabled()
   })
+
+  it('an open list closes when its field is disabled and stays closed when re-enabled', async () => {
+    const RESOLUTION = base({ name: 'Resolution', category: 'Graphics', namedVariants: [{ name: '2560x1440', description: '' }, { name: '1920x1080', description: '' }], value: 1, maxValue: 2 })
+    const set = vi.fn()
+    const panel = (list: Setting[]) => <SettingsPanel settings={{ ...fakeSession().settings, open: true, list, set }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+    const { rerender } = render(panel([RESOLUTION]))
+    await userEvent.click(screen.getByRole('button', { name: 'Resolution' }))
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    // e.g. Window mode switched to Windowed from the keyboard: no outside mousedown
+    rerender(panel([{ ...RESOLUTION, disabled: true }]))
+    expect(screen.queryByRole('option')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resolution' })).toHaveAttribute('aria-expanded', 'false')
+    rerender(panel([RESOLUTION]))
+    expect(screen.queryByRole('option')).toBeNull()
+    expect(set).not.toHaveBeenCalled()
+  })
 })
 
 // A run-time list (Resolution: the monitor's fullscreen sizes) can hold a single choice, and holds

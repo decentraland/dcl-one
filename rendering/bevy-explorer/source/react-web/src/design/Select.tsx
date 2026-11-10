@@ -67,6 +67,9 @@ export function Select({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
 
+  // disabled while open (another control changed what this one applies to): close, so the list
+  // cannot keep setting it
+  if (disabled && open) setOpen(false)
   const current = options.find((o) => o.value === value)
 
   return (

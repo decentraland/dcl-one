@@ -39,6 +39,43 @@ impl ModeList {
             .or_else(|| self.desktop.and_then(|d| self.position(d.physical_size)))
     }
 
+    /// Whether the choices open with "Desktop": the monitor's current mode, kept as it is. Offered
+    /// when no listed mode is the desktop's (an X11 output rotated to portrait reports its size
+    /// turned while its modes keep theirs), so an unsaved size still has a choice to show.
+    fn desktop_choice(&self) -> bool {
+        !self.modes.is_empty()
+            && self
+                .desktop
+                .and_then(|d| self.position(d.physical_size))
+                .is_none()
+    }
+
+    /// The choice shown for `saved`, `None` until the monitor is read.
+    fn index(&self, saved: Option<FullscreenSize>) -> Option<usize> {
+        if self.desktop_choice() {
+            Some(self.selected(saved).map_or(0, |ix| ix + 1))
+        } else {
+            self.selected(saved)
+        }
+    }
+
+    /// The size saved for choice `index`; "Desktop" saves none.
+    fn size_at(&self, index: usize) -> anyhow::Result<Option<FullscreenSize>> {
+        let index = match (self.desktop_choice(), index) {
+            (true, 0) => return Ok(None),
+            (true, ix) => ix - 1,
+            (false, ix) => ix,
+        };
+        let mode = self
+            .modes
+            .get(index)
+            .ok_or(anyhow::anyhow!("invalid variant index"))?;
+        Ok(Some(FullscreenSize {
+            width: mode.physical_size.x,
+            height: mode.physical_size.y,
+        }))
+    }
+
     /// The video mode exclusive fullscreen asks for. Only a mode the monitor reported is ever
     /// named: winit ignores the switch when an exact match is missing.
     fn fullscreen_mode(&self, saved: Option<FullscreenSize>) -> VideoModeSelection {
@@ -114,18 +151,14 @@ fn label(size: UVec2) -> String {
 /// the one choice is the desktop, shown greyed out by the negative value: a list keeps the panel
 /// on its dropdown, where no choices would read as an off/on switch.
 fn variants(list: &ModeList) -> Vec<NamedVariant> {
-    if list.modes.is_empty() {
-        return vec![NamedVariant {
-            name: "Desktop".to_owned(),
-            description: DESCRIPTION.to_owned(),
-        }];
-    }
-    list.modes
-        .iter()
-        .map(|m| NamedVariant {
-            name: label(m.physical_size),
-            description: DESCRIPTION.to_owned(),
-        })
+    let named = |name: String| NamedVariant {
+        name,
+        description: DESCRIPTION.to_owned(),
+    };
+    let desktop = (list.modes.is_empty() || list.desktop_choice()).then(|| named("Desktop".into()));
+    desktop
+        .into_iter()
+        .chain(list.modes.iter().map(|m| named(label(m.physical_size))))
         .collect()
 }
 
@@ -169,19 +202,11 @@ pub(super) fn register(app: &mut App, settings: &mut Settings, config: &AppConfi
             load_list
                 .read()
                 .unwrap()
-                .selected(config.graphics.fullscreen_size)
+                .index(config.graphics.fullscreen_size)
                 .map_or(-1.0, |ix| ix as f32)
         },
         move |config: &mut AppConfig, index: usize| {
-            let list = save_list.read().unwrap();
-            let mode = list
-                .modes
-                .get(index)
-                .ok_or(anyhow::anyhow!("invalid variant index"))?;
-            config.graphics.fullscreen_size = Some(FullscreenSize {
-                width: mode.physical_size.x,
-                height: mode.physical_size.y,
-            });
+            config.graphics.fullscreen_size = save_list.read().unwrap().size_at(index)?;
             Ok(())
         },
         disabled,
@@ -367,6 +392,32 @@ mod tests {
             ModeList::default().fullscreen_mode(saved(2560, 1440)),
             VideoModeSelection::Current
         );
+    }
+
+    #[test]
+    fn a_desktop_size_matching_no_listed_mode_is_offered_as_desktop() {
+        // a portrait output: its size is turned, its modes are not
+        let all = [mode(1920, 1080, 60, 32), mode(2560, 1440, 60, 32)];
+        let saved = |width, height| Some(FullscreenSize { width, height });
+        for desktop in [None, Some(mode(1080, 1920, 60, 32))] {
+            let list = list_modes(&all, desktop);
+            let names: Vec<_> = variants(&list).into_iter().map(|v| v.name).collect();
+            assert_eq!(names, ["Desktop", "2560x1440 (16:9)", "1920x1080 (16:9)"]);
+            assert_eq!(list.index(None), Some(0));
+            assert_eq!(list.index(saved(1920, 1080)), Some(2));
+            assert_eq!(list.index(saved(3840, 2160)), Some(0));
+            assert_eq!(list.size_at(0).unwrap(), None);
+            assert_eq!(list.size_at(2).unwrap(), saved(1920, 1080));
+            assert!(list.size_at(3).is_err());
+            assert_eq!(list.fullscreen_mode(None), VideoModeSelection::Current);
+        }
+        // a listed desktop needs no extra choice
+        let desktop = mode(1920, 1080, 60, 32);
+        let list = list_modes(&all, Some(desktop));
+        assert!(!list.desktop_choice());
+        assert_eq!(list.index(None), Some(1));
+        assert_eq!(list.size_at(0).unwrap(), saved(2560, 1440));
+        assert_eq!(ModeList::default().index(None), None);
     }
 
     #[test]
