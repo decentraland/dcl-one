@@ -197,6 +197,8 @@ pub struct CollectibleManager<'w, 's, T: CollectibleType> {
 #[derive(Debug)]
 pub enum CollectibleError {
     Loading,
+    /// The remote pointer is absent, or a dynamic collectible has no local value.
+    /// Dynamic values require synthesis through `CollectibleManager::add_dynamic`.
     Missing,
     Failed,
     NoRepresentation,
@@ -307,6 +309,8 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
         Ok((representation, handle))
     }
 
+    /// Dynamic collectibles must already be synthesized through [`Self::add_dynamic`].
+    /// `Missing` for an unbuilt or reclaimed dynamic value does not start a remote load.
     pub fn get_data(
         &mut self,
         urn: impl AsRef<CollectibleUrn<T>>,
@@ -469,7 +473,7 @@ fn expire_idle_wearables(
     server: Res<AssetServer>,
     pressure: Option<Res<MemoryReclaimState>>,
 ) {
-    // The pressure pass owns cleanup for this frame, including all eligibility work.
+    // Under pressure, all expiry shares the reclaimer's budget and rotation.
     if pressure.is_some_and(|pressure| pressure.ram_active || pressure.gpu_active) {
         return;
     }

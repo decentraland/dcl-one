@@ -294,8 +294,8 @@ Kept from explorer-automation's guides:
 ## Keeping the suite true
 
 `specs/debug-panel.test.ts` checks every registered diagnostic field and the
-`/memory_reclaim` simulation modes, reset, budget validation and cumulative cache
-counters. A separate scenario measures the active emote baseline, observes wave
+`/memory_reclaim` simulation modes, reset and budget validation.
+A separate scenario measures the active emote baseline, observes wave
 playing with cache-pin growth, waits for the observed playback to finish or yield
 its slot and idle pins to leave, then verifies replay with renewed pin growth.
 Both full URNs and short emote names are accepted. Active scene movement animations

@@ -144,14 +144,16 @@ fn leaving_preview_discards_overrides_before_the_same_frames_cleanup() {
 
     for (measured_ram, measured_gpu) in [(false, false), (true, false), (false, true)] {
         let mut app = app();
-        app.insert_resource(PreviewMode {
-            is_preview: true,
-            ..Default::default()
-        })
-        .insert_resource(MemoryReclaimSettings {
-            frame_budget: Duration::from_millis(16),
-            simulation: ReclaimSimulation::Both,
-        });
+        app.init_resource::<Visits>()
+            .add_memory_reclaimer(spec("a", 10, ReclaimDomains::RamAndGpu), clean_a)
+            .insert_resource(PreviewMode {
+                is_preview: true,
+                ..Default::default()
+            })
+            .insert_resource(MemoryReclaimSettings {
+                frame_budget: Duration::from_millis(16),
+                simulation: ReclaimSimulation::Both,
+            });
         ready(&mut app);
         ram(&mut app, Some(if measured_ram { 800 } else { 400 }));
         gpu(&mut app, &[if measured_gpu { 800 } else { 400 }]);
@@ -200,11 +202,17 @@ fn leaving_preview_discards_overrides_before_the_same_frames_cleanup() {
         );
         let budget = app.world().resource::<ReclaimBudget>();
         assert_eq!((budget.ram, budget.gpu), (measured_ram, measured_gpu));
-        assert_eq!(
-            budget.deadline.unwrap() - budget.started.unwrap(),
-            Duration::from_millis(1),
-            "the same frame's cleanup must use the restored allowance"
-        );
+        if measured_ram || measured_gpu {
+            assert_eq!(
+                budget.deadline.unwrap() - budget.started.unwrap(),
+                Duration::from_millis(1),
+                "the same frame's cleanup must use the restored allowance"
+            );
+        } else {
+            assert!(budget.started.is_none() && budget.deadline.is_none());
+            assert_eq!(budget.elapsed, Duration::ZERO);
+            assert_eq!(budget.caches()[0].scan_status, ReclaimScanStatus::NotRun);
+        }
 
         app.world_mut().resource_mut::<PreviewMode>().is_preview = true;
         app.update();
@@ -283,6 +291,36 @@ fn gpu_only_pressure_skips_ram_only_caches_and_no_render_resources_are_required(
     app.world_mut().remove_resource::<GpuMemoryBudget>();
     app.update();
     assert_eq!(app.world().resource::<Visits>().0.len(), 2);
+}
+
+#[test]
+fn unrelated_last_work_cannot_exhaust_the_allowance_before_the_first_cache() {
+    let mut app = app();
+    app.init_resource::<Visits>()
+        .add_memory_reclaimer(spec("a", 10, ReclaimDomains::Ram), clean_a)
+        .add_memory_reclaimer(spec("b", 20, ReclaimDomains::Ram), clean_b)
+        .add_systems(
+            Last,
+            (|mut budget: ResMut<ReclaimBudget>| {
+                // Model unrelated Last work outlasting any already-started allowance,
+                // without depending on wall-clock delays or scheduler speed.
+                budget.deadline = budget.deadline.map(|_| Instant::now());
+            })
+            .after(begin_frame)
+            .before(clean_a),
+        );
+    app.world_mut()
+        .resource_mut::<MemoryReclaimSettings>()
+        .frame_budget = Duration::from_secs(10);
+    ready(&mut app);
+    ram(&mut app, Some(800));
+    app.update();
+
+    assert_eq!(app.world().resource::<Visits>().0, ["a", "a", "b", "b"]);
+    let budget = app.world().resource::<ReclaimBudget>();
+    assert_eq!(budget.caches()[0].inspected, 2);
+    assert_eq!(budget.caches()[1].inspected, 2);
+    assert!(!budget.budget_exhausted);
 }
 
 fn slow_a(mut budget: ResMut<ReclaimBudget>, mut visits: ResMut<Visits>) {

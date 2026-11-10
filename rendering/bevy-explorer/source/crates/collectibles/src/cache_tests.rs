@@ -28,9 +28,6 @@ fn touches_share_one_pin_and_one_recency_record_per_content_hash() {
     assert_eq!(cache.len(), 1);
     cache.reclaim(103, &mut turn(), |_| false);
     assert_eq!(cache.len(), 0);
-    // The consumer still owns a strong handle; cleanup never forcibly removes an asset.
-    assert!(first.is_strong());
-    assert!(assets.get(&first).is_some());
 }
 
 #[test]

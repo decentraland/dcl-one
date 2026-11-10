@@ -114,6 +114,7 @@ pub struct ReclaimStats {
 #[derive(Resource, Default)]
 pub struct ReclaimBudget {
     caches: Vec<ReclaimStats>,
+    frame_budget: Duration,
     started: Option<Instant>,
     deadline: Option<Instant>,
     start_cache: usize,
@@ -190,6 +191,12 @@ impl ReclaimBudget {
             || !(self.ram || (self.gpu && matches!(cache.spec.domains, ReclaimDomains::RamAndGpu)))
         {
             return None;
+        }
+        if self.started.is_none() {
+            // Unrelated Last systems must not spend the allowance before cleanup starts.
+            let now = Instant::now();
+            self.started = Some(now);
+            self.deadline = Some(now + self.frame_budget);
         }
         if self
             .deadline
@@ -387,9 +394,9 @@ fn begin_frame(
         state.ram_active = state.ram_latched;
         state.gpu_active = state.gpu_latched;
     }
-    let now = Instant::now();
-    budget.started = Some(now);
-    budget.deadline = Some(now + settings.frame_budget);
+    budget.frame_budget = settings.frame_budget;
+    budget.started = None;
+    budget.deadline = None;
     budget.start_cache = (budget.next_cache..budget.caches.len())
         .chain(0..budget.next_cache)
         .find(|&index| {

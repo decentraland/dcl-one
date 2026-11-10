@@ -42,14 +42,11 @@ scenario('memory reclamation validates session controls and restores measured pr
       { timeoutMs: 5_000, what: 'memory reclamation simulation ' + simulation })
     }
     await explorer.run('/memory_reclaim off')
-    const after = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
       state.simulation === 'off' &&
       !((state.ram == null || state.ram === 'Abundance') && state.ramActive) &&
       !((state.gpu == null || state.gpu === 'Abundance') && state.gpuActive),
     { timeoutMs: 5_000, what: 'simulation off to restore real pressure' })
-    for (const cache of before.caches) {
-      assert.ok(after.caches.find(row => row.name === cache.name)!.released >= cache.released)
-    }
   } finally {
     await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
     await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>

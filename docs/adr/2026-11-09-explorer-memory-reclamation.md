@@ -21,8 +21,9 @@ their animation clips. Pending loads have per-avatar, per-slot ownership. Never
 force-remove a live Bevy asset or infer global ownership from an
 individual handle's Arc count. Permanent embedded assets remain pinned.
 
-The initial shared allowance is 1 ms per frame, with at most 10 releases and 64
-candidate inspections per cache turn. Cursors resume bounded scans across frames.
+The initial shared allowance is 1 ms per frame, starting at the first eligible
+cache turn, with at most 10 releases and 64 candidate inspections per cache turn.
+Cursors resume bounded scans across frames.
 The allowance is cooperative: individual destructors and later renderer cleanup
 can exceed it. Counters report released pins, not estimated bytes recovered.
 
@@ -47,6 +48,10 @@ for bounded cleanup; recently accessed
 entries still fetch. Collectibles retain a
 three-frame grace. Active consumers and pending loads keep their own strong
 handles, so releasing a cache pin cannot invalidate their assets.
+
+Under pressure, the shared allowance and cache rotation replace ordinary wearable
+expiry. A wearable cache skipped in a frame waits for a later turn; it does not run
+additional expiry outside that allowance.
 
 Representation caches respond to RAM or GPU pressure; metadata and profile caches
 respond to RAM. Weak lookup tables do not retain assets and require no pressure
