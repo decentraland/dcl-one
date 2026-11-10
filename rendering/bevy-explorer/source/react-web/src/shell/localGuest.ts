@@ -5,7 +5,7 @@
 // held for the page, not stored, so a run replaces nothing the profile holds.
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
-import { newEphemeralDelegation, publicKeyAddress, signedIdentity } from '../features/auth/guest'
+import { newEphemeralDelegation, publicKeyAddress, signedIdentity } from '@explorer-core/features/auth/guest'
 import type { AuthIdentity } from '@explorer-core/features/auth/sso'
 import { personalSign } from '@explorer-core/shell/sign'
 

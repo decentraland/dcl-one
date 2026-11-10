@@ -28,7 +28,10 @@ const unattendedRun = (): UnattendedRun | null =>
       }
     : null
 
-export { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+/** boot.js sets it when the engine ended its own run (an `AppExit`, the benchmark autopilot). */
+const engineExited = (): boolean => (window as { __engineExited?: boolean }).__engineExited === true
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+
+const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

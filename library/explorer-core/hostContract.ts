@@ -61,6 +61,9 @@ export interface HudHost {
   ownShopItemUrl(contract: string, item: string): string | null
   /** Whether this host runs the in-world Shop page (otherwise the Shop opens the web Shop). */
   IN_WORLD_SHOP: boolean
+  /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went
+   *  with it, so its silence is no fault. */
+  engineExited(): boolean
   /** How this page boots. */
   bootMode(): BootMode
   /** This boot's unattended run, when it is one (`bootMode().autoLogin === 'unattended'`), else null. */

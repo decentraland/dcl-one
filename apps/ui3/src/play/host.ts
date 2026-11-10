@@ -17,7 +17,10 @@ const ownShopItemUrl = (contract: string, item: string): string | null =>
 /** /play has no benchmark run. */
 const unattendedRun: HudHost['unattendedRun'] = () => null
 
-export { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+/** /play's engine never ends its own run: it has no benchmark. */
+const engineExited = (): boolean => false
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+
+const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

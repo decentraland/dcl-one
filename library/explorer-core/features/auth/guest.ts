@@ -1,13 +1,13 @@
 // Persistent guest accounts: "Explore as guest" creates a guest wallet and signs in with it like
 // any other account, so the guest keeps its avatar and name across visits. On web this runs in the
-// shell page (src/shell/main.ts), which keeps the identity and its key with the other sign-ins; on
+// shell page (each host's shell), which keeps the identity and its key with the other sign-ins; on
 // native, in the page with the bridge scene making the thirdweb calls.
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
-import { personalSign } from '@explorer-core/shell/sign'
-import type { AuthIdentity } from '@explorer-core/features/auth/sso'
-import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from '@explorer-core/features/auth/thirdweb'
+import { personalSign } from '../../shell/sign'
+import type { AuthIdentity } from './sso'
+import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 
@@ -61,24 +61,44 @@ export function publicKeyAddress(publicKey: Uint8Array): string {
   return checksumAddress(keccak_256(publicKey.slice(1)).slice(-20))
 }
 
+/** A fresh ephemeral key and the message an account signs to delegate it for `IDENTITY_LIFETIME_MS`.
+ *  The catalyst parses `payload`, so every kind of account builds it here. */
+export interface EphemeralDelegation {
+  ephemeralIdentity: AuthIdentity['ephemeralIdentity']
+  expiration: string
+  payload: string
+}
+
+export function newEphemeralDelegation(): EphemeralDelegation {
+  const privateKey = secp256k1.utils.randomSecretKey()
+  const publicKey = secp256k1.getPublicKey(privateKey, false)
+  const address = publicKeyAddress(publicKey)
+  const expiration = new Date(Date.now() + IDENTITY_LIFETIME_MS).toISOString()
+  return {
+    ephemeralIdentity: { address, publicKey: `0x${bytesToHex(publicKey)}`, privateKey: `0x${bytesToHex(privateKey)}` },
+    expiration,
+    payload: `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`
+  }
+}
+
+/** The identity of `signer` (the account's address, lower case) once it has signed `delegation.payload`. */
+export function signedIdentity(delegation: EphemeralDelegation, signer: string, signature: string): AuthIdentity {
+  return {
+    ephemeralIdentity: delegation.ephemeralIdentity,
+    expiration: delegation.expiration,
+    authChain: [
+      { type: 'SIGNER', payload: signer, signature: '' },
+      { type: 'ECDSA_EPHEMERAL', payload: delegation.payload, signature }
+    ]
+  }
+}
+
 /** Create a new guest wallet and an identity it has signed. Any earlier guest is replaced. */
 export async function createGuestIdentity(backend: GuestBackend): Promise<AuthIdentity> {
   const sessionId = bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
   const { token, walletAddress } = await backend.login(sessionId)
 
-  const privateKey = secp256k1.utils.randomSecretKey()
-  const publicKey = secp256k1.getPublicKey(privateKey, false)
-  const address = publicKeyAddress(publicKey)
-  const expiration = new Date(Date.now() + IDENTITY_LIFETIME_MS).toISOString()
-  const payload = `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`
-  const signature = await backend.sign(token, payload)
-
-  return {
-    ephemeralIdentity: { address, publicKey: `0x${bytesToHex(publicKey)}`, privateKey: `0x${bytesToHex(privateKey)}` },
-    expiration,
-    authChain: [
-      { type: 'SIGNER', payload: walletAddress.toLowerCase(), signature: '' },
-      { type: 'ECDSA_EPHEMERAL', payload, signature }
-    ]
-  }
+  const delegation = newEphemeralDelegation()
+  const signature = await backend.sign(token, delegation.payload)
+  return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
 }

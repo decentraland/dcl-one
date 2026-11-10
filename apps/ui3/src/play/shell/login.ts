@@ -1,6 +1,6 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackendFor } from '../features/auth/guest'
+import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
 import {
   clearGuestLogin,
   clearStoredLogins,

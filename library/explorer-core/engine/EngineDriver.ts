@@ -5,27 +5,23 @@
 //     from the super-user bridge scene over the `bevy-ui-bridge` BroadcastChannel
 //     and are delivered through ONE generic `on(msg => …)` subscription.
 
-import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '@explorer-core/features/auth/sso'
-import { trackGuestWalletCreation } from '@explorer-core/features/auth/guestWalletEvent'
-import { attachEngine, launchAnalytics } from '@explorer-core/lib/analytics'
-import { inShell, shellRequest } from '@explorer-core/lib/shell'
-import { newAccountFlags, type NewAccountPick } from '@explorer-core/engine/driver'
-import { autopilotFailCommand, type AutopilotDriver } from './autopilot'
-import type { EngineRpc, LaunchHostOptions } from '@explorer-core/engine/engineRpc'
+import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
+import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
+import { attachEngine, launchAnalytics } from '../lib/analytics'
+import { inShell, shellRequest } from '../lib/shell'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
+import type { EngineRpc, LaunchHostOptions } from './engineRpc'
 import { BridgeChannel } from './bridgeChannel'
-import { bridgeChannelName, type PageToScene, type SceneToPage } from '@explorer-core/engine/protocol'
+import { bridgeChannelName, type PageToScene, type SceneToPage } from './protocol'
 
 // Two thirdweb round-trips.
 const CREATE_GUEST_TIMEOUT_MS = 30_000
 
-/** Why the autopilot's sign-in fails outside the shell (`loginLocalGuest`). */
-export const NO_SHELL_FOR_LOCAL_GUEST = 'no shell to keep the local guest'
-
-export class EngineDriver implements AutopilotDriver {
+export class EngineDriver implements LoginDriver {
   private readonly ch: BridgeChannel
   private readonly listeners = new Set<(msg: SceneToPage) => void>()
 
-  constructor(private readonly rpc: EngineRpc) {
+  constructor(protected readonly rpc: EngineRpc) {
     this.ch = new BridgeChannel(
       bridgeChannelName(),
       (msg) => {
@@ -60,23 +56,8 @@ export class EngineDriver implements AutopilotDriver {
     await this.loginWithIdentity(login.identity, false, true, pick)
   }
 
-  // The shell makes the autopilot's guest, keeps its root key and holds the signed identity for this
-  // page without storing it (a stored account stays as it is); the engine gets the public identity and
-  // signs through the shell. Outside the shell (the app page opened on its own) there is nowhere to
-  // keep it, and a throwaway guest would be a new address every run: the sign-in fails, and with it
-  // the run (the session reports it with `autopilotFailed`).
-  async loginLocalGuest(): Promise<void> {
-    if (!inShell) throw new Error(NO_SHELL_FOR_LOCAL_GUEST)
-    const login = await shellRequest<StoredLogin>('createLocalGuest')
-    await this.loginWithIdentity(login.identity, false, true)
-  }
-
   async loginCancel(): Promise<void> {
     // SSO login is a redirect/console-command; there is no in-engine flow to cancel.
-  }
-
-  async autopilotFailed(reason: string): Promise<unknown> {
-    return this.rpc.command(autopilotFailCommand(reason))
   }
 
   async logout(): Promise<void> {

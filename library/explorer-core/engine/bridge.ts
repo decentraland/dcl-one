@@ -6,11 +6,10 @@
 // `on(msg => …)` subscription; only request/response (login) is correlated by id.
 
 import { createGuestIdentity } from '../features/auth/guest'
-import { encodeIdentity, type AuthIdentity } from '@explorer-core/features/auth/sso'
-import type { GuestWallet } from '@explorer-core/features/auth/thirdweb'
+import { encodeIdentity, type AuthIdentity } from '../features/auth/sso'
+import type { GuestWallet } from '../features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
-import { newAccountFlags, type NewAccountPick } from '@explorer-core/engine/driver'
-import { autopilotFailCommand, type AutopilotDriver } from './autopilot'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
 import {
   bridgeChannelName,
   type LoginPreviousResult,
@@ -19,7 +18,7 @@ import {
   type RpcMethod,
   type RpcRequest,
   type SceneToPage
-} from '@explorer-core/engine/protocol'
+} from './protocol'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }
 
@@ -34,7 +33,7 @@ const QUICK_RPC_TIMEOUT_MS: Partial<Record<RpcMethod, number>> = {
 // Answered by the bridge scene, not the engine's boot shim.
 const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestDiscard'])
 
-export class BridgeClient implements AutopilotDriver {
+export class BridgeClient implements LoginDriver {
   private readonly ch: BridgeChannel
   private readonly pending = new Map<string, Pending>()
   private readonly listeners = new Set<(msg: SceneToPage) => void>()
@@ -71,21 +70,8 @@ export class BridgeClient implements AutopilotDriver {
     await this.command(`/login_identity ${encodeIdentity(identity)} --guest${newAccountFlags(pick)}`)
   }
 
-  // Native: the engine keeps the autopilot's guest, root key included, in its config beside the
-  // previous login, and signs the identity itself. The mock has no engine console, so it stays a
-  // plain guest.
-  async loginLocalGuest(): Promise<void> {
-    if (!('engine_console_command' in window)) return this.loginGuest()
-    await this.command('/login_local_guest')
-  }
-
   loginCancel(): Promise<void> {
     return this.rpc<void>('loginCancel')
-  }
-
-  // Native: the engine console, as for the identity above. The mock has none, and no run to end.
-  async autopilotFailed(reason: string): Promise<unknown> {
-    if ('engine_console_command' in window) return this.command(autopilotFailCommand(reason))
   }
 
   logout(): Promise<void> {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { EngineDriver } from '../engine/EngineDriver'
+import { EngineDriver } from '@explorer-core/engine/EngineDriver'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { sessionId } from '@explorer-core/lib/analytics'
 

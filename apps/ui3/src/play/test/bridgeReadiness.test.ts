@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { BridgeChannel } from '../engine/bridgeChannel'
+import { BridgeChannel } from '@explorer-core/engine/bridgeChannel'
 import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import { renderSession, enterAsGuest } from '@hud/test/harness'
 

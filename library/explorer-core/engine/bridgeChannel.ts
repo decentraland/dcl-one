@@ -14,18 +14,14 @@
 // arrives long after the scene — still gets an answer, and domains holding one-shot state can
 // re-send it to the newcomer.
 
-import { PAGE_DIR } from '../lib/publicUrl'
-import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
+import { engineExited, PAGE_DIR } from '@hud-host'
+import type { Envelope, PageToScene, SceneToPage } from './protocol'
 
 const HELLO_INTERVAL_MS = 250
 
 /** Only armed by `expectReady()`: before the engine is launched there is legitimately no bridge on
  *  web, and a clock started at construction just accuses an idle login screen or picker. */
 const READY_TIMEOUT_MS = 30_000
-
-/** boot.js sets it when the engine ended its own run (an `AppExit`, the benchmark autopilot): the
- *  scene went with it, so its silence is no fault. */
-const engineExited = (): boolean => (window as { __engineExited?: boolean }).__engineExited === true
 
 export class BridgeChannel {
   private readonly ch: BroadcastChannel
@@ -62,6 +58,8 @@ export class BridgeChannel {
     this.expected = true
     this.timeoutTimer = setTimeout(() => {
       this.timeoutTimer = null
+      // A run the engine ended on its own (the host's `engineExited`) took the scene with it: its
+      // silence is no fault.
       if (!this.ready && !engineExited()) this.onUnavailable?.()
     }, READY_TIMEOUT_MS)
   }

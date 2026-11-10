@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
-import { createGuestIdentity, publicKeyAddress, type GuestBackend } from '../features/auth/guest'
+import { createGuestIdentity, publicKeyAddress, type GuestBackend } from '@explorer-core/features/auth/guest'
 
 const hexToBytes = (hex: string): Uint8Array => Uint8Array.from(hex.match(/../g) ?? [], (b) => parseInt(b, 16))
 

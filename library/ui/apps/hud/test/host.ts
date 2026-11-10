@@ -16,3 +16,4 @@ export const ownShopItemUrl: HudHost['ownShopItemUrl'] = () => null
 export const IN_WORLD_SHOP = false
 export const bootMode = (): BootMode => ({ systemScene: null, hideHud: false, autoLogin: null })
 export const unattendedRun: HudHost['unattendedRun'] = () => null
+export const engineExited: HudHost['engineExited'] = () => false

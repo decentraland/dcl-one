@@ -8,7 +8,7 @@ import {
   webGuestBackend,
   webGuestBackendFor,
   type GuestBackend
-} from '../features/auth/guest'
+} from '@explorer-core/features/auth/guest'
 import { personalSign } from '@explorer-core/shell/sign'
 
 function personalHash(message: string): Uint8Array {

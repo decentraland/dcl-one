@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { BridgeClient } from './engine/bridge'
-import { EngineDriver } from './engine/EngineDriver'
+import { AutopilotBridgeClient, AutopilotEngineDriver } from './engine/autopilot'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { EngineHost } from './features/engine/EngineHost'
 import type { LoginDriver } from '@explorer-core/engine/driver'
@@ -204,15 +203,15 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
   } => {
     if (MODE === 'mock') {
       startMockBridge()
-      return { rpc: null, createDriver: () => new BridgeClient() }
+      return { rpc: null, createDriver: () => new AutopilotBridgeClient() }
     }
     if (MODE === 'native') {
       // The CEF shim wires this BroadcastChannel to the native engine relay (see
       // src/lib/cefNativeBridge.ts and src/react_hud_cef.rs).
-      return { rpc: null, createDriver: () => new BridgeClient() }
+      return { rpc: null, createDriver: () => new AutopilotBridgeClient() }
     }
     const engineRpc = new EngineRpc()
-    return { rpc: engineRpc, createDriver: () => new EngineDriver(engineRpc) }
+    return { rpc: engineRpc, createDriver: () => new AutopilotEngineDriver(engineRpc) }
   }, [])
 
   const session = useEngineSession(createDriver)
