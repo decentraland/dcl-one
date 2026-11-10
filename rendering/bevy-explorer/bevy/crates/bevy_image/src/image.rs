@@ -974,19 +974,16 @@ impl Image {
         asset_usage: RenderAssetUsages,
         asset_path: Option<&AssetPath<'_>>,
     ) -> Result<Image, TextureError> {
+        // sniffed before `image_type` is resolved, which fails on an unknown mime type
         #[cfg(feature = "ktx2")]
-        let format = if has_ktx2_magic(buffer) {
-            ImageFormat::Ktx2
-        } else {
-            image_type.to_image_format()?
-        };
+        let sniffed = has_ktx2_magic(buffer).then_some(ImageFormat::Ktx2);
         #[cfg(not(feature = "ktx2"))]
-        let format = image_type.to_image_format()?;
+        let sniffed: Option<ImageFormat> = None;
         #[cfg(all(feature = "ktx2", feature = "dds"))]
-        let format = if buffer.starts_with(b"DDS ") {
-            ImageFormat::Dds
-        } else {
-            format
+        let sniffed = sniffed.or(buffer.starts_with(b"DDS ").then_some(ImageFormat::Dds));
+        let format = match sniffed {
+            Some(format) => format,
+            None => image_type.to_image_format()?,
         };
         Self::decode_buffer(
             #[cfg(all(debug_assertions, feature = "dds"))]
