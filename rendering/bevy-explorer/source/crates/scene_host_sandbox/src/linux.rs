@@ -46,6 +46,15 @@ const READ_ONLY: &[&str] = &[
 
 const READ_WRITE: &[&str] = &["/dev/null"];
 
+// Not in libc for every target; the numbers are the same on x86_64 and aarch64.
+const SYS_FCHMODAT2: i64 = 452;
+const SYS_SETXATTRAT: i64 = 463;
+const SYS_REMOVEXATTRAT: i64 = 466;
+const F_SETOWN_EX: u64 = 15;
+const FIOSETOWN: u64 = 0x8901;
+const SIOCSPGRP: u64 = 0x8902;
+const IOPRIO_WHO_PROCESS: u64 = 1;
+
 pub fn apply(mode: Mode) -> Result<Status> {
     if mode == Mode::Off {
         return Ok(Status {
@@ -191,7 +200,7 @@ fn filter(
 
 fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
     let pid = u64::from(std::process::id());
-    let mut denied = BTreeMap::new();
+    let mut denied: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
 
     for syscall in [
         libc::SYS_execve,
@@ -230,6 +239,36 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
         libc::SYS_reboot,
         libc::SYS_acct,
         libc::SYS_personality,
+        // tgkill covers this process's own threads
+        libc::SYS_tkill,
+        // file metadata, which Landlock does not cover, and path truncate below Landlock ABI 3
+        libc::SYS_fchmod,
+        libc::SYS_fchmodat,
+        SYS_FCHMODAT2,
+        libc::SYS_fchown,
+        libc::SYS_fchownat,
+        libc::SYS_setxattr,
+        libc::SYS_lsetxattr,
+        libc::SYS_fsetxattr,
+        SYS_SETXATTRAT,
+        libc::SYS_removexattr,
+        libc::SYS_lremovexattr,
+        libc::SYS_fremovexattr,
+        SYS_REMOVEXATTRAT,
+        libc::SYS_utimensat,
+        libc::SYS_truncate,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_chmod,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_chown,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_lchown,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_utime,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_utimes,
+        #[cfg(target_arch = "x86_64")]
+        libc::SYS_futimesat,
         #[cfg(target_arch = "x86_64")]
         libc::SYS_fork,
         #[cfg(target_arch = "x86_64")]
@@ -252,7 +291,6 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
     // the first argument names a process; only this one may be signalled
     for syscall in [
         libc::SYS_kill,
-        libc::SYS_tkill,
         libc::SYS_tgkill,
         libc::SYS_rt_sigqueueinfo,
         libc::SYS_rt_tgsigqueueinfo,
@@ -262,13 +300,68 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
             vec![rule([(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, pid)])?],
         );
     }
-    // pid 0 is this process
-    denied.insert(
+    // the first argument names a process, and 0 is this one. A thread id of this process is
+    // refused too; the runtime treats these as hints.
+    let other_process = |arg: u8| {
+        rule([
+            (arg, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, 0),
+            (arg, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, pid),
+        ])
+    };
+    for syscall in [
         libc::SYS_prlimit64,
-        vec![rule([
-            (0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, 0),
-            (0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, pid),
-        ])?],
+        libc::SYS_sched_setaffinity,
+        libc::SYS_sched_setparam,
+        libc::SYS_sched_setscheduler,
+        libc::SYS_sched_setattr,
+        libc::SYS_migrate_pages,
+        libc::SYS_move_pages,
+        libc::SYS_get_robust_list,
+    ] {
+        denied.insert(syscall, vec![other_process(0)?]);
+    }
+    // (which, who): only a single process, and only this one
+    for (syscall, single_process) in [
+        (libc::SYS_setpriority, libc::PRIO_PROCESS as u64),
+        (libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS),
+    ] {
+        denied.insert(
+            syscall,
+            vec![
+                rule([(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, single_process)])?,
+                other_process(1)?,
+            ],
+        );
+    }
+
+    // the owner of a descriptor receives its signals
+    let set_owner = |cmd: u64| (1, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, cmd);
+    denied.insert(
+        libc::SYS_fcntl,
+        vec![
+            rule([
+                set_owner(libc::F_SETOWN as u64),
+                (2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, 0),
+                (2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, pid),
+            ])?,
+            // the owner is in memory the filter cannot read
+            rule([set_owner(F_SETOWN_EX)])?,
+        ],
+    );
+    // the owner ioctls as above; terminal input injection and the console's ioctls on a terminal
+    // the host inherited; taking a terminal's foreground
+    denied.insert(
+        libc::SYS_ioctl,
+        [
+            FIOSETOWN,
+            SIOCSPGRP,
+            libc::TIOCSTI,
+            libc::TIOCLINUX,
+            libc::TIOCSPGRP,
+        ]
+        .into_iter()
+        .map(|request| rule([(1, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, request)]))
+        .collect::<Result<_>>()?,
     );
 
     // IPv4 and IPv6 for fetch and WebSocket; route netlink for the resolver's interface listing
