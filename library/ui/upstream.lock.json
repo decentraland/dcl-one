@@ -4478,7 +4478,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4596,7 +4596,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4714,7 +4714,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4839,7 +4839,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -4959,7 +4959,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5079,7 +5079,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5197,7 +5197,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5317,7 +5317,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
@@ -5429,7 +5429,7 @@
         }
       },
       "generation.json": {
-        "sha256": "a15747adb42af268874f9bf2f87a1aeca6314c4731adaed06fceb72966e4d68a",
+        "sha256": "d87d00e275ca1844f6fb33c7dae00a788d844d0dacdbf5a9bf3e86421ea4332d",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -5437,7 +5437,7 @@
           "modules": {
             "library/ui/figma/component-generation.mjs": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
             "library/ui/figma/key-guard.d.mts": "e799fa496b6516b4a092acfb47ec49d3ae7510f7bda9640a23cc51499dea70b2",
-            "library/ui/figma/key-guard.mjs": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
+            "library/ui/figma/key-guard.mjs": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/lfs-prefetch.d.mts": "5efbf855faef35ae0017a769b76f375717bb9cc8ec18f08232d1be3b3773f072",
             "library/ui/figma/lfs-prefetch.mjs": "6fc68bbc1a36ad97321181c62d1cb3dadeb3e27d35f7c85a1f84723669285a66",
