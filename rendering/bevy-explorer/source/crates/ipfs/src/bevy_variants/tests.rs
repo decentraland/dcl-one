@@ -22,8 +22,14 @@ fn variant_bytes() -> Vec<u8> {
     (0..1000).map(|i| (i % 251) as u8).collect()
 }
 
+/// The path abgen would serve a texture variant at; any valid one will do here.
+fn served_path(cid: &str) -> String {
+    format!("bevy/t1/{ORIGINAL_CID}_{}", &cid[cid.len() - 6..])
+}
+
 fn variant(cid: &str, kind: &str, format: &str) -> Variant {
     Variant {
+        path: served_path(cid),
         cid: cid.to_owned(),
         kind: kind.to_owned(),
         format: format.to_owned(),
@@ -35,22 +41,30 @@ fn variant(cid: &str, kind: &str, format: &str) -> Variant {
 }
 
 #[test]
-fn parses_a_v1_manifest() {
+fn parses_a_v2_manifest() {
     let json = format!(
         r#"{{
-            "v": 1,
+            "v": 2,
             "entity": "{SCENE}",
             "generator": "abgen 0.1",
+            "lanes": {{"texture": "t1", "mesh": "m1"}},
             "unknown": true,
             "files": {{
                 "{ORIGINAL_CID}": [
-                    {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc7",
+                    {{"path": "bevy/t1/{ORIGINAL_CID}_srgb", "cid": "{VARIANT_CID}",
+                      "kind": "texture", "format": "ktx2-bc7",
                       "width": 1024, "height": 1024, "mips": 11, "size": 1000}},
-                    {{"cid": "../../etc/passwd", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"cid": "QmNotRawLeaf", "kind": "texture", "format": "ktx2-bc1"}}
+                    {{"path": "bevy/t1/x", "cid": "../../etc/passwd", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "bevy/t1/x", "cid": "QmNotRawLeaf", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "bevy/../etc/passwd", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "bevy/t1/a.br", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "bevy/manifest/x", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "https://elsewhere/bevy/t1/x", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"path": "bevy/t1/x/y", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}}
                 ],
                 "bafkreionlybadvariants": [
-                    {{"cid": "bafkrei/../x", "kind": "model", "format": "glb"}}
+                    {{"path": "bevy/m1/x", "cid": "bafkrei/../x", "kind": "model", "format": "glb"}}
                 ]
             }}
         }}"#
@@ -62,6 +76,7 @@ fn parses_a_v1_manifest() {
     let variants = &manifest.files[ORIGINAL_CID];
     assert_eq!(variants.len(), 1);
     assert_eq!(variants[0].cid, VARIANT_CID);
+    assert_eq!(variants[0].path, format!("bevy/t1/{ORIGINAL_CID}_srgb"));
     assert_eq!(variants[0].width, Some(1024));
     assert_eq!(variants[0].mips, Some(11));
 }
@@ -70,11 +85,13 @@ fn parses_a_v1_manifest() {
 fn rejects_other_versions_entities_and_garbage() {
     let manifest =
         |v: u32, entity: &str| format!(r#"{{"v": {v}, "entity": "{entity}", "files": {{}}}}"#);
-    assert!(parse_manifest(manifest(1, SCENE).as_bytes(), SCENE).is_ok());
-    assert!(parse_manifest(manifest(2, SCENE).as_bytes(), SCENE)
+    assert!(parse_manifest(manifest(2, SCENE).as_bytes(), SCENE).is_ok());
+    // v1 manifests (variants addressed by CID alone) are no longer read
+    assert!(parse_manifest(manifest(1, SCENE).as_bytes(), SCENE)
         .unwrap_err()
-        .contains("version 2"));
-    assert!(parse_manifest(manifest(1, "bafkreiother").as_bytes(), SCENE).is_err());
+        .contains("version 1"));
+    assert!(parse_manifest(manifest(3, SCENE).as_bytes(), SCENE).is_err());
+    assert!(parse_manifest(manifest(2, "bafkreiother").as_bytes(), SCENE).is_err());
     assert!(parse_manifest(b"<html>not found</html>", SCENE).is_err());
     assert!(parse_manifest(br#"{"entity": "x"}"#, SCENE).is_err());
 }
@@ -306,9 +323,10 @@ async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str, variant_cid: &str) {
     io.set_bevy_variants_base(base);
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
-        r#"{{"v": 1, "entity": "{SCENE}", "files": {{"{ORIGINAL_CID}": [
-            {{"cid": "{variant_cid}", "kind": "texture", "format": "ktx2-bc7"}}
-        ]}}}}"#
+        r#"{{"v": 2, "entity": "{SCENE}", "files": {{"{ORIGINAL_CID}": [
+            {{"path": "{}", "cid": "{variant_cid}", "kind": "texture", "format": "ktx2-bc7"}}
+        ]}}}}"#,
+        served_path(variant_cid)
     );
     // the scene's own content server is loopback here, which `request_bevy_variants` refuses
     let (sender, receiver) = watch::channel(ManifestState::Loaded(Arc::new(
@@ -337,7 +355,7 @@ fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
 async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
     let (io, dir) = io_with_cache("served");
     let (ktx2, cid, dds) = bc7_variant();
-    let variant_route = format!("/bevy/contents/{cid}");
+    let variant_route = format!("/{}", served_path(&cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), ktx2.clone()),
@@ -377,7 +395,7 @@ async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
 async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
     let (io, dir) = io_with_cache("mismatch");
     let (_, cid, _) = bc7_variant();
-    let variant_route = format!("/bevy/contents/{cid}");
+    let variant_route = format!("/{}", served_path(&cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), b"tampered".to_vec()),
@@ -410,7 +428,7 @@ async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
 #[tokio::test]
 async fn a_verified_variant_that_is_no_bc_ktx2_falls_back_to_the_original() {
     let (io, dir) = io_with_cache("not-ktx2");
-    let variant_route = format!("/bevy/contents/{VARIANT_CID}");
+    let variant_route = format!("/{}", served_path(VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), variant_bytes()),
