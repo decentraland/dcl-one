@@ -27,6 +27,8 @@ const USAGE = `
     --timeout <secs>       Exit cleanly after N seconds.
     --scene-hosts <mode>   shared (default): one scene host process for every scene;
                            per-scene: one each, so losing one ends only its scene.
+    --scene-host-spares <n>    per-scene only: hosts kept started for the next scenes. Default 1.
+    --scene-host-memory-mb <n> per-scene only: end a host over this resident memory. No default.
     --pulse-realm <key>    Pulse realm to announce verbatim (what sdk-commands mints for a
                            local preview). Standalone only; orchestrated scenes carry their own.
     --pulse-server <h:p>   Pulse server to join, host:port. Default: derived from --base-domain.
@@ -58,6 +60,8 @@ function translate(argv) {
     '--timeout': true,
     '--scene-threads': true,
     '--scene-hosts': true,
+    '--scene-host-spares': true,
+    '--scene-host-memory-mb': true,
     '--pulse-realm': true,
     '--pulse-server': true,
     '--base-domain': true,

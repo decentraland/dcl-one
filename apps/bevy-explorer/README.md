@@ -209,7 +209,9 @@ The native scene runtime samples counters and memory after completed updates, at
 most once per five seconds. The headless emitter reports fresh observations about
 every ten seconds as `@scene-stats` JSON, with `observed_at_ms`, `sample_seq`, an
 execution identity and a monotonic `window_s`. Baselines belong to the scene
-entity; restarted executions start fresh and stalled updates leave gaps.
+entity; restarted executions start fresh and stalled updates leave gaps. With
+`--scene-hosts per-scene`, a sample also carries `host_rss_bytes`: the resident
+memory of the scene's own scene host process, sampled every two seconds.
 
 `dcl_types` owns the shared counter payload. Native sampling and flushing run in
 `dcl_deno`; web stats flush after the shared CRDT send returns, in the `dcl_wasm`

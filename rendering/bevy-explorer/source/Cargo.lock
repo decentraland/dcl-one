@@ -4357,6 +4357,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "sysinfo",
  "system_bridge",
  "tokio",
 ]

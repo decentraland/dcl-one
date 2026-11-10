@@ -15,19 +15,23 @@ use interprocess::local_socket::{
 };
 use once_cell::sync::Lazy;
 use std::{
+    collections::HashMap,
     ffi::OsString,
     path::PathBuf,
     pin::Pin,
     process::Stdio,
     sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, Mutex, RwLock,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc, Mutex, RwLock, Weak,
     },
     time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite},
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        Notify,
+    },
 };
 
 /// Host spawns that fail in a row, with no host running, before the pool counts as unavailable.
@@ -42,6 +46,38 @@ const HOST_LOG_LINES_PER_SECOND: u32 = 200;
 const ALL_HOSTS_LOG_LINES_PER_SECOND: u32 = 1000;
 // how often a host whose scenes were all removed checks whether its grace period is over
 const RETIRE_POLL: Duration = Duration::from_millis(250);
+// how often the resident memory of per-scene hosts is sampled
+const MEMORY_SAMPLE_PERIOD: Duration = Duration::from_secs(2);
+// V8's worker pool in a per-scene host, which runs one isolate
+const PER_SCENE_V8_THREADS: u32 = 2;
+/// The environment a per-scene host is started with: what the scene host and the libraries it
+/// links read (logging, the scene log budget, temporary files, TLS roots, HTTP proxies, the time
+/// zone and locale).
+pub(crate) const PER_SCENE_HOST_ENV: &[&str] = &[
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "RUST_LIB_BACKTRACE",
+    "NO_COLOR",
+    "DCL_SCENE_LOG_MAX_LINES",
+    "DCL_SCENE_LOG_MAX_LINE_BYTES",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "TZ",
+    "LANG",
+    "LC_ALL",
+    "SystemRoot",
+];
 
 /// Which scene host a new scene runs in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -56,6 +92,10 @@ pub enum Placement {
 #[derive(Clone, Debug, Default)]
 pub struct HostOptions {
     pub placement: Placement,
+    /// `PerScene` only: hosts kept started with no scene, so a new scene need not wait for one.
+    pub spares: usize,
+    /// `PerScene` only: a host whose resident memory goes over this many bytes is ended.
+    pub memory_cap: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +111,8 @@ pub enum HostExitReason {
     Exit,
     /// The engine ended it over a frame it sent.
     Protocol,
+    /// The engine ended it for going over its memory cap.
+    Memory,
     /// It could not be started.
     Spawn,
 }
@@ -80,6 +122,7 @@ impl HostExitReason {
         match self {
             HostExitReason::Exit => "exit",
             HostExitReason::Protocol => "protocol",
+            HostExitReason::Memory => "memory",
             HostExitReason::Spawn => "spawn",
         }
     }
@@ -95,6 +138,16 @@ pub struct HostExit {
     pub reason: HostExitReason,
 }
 
+/// The pool as a tester sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolInfo {
+    pub placement: Placement,
+    pub memory_cap: Option<u64>,
+    pub hosts: Vec<SceneHostInfo>,
+    /// Hosts that ended while the engine still served them, since the pool started.
+    pub lost_hosts: u64,
+}
+
 /// A scene host as the pool sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneHostInfo {
@@ -102,6 +155,8 @@ pub struct SceneHostInfo {
     pub state: HostState,
     /// The scenes it runs, not counting removed ones.
     pub scenes: Vec<SceneId>,
+    /// Resident memory at the last sample; sampled only with [`Placement::PerScene`].
+    pub rss_bytes: Option<u64>,
 }
 
 /// How a scene host process ended.
@@ -126,6 +181,11 @@ pub(crate) struct Host {
     pub(crate) scenes: Arc<Mutex<HostScenes>>,
     state: Mutex<HostState>,
     pid: Mutex<Option<u32>>,
+    // 0 until sampled
+    rss_bytes: AtomicU64,
+    // set, then notified, to make the IPC thread end the host
+    end_reason: Mutex<Option<HostExitReason>>,
+    end: Notify,
 }
 
 impl Host {
@@ -134,7 +194,21 @@ impl Host {
             scenes: Default::default(),
             state: Mutex::new(HostState::Starting),
             pid: Default::default(),
+            rss_bytes: Default::default(),
+            end_reason: Default::default(),
+            end: Notify::new(),
         }
+    }
+
+    fn end(&self, reason: HostExitReason) {
+        self.end_reason.lock().unwrap().get_or_insert(reason);
+        self.stop_taking_scenes();
+        self.end.notify_one();
+    }
+
+    // An ending host is given no new scene; the ones it has are reported when it is gone.
+    fn stop_taking_scenes(&self) {
+        self.scenes.lock().unwrap().closed = true;
     }
 
     fn state(&self) -> HostState {
@@ -154,6 +228,7 @@ impl Host {
                 .live()
                 .map(|(id, _)| SceneId(Entity::from_bits(id)))
                 .collect(),
+            rss_bytes: Some(self.rss_bytes.load(Ordering::Relaxed)).filter(|rss| *rss > 0),
         }
     }
 }
@@ -163,10 +238,12 @@ impl Host {
 pub(crate) struct HostCommand {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+    /// The whole environment; `None` inherits the engine's.
+    pub env: Option<Vec<(OsString, OsString)>>,
 }
 
 impl HostCommand {
-    fn scene_host(endpoint: &str) -> anyhow::Result<Self> {
+    fn scene_host(endpoint: &str, placement: Placement) -> anyhow::Result<Self> {
         let mut program = std::env::current_exe().context("locate the scene host binary")?;
         program.pop();
 
@@ -179,10 +256,21 @@ impl HostCommand {
         if cfg!(windows) {
             program.set_extension("exe");
         }
-        Ok(Self {
-            program,
-            args: vec![endpoint.into()],
-        })
+        let mut args = vec![endpoint.into()];
+        let mut env = None;
+        if placement == Placement::PerScene {
+            args.extend([
+                "--v8-threads".into(),
+                PER_SCENE_V8_THREADS.to_string().into(),
+            ]);
+            let inherited = std::env::vars_os().filter(|(name, _)| {
+                PER_SCENE_HOST_ENV
+                    .iter()
+                    .any(|allowed| name.as_os_str() == *allowed)
+            });
+            env = Some(inherited.collect());
+        }
+        Ok(Self { program, args, env })
     }
 }
 
@@ -230,6 +318,33 @@ impl Launch for ProcessLauncher {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
+            if let Some(env) = &command.env {
+                process.env_clear().envs(env.iter().cloned());
+            }
+            // the IPC thread spawns the host and lives as long as it does, so the signal fires
+            // when the engine is gone
+            #[cfg(target_os = "linux")]
+            {
+                let engine = std::process::id();
+                // SAFETY: only async-signal-safe calls between fork and exec
+                unsafe {
+                    process.pre_exec(move || {
+                        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        if libc::getppid() as u32 != engine {
+                            libc::_exit(1);
+                        }
+                        // the kernel's OOM killer picks a host before the engine; best effort
+                        let adj = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY);
+                        if adj >= 0 {
+                            libc::write(adj, b"1000".as_ptr().cast(), 4);
+                            libc::close(adj);
+                        }
+                        Ok(())
+                    });
+                }
+            }
             // descriptors the engine's libraries opened without close-on-exec stay out of the host
             #[cfg(target_os = "linux")]
             // SAFETY: only async-signal-safe calls between fork and exec
@@ -452,6 +567,33 @@ struct HostEntry {
     host: Arc<Host>,
     // dropping it ends the host: its connection closes once no scene can be queued on it
     new_scene: UnboundedSender<NewSceneCommand>,
+    // started with no scene, for the next one
+    spare: bool,
+}
+
+/// Reads the resident memory of processes.
+pub(crate) trait SampleMemory: Send {
+    /// Resident bytes of each process of `pids` that is still running.
+    fn sample(&mut self, pids: &[u32]) -> HashMap<u32, u64>;
+}
+
+struct SystemMemory(sysinfo::System);
+
+impl SampleMemory for SystemMemory {
+    fn sample(&mut self, pids: &[u32]) -> HashMap<u32, u64> {
+        let pids = pids
+            .iter()
+            .map(|pid| sysinfo::Pid::from_u32(*pid))
+            .collect::<Vec<_>>();
+        self.0.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&pids),
+            true,
+            sysinfo::ProcessRefreshKind::nothing().with_memory(),
+        );
+        pids.iter()
+            .filter_map(|pid| Some((pid.as_u32(), self.0.process(*pid)?.memory())))
+            .collect()
+    }
 }
 
 // What the hosts' IPC threads report to the pool. They must not hold the pool itself: dropping
@@ -461,6 +603,8 @@ struct PoolEvents {
     exits: Mutex<Vec<HostExit>>,
     failed_spawns: AtomicU32,
     ready_hosts: AtomicU32,
+    // hosts that ended other than by retiring
+    lost: AtomicU64,
 }
 
 impl PoolEvents {
@@ -480,22 +624,30 @@ pub struct HostPool {
     events: Arc<PoolEvents>,
     // how long a per-scene host outlives the removal of its scene
     pub(crate) retire_after: Duration,
+    memory: Mutex<Option<Box<dyn SampleMemory>>>,
+    pub(crate) sample_every: Duration,
 }
 
 impl HostPool {
-    pub(crate) fn new(options: HostOptions, launcher: Arc<dyn Launch>) -> Self {
+    pub(crate) fn new(
+        options: HostOptions,
+        launcher: Arc<dyn Launch>,
+        memory: Box<dyn SampleMemory>,
+    ) -> Self {
         Self {
             options,
             launcher,
             hosts: Default::default(),
             events: Default::default(),
             retire_after: KILL_GRACE_PERIOD,
+            memory: Mutex::new(Some(memory)),
+            sample_every: MEMORY_SAMPLE_PERIOD,
         }
     }
 
     /// Starts the hosts the placement needs before any scene arrives. With `Shared` this waits
     /// until the one host has connected.
-    pub(crate) fn start(&self) -> anyhow::Result<()> {
+    pub(crate) fn start(self: &Arc<Self>) -> anyhow::Result<()> {
         match self.options.placement {
             Placement::Shared => {
                 let (ready_sx, ready_rx) = tokio::sync::oneshot::channel();
@@ -503,7 +655,59 @@ impl HostPool {
                 self.hosts.lock().unwrap().push(entry);
                 ready_rx.blocking_recv()?
             }
-            Placement::PerScene => Ok(()),
+            Placement::PerScene => {
+                self.start_spares(&mut self.hosts.lock().unwrap());
+                if let Some(memory) = self.memory.lock().unwrap().take() {
+                    let pool = Arc::downgrade(self);
+                    let every = self.sample_every;
+                    std::thread::spawn(move || sample_memory(pool, memory, every));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn start_spares(&self, hosts: &mut Vec<HostEntry>) {
+        let spares = hosts.iter().filter(|entry| entry.spare).count();
+        for _ in spares..self.options.spares {
+            match self.start_host(None, None) {
+                Ok(mut entry) => {
+                    entry.spare = true;
+                    hosts.push(entry);
+                }
+                Err(e) => {
+                    error!("no spare scene host: {e:#}");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Records each host's resident memory and ends the ones over the cap.
+    fn check_memory(&self, memory: &mut dyn SampleMemory) {
+        let hosts = self
+            .hosts
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.host.clone())
+            .collect::<Vec<_>>();
+        let pids = hosts
+            .iter()
+            .filter_map(|host| *host.pid.lock().unwrap())
+            .collect::<Vec<_>>();
+        let resident = memory.sample(&pids);
+        for host in hosts {
+            let Some(rss) = host.pid.lock().unwrap().and_then(|pid| resident.get(&pid)) else {
+                continue;
+            };
+            host.rss_bytes.store(*rss, Ordering::Relaxed);
+            // an idle spare runs no scene code, so only its fixed footprint counts
+            let idle = host.scenes.lock().unwrap().live().next().is_none();
+            if !idle && self.options.memory_cap.is_some_and(|cap| *rss > cap) {
+                error!("scene host at {rss} resident bytes is over its memory cap; ending it");
+                host.end(HostExitReason::Memory);
+            }
         }
     }
 
@@ -523,8 +727,18 @@ impl HostPool {
             }
             Placement::PerScene => {
                 hosts.retain(|entry| entry.host.state() != HostState::Lost);
-                let entry = self.start_host(None, Some(command))?;
-                hosts.push(entry);
+                let spare = hosts
+                    .iter_mut()
+                    .find(|entry| entry.spare && command.assign_to(&entry.host.scenes));
+                match spare {
+                    Some(entry) => {
+                        entry.spare = false;
+                        // a host lost meanwhile reports the scene, which it was assigned
+                        let _ = entry.new_scene.send(command);
+                    }
+                    None => hosts.push(self.start_host(None, Some(command))?),
+                }
+                self.start_spares(&mut hosts);
                 Ok(())
             }
         }
@@ -561,7 +775,11 @@ impl HostPool {
             }
             return Err(e).context("start a scene host thread");
         }
-        Ok(HostEntry { host, new_scene })
+        Ok(HostEntry {
+            host,
+            new_scene,
+            spare: false,
+        })
     }
 
     /// Lost hosts not yet drained, oldest first.
@@ -573,6 +791,26 @@ impl HostPool {
     #[cfg(test)]
     pub(crate) fn unavailable(&self) -> bool {
         self.events.unavailable()
+    }
+
+    pub(crate) fn info(&self) -> PoolInfo {
+        PoolInfo {
+            placement: self.options.placement,
+            memory_cap: self.options.memory_cap,
+            hosts: self.hosts(),
+            lost_hosts: self.events.lost.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Ends the running host with process id `pid`, as if it had exited. False if there is none.
+    pub(crate) fn end_host(&self, pid: u32) -> bool {
+        let hosts = self.hosts.lock().unwrap();
+        let host = hosts
+            .iter()
+            .map(|entry| &entry.host)
+            .find(|host| host.state() != HostState::Lost && *host.pid.lock().unwrap() == Some(pid));
+        host.inspect(|host| host.end(HostExitReason::Exit))
+            .is_some()
     }
 
     pub(crate) fn hosts(&self) -> Vec<SceneHostInfo> {
@@ -607,7 +845,7 @@ impl HostThread {
             .context("build the scene host's runtime");
         let endpoint = ipc_socket_name();
         let launched = rt.and_then(|rt| {
-            let command = HostCommand::scene_host(&endpoint)?;
+            let command = HostCommand::scene_host(&endpoint, self.placement)?;
             let link = rt.block_on(self.launcher.launch(endpoint, command))?;
             Ok((rt, link))
         });
@@ -652,8 +890,10 @@ impl HostThread {
             tokio::select! {
                 ended = connection => Some(ended),
                 () = retired, if self.placement == Placement::PerScene => None,
+                () = self.host.end.notified() => Some(ConnectionEnd::Closed),
             }
         });
+        self.host.stop_taking_scenes();
         link.process.start_kill();
         let status = rt.block_on(link.process.wait()).unwrap_or_default();
         self.host.set_state(HostState::Lost);
@@ -667,6 +907,9 @@ impl HostThread {
                 // running process — so exit hard and let the supervisor restart the whole engine.
                 // Desktop/tests leave the flag false and end quietly (tests build a fresh runtime
                 // per app, where this is a normal shutdown, not a crash).
+                if ended.is_some() {
+                    self.events.lost.fetch_add(1, Ordering::Relaxed);
+                }
                 if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                     error!("dcl_deno_ipc runtime terminated (JS sidecar lost); exiting process");
                     std::process::exit(1);
@@ -675,22 +918,27 @@ impl HostThread {
             Placement::PerScene => {
                 // a host retired after its scenes were removed lost nothing
                 if let Some(ended) = ended {
-                    let reason = match ended {
+                    let ended_by_engine = *self.host.end_reason.lock().unwrap();
+                    let reason = ended_by_engine.unwrap_or(match ended {
                         ConnectionEnd::Closed => HostExitReason::Exit,
                         ConnectionEnd::Rejected => HostExitReason::Protocol,
-                    };
-                    self.report_loss(status, reason, format!("scene host exited: {status}"));
+                    });
+                    // an idle spare that ended lost no scene
+                    if self.report_loss(status, reason, format!("scene host exited: {status}")) {
+                        self.events.lost.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
     }
 
     // Reports the host's live scenes as lost: the record first, so it is there by the time a
-    // scene is seen broken, then an error to each scene. Outside the runtime: it may wait.
-    fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) {
+    // scene is seen broken, then an error to each scene. Outside the runtime: it may wait. False
+    // when the host ran no scene.
+    fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) -> bool {
         let lost = self.host.scenes.lock().unwrap().close();
         if lost.is_empty() {
-            return;
+            return false;
         }
         let scenes = lost
             .iter()
@@ -706,6 +954,7 @@ impl HostThread {
             // the channel is bounded; this message must not be shed
             let _ = responses.blocking_send((scene, SceneResponse::Error(message.clone())));
         }
+        true
     }
 }
 
@@ -720,14 +969,26 @@ async fn retired(scenes: &Mutex<HostScenes>, grace: Duration) {
     }
 }
 
+// The pool's memory sampler, until the pool is dropped.
+fn sample_memory(pool: Weak<HostPool>, mut memory: Box<dyn SampleMemory>, every: Duration) {
+    loop {
+        std::thread::sleep(every);
+        let Some(pool) = pool.upgrade() else {
+            return;
+        };
+        pool.check_memory(&mut *memory);
+    }
+}
+
 pub(crate) static POOL: Lazy<RwLock<Option<Arc<HostPool>>>> = Lazy::new(Default::default);
 
 /// Starts the scene host pool and makes it the one `spawn_scene` uses. A later call replaces it,
 /// which ends the previous pool's hosts.
 pub fn init_runtime_with(options: HostOptions) -> anyhow::Result<()> {
-    let pool = HostPool::new(options, Arc::new(ProcessLauncher));
+    let memory = Box::new(SystemMemory(sysinfo::System::new()));
+    let pool = Arc::new(HostPool::new(options, Arc::new(ProcessLauncher), memory));
     pool.start()?;
-    *POOL.write().unwrap() = Some(Arc::new(pool));
+    *POOL.write().unwrap() = Some(pool);
     Ok(())
 }
 
@@ -743,4 +1004,17 @@ pub fn drain_host_exits() -> Vec<HostExit> {
 pub fn scene_hosts() -> Vec<SceneHostInfo> {
     let pool = POOL.read().unwrap();
     pool.as_ref().map(|pool| pool.hosts()).unwrap_or_default()
+}
+
+/// The pool `spawn_scene` uses, if the runtime is initialized.
+pub fn scene_host_pool() -> Option<PoolInfo> {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().map(|pool| pool.info())
+}
+
+/// Ends the scene host with process id `pid` as if it had exited: its scenes are lost. False if
+/// the pool has no such running host.
+pub fn end_scene_host(pid: u32) -> bool {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().is_some_and(|pool| pool.end_host(pid))
 }

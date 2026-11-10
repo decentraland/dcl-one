@@ -23,8 +23,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 mod pool;
 pub use pool::{
-    drain_host_exits, init_runtime_with, scene_hosts, HostExit, HostExitReason, HostOptions,
-    HostState, Placement, SceneHostInfo,
+    drain_host_exits, end_scene_host, init_runtime_with, scene_host_pool, scene_hosts, HostExit,
+    HostExitReason, HostOptions, HostState, Placement, PoolInfo, SceneHostInfo,
 };
 
 // A frame over this ends the scene host. It must stay above the largest frame a host builds:
