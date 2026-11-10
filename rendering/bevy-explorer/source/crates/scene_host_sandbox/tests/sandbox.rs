@@ -150,6 +150,8 @@ mod linux {
             cannot_open_home,
             cannot_read_other_process,
             cannot_open_unix_socket,
+            cannot_use_sysv_ipc,
+            cannot_open_other_inet_protocol,
             cannot_open_non_route_netlink,
             cannot_signal_other_process,
             cannot_signal_process_group,
@@ -176,6 +178,8 @@ mod linux {
         assert!(cannot_open_home);
         assert!(cannot_read_other_process);
         assert!(cannot_open_unix_socket);
+        assert!(cannot_use_sysv_ipc);
+        assert!(cannot_open_other_inet_protocol);
         assert!(cannot_open_non_route_netlink);
         assert!(cannot_signal_other_process);
         assert!(cannot_signal_process_group);
@@ -198,6 +202,8 @@ mod linux {
             cannot_open_home: _,
             cannot_read_other_process: _,
             cannot_open_unix_socket: _,
+            cannot_use_sysv_ipc: _,
+            cannot_open_other_inet_protocol: _,
             cannot_open_non_route_netlink: _,
             cannot_signal_other_process: _,
             cannot_signal_process_group: _,
@@ -259,6 +265,8 @@ mod linux {
             cannot_open_home: _,
             cannot_read_other_process,
             cannot_open_unix_socket,
+            cannot_use_sysv_ipc,
+            cannot_open_other_inet_protocol,
             cannot_open_non_route_netlink,
             cannot_signal_other_process,
             cannot_signal_process_group,
@@ -286,6 +294,8 @@ mod linux {
         assert!(!cannot_change_file_metadata);
         assert!(!cannot_read_other_process);
         assert!(!cannot_open_unix_socket);
+        assert!(!cannot_use_sysv_ipc);
+        assert!(!cannot_open_other_inet_protocol);
         assert!(!cannot_open_non_route_netlink);
         assert!(!cannot_signal_other_process);
         assert!(!cannot_signal_process_group);

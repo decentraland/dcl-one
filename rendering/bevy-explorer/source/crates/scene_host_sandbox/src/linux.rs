@@ -21,9 +21,16 @@ const READ_ONLY: &[&str] = &[
     "/usr/lib64",
     "/usr/local/lib",
     "/etc/ld.so.cache",
-    // OpenSSL configuration and CA certificates, per distribution
-    "/etc/ssl",
-    "/etc/pki",
+    // OpenSSL configuration and CA certificates, per distribution; not the private key directories
+    // beside them
+    "/etc/ssl/certs",
+    "/etc/ssl/cert.pem",
+    "/etc/ssl/openssl.cnf",
+    "/etc/ssl/openssl.cnf.d",
+    "/etc/pki/tls/certs",
+    "/etc/pki/tls/cert.pem",
+    "/etc/pki/tls/openssl.cnf",
+    "/etc/pki/ca-trust",
     "/etc/ca-certificates",
     "/usr/share/ca-certificates",
     "/usr/local/share/ca-certificates",
@@ -54,6 +61,19 @@ const F_SETOWN_EX: u64 = 15;
 const FIOSETOWN: u64 = 0x8901;
 const SIOCSPGRP: u64 = 0x8902;
 const IOPRIO_WHO_PROCESS: u64 = 1;
+const SYS_OPEN_TREE: i64 = 428;
+const SYS_MOVE_MOUNT: i64 = 429;
+const SYS_FSOPEN: i64 = 430;
+const SYS_FSCONFIG: i64 = 431;
+const SYS_FSMOUNT: i64 = 432;
+const SYS_FSPICK: i64 = 433;
+const SYS_MOUNT_SETATTR: i64 = 442;
+const SYS_OPEN_TREE_ATTR: i64 = 467;
+const SYS_FILE_SETATTR: i64 = 469;
+/// The newest syscall number this filter was reviewed against (`file_setattr`, Linux 6.17), the same
+/// on x86_64 and aarch64. The filter denies what it names and allows the rest, so a newer syscall
+/// answers ENOSYS until it is reviewed; glibc reads that as "not available".
+const LAST_REVIEWED_SYSCALL: u32 = 469;
 
 pub fn apply(mode: Mode) -> Result<Status> {
     if mode == Mode::Off {
@@ -165,6 +185,7 @@ fn apply_seccomp() -> Result<bool> {
                 arch,
             )?,
         ),
+        ("newer than reviewed", newer_syscalls_filter()),
         #[cfg(target_arch = "x86_64")]
         ("x32", x32_filter()),
     ];
@@ -251,6 +272,30 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
         SYS_REMOVEXATTRAT,
         libc::SYS_utimensat,
         libc::SYS_truncate,
+        SYS_FILE_SETATTR,
+        // System V IPC: segments, queues and semaphores are shared by every process of the IPC
+        // namespace, and Landlock does not scope them
+        libc::SYS_shmget,
+        libc::SYS_shmat,
+        libc::SYS_shmctl,
+        libc::SYS_shmdt,
+        libc::SYS_msgget,
+        libc::SYS_msgsnd,
+        libc::SYS_msgrcv,
+        libc::SYS_msgctl,
+        libc::SYS_semget,
+        libc::SYS_semop,
+        libc::SYS_semtimedop,
+        libc::SYS_semctl,
+        // the new mount API, which Landlock does not cover where it is absent
+        SYS_OPEN_TREE,
+        SYS_OPEN_TREE_ATTR,
+        SYS_MOVE_MOUNT,
+        SYS_FSOPEN,
+        SYS_FSCONFIG,
+        SYS_FSMOUNT,
+        SYS_FSPICK,
+        SYS_MOUNT_SETATTR,
         #[cfg(target_arch = "x86_64")]
         libc::SYS_chmod,
         #[cfg(target_arch = "x86_64")]
@@ -395,6 +440,37 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
             ),
         ])?,
     ];
+    // over IPv4 and IPv6, only TCP and UDP: other protocols are kernel modules the runtime never needs
+    let mut socket_rules = socket_rules;
+    for family in [libc::AF_INET, libc::AF_INET6] {
+        let family = || (0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64);
+        let mut types = vec![family()];
+        for kind in [libc::SOCK_STREAM, libc::SOCK_DGRAM] {
+            for flags in [
+                0,
+                libc::SOCK_NONBLOCK,
+                libc::SOCK_CLOEXEC,
+                libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            ] {
+                types.push((
+                    1,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    (kind | flags) as u64,
+                ));
+            }
+        }
+        socket_rules.push(rule_of(types)?);
+        let protocols = [0, libc::IPPROTO_TCP, libc::IPPROTO_UDP].map(|protocol| {
+            (
+                2,
+                SeccompCmpArgLen::Dword,
+                SeccompCmpOp::Ne,
+                protocol as u64,
+            )
+        });
+        socket_rules.push(rule_of([family()].into_iter().chain(protocols).collect())?);
+    }
     denied.insert(libc::SYS_socket, socket_rules.clone());
     denied.insert(libc::SYS_socketpair, socket_rules);
 
@@ -404,6 +480,10 @@ fn denied_syscalls() -> Result<BTreeMap<i64, Vec<SeccompRule>>> {
 fn rule<const N: usize>(
     conditions: [(u8, SeccompCmpArgLen, SeccompCmpOp, u64); N],
 ) -> Result<SeccompRule> {
+    rule_of(conditions.into())
+}
+
+fn rule_of(conditions: Vec<(u8, SeccompCmpArgLen, SeccompCmpOp, u64)>) -> Result<SeccompRule> {
     let conditions = conditions
         .into_iter()
         .map(|(arg, len, op, value)| {
@@ -412,6 +492,39 @@ fn rule<const N: usize>(
         })
         .collect::<Result<Vec<_>>>()?;
     SeccompRule::new(conditions).map_err(|e| anyhow!("seccomp: rule: {e}"))
+}
+
+/// Every syscall numbered above [`LAST_REVIEWED_SYSCALL`] answers ENOSYS. The other filters kill a
+/// process that calls in another architecture's numbering.
+fn newer_syscalls_filter() -> BpfProgram {
+    use seccompiler::sock_filter;
+    vec![
+        // seccomp_data.nr
+        sock_filter {
+            code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JGT | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: LAST_REVIEWED_SYSCALL,
+        },
+        sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32,
+        },
+        sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ALLOW,
+        },
+    ]
 }
 
 /// The x32 ABI shares the x86_64 audit architecture with its own syscall numbers, which the
