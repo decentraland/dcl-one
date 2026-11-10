@@ -146,12 +146,12 @@ The launch parameters shared with the web build — realm, spawn parcel, ui scen
 
 ### Bevy variants (prototype)
 
-abgen can publish, per scene entity, GPU-ready variants of the scene's textures: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed. The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
+abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures and models: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed, and `glb-meshopt` models. The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
 
 With a base url set:
 
-- For each scene entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session. A 404 means no variants for that scene. The manifest (schema `v: 2`) maps each original content CID to its variants, each with the path it is served at (`bevy/{prefix}/{name}`) and the raw-leaf CID of its bytes (`bafkrei…`).
-- Preview and local scenes ask for no manifest: preview mode, `b64-` entity ids, and scenes served from a loopback or `file://` content server.
+- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session. A 404 means no variants for that entity. The manifest (schema `v: 2`) maps each original content CID to its variants, each with the path it is served at (`bevy/{prefix}/{name}`) and the raw-leaf CID of its bytes (`bafkrei…`).
+- Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.
 - When a scene's `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2` file, or a file without an extension, has a `ktx2-bc7`, `ktx2-bc1` or `ktx2-bc5` variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes must hash to the variant CID and are cached under that CID only, never under the original's.
 - The verified KTX2 is unwrapped into a DDS with a DX10 header: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The image loaders recognise DDS from its bytes, so the asset keeps its original path, and the texture is sRGB or linear as it is requested. The DDS is cached under `{variantCid}.dds`, so a warm visit skips the zstd decode.
 - `glb` variants are not used. They embed their textures as KTX2 under `KHR_texture_basisu`, and the glTF loader rejects a file that requires that extension.

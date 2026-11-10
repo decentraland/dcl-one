@@ -428,6 +428,78 @@ async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Wearables and emotes register their entity with the catalyst's content url as its own base
+/// (`collectibles::request_collectibles`) and request its manifest as a scene does: the
+/// manifest is fetched from the variants base and the entity's files read as their variants.
+#[tokio::test]
+async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
+    const WEARABLE: &str = "bafkreiwearable";
+    let (io, dir) = io_with_cache("wearable");
+    let (ktx2, cid, dds) = bc7_variant();
+    let manifest = format!(
+        r#"{{"v": 2, "entity": "{WEARABLE}", "files": {{"{ORIGINAL_CID}": [
+            {{"path": "{}", "cid": "{cid}", "kind": "texture", "format": "ktx2-bc7"}}
+        ]}}}}"#,
+        served_path(&cid)
+    );
+    let manifest_route = format!("/bevy/manifest/{WEARABLE}.json");
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![
+        (manifest_route.clone(), manifest.into_bytes()),
+        (variant_route.clone(), ktx2),
+    ])
+    .await;
+    let about = ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: base.clone(),
+        }),
+        ..Default::default()
+    };
+    {
+        let mut context = io.context.write().await;
+        context.about = Some(about.clone());
+        context.entities.insert(
+            WEARABLE.to_owned(),
+            IpfsEntity {
+                collection: ContentMap::new_single(
+                    "male/tex.png".to_owned(),
+                    ORIGINAL_CID.to_owned(),
+                ),
+                metadata: None,
+            },
+        );
+        // as `request_collectibles` registers it: the catalyst's contents, not the realm's
+        context.modifiers.insert(
+            WEARABLE.to_owned(),
+            crate::IpfsModifier {
+                base_url: Some("https://peer.decentraland.org/content/contents/".to_owned()),
+            },
+        );
+    }
+    io.realm_config_sender.send_replace(Some(RealmConfig {
+        about_url: String::new(),
+        address: String::new(),
+        about,
+        connected: true,
+        secret: None,
+        spawn_parcel: None,
+    }));
+    io.set_bevy_variants_base(&base);
+    let _ = io.bevy_variants.bc.set(true);
+
+    io.request_bevy_variants(WEARABLE);
+    let path = PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+        WEARABLE.to_owned(),
+        "male/tex.png".to_owned(),
+    )));
+    assert_eq!(read_all(&io, &path).await, dds);
+    assert!(io.served_bevy_variant(&path));
+    assert_eq!(requests_for(&log, &manifest_route), 1);
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A `glb-meshopt` model variant is handed to the loader of the original `.glb` path as it is,
 /// and cached under the variant cid alone.
 #[cfg(feature = "meshopt-variants")]

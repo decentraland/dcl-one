@@ -1932,8 +1932,8 @@ impl IpfsIo {
                 return Ok(Box::new(VecReader::new(daft_buffer)));
             }
 
-            // a scene file abgen has a verified variant of reads as what that variant decodes to
-            // (a texture's DDS)
+            // a content file (scene, wearable or emote) abgen has a verified variant of reads as
+            // what that variant decodes to (a texture's DDS)
             if let Some(variant) = self.read_bevy_variant(&ipfs_path, path).await {
                 if variant.cached {
                     ipfs_io_read_state.send_cached(variant.bytes.len());

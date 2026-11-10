@@ -1,7 +1,9 @@
-//! Prototype: GPU-ready "Bevy variants" of a scene's textures, published by abgen.
+//! Prototype: GPU-ready "Bevy variants" of the textures and models of scenes, wearables and
+//! emotes, published by abgen.
 //!
 //! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
-//! `bevy_variants_url` config field). For each scene entity the explorer fetches
+//! `bevy_variants_url` config field). For each scene, wearable and emote entity it loads, the
+//! explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to variants, each
 //! with the path it is served at and the raw-leaf CID of its bytes. A content file read whose
 //! original CID has a variant in a format this client takes is answered with
@@ -20,8 +22,9 @@
 //! path's extension, not by the cache file's name). `glb` embeds its textures as KTX2 under
 //! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it, and is not taken.
 //!
-//! Preview and local scenes (preview mode, `b64-` ids, loopback or file content servers) never
-//! ask for a manifest.
+//! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
+//! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
+//! preview always shows the deployed files.
 
 mod debug_panel;
 pub mod ktx2;
@@ -310,7 +313,7 @@ pub fn select_variant<'a>(
         .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.cid))
 }
 
-/// Why a scene gets no manifest request, if it doesn't.
+/// Why an entity (scene, wearable or emote) gets no manifest request, if it doesn't.
 pub fn scene_eligibility(
     entity: &str,
     contents_base_url: Option<&str>,
@@ -529,8 +532,8 @@ impl IpfsIo {
         self.bevy_variants.is_served(path)
     }
 
-    /// Asks abgen for the scene entity's manifest, once per session. A no-op when variants are
-    /// off.
+    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
+    /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
         let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
             return;
@@ -592,7 +595,7 @@ impl IpfsIo {
         }
     }
 
-    /// The variant's bytes for a scene content file, or None to read the original.
+    /// The variant's bytes for an entity's content file, or None to read the original.
     pub(crate) async fn read_bevy_variant(
         self: &Arc<Self>,
         ipfs_path: &IpfsPath,

@@ -19,7 +19,7 @@ which all work per file; a pack adds nothing to size, loses per-file caching
 
 ## Decision
 
-abgen publishes, per scene entity, a manifest that maps each original content
+abgen publishes, per scene, wearable and emote entity, a manifest that maps each original content
 CID to GPU-ready variants, each with the path it is served at and the CID of its
 bytes. The Explorer reads the manifest when present and loads a variant instead
 of the original; without a manifest, without a usable variant or on any failure
@@ -108,10 +108,13 @@ Excluded from variants: source maps, audio, video and scene code.
 ### Explorer rules
 
 - Off unless a variants base URL is configured (launch option, web parameter or
-  config field). Preview mode, local scenes (`b64-` ids) and scenes served from
-  a loopback or file content server never ask for a manifest.
-- One manifest request per scene entity per session; a `404` is remembered as
-  "no manifest".
+  config field). Preview mode, local scenes (`b64-` ids) and entities served
+  from a loopback or file content server never ask for a manifest; in preview
+  mode that includes wearables and emotes, so a preview shows deployed files.
+- One manifest request per entity per session: each scene when it loads, and
+  each wearable and emote when its entity is fetched for an avatar. A `404` is
+  remembered as "no manifest". A wearable or emote takes its content server from
+  the catalyst it was fetched from, so it is eligible on any realm.
 - A content file reads as a variant only when its original CID has a variant in
   a format the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, verify the bytes against the
