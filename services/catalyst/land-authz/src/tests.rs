@@ -1323,7 +1323,9 @@ async fn present(pool: &PgPool) -> bool {
 
 async fn set(pool: &PgPool, block: i64) {
     let mut conn = pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, block).await.unwrap();
+    set_cursor(&mut conn, &Settings::for_tests(), block)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1346,14 +1348,14 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "an unfolded cursor cannot grant rights"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap(),
         "partial sync cannot publish readiness"
     );
     assert!(!present(pool).await);
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap(),
         "an existing cursor does not prove its full history was scanned"
@@ -1385,7 +1387,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "repair must disable stale rights immediately"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -1395,7 +1397,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         .await
         .unwrap();
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -1404,7 +1406,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
     set(pool, base + 101).await;
     assert!(!present(pool).await, "backfill invalidates the old fold");
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap()
     );
@@ -2305,6 +2307,246 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     db.drop().await;
 }
 
+#[tokio::test]
+async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = |replay_from_block: Option<u64>| Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block,
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // A published index of other registries (a testnet stack before a
+    // redeploy), holding an estate link the configured estate registry never
+    // made: LAND (37, 55) in estate 500, which that registry gives ALICE.
+    const OLD_LAND: &str = "0x00000000000000000000000000000000000000aa";
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let old = Settings {
+        land_registry: OLD_LAND.into(),
+        estate_registry: OLD_ESTATE.into(),
+        ..configured(None)
+    };
+    let old_last = (START + 5_000) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 500, $2, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    let links = || async {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT land_token_id::text, estate_token_id::text FROM land_authz.estate_land ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let kept = |why: &'static str| async move {
+        let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                row.land_registry.as_str(),
+                row.estate_registry.as_str(),
+                row.last_block
+            ),
+            (OLD_LAND, OLD_ESTATE, old_last),
+            "{why}"
+        );
+        assert_eq!(links().await.len(), 1, "{why}");
+    };
+
+    // Without a replay, or with a partial one, the configured registries are
+    // refused with the remedy named, and nothing is rewound or consumed.
+    for replay_from_block in [None, Some(START + 100)] {
+        let state = state_over(pool.clone(), configured(replay_from_block), None);
+        let err = format!("{:#}", indexer::run_pass(&state, &ctx).await.unwrap_err());
+        assert!(
+            err.contains(&format!("LAND_AUTHZ_REPLAY_FROM_BLOCK={START}")),
+            "{err}"
+        );
+        assert!(!state.replay_requested.load(Ordering::SeqCst));
+        kept("a refused pass rewinds nothing").await;
+    }
+
+    // A full replay whose rewind fails is not consumed: the same state
+    // retries it, and the failed write changed nothing.
+    let full = state_over(pool.clone(), configured(Some(START)), None);
+    sqlx::query(
+        "CREATE FUNCTION land_authz.refuse_cursor_update() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'cursor write refused by the test'; END $$",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_cursor_update BEFORE UPDATE ON land_authz.index_cursor \
+         FOR EACH ROW EXECUTE FUNCTION land_authz.refuse_cursor_update()",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let err = format!("{:#}", indexer::run_pass(&full, &ctx).await.unwrap_err());
+    assert!(err.contains("cursor write refused by the test"), "{err}");
+    assert!(!full.replay_requested.load(Ordering::SeqCst));
+    kept("the failed rewind changed nothing").await;
+    sqlx::query("DROP TRIGGER refuse_cursor_update ON land_authz.index_cursor")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION land_authz.refuse_cursor_update()")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // The retry rebinds the cursor to the configured registries, re-reads
+    // their log from the start and publishes; the old estate link is gone
+    // and only the configured estate registry's own link is folded.
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert!(full.replay_requested.load(Ordering::SeqCst));
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            row.land_registry.as_str(),
+            row.estate_registry.as_str(),
+            row.last_block
+        ),
+        (LAND, ESTATE, (START + 1_000) as i64)
+    );
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(
+        token_leg(pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_never_crosses_one()
+{
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let other = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let base = START as i64;
+    let row = || async { cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap() };
+    let timestamps_ready = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT history_timestamps_ready FROM land_authz.index_cursor WHERE network = $1",
+        )
+        .bind(NETWORK_MAINNET)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+
+    // Another registries' cursor standing BEFORE the configured start: a
+    // switch still starts the new log exactly at the start, owes the
+    // timestamps again and drops the estate links.
+    indexer::ensure_cursor(pool, &other).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(base - 50)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(begin_replay(pool, &configured, START).await.unwrap());
+    let r = row().await;
+    assert_eq!(
+        (
+            r.land_registry.as_str(),
+            r.estate_registry.as_str(),
+            r.last_block,
+            r.folded_block
+        ),
+        (LAND, ESTATE, base - 1, None)
+    );
+    assert!(r.full_replay_started);
+    assert!(
+        !timestamps_ready().await,
+        "the new registries' timestamps are owed"
+    );
+    let estate_links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(estate_links, 0);
+
+    // On the same registries a rewind never moves the cursor forward, and the
+    // timestamps already repaired stay so.
+    sqlx::query("UPDATE land_authz.index_cursor SET history_timestamps_ready = true")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        row().await.last_block,
+        base - 1,
+        "a later rewind skips no block"
+    );
+    set(pool, base + 500).await;
+    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        row().await.last_block,
+        base + 94,
+        "a rewind goes back to the block asked"
+    );
+    assert!(timestamps_ready().await);
+
+    // A partial rewind for other registries writes nothing.
+    assert!(!begin_replay(pool, &other, START + 95).await.unwrap());
+    let r = row().await;
+    assert_eq!((r.land_registry.as_str(), r.last_block), (LAND, base + 94));
+
+    // Nor can a pass for other registries advance or publish this cursor.
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(matches!(
+        set_cursor(&mut conn, &other, base + 900).await,
+        Err(sqlx::Error::RowNotFound)
+    ));
+    drop(conn);
+    assert!(!mark_folded(pool, &other, (base + 94) as u64).await.unwrap());
+    assert_eq!(row().await.last_block, base + 94);
+    db.drop().await;
+}
+
 async fn serve_marketplace_subgraph(nfts: Value) -> String {
     async fn graphql(State(nfts): State<Arc<Value>>) -> axum::Json<Value> {
         axum::Json(json!({ "data": { "nfts": *nfts } }))
@@ -2988,7 +3230,7 @@ async fn repair_uses_spare_batches_scopes_registries_and_never_starves_live_head
     settings.requests_per_pass = 1;
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     let mut conn = db.pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, START as i64 + 204)
+    set_cursor(&mut conn, &Settings::for_tests(), START as i64 + 204)
         .await
         .unwrap();
     drop(conn);
@@ -3196,7 +3438,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         !allowed(pool, entity_time).await,
         "fold commit alone is not publication"
     );
-    mark_folded(pool, NETWORK_MAINNET, 103).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 103)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut recent_membership = estate_ev(104, 0, KIND_ADD_LAND, "43", &token);
     recent_membership.block_time = cutoff;
@@ -3206,7 +3450,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         .await
         .unwrap();
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 104).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 104)
+        .await
+        .unwrap();
     assert!(
         !allowed(pool, entity_time).await,
         "membership timestamp independently revokes at the strict boundary"
@@ -3230,7 +3476,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         "even an old timestamp cannot bypass the pending estate transfer fence"
     );
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 105).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 105)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut transferred = ev(
         106,
