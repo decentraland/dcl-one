@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   cp,
   lstat,
@@ -94,12 +95,20 @@ describe('installKit', () => {
       const target = await temp('consumer-')
       await installKit({ target })
       const skill = path.join(target, '.claude/skills/implement-figma-design')
+      // Every file below the skill, with its sha256 and modification time.
       const snapshot = async () =>
         Promise.all(
-          (await readdir(skill)).sort().map(async (file) => {
-            const full = path.join(skill, file)
-            return [file, (await readFile(full, 'utf8')).length, (await stat(full)).mtimeMs]
-          })
+          (await readdir(skill, { recursive: true, withFileTypes: true }))
+            .filter((entry) => entry.isFile())
+            .map((entry) => path.join(entry.parentPath, entry.name))
+            .sort()
+            .map(async (full) => [
+              path.relative(skill, full),
+              createHash('sha256')
+                .update(await readFile(full))
+                .digest('hex'),
+              (await stat(full)).mtimeMs
+            ])
         )
       const before = await snapshot()
 
@@ -229,15 +238,68 @@ describe('checkKit', () => {
       }
     ]
   ])('when .agents/skills is %s', (_label, make) => {
-    it('should report agents-link-mismatch', async () => {
+    it('should report agents-link-mismatch after an install that asked for the link', async () => {
       const target = await temp('consumer-')
-      await installKit({ target })
+      await installKit({ target, linkAgents: true })
+      await rm(path.join(target, '.agents/skills'))
       await make(path.join(target, '.agents/skills'))
 
       const result = await checkKit({ target })
 
       expect(result).toMatchObject({ ok: false })
       expect(result.problems.map((p) => p.reason)).toEqual(['agents-link-mismatch'])
+    })
+  })
+
+  describe('when the consumer owns .agents/skills and installed without the link', () => {
+    it.each([
+      ['a real directory', (link: string) => mkdir(link, { recursive: true })],
+      [
+        'a link elsewhere',
+        async (link: string) => {
+          await mkdir(path.dirname(link), { recursive: true })
+          await symlink('../elsewhere', link)
+        }
+      ]
+    ])('should pass with %s', async (_label, make) => {
+      const target = await temp('consumer-')
+      await make(path.join(target, '.agents/skills'))
+      await installKit({ target })
+
+      expect(await checkKit({ target })).toMatchObject({ ok: true, problems: [] })
+    })
+  })
+
+  describe('when the kit link is spelled differently but resolves to the skills', () => {
+    it.each(['./../.claude/skills', '../.claude/skills/'])('should accept %s', async (spelling) => {
+      const target = await temp('consumer-')
+      await installKit({ target, linkAgents: true })
+      await rm(path.join(target, '.agents/skills'))
+      await symlink(spelling, path.join(target, '.agents/skills'))
+
+      expect((await installKit({ target, linkAgents: true })).agentsLink).toBe('already-linked')
+      expect(await checkKit({ target })).toMatchObject({ ok: true })
+    })
+  })
+
+  describe.each([
+    [
+      'a symlink to another directory',
+      async (target: string) => {
+        await mkdir(path.join(target, 'outside'))
+        await symlink('outside', path.join(target, '.agents'))
+      }
+    ],
+    ['a file', (target: string) => writeFile(path.join(target, '.agents'), 'not a directory')]
+  ])('when .agents itself is %s', (_label, make) => {
+    it('should refuse the link instead of writing outside the target', async () => {
+      const target = await temp('consumer-')
+      await make(target)
+
+      await expect(installKit({ target, linkAgents: true })).rejects.toThrow(/is not a link to/)
+      expect(
+        await lstat(path.join(target, 'outside/skills')).catch(() => undefined)
+      ).toBeUndefined()
     })
   })
 

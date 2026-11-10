@@ -9,7 +9,7 @@ The library owns the components. Find the mapped component, import it and pass t
 
 ## Scope
 
-Only components with a public mapping in `library/ui/components` resolve. That set is small and is not the set of components in the Figma file or in the Review gallery. Everything else is outside the supported scope: report it, do not reimplement it. A resolve error lists the components that do resolve in `details.supported`.
+Only components with a public mapping in `library/ui/components` resolve. That set is small and is not the set of components in the Figma file or in the Review gallery. Everything else is outside the supported scope: report it, do not reimplement it. The components that do resolve are the `*.figma.ts` mappings under `library/ui/components`; `pnpm --silent figma check-mappings --mapping-only` in `library/ui` lists them.
 
 ## Preflight
 
@@ -18,16 +18,16 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 
 ## Workflow
 
-1. **Read the design.** Take the file and node from the link the user gave you, and open the file the way the connected Figma MCP's own instructions say (some versions require a session first). Keep the link and the file key in memory only: never write them to a file, commit, pull request, issue, log or report. For every component instance, note its main component node id, its variant properties (for example `Kind=Primary`, `Hover=No`) and the text it shows.
+1. **Read the design.** Take the file and node from the link the user gave you, and open the file the way the connected Figma MCP's own instructions say (some versions require a session first). Keep the link and the file key in memory only: never write them to a file, commit, pull request, issue, log or report. For every component instance, note its component set id (not the id of one variant), its variant properties (for example `Kind=Primary`, `Hover=No`) and the text it shows.
 2. **Resolve each instance** with the CLI, from `library/ui`:
 
    ```sh
-   pnpm --silent figma resolve --mapping-only --node-id <main component id> --variant "Kind=Primary" --text "Label=Buy"
+   pnpm --silent figma resolve --mapping-only --node-id <component set id> --variant "Kind=Primary" --text "Label=Buy"
    ```
 
    Repeat `--variant` and `--text` as needed. `--node-id` is preferred over `--name`. Without a capture only a component set id matches a mapping: pass the set id, not a variant id; a name lookup is refused. The command exits 0 with `ok: true`, or 1 with coded `errors`. List the instances you resolved when you report back, so the user can spot one you missed: the list comes from your reading of the design, the resolver does not walk the file.
 
-3. **Read the answer.** `ok: true`: import from `component.importSpecifier` and copy the props from `usage` and `propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
+3. **Read the answer.** `ok: true`: import from `resolved.component.importSpecifier` and copy the props from `resolved.usage` and `resolved.propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
    Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The codes, severities and audiences in this table are checked against the resolver's registry; `action` is the authority on what to do.
 
 <!-- diagnostic-codes -->
@@ -50,22 +50,23 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 | `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                    |
 | `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                            |
 
-4. **Stop on `mapping-missing`, an identity code or `variant-unsupported`.** Do not duplicate the component in the app and do not add a stopgap. Report it to the contributor (the user), in this form and nothing more:
+4. **Stop on any error.** Do not duplicate the component in the app and do not add a stopgap. Report it to the contributor (the user), in this form and nothing more; the `Code:` line tells the cases apart:
 
    ```text
-   Missing library mapping
+   Unresolved component
    Component: <name from the design>
-   Code: <code>
+   Node: <component set id>
+   Code: <code> (<details.reason>, when present)
    Variant properties: <Prop=Value, ...>
-   Library: <provenance.library or details.library name@version>
-   Capture revision: <details.captureRevision or provenance.capture.revision>
+   Library: <context.library.name>@<context.library.version>
+   Capture revision: <context.capture.revision, or "unknown">
    ```
 
-   No Figma link, file key or component key goes in it. Identity codes (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) say the component could not be identified; never report them as a missing mapping.
+   A failed result carries `context`, not `provenance`. No Figma link, file key or component key goes in the report. `mapping-missing` means a known library component has no public mapping; an identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) means the component could not be identified, so never describe it as a missing mapping.
 
 5. **Compose the page** with the resolved components and the shared `--dcl-*` tokens, following `docs/ui-standards.md` (CSS Modules, public imports only, where app-specific UI lives, reuse before duplication, translation parity). Public imports only: `import { X } from '<importSpecifier>'`, never a deep path. Routing, data, auth and tracking stay in the application.
 6. **Report limits.** Repeat every warning and any accepted limit the result names, verbatim. Do not claim parity on those aspects.
-7. **Verify.** Run the application's own checks. Then compare the rendered result with `get_screenshot` of the node and say what differs. The comparison is reported, not a gate. The library is generated from the pinned capture named by `provenance.capture.revision`, so attribute a difference to capture age before calling it a bug. Your verification is self-reported: say what you ran, and never claim visual fidelity from a successful build.
+7. **Verify.** Run the application's own checks. Then compare the rendered result with `get_screenshot` of the node and say what differs. The comparison is reported, not a gate. The library is generated from the pinned capture named by `resolved.provenance.capture.revision`, so attribute a difference to capture age before calling it a bug. Your verification is self-reported: say what you ran, and never claim visual fidelity from a successful build.
 
 ## The MCP server (optional)
 

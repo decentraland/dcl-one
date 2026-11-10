@@ -61,17 +61,29 @@ function compareVersions(a, b) {
   return 0
 }
 
-// absent, linked (a symlink to AGENTS_LINK_TARGET), or conflict (anything else, including a real directory).
+// absent, linked (a symlink that resolves to <target>/.claude/skills, however it is spelled, so a Windows
+// `..\\.claude\\skills` counts), or conflict: anything else, including a real directory, a symlinked .agents that
+// would place the link outside the target, or an .agents that is a file.
 async function agentsLinkState(target) {
-  const link = path.join(target, '.agents', 'skills')
+  const agents = path.join(target, '.agents')
+  const link = path.join(agents, 'skills')
+  const parent = await lstat(agents).catch((error) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (parent && !parent.isDirectory()) return { link, state: 'conflict', symlink: false }
   let stat
   try {
     stat = await lstat(link)
   } catch (error) {
     if (error.code === 'ENOENT') return { link, state: 'absent' }
+    if (error.code === 'ENOTDIR') return { link, state: 'conflict', symlink: false }
     throw error
   }
-  if (stat.isSymbolicLink() && (await readlink(link)) === AGENTS_LINK_TARGET)
+  if (
+    stat.isSymbolicLink() &&
+    path.resolve(agents, await readlink(link)) === path.resolve(target, '.claude', 'skills')
+  )
     return { link, state: 'linked' }
   return { link, state: 'conflict', symlink: stat.isSymbolicLink() }
 }
@@ -109,6 +121,7 @@ async function installKit({ target, force = false, linkAgents = false, kitRoot =
       if (
         current.library === library.name &&
         current.version === library.version &&
+        Boolean(current.agentsLink) === Boolean(linkAgents) &&
         current.hash === shipped &&
         (await hashDirectory(destination)) === shipped
       ) {
@@ -137,7 +150,7 @@ async function installKit({ target, force = false, linkAgents = false, kitRoot =
     await cp(path.join(kitRoot, 'skills', name), destination, { recursive: true })
     await writeFile(
       path.join(destination, MANIFEST),
-      `${JSON.stringify({ library: library.name, version: library.version, hash: await hashDirectory(destination) }, null, 2)}\n`
+      `${JSON.stringify({ library: library.name, version: library.version, hash: await hashDirectory(destination), ...(linkAgents ? { agentsLink: true } : {}) }, null, 2)}\n`
     )
     installed.push(name)
   }
@@ -189,12 +202,21 @@ async function checkKit({ target, kitRoot = defaultKitRoot }) {
       })
     }
   }
+  // The link is checked only when an install asked for it (recorded in the manifest), so a consumer's own
+  // .agents/skills directory is never a problem.
+  const manifests = await Promise.all(
+    (await skillNames(kitRoot)).map((name) =>
+      readFile(path.join(target, '.claude', 'skills', name, MANIFEST), 'utf8')
+        .then((text) => JSON.parse(text))
+        .catch(() => ({}))
+    )
+  )
   const agents = await agentsLinkState(target)
-  if (agents.state === 'conflict')
+  if (manifests.some((manifest) => manifest.agentsLink === true) && agents.state !== 'linked')
     problems.push({
       skill: '.agents/skills',
       reason: 'agents-link-mismatch',
-      message: `${agents.link} exists and is not a link to ${AGENTS_LINK_TARGET}`
+      message: `${agents.link} was installed with --agents-link but is not a link to ${AGENTS_LINK_TARGET}`
     })
   return { library, ok: problems.length === 0, problems }
 }

@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "b8ac99d5d9f60d256eb2f2f0e6b312d45c7ee67cb39b66d5818c3070f3305b2c",
+          "sha256": "b2ce0f2f45cf75027fca009a497ef6892c492f9fb1058ed974b79ba449ee7a0f",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -618,7 +618,7 @@
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
-          "sha256": "f3073d67b48f326276795f9decba46fbea8912da154925f73cb38d9893508d16",
+          "sha256": "a8374549aabbe914e55044c99883987cf3af9224d0aa81346944ec8355d10cc4",
           "fds": {
             "path": "component-library/agent-kit/cli.mjs",
             "sha256": "f3073d67b48f326276795f9decba46fbea8912da154925f73cb38d9893508d16"
@@ -628,7 +628,7 @@
           ]
         },
         "library/ui/figma/agent-kit/kit.d.mts": {
-          "sha256": "49c48a9ca9c43a1601b93f230fd15fd137737309b28433221156bb674a6ec87e",
+          "sha256": "896e4dd16f6ef86fb60f17c543185181f15bcd285f20eea2f9f6600253183649",
           "fds": {
             "path": "component-library/agent-kit/kit.d.mts",
             "sha256": "49c48a9ca9c43a1601b93f230fd15fd137737309b28433221156bb674a6ec87e"
@@ -638,7 +638,7 @@
           ]
         },
         "library/ui/figma/agent-kit/kit.mjs": {
-          "sha256": "a06be12ac6251c16362b7b4d8555937b05a8c46ebe485bd94a29d81d07ee6fb5",
+          "sha256": "271f0f3bbdd5c261d9292016d569b80fcd76ea81b05be5c893f3188e2e07a9c9",
           "fds": {
             "path": "component-library/agent-kit/kit.mjs",
             "sha256": "923bb25ba02f183f6e5f4b19e21089d20a0c1fc4f80f43aa40a146d696345f54"
@@ -649,7 +649,7 @@
           ]
         },
         "library/ui/figma/agent-kit/kit.test.ts": {
-          "sha256": "1a4c4c19ad10b1514a39a9231edd065ccfc5eb348d994bbb0030eca17a95eedf",
+          "sha256": "09ca46ec1c75e5b6546260bfdca560dc941a9662102a7fcd04015edc05d2bb51",
           "fds": {
             "path": "component-library/agent-kit/kit.test.ts",
             "sha256": "4c58e979525c809c07f82c9ee366876b1cf4d266435434b63886b9497005f433"
@@ -660,7 +660,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "98920ab8f78d47bec4f315656fd380945a91a9da360fda1f8cb0ec7631e69740",
+          "sha256": "d10af8970796e59b74b90e0a5e4edf675d9aca968449b87adee550618b3f659d",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -4179,7 +4179,7 @@
         "cache-hardening": "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts.",
         "capture-removed": "The Figma capture and everything derived from its imagery leave this tree (owner decision): figma/figma-snapshot, the frozen test copy figma/test/fixtures/figma-snapshot, the Review evidence (references, renders, Figma icon exports, fidelity.json), the generated image-fill assets, references.json and promotion.json. Two pins: revision stays the code base the ported files and their deviations are compared against, and snapshot.revision is the capture commit. pnpm figma fetch-source (figma/src/sources/fds-source.ts) fetches the capture commit into a temporary repository, rewrites each capture file keyless (stripFileKey, stripImageMetadata, encodePageFileName, this tree's paths), overlays this tree's orphan ledger figma/ledger/orphaned-assets.json, and accepts the result only when it matches the snapshot digest table above; at 9c6dfbe6 it reproduces the removed capture byte for byte except pages.json, which differs only in how it escapes non-ASCII text, and orphaned-assets.json, which fetch-source takes from this tree, and regeneration from it changes nothing but the image fills. Generated components take imageFills from figma.config.json: the Review uses a neutral placeholder instead of an exported image fill. The Review is a gallery of the generated components; its icons render through the generated icon components. Relocated guard, both halves named: lock-digests.mjs fails on any tracked file under figma/ that differs from, is missing from or is not pinned in files; port-verification.mjs requires library/ui/port-verification.json, the record of the real-capture checks (fetch-source, diff, check-mappings, review-manifest, navbar-bounds) for this exact lock, FDS commit and figma/ tree, whenever the lock changes. figma diff, figma guard against the base, check-mappings, promotion-verify, review-manifest and review:check no longer run in this repository's CI; they run where the capture lives. Follow-up: figma-design-system CI publishes a verdict per candidate commit and replaces the local record. Removed with the evidence they produced or checked: capture-review.mjs, capture-scope.mjs (so the aad3791 port above no longer applies), capture-animations.mjs, check-evidence.mjs, check-review.mjs, review-signature.mjs, scripts/freeze-test-snapshot.mjs, capture-retry.mjs (the staged renders/fidelity publisher) and their tests; capture-browser.mjs (which now defines its own CaptureTimeout), browser-args.mjs and capture-teardown.mjs stay for the build checks. Promotion is reduced to its eligibility rule (figma/src/promotion/eligibility.ts, used by check-mappings): the seal, its verification, promote-reviewed, their mappings and scope modules, the CLI commands promotion-manifest, promotion-verify and promote-reviewed, the guard's seal check and their tests are removed, because their input lives in figma-design-system. Unit tests read the hand-written figma/test/fixtures/synthetic-snapshot.",
         "component-install-integrity": "Install components through the verified-cache transaction and check emitted output provenance, complete input identities, CSS Modules exports and internal registry lifecycle.",
-        "consumer-skill": "dcl-one owns the consumer skill and the agent kit (owner decision). The skill leads a contributor from a Figma link to library code with the CLI first and the MCP optional, both with --mapping-only: preflight, read the design without persisting the link or key, resolve each instance, follow each diagnostic's action, stop and report a missing mapping to the contributor with name, code, variant properties, library version and capture revision, compose per docs/ui-standards.md, repeat limits, and report the screenshot comparison as non-blocking and relative to the pinned capture. The kit installs the skill into the repository root (committed, checked in CI); the .agents/skills link is opt-in, an existing entry that is not the kit's link is a conflict refused before any write (--force replaces only a foreign symlink, never a directory), check reports agents-link-mismatch, and a repeated install leaves matching skills untouched.",
+        "consumer-skill": "dcl-one owns the consumer skill and the agent kit (owner decision). The skill leads a contributor from a Figma link to library code with the CLI first and the MCP optional, both with --mapping-only: preflight, read the design without persisting the link or key, resolve each instance, follow each diagnostic's action, stop and report a missing mapping to the contributor with name, code, variant properties, library version and capture revision, compose per docs/ui-standards.md, repeat limits, and report the screenshot comparison as non-blocking and relative to the pinned capture. The kit installs the skill into the repository root (committed, checked in CI); the .agents/skills link is opt-in, an existing entry that is not the kit's link is a conflict refused before any write (--force replaces only a foreign symlink, never a directory), check reports agents-link-mismatch, and a repeated install leaves matching skills untouched. Review follow-up: check reports agents-link-mismatch only when an install asked for the link (recorded as agentsLink in the manifest), so a consumer-owned .agents/skills never fails it; the link is compared by resolved path, and an .agents that is a symlink or a file is a conflict. The skill reports any failure in one Unresolved component form filled from context, names the result fields under resolved, uses component set ids, and points at the mappings for the supported set.",
         "dcl-one-only": "Files with no counterpart in figma-design-system at the code base: this tree's own tooling (key guard, LFS prefetch, lock digests, port verification, fetch-source, check-build), its orphan ledger, its allowlists, the synthetic test capture and the tests built on it.",
         "evidence-removed": "The guard no longer knows the removed Review evidence: the references, renders and fidelity aggregates, owned paths and image rules are gone, and the whole of review/public/dcl-ui-review is a guarded directory with no owned file, so any file planted there (a PNG in references/, renders/, icons/ or at its root) is unowned and rejected. capture-retry.mjs (the staged renders/fidelity publisher) is removed and capture-browser.mjs defines its own CaptureTimeout. Comments that described comparison renders and fidelity metrics are reworded.",
         "foundation-review": "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
