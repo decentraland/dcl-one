@@ -1,8 +1,9 @@
+import { expectConsoleOutput } from './console'
 // The scene editor host (features/editorHost): the page offers Create only where an editor is
 // available, loads it only when the Create page opens, and what it hands the editor keeps the
 // engine on a short leash. What it signs for the editor is in editorHostSigning.test.tsx.
 import { describe, it, expect, vi } from 'vitest'
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, renderHook, screen } from '@testing-library/react'
 import { ToastHost } from '../design'
 import userEvent from '@testing-library/user-event'
 import { editorFeatures, editorOffered, EditorOffered, PINNED_EDITOR } from '../features/editorHost/config'
@@ -16,7 +17,7 @@ import { Sidebar } from '../features/sidebar/Sidebar'
 import { bridgeChannelName, type Envelope } from '../engine/protocol'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { pending, sessionId } from '../lib/analytics'
-import { fakeSession } from './harness'
+import { renderSettled, fakeSession } from './harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1
@@ -155,11 +156,11 @@ describe('editor host', () => {
         </MainMenuShell>
       </>
     )
-    const plain = render(surfaces)
+    const plain = await renderSettled(surfaces)
     expect(screen.queryAllByRole('button', { name: /Create/ })).toEqual([])
     plain.unmount()
 
-    render(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
+    await renderSettled(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
     const [rail, topBar] = screen.getAllByRole('button', { name: /Create/ })
     await userEvent.click(rail)
     expect(s.create.toggle).toHaveBeenCalledTimes(1)
@@ -168,6 +169,7 @@ describe('editor host', () => {
   })
 
   it('loads nothing until the Create page opens; mounts the home in its body, and keeps the engine to preview realms', async () => {
+    expectConsoleOutput('error', [['[create] the editor home failed', new Error('the editor package failed to load')]])
     const synced = vi.fn()
     w.set_url_params = synced
     // the preview realm: no scene server for this scene
@@ -197,7 +199,7 @@ describe('editor host', () => {
         </>
       )
     }
-    const view = render(<Page s={session} />)
+    const view = await renderSettled(<Page s={session} />)
     expect(scripts()).toEqual([])
     expect(w.__dclEditorHost).toBeUndefined()
 
@@ -356,9 +358,9 @@ describe('editor host', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps the Create page over the travel back to scenes', () => {
+  it('keeps the Create page over the travel back to scenes', async () => {
     const travelling: EngineSession = { ...session, phase: 'entering', create: { ...session.create, open: true } }
-    render(<EditorHost session={travelling} entrySearch="" onNavigate={vi.fn()} />)
+    await renderSettled(<EditorHost session={travelling} entrySearch="" onNavigate={vi.fn()} />)
     expect(document.getElementById('dcl-editor-home')).toBeInTheDocument()
   })
 })

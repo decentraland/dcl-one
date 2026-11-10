@@ -85,7 +85,9 @@ use bevy_ecs::{
     schedule::{IntoScheduleConfigs, SystemSet},
     system::{Res, ResMut},
 };
-use bevy_math::{Vec3, Vec4};
+#[cfg(feature = "webgl")]
+use bevy_math::Vec3;
+use bevy_math::Vec4;
 use bevy_reflect::TypePath;
 
 #[cfg(all(

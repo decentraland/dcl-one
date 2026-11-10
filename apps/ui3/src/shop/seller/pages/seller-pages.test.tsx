@@ -3,10 +3,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { MANA, sale } from "../../market/fixtures";
-import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "../../market/lib/contracts";
+import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "@shop/market/lib/contracts";
 import { fakeChain, fakeWallet, type FakeRoute } from "../../market/testing";
 import { mountShop, StoryShell } from "../../market/testHarness";
 import { CreatorSaleForm, salePrice } from "../components/CreatorSales";
@@ -258,7 +258,7 @@ const publishable: PublishableItem = {
 
 describe("Discounts, issuance and the listing import", () => {
   it("previews a discount in whole credits and refuses to publish on a node without its coupons index", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     setShopClient(fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]).client);
     try {
@@ -281,7 +281,7 @@ describe("Discounts, issuance and the listing import", () => {
   });
 
   it("signs and publishes a discount on the Shop's settlement chain, not always Polygon", async () => {
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../../market/testing");
     const shop = fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]);
     setShopClient(shop.client);

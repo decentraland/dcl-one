@@ -31,7 +31,7 @@
     "predev": "node scripts/check-generated.mts",
     "build:lib": "rm -rf dist && tsc -p tsconfig.lib.json && rsync -rlpt --prune-empty-dirs --exclude='/app/' --exclude='/test/' --exclude='/tours/' --include='*/' --include='*.css' --include='*.png' --include='*.jpg' --include='*.webp' --include='*.svg' --include='*.glb' --include='*.woff2' --include='OFL.txt' --exclude='*' src/ dist/",
     "prebuild:lib": "node scripts/check-generated.mts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.play.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.play.json --noEmit && tsc -p ../../library/shop/tsconfig.json --noEmit",
     "pretypecheck": "node scripts/check-generated.mts",
     "test": "vitest run",
     "pretest": "node scripts/check-generated.mts",

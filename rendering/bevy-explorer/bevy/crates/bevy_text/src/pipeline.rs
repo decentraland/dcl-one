@@ -419,7 +419,7 @@ pub fn remove_dropped_fonts(
     mut font_system: ResMut<CosmicFontSystem>,
     mut swash_cache: ResMut<SwashCache>,
 ) {
-    let mut removed = alloc::vec::Vec::new();
+    let mut removed = Vec::new();
     for event in font_events.read() {
         if let AssetEvent::Removed { id } = event {
             if let Some((face_id, _)) = pipeline.map_handle_to_font_id.remove(id) {
@@ -436,7 +436,7 @@ pub fn remove_dropped_fonts(
     // individual entries, so rebuild it around the pruned database. This also recomputes its
     // monospace face lists.
     let placeholder = cosmic_text::FontSystem::new_with_locale_and_db(
-        alloc::string::String::new(),
+        String::new(),
         cosmic_text::fontdb::Database::new(),
     );
     let (locale, db) = core::mem::replace(&mut font_system.0, placeholder).into_locale_and_db();

@@ -481,7 +481,8 @@ export function initNametags(): void {
     const present = new Set<string>()
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) if (data.address !== '') present.add(canon(data.address))
     if (meKey != null) present.add(meKey) // our own avatar is always present (no PlayerIdentityData for self)
-    for (const key of [...shown]) {
+    const shownKeys = [...shown]
+    for (const key of shownKeys) {
       if (present.has(key)) { absent.set(key, 0) }
       else {
         const n = (absent.get(key) ?? 0) + 1

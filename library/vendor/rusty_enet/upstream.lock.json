@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "9aa31a9be994192f07b225cf125a86cbeeca4110b04971436d528480f9c17cd7"
+    "checksums.sha256": "31aa3ba4cd67f74693d5d21bbc89cfdc9964c83a66b42b9ad2cea15945b553df"
   },
   "patches": [
     {
@@ -64,6 +64,13 @@
       "sha256": "b1050b7ef9938f49b2e7253e40db112a8645567c10b71a06fc0ac0b0805a9e8e",
       "changes": [
         "Name the elided lifetime of Event in check_events and service, and allow the range coder's unused final byte assignment, so the 1.99 toolchain compiles the crate without warnings"
+      ]
+    },
+    {
+      "path": "patches/0007-explicit-connected-event-lifetimes.patch",
+      "sha256": "07f82e57096294f3383128ce75ba7a177cab5a20b81febc2c4bceda26356b3b8",
+      "changes": [
+        "Name the borrowed Event lifetime in the connected host's handle_event, check_events and service return types, matching the host's Rust 1.99 lifetime syntax fix"
       ]
     }
   ],

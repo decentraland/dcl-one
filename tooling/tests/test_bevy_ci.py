@@ -49,7 +49,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
                       job)
         self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
-                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}\n", job)
+                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
 
@@ -194,6 +194,24 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
+
+    def test_shared_hud_sources_validate_web_only(self):
+        for name in (ci.HUD_SHARED[0] + 'model/money.ts', ci.HUD_SHARED[1] + 'credits/BalanceOut.ts',
+                     'library/ui/index.ts', 'library/ui/foundations/colors/colors.css'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'web'})
+
+    def test_library_ui_outside_the_hud_entries_selects_nothing(self):
+        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.tsx', 'library/ui/upstream.lock.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, set())
 
     def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
         for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
@@ -511,6 +529,7 @@ class SelectionTest(unittest.TestCase):
             '.github/workflows/bevy-explorer-images.yml': {'web', 'headless'},
             'apps/bevy-explorer/prepare-native-cache.py': {'clippy', 'test', 'headless', 'native-matrix', 'scenes'},
             'apps/bevy-explorer/install-linux-deps.py': {*ci.LANES, 'scenes'},
+            'apps/bevy-explorer/install-web-tools.py': {'web'},
             ci.SCENES_WORKFLOW: {'scenes'},
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),

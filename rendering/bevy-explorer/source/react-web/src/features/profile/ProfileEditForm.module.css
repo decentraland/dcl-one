@@ -1,14 +1,12 @@
 /* The edit form sits where the About card does, so it borrows that card's surface and section
    headings rather than restating them — the passport's gradient panel is what they're tuned to. */
 .form {
-  composes: card from './ProfilePassport.module.css';
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
 }
 
 .title {
-  composes: cardTitle from './ProfilePassport.module.css';
   margin: 0;
 }
 .title:not(:first-of-type) {
@@ -28,7 +26,6 @@
 }
 
 .fields {
-  composes: fields from './ProfilePassport.module.css';
   margin-top: 0;
 }
 .field {

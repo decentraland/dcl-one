@@ -619,7 +619,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 2;
+pub const SETTINGS_GENERATION: u32 = 3;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -711,6 +711,7 @@ impl AppConfig {
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -721,6 +722,9 @@ impl AppConfig {
         }
         if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
             self.graphics.bloom = default.graphics.bloom;
+        }
+        if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
+            self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -888,6 +892,7 @@ pub struct GraphicsSettings {
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
+    /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
     /// share of the screen's device pixels the web canvas renders at
     pub render_scale: f32,
@@ -919,11 +924,7 @@ impl Default for GraphicsSettings {
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
-            gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
-                10_000_000
-            } else {
-                0
-            },
+            gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
     }
@@ -1980,6 +1981,23 @@ mod tests {
                 "mip {mip}: bevy {weight} vs urp {urp}"
             );
         }
+    }
+
+    #[test]
+    fn reset_outdated_settings_caps_uncapped_uploads() {
+        let saved = |gpu_bytes_per_frame| {
+            let mut config = AppConfig {
+                settings_generation: 2,
+                ..Default::default()
+            };
+            config.graphics.gpu_bytes_per_frame = gpu_bytes_per_frame;
+            config.reset_outdated_settings();
+            config
+        };
+        let uncapped = saved(0);
+        assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
+        assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
+        assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
     }
 
     #[test]

@@ -3,10 +3,10 @@
 // the MANA shortfall). The rails of the whole cart, read from each line's presentation (the server's offer
 // under the payment rule), so the buttons can never offer a rail a line does not have. They depend on the
 // offers and the balances only, never on the method each line happens to be set to now.
-import { lineUnits } from "../../cart/partition";
-import { addCents, mulCents, mulMana, type ManaWei, type UsdCents } from "../../model/money";
-import type { CartLine } from "../../model/purchase";
-import type { PaymentPresentation } from "../../payment/present";
+import { lineUnits } from "@shop/cart/partition";
+import { addCents, mulCents, mulMana, type ManaWei, type UsdCents } from "@shop/model/money";
+import type { CartLine } from "@shop/model/purchase";
+import type { PaymentPresentation } from "@shop/payment/present";
 
 export type CartRail = { method: "credits" } | { method: "mana"; manaWei: ManaWei; chainId: number };
 

@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import stat
@@ -312,6 +313,77 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
+
+    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+        # react-web compiles these through its aliases (react-web/vite.shared.ts).
+        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
+        for shared in contract.HUD_SHARED:
+            with self.subTest(shared=shared):
+                self.write(shared + 'changed.ts' if shared.endswith('/') else shared, 'export const changed = true;\n')
+                with self.assertRaisesRegex(ValueError, 'inputs differ'):
+                    play.install(self.build)
+                self.assertEqual(engine, contract.engine_inputs(self.root))
+                self.assertEqual(hud, contract.hud_inputs(self.root))
+                contract.pack(self.build, self.root)
+                play.install(self.build)
+
+    def test_a_shared_file_entry_names_that_file_only(self):
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        self.write('library/ui/index.ts', "export * from './foundations'\n")
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        key = contract.inputs(self.root)
+        for neighbour in ('library/ui/index.tsx', 'library/ui/index.ts.orig', 'library/ui/figma/src/cli.ts'):
+            self.write(neighbour, 'export {};\n')
+        git('add', '.')
+        git('commit', '-qm', 'neighbours')
+        self.assertEqual(key, contract.inputs(self.root))
+        self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
+
+    def test_the_lfs_fonts_under_the_shared_foundations_are_no_input_either_way_they_are_checked_out(self):
+        # A checkout without LFS holds a pointer; Nix's `git+file:.?lfs=1` source holds the font itself.
+        font = contract.HUD_UNREAD[0] + 'inter-latin-wght-normal.woff2'
+        self.write(font, 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n')
+        key = contract.inputs(self.root)
+        self.write(font, b'wOF2 the font itself')
+        self.assertEqual(key, contract.inputs(self.root))
+        self.assertNotIn(font, contract.input_files(self.root))
+        play.install(self.build)
+
+    def test_shared_hud_sources_are_inputs_in_git_and_in_the_nix_contract(self):
+        # Each entry, a tree or one file, the same in a checkout, in a commit and in Nix's filtered copy.
+        names = [entry + 'model/money.ts' if entry.endswith('/') else entry for entry in contract.HUD_SHARED]
+        for name in names:
+            self.write(name, 'export const zero = 0n;\n')
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        key = contract.inputs(self.root)
+        self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
+        filtered = self.root / 'nix-contract'
+        for name in git('ls-files').splitlines():
+            target = filtered / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / name, target)
+        for name in names:
+            with self.subTest(name=name):
+                for files in (contract.input_files(self.root), contract.input_files(self.root, git('rev-parse', 'HEAD')),
+                              contract.input_files(filtered)):
+                    self.assertIn(name, files)
+                self.assertNotIn(name, contract.input_files(self.root, engine_only=True))
+        self.assertEqual(key, contract.inputs(filtered))
+        self.write(names[0], 'export const zero = 1n;\n')
+        self.assertNotEqual(key, contract.inputs(self.root))
 
     def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
@@ -1157,6 +1229,62 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
         self.assertEqual(clock[0], 60)
         download.assert_not_called()
+
+
+class HudSharedSourcesTests(unittest.TestCase):
+    """The library sources the web HUD aliases are inputs everywhere its build is fingerprinted or selected."""
+
+    root = Path(__file__).resolve().parents[2]
+    web = root / contract.SOURCE / 'react-web'
+
+    def named(self, file, pattern):
+        return set(re.findall(pattern, (self.web / file).read_text()))
+
+    def test_the_hud_aliases_and_the_build_inputs_name_the_same_sources(self):
+        aliased = self.named('vite.shared.ts', r"'\.\./\.\./\.\./\.\./(library/[^']+)'")
+        mapped = self.named('tsconfig.json', r'"\.\./\.\./\.\./\.\./(library/[^"*]+?)(?:/\*)?"')
+        for path in sorted(aliased | mapped):
+            with self.subTest(path=path):
+                self.assertTrue(contract.hud_shared(path) or contract.hud_shared(path + '/'),
+                                f'react-web aliases or maps {path}, which the build inputs miss')
+        self.assertLessEqual(mapped, aliased, 'react-web/tsconfig.json maps a source vite.shared.ts does not alias')
+        self.assertEqual({entry.rstrip('/') for entry in contract.HUD_SHARED} - aliased, set(),
+                         'a build input names a source react-web/vite.shared.ts no longer aliases')
+        nix = (self.root / 'infra/packages/play.nix').read_text()
+        # `just native-*` rebuilds the native HUD when one of these is newer than its last bundle.
+        just = (self.root / contract.SOURCE / 'justfile').read_text()
+        spec = importlib.util.spec_from_file_location('bevy_ci', self.root / 'tooling/bevy-ci.py')
+        ci = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ci)
+        for entry in contract.HUD_SHARED:
+            with self.subTest(entry=entry):
+                self.assertIn(entry.rstrip('/'), ci.INPUTS)
+                self.assertRegex(nix, rf'/{re.escape(entry.rstrip("/"))}(\s|$)')
+                self.assertRegex(just, rf' \.\./\.\./\.\./{re.escape(entry.rstrip("/"))} ')
+
+    def test_every_library_ui_file_the_hud_compiles_is_an_input(self):
+        # From the @dcl/one-ui entries react-web aliases, through relative imports and stylesheet @imports. A
+        # stylesheet's url() is not followed: its only targets are the Inter files the HUD takes from its own
+        # package instead (react-web/src/test/sharedUi.test.tsx).
+        entries = {path for path in self.named('vite.shared.ts', r"'\.\./\.\./\.\./\.\./(library/ui/[^']+)'")
+                   if (self.root / path).is_file()}
+        self.assertTrue(entries)
+        reached, queue = set(), sorted(entries)
+        while queue:
+            path = queue.pop()
+            if path in reached:
+                continue
+            reached.add(path)
+            text = (self.root / path).read_text()
+            for spec in re.findall(r"""(?:\bfrom|\bimport|@import)\s+['"](\.[^'"]+)['"]""", text):
+                base = posixpath.normpath(posixpath.join(posixpath.dirname(path), spec))
+                found = [candidate for candidate in (base, base + '.ts', base + '.tsx', base + '/index.ts')
+                         if (self.root / candidate).is_file()]
+                self.assertTrue(found, f'{path} imports {spec}, which is no file')
+                queue.append(found[0])
+        outside = sorted(path for path in reached if not contract.hud_shared(path) or path.startswith(contract.HUD_UNREAD))
+        self.assertEqual(outside, [], 'the HUD compiles these library/ui files, which are no build input')
+        self.assertGreater(len(reached), len(entries))
 
 
 if __name__ == '__main__':
