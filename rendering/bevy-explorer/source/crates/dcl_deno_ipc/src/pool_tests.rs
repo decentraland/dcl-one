@@ -17,12 +17,25 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 // how long to wait for something that must not happen
 const QUIET: Duration = Duration::from_millis(500);
 
+const SANDBOXED: SandboxStatus = SandboxStatus {
+    landlock: Landlock::PartiallyEnforced,
+    seccomp: true,
+    no_new_privs: true,
+};
+const NOT_SANDBOXED: SandboxStatus = SandboxStatus {
+    landlock: Landlock::NotEnforced,
+    seccomp: false,
+    no_new_privs: false,
+};
+
 /// Hands the pool in-memory hosts and gives the test the other end of each.
 struct FakeLauncher {
     launched: UnboundedSender<FakeHost>,
     // launches that fail before any succeeds again
     failures: AtomicU32,
     next_pid: AtomicU32,
+    // what each new host reports as its first frame; `None` leaves the report to the test
+    report: Mutex<Option<SandboxStatus>>,
 }
 
 impl FakeLauncher {
@@ -32,6 +45,7 @@ impl FakeLauncher {
             launched,
             failures: AtomicU32::new(0),
             next_pid: AtomicU32::new(1),
+            report: Mutex::new(Some(SANDBOXED)),
         };
         (Arc::new(launcher), hosts)
     }
@@ -62,10 +76,15 @@ impl Launch for FakeLauncher {
             killed: killed.clone(),
         };
         let pid = self.next_pid.fetch_add(1, Ordering::SeqCst);
-        let host = FakeHost { pid, ..host };
-        let launched = self.launched.send(host);
+        let mut host = FakeHost { pid, ..host };
+        let report = *self.report.lock().unwrap();
         Box::pin(async move {
-            launched.map_err(|_| anyhow::anyhow!("the test stopped taking hosts"))?;
+            if let Some(sandbox) = report {
+                host.report(sandbox).await;
+            }
+            self.launched
+                .send(host)
+                .map_err(|_| anyhow::anyhow!("the test stopped taking hosts"))?;
             Ok(HostLink {
                 inbound: Box::pin(inbound),
                 outbound: Box::pin(outbound),
@@ -131,6 +150,17 @@ impl FakeHost {
             panic!("expected the engine to start a scene");
         };
         started
+    }
+
+    async fn report(&mut self, sandbox: SandboxStatus) {
+        let message = SceneToEngine::HostReady { sandbox };
+        write_msg(&mut self.writer, &message).await.unwrap();
+    }
+
+    /// Whether the engine closed its end without writing another frame.
+    async fn closed_by_engine(&mut self) -> bool {
+        let read = tokio::time::timeout(TIMEOUT, self.reader.read_u64_le()).await;
+        matches!(read, Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof)
     }
 
     async fn respond(&mut self, scene: u64, marker: u64) {
@@ -485,7 +515,7 @@ async fn a_new_scene_takes_the_warm_host_and_a_replacement_starts() {
     let (pool, mut launched, _, _) = pool_with(HostOptions {
         placement: Placement::PerScene,
         spares: 1,
-        memory_cap: None,
+        ..Default::default()
     });
     let pool = Arc::new(pool);
     pool.start().unwrap();
@@ -505,7 +535,8 @@ async fn a_new_scene_takes_the_warm_host_and_a_replacement_starts() {
     let replacement = tokio::time::timeout(TIMEOUT, launched.recv()).await;
     let replacement = replacement.unwrap().unwrap();
     assert_ne!(replacement.pid, spare.pid);
-    eventually(|| pool.hosts().len() == 2).await;
+    eventually(|| pool.hosts().iter().all(|host| host.pid.is_some()) && pool.hosts().len() == 2)
+        .await;
     let hosts = pool.hosts();
     let running = hosts
         .iter()
@@ -521,8 +552,8 @@ async fn a_new_scene_takes_the_warm_host_and_a_replacement_starts() {
 async fn a_host_over_its_memory_cap_is_ended_and_reported() {
     let (pool, mut launched, _, memory) = pool_with(HostOptions {
         placement: Placement::PerScene,
-        spares: 0,
         memory_cap: Some(1000),
+        ..Default::default()
     });
     let pool = Arc::new(pool);
     pool.start().unwrap();
@@ -613,6 +644,7 @@ async fn an_ending_spare_is_given_no_scene_and_counts_as_no_loss() {
         placement: Placement::PerScene,
         spares: 1,
         memory_cap: None,
+        ..Default::default()
     });
     let pool = Arc::new(pool);
     pool.start().unwrap();
@@ -656,6 +688,7 @@ async fn an_idle_spare_is_not_held_to_the_memory_cap() {
         placement: Placement::PerScene,
         spares: 1,
         memory_cap: Some(1000),
+        ..Default::default()
     });
     let pool = Arc::new(pool);
     pool.start().unwrap();
@@ -673,6 +706,175 @@ async fn an_idle_spare_is_not_held_to_the_memory_cap() {
 
     assert!(!spare.killed());
     assert_eq!(pool.info().lost_hosts, 0);
+}
+
+fn required_sandbox_pool() -> (HostPool, UnboundedReceiver<FakeHost>, Arc<FakeLauncher>) {
+    let (pool, launched, launcher, _) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        sandbox: SandboxMode::Require,
+        ..Default::default()
+    });
+    (pool, launched, launcher)
+}
+
+#[tokio::test]
+async fn a_host_below_the_required_sandbox_gets_no_scene() {
+    let (pool, mut launched, launcher) = required_sandbox_pool();
+    *launcher.report.lock().unwrap() = Some(NOT_SANDBOXED);
+    let (responses, mut receiver) = scene_response_channel();
+
+    let _scene = place(&pool, &responses, [1]);
+
+    let mut host = tokio::time::timeout(TIMEOUT, launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let (errored, response) = delivered(&mut receiver).await;
+    assert_eq!(errored, scene_id(1));
+    assert!(is_error_starting_with(
+        &response,
+        "scene host failed to start"
+    ));
+    assert!(host.closed_by_engine().await);
+    assert!(host.killed());
+    let exits = pool.drain_exits();
+    assert_eq!(exits.len(), 1);
+    assert_eq!(exits[0].reason, HostExitReason::Sandbox);
+    assert_eq!(exits[0].scenes, [SceneId(Entity::from_raw(1))]);
+    assert!(pool.hosts().is_empty());
+    assert_eq!(pool.first_sandbox(), Some(NOT_SANDBOXED));
+}
+
+#[tokio::test]
+async fn a_host_meeting_the_required_sandbox_gets_its_scene() {
+    let (pool, mut launched, _) = required_sandbox_pool();
+    let (responses, mut receiver) = scene_response_channel();
+
+    let _scene = place(&pool, &responses, [1]);
+
+    let (started, host) = next_host(&mut launched).await;
+    assert_eq!(started, scene_id(1));
+    assert_eq!(
+        host.command.args[1..],
+        ["--sandbox", "require", "--v8-threads", "2"]
+    );
+    eventually(|| {
+        pool.hosts()
+            .first()
+            .is_some_and(|h| h.state == HostState::Ready)
+    })
+    .await;
+    assert_eq!(pool.hosts()[0].sandbox, Some(SANDBOXED));
+    assert_eq!(pool.first_sandbox(), Some(SANDBOXED));
+    assert!(nothing_delivered(&mut receiver).await);
+    assert!(pool.drain_exits().is_empty());
+}
+
+#[tokio::test]
+async fn a_host_that_ends_before_its_sandbox_report_loses_its_scene_to_the_sandbox() {
+    let (pool, mut launched, launcher) = required_sandbox_pool();
+    *launcher.report.lock().unwrap() = None;
+    let (responses, mut receiver) = scene_response_channel();
+    let _scene = place(&pool, &responses, [1]);
+    let host = tokio::time::timeout(TIMEOUT, launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    drop(host);
+
+    let (errored, _) = delivered(&mut receiver).await;
+    assert_eq!(errored, scene_id(1));
+    assert_eq!(pool.drain_exits()[0].reason, HostExitReason::Sandbox);
+    assert_eq!(pool.first_sandbox(), None);
+}
+
+#[tokio::test]
+async fn a_scene_goes_to_no_spare_before_the_spare_reports_its_sandbox() {
+    let (pool, mut launched, launcher, _) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        spares: 1,
+        sandbox: SandboxMode::Require,
+        ..Default::default()
+    });
+    *launcher.report.lock().unwrap() = None;
+    let pool = Arc::new(pool);
+    pool.start().unwrap();
+    let mut spare = tokio::time::timeout(TIMEOUT, launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let (responses, _receiver) = scene_response_channel();
+
+    let _scene = place(&pool, &responses, [1]);
+
+    let mut fresh = tokio::time::timeout(TIMEOUT, launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    fresh.report(SANDBOXED).await;
+    assert_eq!(fresh.started().await, scene_id(1));
+    spare.report(SANDBOXED).await;
+    eventually(|| {
+        pool.hosts()
+            .iter()
+            .any(|host| host.pid == Some(spare.pid) && host.state == HostState::Ready)
+    })
+    .await;
+    let spare_frame = tokio::time::timeout(QUIET, spare.reader.read_u64_le()).await;
+    assert!(spare_frame.is_err(), "the spare was given a scene");
+}
+
+#[tokio::test]
+async fn a_second_sandbox_report_ends_the_host_as_a_protocol_error() {
+    let (pool, mut launched, _) = required_sandbox_pool();
+    let (responses, mut receiver) = scene_response_channel();
+    let _scene = place(&pool, &responses, [1]);
+    let (scene, mut host) = next_host(&mut launched).await;
+
+    host.report(SANDBOXED).await;
+
+    let (errored, _) = delivered(&mut receiver).await;
+    assert_eq!(errored, scene);
+    assert_eq!(pool.drain_exits()[0].reason, HostExitReason::Protocol);
+    assert!(host.killed());
+}
+
+/// The inspector flag the next `NewScene` on `host` carries.
+async fn inspect_flag(host: &mut FakeHost) -> bool {
+    let EngineToScene::NewScene(_, info) = host.read().await else {
+        panic!("expected the engine to start a scene");
+    };
+    info.inspect
+}
+
+#[tokio::test]
+async fn sandboxed_hosts_run_scenes_without_the_inspector() {
+    let (responses, _receiver) = scene_response_channel();
+    let (sandboxed, mut sandboxed_launched, _) = required_sandbox_pool();
+    let (unsandboxed, mut unsandboxed_launched, _) = pool(Placement::PerScene);
+    let inspected = |pool: &HostPool| {
+        let (mut command, renderer) = new_scene(1, &responses);
+        command.info.inspect = true;
+        pool.place(command).unwrap();
+        renderer
+    };
+
+    let _sandboxed_scene = inspected(&sandboxed);
+    let _unsandboxed_scene = inspected(&unsandboxed);
+
+    let next = |launched: &mut UnboundedReceiver<FakeHost>| launched.try_recv();
+    let mut sandboxed_host = tokio::time::timeout(TIMEOUT, sandboxed_launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut unsandboxed_host = tokio::time::timeout(TIMEOUT, unsandboxed_launched.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!inspect_flag(&mut sandboxed_host).await);
+    assert!(inspect_flag(&mut unsandboxed_host).await);
+    assert!(next(&mut sandboxed_launched).is_err());
 }
 
 // set in the copy of this test binary that plays the engine

@@ -29,6 +29,8 @@ const USAGE = `
                            per-scene: one each, so losing one ends only its scene.
     --scene-host-spares <n>    per-scene only: hosts kept started for the next scenes. Default 1.
     --scene-host-memory-mb <n> per-scene only: end a host over this resident memory. No default.
+    --scene-host-sandbox <mode> off, on or require: the sandbox each scene host applies to
+                           itself on Linux. Default require with --orchestrated on Linux, else off.
     --pulse-realm <key>    Pulse realm to announce verbatim (what sdk-commands mints for a
                            local preview). Standalone only; orchestrated scenes carry their own.
     --pulse-server <h:p>   Pulse server to join, host:port. Default: derived from --base-domain.
@@ -62,6 +64,7 @@ function translate(argv) {
     '--scene-hosts': true,
     '--scene-host-spares': true,
     '--scene-host-memory-mb': true,
+    '--scene-host-sandbox': true,
     '--pulse-realm': true,
     '--pulse-server': true,
     '--base-domain': true,

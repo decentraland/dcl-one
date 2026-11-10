@@ -20,14 +20,38 @@ mod linux;
 #[cfg(target_os = "linux")]
 mod probe;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
     /// Touch nothing.
+    #[default]
     Off,
     /// Apply what the kernel offers and report it.
     On,
     /// Fail unless seccomp applied and Landlock is at least partially enforced.
     Require,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Off => "off",
+            Mode::On => "on",
+            Mode::Require => "require",
+        }
+    }
+}
+
+impl std::str::FromStr for Mode {
+    type Err = anyhow::Error;
+
+    fn from_str(mode: &str) -> anyhow::Result<Self> {
+        match mode {
+            "off" => Ok(Mode::Off),
+            "on" => Ok(Mode::On),
+            "require" => Ok(Mode::Require),
+            other => anyhow::bail!("unknown sandbox mode {other:?}: expected off, on or require"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +60,19 @@ pub struct Status {
     pub landlock: Landlock,
     pub seccomp: bool,
     pub no_new_privs: bool,
+}
+
+impl Status {
+    /// Whether a process in this state meets `mode`: only [`Mode::Require`] asks for anything.
+    pub fn satisfies(&self, mode: Mode) -> bool {
+        mode != Mode::Require
+            || (self.seccomp
+                && self.no_new_privs
+                && matches!(
+                    self.landlock,
+                    Landlock::FullyEnforced | Landlock::PartiallyEnforced
+                ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,5 +184,50 @@ pub fn probe(loopback: &TcpListener) -> Report {
     {
         let _ = loopback;
         Report::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SANDBOXED: Status = Status {
+        landlock: Landlock::PartiallyEnforced,
+        seccomp: true,
+        no_new_privs: true,
+    };
+
+    #[test]
+    fn require_accepts_seccomp_with_enforced_landlock_only() {
+        let fully = Status {
+            landlock: Landlock::FullyEnforced,
+            ..SANDBOXED
+        };
+        let without_seccomp = Status {
+            seccomp: false,
+            ..SANDBOXED
+        };
+
+        assert!(SANDBOXED.satisfies(Mode::Require));
+        assert!(fully.satisfies(Mode::Require));
+        assert!(!without_seccomp.satisfies(Mode::Require));
+        for landlock in [Landlock::NotEnforced, Landlock::Unsupported] {
+            let status = Status {
+                landlock,
+                ..SANDBOXED
+            };
+            assert!(!status.satisfies(Mode::Require), "{status:?}");
+            assert!(status.satisfies(Mode::On), "{status:?}");
+            assert!(status.satisfies(Mode::Off), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn modes_parse_from_their_names() {
+        for mode in [Mode::Off, Mode::On, Mode::Require] {
+            assert_eq!(mode.as_str().parse::<Mode>().unwrap(), mode);
+        }
+        assert!("required".parse::<Mode>().is_err());
+        assert_eq!(Mode::default(), Mode::Off);
     }
 }

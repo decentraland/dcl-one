@@ -1,7 +1,7 @@
 //! The orchestrator's view of the engine's scene hosts.
 
 use bevy::{ecs::entity::Entity, platform::collections::HashMap};
-use dcl_deno_ipc::{HostExit, SceneHostInfo};
+use dcl_deno_ipc::{HostExit, SandboxMode, SandboxStatus, SceneHostInfo};
 
 /// The `scene-host-exited` control event for a lost host whose scenes have `hashes`.
 pub fn scene_host_exited_event(exit: &HostExit, hashes: &[&str]) -> serde_json::Value {
@@ -12,6 +12,15 @@ pub fn scene_host_exited_event(exit: &HostExit, hashes: &[&str]) -> serde_json::
         "signal": exit.signal,
         "reason": exit.reason.as_str(),
     })
+}
+
+/// The `scene-host-sandbox` control event: the sandbox mode asked of scene hosts and what the
+/// first host reported.
+pub fn scene_host_sandbox_event(mode: SandboxMode, status: &SandboxStatus) -> serde_json::Value {
+    let mut event = serde_json::json!(status);
+    event["type"] = "scene-host-sandbox".into();
+    event["mode"] = mode.as_str().into();
+    event
 }
 
 /// The sampled resident memory of the host each scene runs in, keyed by scene entity.
@@ -26,7 +35,7 @@ pub fn host_rss_by_scene(hosts: &[SceneHostInfo]) -> HashMap<Entity, u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dcl_deno_ipc::{HostExitReason, HostState};
+    use dcl_deno_ipc::{HostExitReason, HostState, Landlock};
     use dcl_types::SceneId;
 
     #[derive(serde::Deserialize, Debug, PartialEq)]
@@ -74,6 +83,7 @@ mod tests {
             (HostExitReason::Protocol, "protocol"),
             (HostExitReason::Memory, "memory"),
             (HostExitReason::Spawn, "spawn"),
+            (HostExitReason::Sandbox, "sandbox"),
         ] {
             let exit = HostExit {
                 scenes: Vec::new(),
@@ -95,6 +105,7 @@ mod tests {
             state: HostState::Ready,
             scenes: vec![SceneId(Entity::from_raw(entity))],
             rss_bytes,
+            sandbox: None,
         };
 
         let rss = host_rss_by_scene(&[host(1, Some(10)), host(2, Some(20)), host(3, None)]);
@@ -102,5 +113,38 @@ mod tests {
         assert_eq!(rss.get(&Entity::from_raw(1)), Some(&10));
         assert_eq!(rss.get(&Entity::from_raw(2)), Some(&20));
         assert_eq!(rss.get(&Entity::from_raw(3)), None);
+    }
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct SandboxEvent {
+        #[serde(rename = "type")]
+        kind: String,
+        mode: String,
+        landlock: String,
+        seccomp: bool,
+        no_new_privs: bool,
+    }
+
+    #[test]
+    fn the_sandbox_event_carries_the_mode_and_the_reported_status() {
+        let status = SandboxStatus {
+            landlock: Landlock::PartiallyEnforced,
+            seccomp: true,
+            no_new_privs: true,
+        };
+
+        let event = scene_host_sandbox_event(SandboxMode::Require, &status);
+
+        assert_eq!(
+            serde_json::from_value::<SandboxEvent>(event).unwrap(),
+            SandboxEvent {
+                kind: "scene-host-sandbox".to_owned(),
+                mode: "require".to_owned(),
+                landlock: "partiallyEnforced".to_owned(),
+                seccomp: true,
+                no_new_privs: true,
+            }
+        );
     }
 }

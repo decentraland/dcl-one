@@ -28,6 +28,7 @@ alloy-core = { workspace = true }
 anyhow = { workspace = true }
 fastrand = { workspace = true }
 mimalloc = { workspace = true }
+scene_host_sandbox = { workspace = true }
 
 interprocess = { version = "2.0", features = ["tokio"] }
 rmp-serde = "1.3"
@@ -35,3 +36,6 @@ sysinfo = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true }
+
+[dev-dependencies]
+tungstenite = { workspace = true }

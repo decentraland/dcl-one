@@ -17,7 +17,7 @@ How this lands on each platform:
 
 | | Native | Web |
 |---|---|---|
-| Scene isolation | V8 isolates inside `dcl_deno_ipc` sidecar processes: one process for all scenes by default; one process per scene with the headless server's `--scene-hosts per-scene`. A sidecar's stdin is empty and its output goes to the engine's log line by line, never to the engine's stdout, which carries the headless server's control channel | One sandbox worker per scene, each with its own wasm memory |
+| Scene isolation | V8 isolates inside `dcl_deno_ipc` sidecar processes: one process for all scenes by default; one process per scene with the headless server's `--scene-hosts per-scene`. A sidecar's stdin is empty and its output goes to the engine's log line by line, never to the engine's stdout, which carries the headless server's control channel. On Linux a sidecar can sandbox itself (Landlock and seccomp), which the orchestrated server requires: it then cannot start programs, touch files beyond what the runtime reads, open Unix sockets, or reach another process | One sandbox worker per scene, each with its own wasm memory |
 | Engine boundary | Process boundary; the sidecar talks to the engine over a pipe | The `dcl_wasm` relay runs in the engine's memory and copies messages wasm to wasm |
 | Signing key | Engine process (`wallet`) | The shell page, a separate process from the app page; the engine asks it for each signature through `wallet::remote_signer` |
 | SystemApi sender | Given to the scene the engine marks `is_super`; the engine forwards `SystemApi` only from the sidecar running that scene | Held by the engine-side relay for the one scene the engine marked super; any other scene that sends a `SystemApi` message is ended |
@@ -25,7 +25,9 @@ How this lands on each platform:
 The engine validates every frame the native sidecar sends: a frame it cannot read ends that
 sidecar, and a sidecar speaks only for the scenes the engine gave it. Scenes that share a sidecar
 rely on V8 isolation between them. With `--scene-hosts per-scene` no two scenes share one, and
-losing a sidecar ends only its scene (`crates/dcl_deno_ipc/src/pool.rs`).
+losing a sidecar ends only its scene (`crates/dcl_deno_ipc/src/pool.rs`). A sandboxed sidecar still
+opens its own TCP connections for fetch and WebSocket, so the address rules for those are enforced
+inside it, and it runs as the same user as the engine.
 
 ## Rules
 
@@ -54,6 +56,18 @@ host was not given, or a `SystemApi` message from a host running no system scene
 counted (`dcl_deno_ipc::rejected_host_messages`). `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
 plays a scene host against the engine side of the pipe; cover every new `SceneToEngine` message
 there.
+
+**The scene host applies its sandbox before it reads a scene.** `dcl_deno_ipc` connects to the
+engine, applies `scene_host_sandbox` while it has one thread, then starts V8, so every V8 and
+runtime thread is created under it. Its first frame, `SceneToEngine::HostReady`, reports what was
+applied, and the pool gives a host no scene before it has accepted that report: a host below the
+required mode is ended (a per-scene host's scene is reported lost with reason `sandbox`; a server
+whose shared host is refused does not start). Anything the host must
+open after that point has to be on the sandbox's list (`crates/scene_host_sandbox/src/linux.rs`);
+add it there, with its reason, rather than opening it before the sandbox. A sandboxed host runs no
+inspector and has no `localStorage`. `crates/dcl_deno_ipc/tests/sandboxed_scene.rs` runs fetch and
+WebSocket from a scene on a sandboxed host, and `dcl_deno_ipc --sandbox-self-test --require` checks
+a deployment.
 
 **On web, the HUD never touches `localStorage`.** The app page and the sandbox workers share an
 origin with the shell page that holds the key. The first `localStorage` read loads the origin's

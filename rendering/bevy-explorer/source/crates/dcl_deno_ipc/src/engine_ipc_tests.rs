@@ -499,3 +499,20 @@ async fn system_api_before_any_scene_does_not_end_the_engine_loop() {
 
     assert_eq!(host.delivered().await, (scene, 1));
 }
+
+#[tokio::test]
+async fn a_sandbox_report_after_the_first_frame_ends_the_host_connection() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    host.respond(scene, 1).await;
+    assert_eq!(host.delivered().await, (scene, 1));
+
+    let sandbox = SandboxStatus {
+        landlock: scene_host_sandbox::Landlock::FullyEnforced,
+        seccomp: true,
+        no_new_privs: true,
+    };
+    host.send(&SceneToEngine::HostReady { sandbox }).await;
+
+    assert!(host.connection_ends().await);
+}

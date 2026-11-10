@@ -4355,11 +4355,13 @@ dependencies = [
  "platform",
  "reqwest",
  "rmp-serde",
+ "scene_host_sandbox",
  "serde",
  "serde_json",
  "sysinfo",
  "system_bridge",
  "tokio",
+ "tungstenite 0.21.0",
 ]
 
 [[package]]

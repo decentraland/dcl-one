@@ -23,7 +23,7 @@ use comms::{
     },
     AdapterManager, ServerSceneRooms,
 };
-use dcl_deno_ipc::{init_runtime_with, HostOptions, Placement};
+use dcl_deno_ipc::{init_runtime_with, HostOptions, Placement, SandboxMode, SandboxRefused};
 use dcl_types::SceneLogMessage;
 use ipfs::{map_realm_name, IpfsAssetServer};
 use scene_runner::{
@@ -123,6 +123,12 @@ struct Args {
     )]
     scene_host_memory_mb: Option<u64>,
 
+    /// What each scene host applies to itself before it takes a scene, on Linux: `on` applies
+    /// what the kernel offers, `require` ends a host that is not sandboxed; absent = require with
+    /// --orchestrated on Linux, off otherwise
+    #[arg(long, value_enum, value_name = "mode", help_heading = HEADLESS)]
+    scene_host_sandbox: Option<SceneHostSandbox>,
+
     /// Pulse realm to announce verbatim; `--server-mode` only, and optional there: absent, the
     /// engine derives the same key from a locally hosted scene's entity id once it loads, this
     /// just announces it sooner. Orchestrated servers host several realms at once and take one
@@ -139,6 +145,25 @@ struct Args {
     realm: String,
     #[arg(skip)]
     location: IVec2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum SceneHostSandbox {
+    Off,
+    On,
+    Require,
+}
+
+impl Args {
+    fn scene_host_sandbox(&self) -> SandboxMode {
+        match self.scene_host_sandbox {
+            Some(SceneHostSandbox::Off) => SandboxMode::Off,
+            Some(SceneHostSandbox::On) => SandboxMode::On,
+            Some(SceneHostSandbox::Require) => SandboxMode::Require,
+            None if self.orchestrated && cfg!(target_os = "linux") => SandboxMode::Require,
+            None => SandboxMode::Off,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -390,15 +415,22 @@ fn main() -> AppExit {
     // whole engine, with per-scene hosts only a pool that can start none does (the desktop
     // client and the scene_runner tests leave this false).
     dcl_deno_ipc::EXIT_ON_SIDECAR_LOSS.store(true, std::sync::atomic::Ordering::SeqCst);
-    init_runtime_with(HostOptions {
+    let sandbox = args.scene_host_sandbox();
+    let started = init_runtime_with(HostOptions {
         placement: args.scene_hosts.placement(),
         spares: match args.scene_hosts {
             SceneHosts::Shared => 0,
             SceneHosts::PerScene => args.scene_host_spares.unwrap_or(1),
         },
         memory_cap: args.scene_host_memory_mb.map(|mib| mib * 1024 * 1024),
-    })
-    .unwrap();
+        sandbox,
+    });
+    if let Err(e) = &started {
+        if e.is::<SandboxRefused>() {
+            usage_error(format!("the scene host failed to start: {e:#}"));
+        }
+    }
+    started.unwrap();
 
     println!(
         "[headless] realm={} location={} preview={} server_mode={} tick_hz={}",
@@ -518,6 +550,7 @@ fn main() -> AppExit {
             .add_systems(
                 PostUpdate,
                 (
+                    emit_scene_host_sandbox.before(emit_scene_host_exits),
                     emit_scene_host_exits.before(emit_scene_status),
                     emit_scene_status,
                     emit_scene_stats,
@@ -525,7 +558,8 @@ fn main() -> AppExit {
                 ),
             );
         ctl_emit(&serde_json::json!({
-            "type": "starting", "realm": args.realm, "sceneHosts": args.scene_hosts.name()
+            "type": "starting", "realm": args.realm, "sceneHosts": args.scene_hosts.name(),
+            "sceneHostSandbox": {"mode": sandbox.as_str()},
         }));
     } else if args.server_mode {
         // before the scene loads: the lifecycle spawns the SceneHash, loading starts next frame
@@ -1255,6 +1289,26 @@ fn emit_scene_log(hash: &str, log: &SceneLogMessage) {
         "@scene-log {}",
         serde_json::json!({"scene": hash, "level": webgpu_build::headless::scene_log_level(&log.level), "ts": log.timestamp, "msg": log.message})
     );
+}
+
+/// The sandbox the first scene host reported, once, unless the sandbox is off.
+fn emit_scene_host_sandbox(mut emitted: Local<bool>) {
+    if *emitted {
+        return;
+    }
+    let (Some(pool), Some(status)) = (
+        dcl_deno_ipc::scene_host_pool(),
+        dcl_deno_ipc::first_host_sandbox(),
+    ) else {
+        return;
+    };
+    *emitted = true;
+    if pool.sandbox != SandboxMode::Off {
+        ctl_emit(&webgpu_build::headless::scene_host_sandbox_event(
+            pool.sandbox,
+            &status,
+        ));
+    }
 }
 
 /// Lost scene hosts (`--scene-hosts per-scene`), each reported before its scenes'

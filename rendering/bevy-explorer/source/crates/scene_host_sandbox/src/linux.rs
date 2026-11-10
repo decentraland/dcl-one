@@ -87,13 +87,7 @@ pub fn apply(mode: Mode) -> Result<Status> {
         seccomp: apply_seccomp()?,
         no_new_privs: true,
     };
-    if mode == Mode::Require
-        && !(status.seccomp
-            && matches!(
-                status.landlock,
-                Landlock::FullyEnforced | Landlock::PartiallyEnforced
-            ))
-    {
+    if !status.satisfies(mode) {
         bail!("the kernel does not offer the required sandbox: {status:?}");
     }
     Ok(status)
