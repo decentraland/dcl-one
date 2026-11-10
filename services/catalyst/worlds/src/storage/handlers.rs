@@ -229,12 +229,20 @@ pub async fn read_upsert_body(
     }
     // The declared length already passed `check_content_length`.
     let limit = usize::try_from(max_value_size + BODY_ENVELOPE_SLACK_BYTES).unwrap_or(usize::MAX);
-    // A body past the limit without a declared length is refused as one
-    // with it; a failed read has no client left to answer.
-    let bytes = axum::body::to_bytes(body, limit).await.map_err(|_| {
-        ApiError::PayloadTooLarge(format!(
-            "Request body exceeds the maximum allowed size ({limit} bytes)"
-        ))
+    let bytes = axum::body::to_bytes(body, limit).await.map_err(|error| {
+        let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+        while let Some(current) = cause {
+            if current.is::<http_body_util::LengthLimitError>() {
+                return ApiError::PayloadTooLarge(format!(
+                    "Request body exceeds the maximum allowed size ({limit} bytes)"
+                ));
+            }
+            cause = current.source();
+        }
+        ApiError::InvalidBody {
+            message: "Invalid JSON body".into(),
+            data: None,
+        }
     })?;
     let doc =
         js_json::parse(&js_json::decode_body(&bytes)).map_err(|message| ApiError::InvalidBody {
@@ -989,6 +997,72 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_body_is_400_without_transport_details() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let chunks = futures::stream::iter([
+            Ok(bytes::Bytes::from_static(br#"{"value":"#)),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "private transport detail",
+            )),
+        ]);
+        let error = read_upsert_body(
+            &headers,
+            axum::body::Body::from_stream(chunks),
+            100,
+            UpsertSchema::Storage,
+        )
+        .await
+        .err()
+        .unwrap();
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({"ok": false, "message": "Invalid JSON body"})
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_error_responses_preserve_lone_surrogates() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        for (body, expected) in [
+            (
+                r#"{"value":{"\ud800/~":1e400}}"#,
+                r#""instancePath":"/value/\ud800~1~0""#,
+            ),
+            (
+                r#"{"value":1,"\udc00":2}"#,
+                r#""additionalProperty":"\udc00""#,
+            ),
+        ] {
+            let error = read_upsert_body(
+                &headers,
+                axum::body::Body::from(body),
+                4096,
+                UpsertSchema::Storage,
+            )
+            .await
+            .err()
+            .unwrap();
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let bytes = axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .unwrap();
+            let text = std::str::from_utf8(&bytes).unwrap();
+            assert!(text.contains(expected), "{text}");
+            assert!(!text.contains('\u{fffd}'), "{text}");
+            assert!(super::super::js::JsValue::parse(text).is_some());
+        }
     }
 
     #[test]

@@ -7,10 +7,11 @@
 //! first position and its last value). Parsing, validation and serialization
 //! are iterative, so any nesting depth is safe.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use serde::Serialize;
+#[cfg(test)]
 use serde_json::{Value, json};
 
 use super::js::{JsString, JsValue};
@@ -34,10 +35,10 @@ pub struct Doc {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AjvError {
-    pub instance_path: String,
+    pub instance_path: JsString,
     pub schema_path: &'static str,
     pub keyword: &'static str,
-    pub params: Value,
+    pub params: BTreeMap<&'static str, JsString>,
     pub message: String,
 }
 
@@ -642,24 +643,27 @@ impl Doc {
     /// `required`, `additionalProperties`. Returns the `value` item.
     fn envelope(&self) -> Result<usize, Vec<AjvError>> {
         let Some(entries) = self.object_entries(0) else {
-            return Err(vec![type_error("", "#/type", "object")]);
+            return Err(vec![type_error(&"".into(), "#/type", "object")]);
         };
         let value_key: Vec<u16> = "value".encode_utf16().collect();
         let Some(&(_, value)) = entries.iter().find(|(k, _)| *k == value_key) else {
             return Err(vec![AjvError {
-                instance_path: String::new(),
+                instance_path: JsString::default(),
                 schema_path: "#/required",
                 keyword: "required",
-                params: json!({ "missingProperty": "value" }),
+                params: BTreeMap::from([("missingProperty", "value".into())]),
                 message: "must have required property 'value'".to_string(),
             }]);
         };
         if let Some((extra, _)) = entries.iter().find(|(k, _)| *k != value_key) {
             return Err(vec![AjvError {
-                instance_path: String::new(),
+                instance_path: JsString::default(),
                 schema_path: "#/additionalProperties",
                 keyword: "additionalProperties",
-                params: json!({ "additionalProperty": String::from_utf16_lossy(extra) }),
+                params: BTreeMap::from([(
+                    "additionalProperty",
+                    JsString::from_units(extra.clone()),
+                )]),
                 message: "must NOT have additional properties".to_string(),
             }]);
         }
@@ -671,7 +675,7 @@ impl Doc {
         let value = self.envelope()?;
         if !matches!(self.items[value], Item::Str(_)) {
             return Err(vec![type_error(
-                "/value",
+                &"/value".into(),
                 "#/properties/value/type",
                 "string",
             )]);
@@ -705,14 +709,15 @@ impl Doc {
     /// the `anyOf` itself fail.
     fn any_of_cascade(&self, value: usize, invalid: &[bool]) -> Vec<AjvError> {
         let mut errors = Vec::new();
-        let mut unwind: Vec<(String, bool)> = Vec::new();
-        let (mut cur, mut path) = (value, "/value".to_string());
-        // Each level copies its path into at most 7 errors, `unwind` included.
+        let mut unwind: Vec<(JsString, bool)> = Vec::new();
+        let (mut cur, mut path) = (value, JsString::from("/value"));
+        // Each UTF-16 unit may serialize as a six-byte escape. Count all
+        // seven path copies per level, including `unwind`.
         let mut path_bytes = 0usize;
         loop {
-            path_bytes = path_bytes.saturating_add(path.len().saturating_mul(7));
+            path_bytes = path_bytes.saturating_add(path.units().len().saturating_mul(6 * 7));
             if unwind.len() >= MAX_ERROR_DEPTH || path_bytes > MAX_ERROR_PATH_BYTES {
-                return vec![any_of_error("/value")];
+                return vec![any_of_error(&"/value".into())];
             }
             for t in ["string", "number", "boolean", "null"] {
                 errors.push(branch_error(&path, t));
@@ -724,7 +729,9 @@ impl Doc {
                         .enumerate()
                         .find(|(_, c)| invalid[**c])
                         .expect("an invalid array has an invalid item");
-                    let child_path = format!("{path}/{i}");
+                    let mut child_path = path.units().into_owned();
+                    child_path.extend(format!("/{i}").encode_utf16());
+                    let child_path = JsString::from_units(child_path);
                     unwind.push((std::mem::replace(&mut path, child_path), true));
                     cur = child;
                 }
@@ -734,10 +741,16 @@ impl Doc {
                         .iter()
                         .find(|(_, c)| invalid[*c])
                         .expect("an invalid object has an invalid property");
-                    let escaped = String::from_utf16_lossy(key)
-                        .replace('~', "~0")
-                        .replace('/', "~1");
-                    let child_path = format!("{path}/{escaped}");
+                    let mut child_path = path.units().into_owned();
+                    child_path.push(b'/' as u16);
+                    for &unit in key {
+                        match unit {
+                            0x7e => child_path.extend([0x7e, 0x30]),
+                            0x2f => child_path.extend([0x7e, 0x31]),
+                            _ => child_path.push(unit),
+                        }
+                    }
+                    let child_path = JsString::from_units(child_path);
                     unwind.push((std::mem::replace(&mut path, child_path), false));
                     cur = *child;
                 }
@@ -759,17 +772,17 @@ impl Doc {
     }
 }
 
-fn type_error(path: &str, schema_path: &'static str, t: &str) -> AjvError {
+fn type_error(path: &JsString, schema_path: &'static str, t: &str) -> AjvError {
     AjvError {
-        instance_path: path.to_string(),
+        instance_path: path.clone(),
         schema_path,
         keyword: "type",
-        params: json!({ "type": t }),
+        params: BTreeMap::from([("type", t.into())]),
         message: format!("must be {t}"),
     }
 }
 
-fn branch_error(path: &str, t: &'static str) -> AjvError {
+fn branch_error(path: &JsString, t: &'static str) -> AjvError {
     let schema_path = match t {
         "string" => "#/anyOf/0/type",
         "number" => "#/anyOf/1/type",
@@ -781,12 +794,12 @@ fn branch_error(path: &str, t: &'static str) -> AjvError {
     type_error(path, schema_path, t)
 }
 
-fn any_of_error(path: &str) -> AjvError {
+fn any_of_error(path: &JsString) -> AjvError {
     AjvError {
-        instance_path: path.to_string(),
+        instance_path: path.clone(),
         schema_path: "#/anyOf",
         keyword: "anyOf",
-        params: json!({}),
+        params: BTreeMap::new(),
         message: "must match a schema in anyOf".to_string(),
     }
 }
@@ -1125,6 +1138,22 @@ mod tests {
             serde_json::to_value(env).unwrap(),
             json!([{"instancePath":"/value","schemaPath":"#/properties/value/type","keyword":"type","params":{"type":"string"},"message":"must be string"}])
         );
+    }
+
+    #[test]
+    fn schema_error_budget_counts_escaped_utf16_bytes() {
+        let body = format!(
+            r#"{{"value":{{"{}":{}1e400{}}}}}"#,
+            r#"\ud800"#.repeat(10_000),
+            "[".repeat(3),
+            "]".repeat(3),
+        );
+        let errors = parse_str(&body)
+            .unwrap()
+            .validate_storage_body()
+            .unwrap_err();
+        assert_eq!(errors, vec![any_of_error(&"/value".into())]);
+        assert!(serde_json::to_string(&errors).unwrap().len() < MAX_ERROR_PATH_BYTES);
     }
 
     #[test]

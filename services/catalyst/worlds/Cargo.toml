@@ -31,6 +31,7 @@ thiserror.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
+http-body-util.workspace = true
 flate2.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true

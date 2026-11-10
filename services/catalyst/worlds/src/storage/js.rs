@@ -60,6 +60,18 @@ impl JsString {
     }
 }
 
+// JSON can represent lone UTF-16 surrogates only as escapes. Serialize the
+// already escaped JSON token without passing it through a UTF-8 string value.
+impl serde::Serialize for JsString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut json = String::new();
+        write_js_string(&mut json, &self.units());
+        let raw =
+            serde_json::value::RawValue::from_string(json).map_err(serde::ser::Error::custom)?;
+        serde::Serialize::serialize(&raw, serializer)
+    }
+}
+
 impl Deref for JsString {
     type Target = str;
 
