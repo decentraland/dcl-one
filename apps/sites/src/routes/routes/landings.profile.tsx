@@ -1,5 +1,5 @@
 import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
 import StProfileCreationsTab from "@ui/web/pages/StProfileCreationsTab";
@@ -27,7 +27,10 @@ import {
   type OwnedItem,
   type OwnedName,
 } from "@/data/lib/catalyst/marketplace/account";
-import type { ProfileCommunity } from "@/data/lib/catalyst/social/profile-communities";
+import {
+  fetchMyCommunities,
+  type ProfileCommunity,
+} from "@/data/lib/catalyst/social/profile-communities";
 import { fetchUserPhotos } from "@/data/lib/catalyst/social/photos";
 import {
   EMPTY_ASSETS,
@@ -36,7 +39,6 @@ import {
   type PhotoVM,
   type ProfileAssets,
 } from "@/data/lib/profile/view";
-import { useMyCommunities } from "@/features/profile/hooks";
 import {
   fetchProfilePlaces,
   withContactName,
@@ -320,19 +322,46 @@ function CommunitiesTab({
   tabs: { id: string; label: string }[];
 }) {
   const { identity } = useAuth();
-  const communities = useMyCommunities(identity, d.own);
-  const failedAt = useRef(0);
+  const [rows, setRows] = useState<ProfileCommunity[]>([]);
+  const [loading, setLoading] = useState<boolean>(d.own);
+
   useEffect(() => {
-    if (!communities.isError || failedAt.current === communities.errorUpdatedAt) return;
-    failedAt.current = communities.errorUpdatedAt;
-    track(
-      "profile_communities_load_failed",
-      { address: d.address },
-      { sid: d.sid, story: STORY },
-    );
-  }, [communities.isError, communities.errorUpdatedAt, d.address, d.sid]);
-  const rows: ProfileCommunity[] = d.own && identity ? (communities.data ?? []) : [];
-  const loading = d.own && identity !== null && communities.isPending;
+    if (!d.own) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    if (!identity) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
+    const ctrl = new AbortController();
+    let live = true;
+    setLoading(true);
+    fetchMyCommunities(identity, { signal: ctrl.signal })
+      .then((list) => {
+        if (live) setRows(list);
+      })
+      .catch(() => {
+        if (!live) return;
+        setRows([]);
+        track(
+          "profile_communities_load_failed",
+          { address: d.address },
+          { sid: d.sid, story: STORY },
+        );
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+
+    return () => {
+      live = false;
+      ctrl.abort();
+    };
+  }, [d.own, d.address, d.sid, identity]);
 
   return (
     <StProfileCommunitiesTab

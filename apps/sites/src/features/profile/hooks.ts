@@ -12,6 +12,7 @@ import {
   ownedWearablesQuery,
   photosQuery,
   placesQuery,
+  PROFILE_STALE_MS,
   profileKeys,
   profileQuery,
 } from "@/data/lib/profile/queries";
@@ -66,6 +67,7 @@ export function useMyCommunities(identity: AuthIdentity | null, enabled = true) 
   const options = identity ? myCommunitiesQuery(identity) : null;
   return useQuery({
     queryKey: options?.queryKey ?? profileKeys.myCommunities(""),
-    queryFn: options && enabled ? options.queryFn : skipToken,
+    queryFn: identity && enabled ? myCommunitiesQuery(identity).queryFn : skipToken,
+    staleTime: PROFILE_STALE_MS,
   });
 }

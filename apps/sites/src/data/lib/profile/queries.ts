@@ -17,6 +17,9 @@ import { mapPhotos } from "./view";
 const PAGE = 48;
 const PLACES_LIMIT = 100;
 
+/** The Sites root default, declared here so a loader's dehydrated data and the page agree on freshness. */
+export const PROFILE_STALE_MS = 30_000;
+
 /** Public keys are `["profile", part, address]`; the member's own reads sit under `["private", account, ...]`. */
 export const profileKeys = {
   all: ["profile"] as const,
@@ -39,6 +42,7 @@ export function canReadProfile(address: string): boolean {
 export const profileQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.profile(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: async ({ signal }) => {
       const avatar = await fetchProfile(address, { signal });
       return avatar ? mapProfile(avatar, address) : null;
@@ -48,6 +52,7 @@ export const profileQuery = (address: string) =>
 export const creationsQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.creations(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
       fetchCreations(normalizeAddress(address), { first: PAGE }, { signal }),
   });
@@ -55,6 +60,7 @@ export const creationsQuery = (address: string) =>
 export const placesQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.places(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
       fetchProfilePlaces(normalizeAddress(address), { limit: PLACES_LIMIT }, { signal }),
   });
@@ -62,6 +68,7 @@ export const placesQuery = (address: string) =>
 export const photosQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.photos(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: async ({ signal }) =>
       mapPhotos(await fetchUserPhotos(normalizeAddress(address), { signal })),
   });
@@ -69,6 +76,7 @@ export const photosQuery = (address: string) =>
 export const ownedWearablesQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.ownedWearables(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
       fetchOwnedWearables(normalizeAddress(address), { first: PAGE }, { signal }),
   });
@@ -76,6 +84,7 @@ export const ownedWearablesQuery = (address: string) =>
 export const ownedNamesQuery = (address: string) =>
   queryOptions({
     queryKey: profileKeys.ownedNames(address),
+    staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
       fetchOwnedNames(normalizeAddress(address), { first: PAGE }, { signal }),
   });
@@ -84,5 +93,6 @@ export const ownedNamesQuery = (address: string) =>
 export const myCommunitiesQuery = (identity: AuthIdentity) =>
   queryOptions({
     queryKey: profileKeys.myCommunities(identity.signer),
+    staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) => fetchMyCommunities(identity, { signal }),
   });

@@ -130,7 +130,7 @@ describe("useMyCommunities", () => {
     expect(communities.fetch).not.toHaveBeenCalled();
   });
 
-  it("caches the list under the signer's private prefix, so an account switch removes it", async () => {
+  it("caches the list under the signer's private prefix", async () => {
     const row = { id: "c1", name: "Builders", membersCount: 3, role: "owner", thumb: null };
     communities.fetch.mockResolvedValue([row]);
 

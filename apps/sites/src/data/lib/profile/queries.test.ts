@@ -1,10 +1,16 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AuthIdentity } from "../auth/types";
 import {
+  PROFILE_STALE_MS,
   canReadProfile,
+  creationsQuery,
+  myCommunitiesQuery,
+  ownedNamesQuery,
   ownedWearablesQuery,
   photosQuery,
+  placesQuery,
   profileKeys,
   profileQuery,
 } from "./queries";
@@ -41,6 +47,23 @@ describe("profileKeys", () => {
 
   it("puts the member's own communities under the private account prefix", () => {
     expect(profileKeys.myCommunities(ADDRESS)).toEqual(["private", LOWER, "profile", "communities"]);
+  });
+});
+
+describe("options factories", () => {
+  it("declare their freshness, so loader data and the page agree on it", () => {
+    const identity = { signer: ADDRESS } as AuthIdentity;
+    const all = [
+      profileQuery(ADDRESS),
+      creationsQuery(ADDRESS),
+      placesQuery(ADDRESS),
+      photosQuery(ADDRESS),
+      ownedWearablesQuery(ADDRESS),
+      ownedNamesQuery(ADDRESS),
+      myCommunitiesQuery(identity),
+    ];
+
+    for (const options of all) expect(options.staleTime).toBe(PROFILE_STALE_MS);
   });
 });
 
