@@ -3371,6 +3371,21 @@ async fn refuses_a_scene_signer_in_every_spelling() {
     }
 }
 
+/// The legacy key check walks `realm` before any signature holds, so a deeply
+/// nested `realm` must fail the signature, not overflow the stack.
+#[tokio::test]
+async fn deeply_nested_realm_fails_the_signature_without_overflowing() {
+    let depth = 200_000;
+    let metadata = format!(r#"{{"realm":{}0{}}}"#, "[".repeat(depth), "]".repeat(depth));
+    let err = verify(&signed_as(KEY, Shape::V6, METHOD, PATH, "{}", &metadata).await)
+        .await
+        .expect_err("metadata other than the signed one must fail");
+    assert!(
+        matches!(err, AuthChainError::InvalidSignature(_)),
+        "{err:?}"
+    );
+}
+
 /// Metadata parses as `JSON.parse` does: a lone surrogate, an overflowing
 /// number and nesting past 128 verify under both payload shapes and serve
 /// the scene, and the scene gate echoes them as `JSON.stringify` writes them.

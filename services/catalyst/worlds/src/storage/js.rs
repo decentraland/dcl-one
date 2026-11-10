@@ -12,8 +12,9 @@ use super::js_json::{self, write_js_string};
 /// A `JSON.parse` result: numbers are doubles and an object keeps its own
 /// keys in JavaScript order (array-index keys ascending, then insertion
 /// order; a repeated key keeps its first position and its last value).
-/// Containers clone and drop iteratively, so any parsed depth is safe.
-#[derive(Debug, Clone, PartialEq)]
+/// Containers clone, drop, compare and print iteratively, so any parsed
+/// depth is safe.
+#[derive(Clone)]
 pub enum JsValue {
     Null,
     Bool(bool),
@@ -82,7 +83,7 @@ impl PartialEq<str> for JsString {
     }
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Default)]
 pub struct JsArray(Vec<JsValue>);
 
 impl Deref for JsArray {
@@ -93,7 +94,7 @@ impl Deref for JsArray {
     }
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Default)]
 pub struct JsObject(Vec<(JsString, JsValue)>);
 
 impl JsObject {
@@ -103,6 +104,78 @@ impl JsObject {
 
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.0.iter().map(|(k, _)| &**k)
+    }
+}
+
+impl PartialEq for JsValue {
+    fn eq(&self, other: &Self) -> bool {
+        values_eq(vec![(self, other)])
+    }
+}
+
+impl PartialEq for JsArray {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && values_eq(self.iter().zip(other.iter()).collect())
+    }
+}
+
+impl PartialEq for JsObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len()
+            && self.0.iter().zip(&other.0).all(|((a, _), (b, _))| a == b)
+            && values_eq(
+                self.0
+                    .iter()
+                    .zip(&other.0)
+                    .map(|((_, a), (_, b))| (a, b))
+                    .collect(),
+            )
+    }
+}
+
+/// Structural equality over the stacked pairs (`NaN` unequal, as `f64`).
+fn values_eq(mut pending: Vec<(&JsValue, &JsValue)>) -> bool {
+    while let Some(pair) = pending.pop() {
+        match pair {
+            (JsValue::Array(a), JsValue::Array(b)) if a.len() == b.len() => {
+                pending.extend(a.iter().zip(b.iter()));
+            }
+            (JsValue::Object(a), JsValue::Object(b)) if a.0.len() == b.0.len() => {
+                for ((ka, va), (kb, vb)) in a.0.iter().zip(&b.0) {
+                    if ka != kb {
+                        return false;
+                    }
+                    pending.push((va, vb));
+                }
+            }
+            (JsValue::Null, JsValue::Null) => {}
+            (JsValue::Bool(a), JsValue::Bool(b)) if a == b => {}
+            (JsValue::Number(a), JsValue::Number(b)) if a == b => {}
+            (JsValue::String(a), JsValue::String(b)) if a == b => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Debug output is the `JSON.stringify` text (non-finite numbers as `null`).
+impl std::fmt::Debug for JsValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.stringify())
+    }
+}
+
+impl std::fmt::Debug for JsArray {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl std::fmt::Debug for JsObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(k, v)| (&**k, v)))
+            .finish()
     }
 }
 
@@ -841,6 +914,12 @@ mod tests {
         let v = JsValue::parse(&text).unwrap();
         let copy = v.clone();
         assert_eq!(copy.stringify(), text);
+        assert_eq!(copy, v);
+        assert_ne!(
+            copy,
+            JsValue::parse(&text.replacen("null", "0", 1)).unwrap()
+        );
+        assert_eq!(format!("{copy:?}"), text);
         drop(copy);
         let v = JsValue::parse(&format!("{}2{}", "[".repeat(depth), "]".repeat(depth))).unwrap();
         assert_eq!(v.to_js_string(), "2");

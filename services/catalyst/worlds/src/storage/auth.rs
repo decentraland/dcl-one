@@ -247,11 +247,15 @@ fn metadata_object(raw: Option<&str>) -> Result<JsObject, AuthChainError> {
     }
 }
 
+/// The objects in `value`, descending through arrays in order.
 fn objects_to_inspect<'a>(value: &'a JsValue, out: &mut Vec<&'a JsObject>) {
-    match value {
-        JsValue::Array(items) => items.iter().for_each(|item| objects_to_inspect(item, out)),
-        JsValue::Object(object) => out.push(object),
-        _ => {}
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            JsValue::Array(items) => stack.extend(items.iter().rev()),
+            JsValue::Object(object) => out.push(object),
+            _ => {}
+        }
     }
 }
 
