@@ -8,6 +8,7 @@ import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
+import { homeEventHref } from "@/features/home/links";
 import { homeActions } from "@/features/home/actions";
 import { detectPlatform, type DetectedPlatform } from "@/features/home/options";
 import { VIBE_CLIPS, WEEKLY_RITUALS } from "@/features/home/content";
@@ -98,7 +99,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               id: card.id,
               title: card.title,
               image: card.image,
-              href: `/events?id=${encodeURIComponent(card.id)}`,
+              href: homeEventHref(card.id),
             }))}
         />
         <CatchTheVibe
@@ -123,7 +124,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
             title: ritual.title,
-            href: `/events?id=${encodeURIComponent(ritual.eventId)}`,
+            href: homeEventHref(ritual.eventId),
             image: ritual.image,
             mobileImage: ritual.mobileImage,
           }))}
