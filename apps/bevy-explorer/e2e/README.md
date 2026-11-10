@@ -98,7 +98,7 @@ as it happens.
 One file per explorer-automation fixture under `specs/`, headed by a table of its test cases
 with the class of each: **Port** (the same scenario), **Partial** (an assertion changed, said
 in the header), **Gap** (the Bevy HUD has no such feature or control) or **Drop** (a Unity
-harness self-test). Each implemented case is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
+harness self-test). Each test case is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
 `todo` with its reason, counted apart in the report and never a pass.
 
 A scenario reaches the client only through `Explorer` (`driver/explorer.ts`): console commands
