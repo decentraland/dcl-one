@@ -18,14 +18,16 @@ const SCOPE = 'library/ui/components'
 const RUNTIME = 'library/ui/figma/review/src/components/'
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
-/** Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind. */
+/**
+ * Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind.
+ * Origins carry no module map: the table pins generation.json, whose module list is the single pin.
+ */
 export function componentExpectedFiles(manifest, metadataDigest) {
   const modules = Object.fromEntries(manifest.modules.map(({ path, sha256 }) => [path, sha256]))
   const generated = {
     kind: 'generated',
     source: JSON.stringify(manifest.source),
-    transform: manifest.transform.id,
-    modules
+    transform: manifest.transform.id
   }
   return new Map(
     [...manifest.output, { path: componentGenerationFile, sha256: metadataDigest }].map(

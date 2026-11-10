@@ -839,6 +839,8 @@ where
 #[derive(Debug, Error)]
 pub enum MigrateError {
     #[error(transparent)]
+    Encoding(#[from] crate::EncodingError),
+    #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error("meta.schema is missing: an empty database takes `catalyst schema apply`, not migrate")]
     NotStamped,
@@ -1092,6 +1094,7 @@ async fn migrate_in_one(
     migrations: &str,
     release: Option<&str>,
 ) -> Result<Migrated, MigrateError> {
+    crate::require_utf8(pool).await?;
     let steps = parse_steps(migrations);
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
