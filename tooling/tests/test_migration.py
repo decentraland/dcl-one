@@ -1410,23 +1410,6 @@ class AgainstPostgres(unittest.TestCase):
           PRIMARY KEY (user_address, badge_id));
     """)
 
-    # The badge catalog schema, for a schemas/ that predates it (a no-op once it has it).
-    BADGES_TARGET = textwrap.dedent("""
-        ALTER TABLE social.badge_definitions
-          ADD COLUMN IF NOT EXISTS criteria_steps integer CHECK (criteria_steps > 0),
-          ADD COLUMN IF NOT EXISTS published_at timestamp,
-          ADD COLUMN IF NOT EXISTS archived_at timestamp,
-          ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now();
-        ALTER TABLE social.user_badge_progress ADD COLUMN IF NOT EXISTS progress jsonb NOT NULL DEFAULT '{}';
-        ALTER TABLE social.badge_tiers ADD CONSTRAINT test_badge_tiers_steps CHECK (criteria_steps > 0);
-        CREATE UNIQUE INDEX IF NOT EXISTS test_badge_tiers_ordinal ON social.badge_tiers (badge_id, ordinal);
-        CREATE TABLE IF NOT EXISTS social.presence_badges (
-          badge_id text PRIMARY KEY REFERENCES social.badge_definitions (id), location_kind varchar(16) NOT NULL,
-          parcel varchar(32), world_name varchar(255), window_start timestamptz NOT NULL,
-          window_end timestamptz NOT NULL, mode varchar(16) NOT NULL, required_seconds integer NOT NULL DEFAULT 0,
-          created_at timestamptz NOT NULL DEFAULT now());
-    """)
-
     T0 = 1767225600000  # 2026-01-01T00:00:00Z
 
     @staticmethod
@@ -1435,7 +1418,7 @@ class AgainstPostgres(unittest.TestCase):
         return ', '.join(f"('{badge}', '{prefix}-{slot}', {i + 1}, '{slot.title()}', '{slot}', {steps}, '{slot}')"
                          for i, (slot, steps) in enumerate(slots))
 
-    def badges_dbs(self, target_schema=True):
+    def badges_dbs(self):
         src, tgt = self.fresh_db('badges_src'), self.catalyst_db('badges_tgt')
         self.sql(src, self.BADGES_SCHEMA)
         t = self.T0
@@ -1464,8 +1447,6 @@ class AgainstPostgres(unittest.TestCase):
               ('stay_fest', 'scene', '10,-20', NULL, '2026-11-01 00:00:00+00', '2026-11-02 00:00:00+00', 'stay', 600,
                '2026-10-30 00:00:00+00');
         """))
-        if target_schema:
-            self.sql(tgt, self.BADGES_TARGET)
         # Only the seed rows the import replaces or deletes, whichever catalog the schema seeds.
         self.sql(tgt, "DELETE FROM social.badge_definitions WHERE id NOT IN ('dclcitizen', 'open_for_business', "
                       "'emotionista', 'decentraland_citizen', 'walkabout');\n")
