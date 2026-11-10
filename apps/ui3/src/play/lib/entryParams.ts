@@ -50,6 +50,8 @@ const INTERNAL_PARAMS = [
   'shop',
   'gate',
   'nogate',
+  // forces the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) for a look at it
+  'gpuGuide',
   'bundled',
   'simerror',
   'simhover',
