@@ -1,10 +1,6 @@
 {
   "schema": 1,
-<<<<<<< HEAD
-  "lockHash": "25115125bec2e90b0829962026766030dd1356c45cb96807703676294b924285",
-=======
-  "lockHash": "f8d27a5030b279e44c1e691710efdf9399bce7117fb0c1f297e2b9d99587d5e6",
->>>>>>> origin/main
+  "lockHash": "b62569b923641c75c01c140c67bdf85f29e73958cafed67e93a0a60e6eec2470",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "figmaTree": "bf56735a9eabfba846d59790e93e35a090efcc00",
@@ -35,7 +31,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "Private and canonical installs reproduce 39 foundation and 11 component files with no-op repeats"
+      "detail": "Private11 component outputs reproduced merged metadata with repeat no-op and prior39 foundations unchanged"
     }
   }
 }
