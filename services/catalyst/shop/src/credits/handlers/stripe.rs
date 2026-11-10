@@ -3,7 +3,10 @@
 //! the purchase flip and the wallet move, granting `purchases.credits`
 //! (captured at intent/session creation), never the event's metadata, and
 //! only for a settled payment in the purchase's currency and amount. A
-//! reversal REVOKES the granted Credits, bounded by the purchase.
+//! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
+//! does not order deliveries, so a reversal is also recorded against its
+//! PaymentIntent, and a grant that lands after it applies it in the same
+//! transaction; both serialize on the PaymentIntent.
 //!
 //! The Stripe endpoint must deliver every event handled below, among them
 //! `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
@@ -123,6 +126,7 @@ pub async fn webhook(
                             },
                         )
                         .await?;
+                    apply_recorded_reversals(&state, &mut tx, pi_id, &event_id).await?;
                 }
                 MarkPaidOutcome::AmountMismatch {
                     expected_cents,
@@ -254,6 +258,14 @@ async fn settle_session(
                     },
                 )
                 .await?;
+            match payment_intent {
+                Some(payment_intent) => {
+                    apply_recorded_reversals(state, tx, payment_intent, event_id).await?;
+                }
+                None => {
+                    tracing::warn!(event_id = %event_id, checkout_session = %session_id, "settled checkout.session names no payment_intent: a later refund or dispute cannot find this purchase");
+                }
+            }
         }
         MarkPaidOutcome::AmountMismatch {
             expected_cents,
@@ -369,7 +381,25 @@ fn log_reversal(outcome: &ReversalOutcome, event_id: &str, pi_id: &str, kind: &s
             tracing::info!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal added no new reversed amount; no credits revoked");
         }
         ReversalOutcome::NoPaidPurchase => {
-            tracing::warn!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal matched no paid purchase; nothing revoked");
+            tracing::warn!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal matched no paid purchase; recorded, and applied if the purchase is credited later");
         }
     }
+}
+
+/// After a grant: the refunds and disputes Stripe delivered for this
+/// PaymentIntent before it settled, applied in the same transaction.
+async fn apply_recorded_reversals(
+    state: &SharedState,
+    tx: &mut Tx<'_>,
+    payment_intent: &str,
+    event_id: &str,
+) -> Result<(), ApiError> {
+    if let Some(outcome) = state
+        .credits
+        .apply_recorded_reversals_in_tx(tx, payment_intent, event_id)
+        .await?
+    {
+        log_reversal(&outcome, event_id, payment_intent, "recorded reversal");
+    }
+    Ok(())
 }

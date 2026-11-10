@@ -4616,6 +4616,374 @@ async fn a_payment_intent_in_another_currency_grants_nothing() {
     delete_events(&pool, "evt_pi_ccy").await;
 }
 
+fn refund_event(event_id: &str, payment_intent: &str, cumulative_cents: i64) -> String {
+    json!({
+        "id": event_id,
+        "type": "charge.refunded",
+        "data": { "object": { "payment_intent": payment_intent, "amount_refunded": cumulative_cents } },
+    })
+    .to_string()
+}
+
+fn dispute_event(event_id: &str, payment_intent: &str) -> String {
+    json!({
+        "id": event_id,
+        "type": "charge.dispute.created",
+        "data": { "object": { "payment_intent": payment_intent } },
+    })
+    .to_string()
+}
+
+async fn delete_reversals(pool: &PgPool, payment_intents: &[String]) {
+    sqlx::query("DELETE FROM credits.payment_reversals WHERE payment_intent = ANY($1)")
+        .bind(payment_intents)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// The wallet's balance equals `credits`, compared in NUMERIC (a partial
+/// reversal leaves a fraction's trailing zeros in the text form).
+async fn balance_is(pool: &PgPool, addr: &str, credits: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT COALESCE((SELECT available FROM credits.wallets WHERE address = $1), 0) = $2::numeric",
+    )
+    .bind(addr)
+    .bind(credits)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// One delayed-payment order whose session already completed unpaid; its
+/// PaymentIntent is `pi_<session>`.
+async fn processing_order(app: &Router, state: &SharedState, addr: &str, tag: &str) -> String {
+    let (_, session) = session_order_fixture(state, addr).await;
+    let (_, out) = deliver(
+        app,
+        &session_event(
+            &unique(tag),
+            "checkout.session.completed",
+            &session,
+            Some("unpaid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(out["detail"], "processed");
+    session
+}
+
+#[tokio::test]
+async fn a_reversal_delivered_before_the_settlement_is_applied_with_the_grant() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let succeeded = |session: &str| {
+        session_event(
+            &unique("evt_early"),
+            "checkout.session.async_payment_succeeded",
+            session,
+            Some("paid"),
+            500,
+            "usd",
+        )
+    };
+
+    let mut reversed = Vec::new();
+
+    // Full refund, then the delayed settlement: the grant and the refund land
+    // in one transaction, so nothing is ever spendable.
+    let full = scratch_wallet().address;
+    let session = processing_order(&app, &state, &full, "evt_early").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let (_, out) = deliver(&app, &refund_event(&unique("evt_early"), &pi, 500)).await;
+    assert_eq!(out["detail"], "processed");
+    assert!(balance_is(&pool, &full, "0").await);
+    let settled = succeeded(&session);
+    let (status, out) = deliver(&app, &settled).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &full, "0").await,
+        "a refunded payment grants nothing spendable"
+    );
+    let (status, refunded, revoked_all): (String, i64, bool) = sqlx::query_as(
+        "SELECT status, refunded_cents, revoked_credits = credits FROM credits.purchases WHERE stripe_checkout_session = $1",
+    )
+    .bind(&session)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (status.as_str(), refunded, revoked_all),
+        ("refunded", 500, true)
+    );
+    // Replays, in any order, change nothing.
+    let (_, out) = deliver(&app, &settled).await;
+    assert_eq!(out["detail"], "already processed");
+    deliver(&app, &refund_event(&unique("evt_early"), &pi, 500)).await;
+    deliver(&app, &succeeded(&session)).await;
+    assert!(balance_is(&pool, &full, "0").await);
+    assert_eq!(purchase_grants(&pool, &full).await, 1);
+
+    // Partial refund first: only the net is credited, and a later refund
+    // takes only the increment.
+    let partial = scratch_wallet().address;
+    let session = processing_order(&app, &state, &partial, "evt_early").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let first_refund = refund_event(&unique("evt_early"), &pi, 250);
+    deliver(&app, &first_refund).await;
+    deliver(&app, &succeeded(&session)).await;
+    assert!(
+        balance_is(&pool, &partial, "25").await,
+        "half refunded before the grant: half the credits"
+    );
+    let (_, out) = deliver(&app, &first_refund).await;
+    assert_eq!(out["detail"], "already processed");
+    deliver(&app, &refund_event(&unique("evt_early"), &pi, 250)).await;
+    assert!(
+        balance_is(&pool, &partial, "25").await,
+        "the same cumulative again reverses nothing"
+    );
+    deliver(&app, &refund_event(&unique("evt_early"), &pi, 500)).await;
+    assert!(balance_is(&pool, &partial, "0").await);
+
+    // A dispute first: the whole purchase is reversed with the grant.
+    let disputed = scratch_wallet().address;
+    let session = processing_order(&app, &state, &disputed, "evt_early").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    deliver(&app, &dispute_event(&unique("evt_early"), &pi)).await;
+    deliver(&app, &succeeded(&session)).await;
+    assert!(balance_is(&pool, &disputed, "0").await);
+    assert_eq!(session_order_row(&pool, &session).await.0, "disputed");
+
+    // The PaymentIntent flow takes the same path.
+    let intent = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let intent_pi = unique("pi_early");
+    reversed.push(intent_pi.clone());
+    state
+        .credits
+        .insert_pending_purchase(&intent, &pack, &intent_pi)
+        .await
+        .unwrap();
+    deliver(&app, &refund_event(&unique("evt_early"), &intent_pi, 500)).await;
+    deliver(
+        &app,
+        &json!({ "id": unique("evt_early"), "type": "payment_intent.succeeded", "data": { "object": { "id": intent_pi, "amount": 500, "currency": "usd" } } }).to_string(),
+    )
+    .await;
+    assert!(balance_is(&pool, &intent, "0").await);
+
+    // A wallet whose payment was never reversed keeps its credits.
+    let untouched = scratch_wallet().address;
+    let session = processing_order(&app, &state, &untouched, "evt_early").await;
+    deliver(&app, &succeeded(&session)).await;
+    assert!(balance_is(&pool, &untouched, "50").await);
+
+    for addr in [&full, &partial, &disputed, &intent, &untouched] {
+        assert_reconciles(&pool, addr, "after reversals delivered early").await;
+        assert_purchases_match_grants(&pool, addr).await;
+        cleanup(&pool, addr).await;
+    }
+    delete_reversals(&pool, &reversed).await;
+    delete_events(&pool, "evt_early").await;
+}
+
+#[tokio::test]
+async fn a_settlement_and_a_reversal_delivered_together_converge() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let mut wallets = Vec::new();
+    let mut reversed = Vec::new();
+    for (round, refunded_cents, expected) in [
+        (0, 500, "0"),
+        (1, 250, "25"),
+        (2, 500, "0"),
+        (3, 250, "25"),
+        (4, 500, "0"),
+        (5, 250, "25"),
+        (6, 500, "0"),
+        (7, 250, "25"),
+    ] {
+        let addr = scratch_wallet().address;
+        // Half the orders have their PaymentIntent linked by an unpaid
+        // completion; the other half meet it first in the settlement.
+        let session = if round % 4 < 2 {
+            processing_order(&app, &state, &addr, "evt_race").await
+        } else {
+            session_order_fixture(&state, &addr).await.1
+        };
+        let pi = format!("pi_{session}");
+        reversed.push(pi.clone());
+        let settled = session_event(
+            &unique("evt_race"),
+            "checkout.session.async_payment_succeeded",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        );
+        let refund = refund_event(&unique("evt_race"), &pi, refunded_cents);
+        let ((a, _), (b, _)) = if round % 2 == 0 {
+            tokio::join!(deliver(&app, &settled), deliver(&app, &refund))
+        } else {
+            let (b, a) = tokio::join!(deliver(&app, &refund), deliver(&app, &settled));
+            (a, b)
+        };
+        assert_eq!((a, b), (StatusCode::OK, StatusCode::OK));
+        assert!(
+            balance_is(&pool, &addr, expected).await,
+            "round {round}: {} instead of {expected}",
+            available(&pool, &addr).await
+        );
+        assert_eq!(purchase_grants(&pool, &addr).await, 1);
+        wallets.push(addr);
+    }
+    for addr in &wallets {
+        assert_reconciles(&pool, addr, "after racing settlement and reversal").await;
+        assert_purchases_match_grants(&pool, addr).await;
+        cleanup(&pool, addr).await;
+    }
+    delete_reversals(&pool, &reversed).await;
+    delete_events(&pool, "evt_race").await;
+}
+
+/// The interleavings a race only hits by luck, held open on purpose: an
+/// uncommitted reversal makes the settlement wait for it, and an
+/// uncommitted grant makes the reversal wait, so neither misses the other
+/// even when the PaymentIntent is not yet linked to the order.
+#[tokio::test]
+async fn an_event_in_flight_holds_the_other_until_it_commits() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let hold = std::time::Duration::from_millis(300);
+    let settlement = |session: &str| {
+        session_event(
+            &unique("evt_inflight"),
+            "checkout.session.async_payment_succeeded",
+            session,
+            Some("paid"),
+            500,
+            "usd",
+        )
+    };
+
+    // A refund still in flight when the settlement arrives.
+    let refunded = scratch_wallet().address;
+    let (_, session) = session_order_fixture(&state, &refunded).await;
+    let refunded_pi = format!("pi_{session}");
+    let mut refund_tx = pool.begin().await.unwrap();
+    state
+        .credits
+        .record_charge_refund_in_tx(&mut refund_tx, &refunded_pi, 500, "evt_inflight-refund")
+        .await
+        .unwrap();
+    let settle = {
+        let (app, body) = (app.clone(), settlement(&session));
+        tokio::spawn(async move { deliver(&app, &body).await })
+    };
+    tokio::time::sleep(hold).await;
+    assert!(
+        !settle.is_finished(),
+        "the settlement waits for the reversal"
+    );
+    refund_tx.commit().await.unwrap();
+    let (status, out) = settle.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &refunded, "0").await,
+        "{} credited for refunded money",
+        available(&pool, &refunded).await
+    );
+
+    // A grant still in flight when the refund arrives.
+    let granted = scratch_wallet().address;
+    let (_, session) = session_order_fixture(&state, &granted).await;
+    let granted_pi = format!("pi_{session}");
+    let mut grant_tx = pool.begin().await.unwrap();
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(
+            &mut grant_tx,
+            &session,
+            "evt_inflight-grant",
+            Charge {
+                cents: 500,
+                currency: "usd",
+            },
+            Some(&granted_pi),
+        )
+        .await
+        .unwrap();
+    let MarkPaidOutcome::Granted { address, credits } = outcome else {
+        panic!("{outcome:?}");
+    };
+    state
+        .credits
+        .admin_grant_credits_in_tx(
+            &mut grant_tx,
+            GrantRequest {
+                address: &address,
+                amount: &credits,
+                kind: "purchase",
+                reason: Some("stripe checkout purchase"),
+                actor: Some("stripe"),
+                idempotency_key: Some("evt_inflight-grant"),
+                detail: &json!({}),
+            },
+        )
+        .await
+        .unwrap();
+    let refund = {
+        let (app, body) = (
+            app.clone(),
+            refund_event(&unique("evt_inflight"), &granted_pi, 500),
+        );
+        tokio::spawn(async move { deliver(&app, &body).await })
+    };
+    tokio::time::sleep(hold).await;
+    assert!(!refund.is_finished(), "the reversal waits for the grant");
+    assert!(
+        state
+            .credits
+            .apply_recorded_reversals_in_tx(&mut grant_tx, &granted_pi, "evt_inflight-grant")
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing recorded yet"
+    );
+    grant_tx.commit().await.unwrap();
+    let (status, out) = refund.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &granted, "0").await,
+        "{} left after the refund",
+        available(&pool, &granted).await
+    );
+
+    for addr in [&refunded, &granted] {
+        assert_reconciles(&pool, addr, "after events held in flight").await;
+        assert_purchases_match_grants(&pool, addr).await;
+        cleanup(&pool, addr).await;
+    }
+    delete_reversals(&pool, &[refunded_pi, granted_pi]).await;
+    delete_events(&pool, "evt_inflight").await;
+}
+
 /// The reconciler's paid-purchases-equal-purchase-grants invariant, for one wallet.
 async fn assert_purchases_match_grants(pool: &PgPool, addr: &str) {
     let (equal, paid, granted): (bool, String, String) = sqlx::query_as(

@@ -335,7 +335,9 @@ impl Credits {
     /// Only for a session whose payment has SETTLED (the caller checks
     /// `payment_status`). `payment_intent` is the session's `payment_intent`,
     /// stored on the order so a later `charge.refunded` / `charge.dispute.*`
-    /// (keyed by payment intent) finds the purchase to revoke.
+    /// (keyed by payment intent) finds the purchase to revoke; it is locked
+    /// first ([`Self::lock_payment_in_tx`]), and after a grant the caller
+    /// applies [`Self::apply_recorded_reversals_in_tx`].
     pub(crate) async fn mark_order_paid_by_session_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -344,6 +346,9 @@ impl Credits {
         charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
+        if let Some(payment_intent) = payment_intent {
+            Self::lock_payment_in_tx(tx, payment_intent).await?;
+        }
         Self::mark_paid_in_tx(
             tx,
             MARK_PAID_BY_SESSION,
@@ -446,6 +451,8 @@ impl Credits {
         Ok(outcome)
     }
 
+    /// Locks the PaymentIntent first; after a grant the caller applies
+    /// [`Self::apply_recorded_reversals_in_tx`].
     pub(crate) async fn mark_purchase_paid_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -453,6 +460,7 @@ impl Credits {
         event_id: &str,
         charged: Charge<'_>,
     ) -> Result<MarkPaidOutcome, ApiError> {
+        Self::lock_payment_in_tx(tx, payment_intent_id).await?;
         Self::mark_paid_in_tx(
             tx,
             MARK_PAID_BY_PAYMENT_INTENT,
@@ -542,14 +550,10 @@ impl Credits {
         cumulative_refunded_cents: i64,
         event_id: &str,
     ) -> Result<ReversalOutcome, ApiError> {
-        self.apply_reversal(
-            tx,
-            payment_intent_id,
-            ReversalTarget::Cumulative(cumulative_refunded_cents),
-            None,
-            event_id,
-        )
-        .await
+        let target = ReversalTarget::Cumulative(cumulative_refunded_cents);
+        Self::persist_reversal_in_tx(tx, payment_intent_id, &target).await?;
+        self.apply_reversal(tx, payment_intent_id, target, None, event_id)
+            .await
     }
 
     /// Stripe `charge.dispute.*`: the whole charge goes back to the buyer.
@@ -574,6 +578,7 @@ impl Credits {
         status_label: &str,
         event_id: &str,
     ) -> Result<ReversalOutcome, ApiError> {
+        Self::persist_reversal_in_tx(tx, payment_intent_id, &ReversalTarget::Full).await?;
         self.apply_reversal(
             tx,
             payment_intent_id,
@@ -582,6 +587,78 @@ impl Credits {
             event_id,
         )
         .await
+    }
+
+    /// Serializes the Stripe events of one PaymentIntent (its settlement and
+    /// its reversals) until the transaction ends. Taken before the purchase
+    /// row, so a reversal and the grant it must reduce never miss each other:
+    /// whichever commits second sees the other.
+    pub(crate) async fn lock_payment_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+    ) -> Result<(), ApiError> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('stripe-payment:' || $1, 0))")
+            .bind(payment_intent)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
+    /// Records a reversal against its PaymentIntent whether or not a credited
+    /// purchase exists yet (`credits.payment_reversals`): a refund or dispute
+    /// can reach us before the settlement that credits the purchase.
+    async fn persist_reversal_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+        target: &ReversalTarget,
+    ) -> Result<(), ApiError> {
+        Self::lock_payment_in_tx(tx, payment_intent).await?;
+        let cumulative = match target {
+            ReversalTarget::Cumulative(c) => Some(*c),
+            ReversalTarget::Full => None,
+        };
+        sqlx::query(
+            "INSERT INTO credits.payment_reversals (payment_intent, refunded_cents, disputed) \
+             VALUES ($1, GREATEST(COALESCE($2::bigint, 0), 0), $2::bigint IS NULL) \
+             ON CONFLICT (payment_intent) DO UPDATE \
+                 SET refunded_cents = GREATEST(credits.payment_reversals.refunded_cents, EXCLUDED.refunded_cents), \
+                     disputed = credits.payment_reversals.disputed OR EXCLUDED.disputed, \
+                     updated_at = timezone('UTC', now())",
+        )
+        .bind(payment_intent)
+        .bind(cumulative)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// Right after a grant, in its transaction: the reversals recorded for
+    /// this PaymentIntent before it was credited, applied to the purchase
+    /// just flipped, so returned money never becomes spendable Credits. A
+    /// dispute reverses the whole purchase; otherwise the highest cumulative
+    /// refund does, bounded by the purchase like any reversal.
+    pub(crate) async fn apply_recorded_reversals_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+        event_id: &str,
+    ) -> Result<Option<ReversalOutcome>, ApiError> {
+        let recorded: Option<(i64, bool)> = sqlx::query_as(
+            "SELECT refunded_cents, disputed FROM credits.payment_reversals WHERE payment_intent = $1",
+        )
+        .bind(payment_intent)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let (target, status_label) = match recorded {
+            Some((_, true)) => (ReversalTarget::Full, Some("disputed")),
+            Some((refunded_cents, false)) if refunded_cents > 0 => {
+                (ReversalTarget::Cumulative(refunded_cents), None)
+            }
+            _ => return Ok(None),
+        };
+        self.apply_reversal(tx, payment_intent, target, status_label, event_id)
+            .await
+            .map(Some)
     }
 
     /// The lock, the clamp and the conditional UPDATE are one statement:
