@@ -17,19 +17,10 @@ import { clearPingMode } from './ping'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
-import { MessageText, mentionsMe } from './chatText'
-import {
-  autoTranslates,
-  clearAutoTranslate,
-  getTranslation,
-  hasTranslatableText,
-  languageName,
-  requestTranslation,
-  showOriginal,
-  useTranslationPrefs,
-  useTranslations,
-  type Translation
-} from './translation'
+import { MessageText } from './chatText'
+import { mentionsMe } from '@explorer-core/features/chat/chatParse'
+import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
+import { useTranslationPrefs, useTranslations } from './useTranslation'
 import { type ChatUser } from './ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { peekProfile, useProfile } from '../session/profileStore'

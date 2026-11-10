@@ -2,7 +2,7 @@
 // player answers here, and only a yes reaches the signer (host/host.ts).
 
 import { showDialog } from '../../design'
-import type { DeploymentRequest, UndeployRequest } from './host/host'
+import type { DeploymentRequest, UndeployRequest } from '@explorer-core/features/editorHost/host/host'
 import styles from './DeployConfirm.module.css'
 
 function size(bytes: number): string {

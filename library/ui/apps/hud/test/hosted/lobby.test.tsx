@@ -5,13 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
-import { fetchHomePlace, fetchRecents } from '../../features/lobby/lobbyApi'
+import { fetchHomePlace, fetchRecents } from '@explorer-core/features/lobby/lobbyApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { fakeSession } from '../harness'
 
-vi.mock('../../features/lobby/lobbyApi', () => ({
+vi.mock('@explorer-core/features/lobby/lobbyApi', () => ({
   fetchHomePlace: vi.fn(async () => null),
   fetchRecents: vi.fn(async () => []),
   fetchHighlighted: vi.fn(async () => []),

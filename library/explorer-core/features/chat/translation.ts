@@ -4,12 +4,11 @@
 // request; the answers go back between the parts kept. Translations live for the session only:
 // nothing here is stored with the DM history. A failed request just leaves the original.
 
-import { useSyncExternalStore } from 'react'
-import { LANGUAGES } from '@explorer-core/engine/generated'
-import type { Setting } from '@explorer-core/engine/protocol'
+import { LANGUAGES } from '../../engine/generated'
+import type { Setting } from '../../engine/protocol'
 import { serviceUrl } from '@hud-host'
-import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
-import { parseMessage } from './chatText'
+import { PREF, getPref, setPref } from '../../lib/prefs'
+import { parseMessage } from './chatParse'
 
 /** The server language for a BCP 47 tag ("pt-BR", "zh-TW", "de-AT"), or null if it has none. */
 export function matchLanguage(tag: string): string | null {
@@ -172,7 +171,7 @@ function readPrefs(): TranslationPrefs {
   }
 }
 
-function getPrefs(): TranslationPrefs {
+export function translationPrefs(): TranslationPrefs {
   // read on first use: the stored values are only loaded when the HUD is about to render
   prefs ??= readPrefs()
   return prefs
@@ -183,24 +182,21 @@ function updatePrefs(next: TranslationPrefs): void {
   listeners.forEach((l) => l())
 }
 
-function subscribe(listener: () => void): () => void {
+/** Calls `listener` on every change of the prefs. */
+export function subscribeTranslationPrefs(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
-}
-
-export function useTranslationPrefs(): TranslationPrefs {
-  return useSyncExternalStore(subscribe, getPrefs)
 }
 
 /** Follow the engine's settings list (pushed at start and after every change). */
 export function applyLanguageSetting(settings: readonly Setting[]): void {
   const language = languageFromSettings(settings)
-  if (language !== getPrefs().language) updatePrefs({ ...getPrefs(), language })
+  if (language !== translationPrefs().language) updatePrefs({ ...translationPrefs(), language })
 }
 
 export function setAutoTranslateDefault(on: boolean): void {
   setPref(PREF.chatAutoTranslateDefault, String(on))
-  updatePrefs({ ...getPrefs(), autoDefault: on })
+  updatePrefs({ ...translationPrefs(), autoDefault: on })
 }
 
 export function autoTranslates(p: TranslationPrefs, channel: string): boolean {
@@ -208,16 +204,16 @@ export function autoTranslates(p: TranslationPrefs, channel: string): boolean {
 }
 
 export function setAutoTranslate(channel: string, on: boolean): void {
-  const channels = { ...getPrefs().channels, [channel]: on }
+  const channels = { ...translationPrefs().channels, [channel]: on }
   setPref(PREF.chatAutoTranslateChannels, JSON.stringify(channels))
-  updatePrefs({ ...getPrefs(), channels })
+  updatePrefs({ ...translationPrefs(), channels })
 }
 
 /** Back to the default for a conversation, or (no channel) for all of them. */
 export function clearAutoTranslate(channel?: string): void {
-  const channels = channel == null ? {} : Object.fromEntries(Object.entries(getPrefs().channels).filter(([c]) => c !== channel))
+  const channels = channel == null ? {} : Object.fromEntries(Object.entries(translationPrefs().channels).filter(([c]) => c !== channel))
   setPref(PREF.chatAutoTranslateChannels, JSON.stringify(channels))
-  updatePrefs({ ...getPrefs(), channels })
+  updatePrefs({ ...translationPrefs(), channels })
 }
 
 // ── Translations ────────────────────────────────────────────────────────────
@@ -274,19 +270,18 @@ function pump(): void {
 }
 
 /** A message's translation into `target`, if one was asked for this session. */
-export function getTranslation(id: string, target: string): Translation | undefined {
-  return entries.get(entryKey(id, target))
+/** Calls `listener` whenever a translation changes; `translationsVersion` counts the changes. */
+export function subscribeTranslations(listener: () => void): () => void {
+  entryListeners.add(listener)
+  return () => entryListeners.delete(listener)
 }
 
-/** Re-renders when any translation changes; read them with getTranslation. */
-export function useTranslations(): number {
-  return useSyncExternalStore(
-    (l) => {
-      entryListeners.add(l)
-      return () => entryListeners.delete(l)
-    },
-    () => version
-  )
+export function translationsVersion(): number {
+  return version
+}
+
+export function getTranslation(id: string, target: string): Translation | undefined {
+  return entries.get(entryKey(id, target))
 }
 
 /**

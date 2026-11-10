@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useEditorHost } from '../../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../../features/editorHost/host/host'
+import type { DclEditorHostV1 } from '@explorer-core/features/editorHost/host/host'
 import { fakeSession } from '../harness'
 
 describe('editor features', () => {

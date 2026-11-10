@@ -3,7 +3,7 @@ import { act } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingMode } from '../../features/chat/ping'
-import { setAutoTranslate } from '../../features/chat/translation'
+import { setAutoTranslate } from '@explorer-core/features/chat/translation'
 import type { CommunityChannel, CommunityMember } from '@explorer-core/engine/protocol'
 
 // DOMAIN: community chat — the user's communities as chat tabs (fed at world entry, kept by

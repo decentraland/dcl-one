@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { EventsPage } from '../../features/events/EventsPage'
-import { eventDestination, type DclEvent } from '../../features/events/eventsApi'
+import { eventDestination, type DclEvent } from '@explorer-core/features/events/eventsApi'
 import { fakeProfileState, fakeSession } from '../harness'
 
 const parcel: DclEvent = { id: 'p', name: 'Plaza party', x: -9, y: 12, live: true, start_at: '2026-09-25T10:00:00Z', total_attendees: 4 }

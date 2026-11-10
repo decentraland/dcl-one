@@ -1,19 +1,19 @@
 // The page's side of the editor host contract (v1.5): the object the editor package finds at
 // window.__dclEditorHost, the element it mounts into, and the script tag that loads it.
 
-import type { AuthChainLink, AuthIdentity } from '@explorer-core/features/auth/sso'
-import type { EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
+import type { AuthChainLink, AuthIdentity } from '../../auth/sso'
+import type { EditorHudMode } from '../hudMode'
 import type { EditorFeatures } from '../config'
 import { PROJECT_ID, type EditorServices, type EditorSource, type SignedServices } from '../source'
-import { CID_PATTERN } from '@explorer-core/features/editorHost/host/cid'
-import { sceneIdFromAbout, stageEditorScene } from '@explorer-core/features/editorHost/host/editorScene'
-import type { Signer } from '@explorer-core/features/editorHost/host/signer'
-import type { SignMessage } from '@explorer-core/features/editorHost/host/sign'
-import { inShell, shellRequest } from '@explorer-core/lib/shell'
+import { CID_PATTERN } from './cid'
+import { sceneIdFromAbout, stageEditorScene } from './editorScene'
+import type { Signer } from './signer'
+import type { SignMessage } from './sign'
+import { inShell, shellRequest } from '../../../lib/shell'
 import { entryRealm } from '@hud-host'
-import { track } from '@explorer-core/lib/analytics'
+import { track } from '../../../lib/analytics'
 // Vite's worker pipeline is what bundles a file on its own; this one is loaded by script tag.
-import signerUrl from '@explorer-core/features/editorHost/host/signer.ts?worker&url'
+import signerUrl from './signer.ts?worker&url'
 
 export interface DeploymentRequest {
   world: string

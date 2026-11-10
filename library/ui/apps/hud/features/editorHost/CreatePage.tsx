@@ -4,7 +4,7 @@
 import { useEffect, useRef } from 'react'
 import { showToast, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { EditorOffered } from './config'
+import { EditorOffered } from './EditorOffered'
 import type { EngineSession, ProfileState } from '../session/useEngineSession'
 import type { EditorEntry } from './EditorHost'
 import styles from './CreatePage.module.css'

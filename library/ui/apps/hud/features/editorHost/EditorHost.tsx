@@ -9,9 +9,9 @@ import type { EngineSession } from '../session/useEngineSession'
 import { CreatePage } from './CreatePage'
 import { confirmDeployment, confirmUndeploy } from './DeployConfirm'
 import { bridgeScene, bridgeTravel } from '@explorer-core/features/editorHost/host/bridge'
-import { guardUrlSync, loadEditor, type EditorPackage } from './host/host'
-import { editorFeatures } from './config'
-import { editorEntry, editorSource, hasEditor, type EditorSource } from './source'
+import { guardUrlSync, loadEditor, type EditorPackage } from '@explorer-core/features/editorHost/host/host'
+import { editorFeatures } from '@explorer-core/features/editorHost/config'
+import { editorEntry, editorSource, hasEditor, type EditorSource } from '@explorer-core/features/editorHost/source'
 
 type HostWindow = Window & {
   engine_console_command?: (line: string) => Promise<string>

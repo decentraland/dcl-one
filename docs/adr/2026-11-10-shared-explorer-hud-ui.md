@@ -27,7 +27,7 @@ on the core, and the core on neither.
   the bindings generator use it directly.
 - **`library/ui/apps/hud`, imported as `@hud/*`: the HUD UI.** Components, styles, assets and the
   React state around the core: the session (`features/session/useEngineSession.ts`), its stores,
-  and the modules that mix a React hook with a server read. It is the app-specific UI the
+  and the hooks over the core's server reads. It is the app-specific UI the
   [shared UI library ADR](2026-10-30-shared-ui-library.md) places in `library/ui/apps/<app>/`.
 
 The rules both layers follow:
@@ -66,6 +66,7 @@ rules do not apply.
 
 Changing shared code changes both hosts. `react-web` type-checks both layers and runs their tests;
 the HUD artifact's inputs and CI selection include both (`HUD_SHARED` in `tooling/play-artifact.py`).
-The Explorer client team owns both folders. A module that holds a React hook and a server read stays
-in the UI layer until the two are split; the in-world Shop's UI imports `apps/ui3/src/shop`, so it
+The Explorer client team owns both folders. Server reads live in the core and their React hooks in the
+UI (for example `features/events/eventsApi.ts` and `useLiveEventCount.ts`); two components still
+fetch directly (`components/WorldVisitModal.tsx`, `features/map/MapPage.tsx`); the in-world Shop's UI imports `apps/ui3/src/shop`, so it
 stays in `/play` until those imports are in `library/`.

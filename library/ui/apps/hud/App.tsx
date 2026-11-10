@@ -56,7 +56,8 @@ import { CrashModal } from './features/error/CrashModal'
 import { openRealmError } from './features/error/RealmErrorModal'
 import { DIALOG_TITLE, isDialogSource } from '@explorer-core/features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
-import { EDITOR_BUILD, editorOffered, EditorOffered, FEATURES_PARAM } from './features/editorHost/config'
+import { EDITOR_BUILD, editorOffered, FEATURES_PARAM } from '@explorer-core/features/editorHost/config'
+import { EditorOffered } from './features/editorHost/EditorOffered'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))

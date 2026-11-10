@@ -2,7 +2,7 @@
 // entity id the page spawns only bytes that hash to it, and serves them itself.
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { contentCid } from '@explorer-core/features/editorHost/host/cid'
-import { loadEditor, type DclEditorHostV1, type EditorHostDeps } from '@hud/features/editorHost/host/host'
+import { loadEditor, type DclEditorHostV1, type EditorHostDeps } from '@explorer-core/features/editorHost/host/host'
 import { PAGE_DIR } from '../lib/publicUrl'
 
 const utf8 = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text)

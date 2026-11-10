@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMessage, buildNameIndex, mentionsMe } from '../features/chat/chatText'
+import { parseMessage, buildNameIndex, mentionsMe } from '@explorer-core/features/chat/chatParse'
 
 describe('parseMessage', () => {
   it('keeps plain text as a single token', () => {

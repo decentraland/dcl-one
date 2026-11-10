@@ -1,7 +1,6 @@
 // Whether this page offers the scene editor. The rest (the package, its services, the project the
 // entry url names) is read in the Create page's own chunk (source.ts), so it costs the HUD nothing.
 
-import { createContext } from 'react'
 import type { EditorPin, EditorRelease } from './source'
 
 /** The released package the page follows (react-web/AGENTS.md, "The scene editor host") and the hosts besides
@@ -50,6 +49,3 @@ export function editorFeatures(search: string): EditorFeatures {
 export const editorOffered = (hostname: string, search: string): boolean =>
   EDITOR_BUILD &&
   (isLoopback(hostname) || ((RELEASED_EDITOR?.hosts.includes(hostname) ?? false) && editorFeatures(search).experimental))
-
-/** Whether the Create entry points (menu top bar, sidebar rail) are offered. */
-export const EditorOffered = createContext(false)

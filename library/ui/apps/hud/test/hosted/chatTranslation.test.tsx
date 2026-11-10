@@ -4,17 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import { SettingsPanel } from '../../features/settings/SettingsPanel'
 import type { ChatLine, ChatState } from '../../features/session/useEngineSession'
-import {
-  TRANSLATE_URL,
-  languageFromSettings,
-  matchLanguage,
-  resetTranslations,
-  setAutoTranslate,
-  setAutoTranslateDefault,
-  splitForTranslation,
-  systemLanguage,
-  translateText
-} from '../../features/chat/translation'
+import { TRANSLATE_URL, languageFromSettings, matchLanguage, resetTranslations, setAutoTranslate, setAutoTranslateDefault, splitForTranslation, systemLanguage, translateText } from '@explorer-core/features/chat/translation'
 import { PREF, getPref } from '@explorer-core/lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { fakeProfileState, fakeSession } from '../harness'

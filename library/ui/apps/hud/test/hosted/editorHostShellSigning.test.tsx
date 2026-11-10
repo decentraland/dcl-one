@@ -3,7 +3,7 @@
 import { beforeAll, describe, it, expect, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useEditorHost } from '../../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../../features/editorHost/host/host'
+import type { DclEditorHostV1 } from '@explorer-core/features/editorHost/host/host'
 import { localSigner, signDeployment, signFetch } from '@explorer-core/features/editorHost/host/sign'
 import type { Signer } from '@explorer-core/features/editorHost/host/signer'
 import { shellRequest } from '@explorer-core/lib/shell'

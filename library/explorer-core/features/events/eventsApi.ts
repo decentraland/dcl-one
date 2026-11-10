@@ -1,6 +1,5 @@
 // Client for the public Decentraland events API (<events service>/api/events).
 
-import { useEffect, useState } from 'react'
 import { serviceUrl } from '@hud-host'
 
 export const EVENTS_API = `${serviceUrl('events')}/api/events`
@@ -90,25 +89,4 @@ export function eventDestination(e: DclEvent): EventDestination | null {
 
 export function eventLocation(e: DclEvent): string {
   return e.world ? (e.server ?? '') : `${e.x},${e.y}`
-}
-
-/** Live events right now; 0 while loading or when the service is unreachable (as Unity). */
-export function useLiveEventCount(): number {
-  const [count, setCount] = useState(0)
-  useEffect(() => {
-    const ctrl = new AbortController()
-    const load = (): void => {
-      fetchEvents('live', ctrl.signal).then(
-        (list) => setCount(list.length),
-        () => !ctrl.signal.aborted && setCount(0)
-      )
-    }
-    load()
-    const id = setInterval(load, LIVE_COUNT_REFRESH_MS)
-    return () => {
-      ctrl.abort()
-      clearInterval(id)
-    }
-  }, [])
-  return count
 }

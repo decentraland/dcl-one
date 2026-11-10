@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverCard, DiscoverGrid, EmptyState, Tabs, type TabItem } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { EventsState, ProfileState } from '../session/useEngineSession'
-import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from './eventsApi'
+import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from '@explorer-core/features/events/eventsApi'
 
 const SECTIONS: TabItem<EventsList>[] = [
   { id: 'live', label: 'Live now' },
