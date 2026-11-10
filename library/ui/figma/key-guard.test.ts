@@ -1105,4 +1105,10 @@ describe('when the LFS objects come from a separate store', () => {
     expect(result.status).toBe(2)
     expect(result.stderr).toContain('--lfs-store takes a directory')
   })
+
+  it('should not take the next option as the --lfs-store directory', () => {
+    const result = run('--lfs-store', '--range', 'HEAD')
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('--lfs-store takes a directory')
+  })
 })

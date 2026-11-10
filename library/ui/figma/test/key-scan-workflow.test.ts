@@ -205,6 +205,7 @@ async function prepareInputs(job: string, env: Record<string, string>) {
       GITHUB_OUTPUT: path.join(job, 'out'),
       RUNNER_TEMP: job,
       READ_TOKEN: 'synthetic',
+      TRUSTED_SHA: gitIn(path.join(job, 'trusted'), 'rev-parse', 'HEAD'),
       ...env
     }
   })
@@ -219,6 +220,8 @@ describe('when selecting the LFS inputs of the scan', () => {
     await mkdir(trusted())
     git('init', '-q', '-b', 'main')
     await writeFile(path.join(trusted(), 'README'), 'clean')
+    await mkdir(path.join(trusted(), 'library/ui/figma'), { recursive: true })
+    await writeFile(path.join(trusted(), 'library/ui/figma/key-guard.mjs'), 'pinned guard')
     commit()
   })
 
@@ -236,7 +239,7 @@ describe('when selecting the LFS inputs of the scan', () => {
     expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=true')
     const [list, prefetch] = node.trim().split('\n')
     expect(list).toBe(
-      `trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --tree ${after}:library/ui --lfs-objects`
+      `${root}/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --tree ${after}:library/ui --lfs-objects`
     )
     expect(prefetch).toBe(
       `trusted/library/ui/figma/lfs-prefetch.mjs --root trusted --endpoint https://github.com/example/repo.git/info/lfs --objects ${root}/lfs-objects.jsonl`
@@ -256,9 +259,23 @@ describe('when selecting the LFS inputs of the scan', () => {
     expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=false')
     const [list, prefetch] = node.trim().split('\n')
     expect(list).toBe(
-      `trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --lfs-objects`
+      `${root}/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --lfs-objects`
     )
     expect(prefetch).toContain('lfs-prefetch.mjs')
+  })
+
+  it('should list the LFS objects with the key guard of TRUSTED_SHA, not the checkout tip', async () => {
+    const pinned = git('rev-parse', 'HEAD')
+    await writeFile(path.join(trusted(), 'library/ui/figma/key-guard.mjs'), 'tip guard')
+    const after = commit()
+    const { result, node } = await prepareInputs(root, {
+      BASE: pinned,
+      HEAD_SHA: after,
+      TRUSTED_SHA: pinned
+    })
+    expect(result.status, result.stderr).toBe(0)
+    expect(node.startsWith(`${root}/key-guard.mjs --root trusted `)).toBe(true)
+    expect(await readFile(path.join(root, 'key-guard.mjs'), 'utf8')).toBe('pinned guard')
   })
 
   // What prepare uploads as key-scan-input: the commits as a bundle, and the prefetched LFS objects.
@@ -573,6 +590,7 @@ describe('when the key-scan job reports its result', () => {
   })
 
   it('should pass only a scan that succeeded, with the scanner stdout as the summary', async () => {
+    await mkdir(path.join(root, 'key-scan-input'))
     await writeFile(path.join(root, 'key-scan.txt'), 'check key: ran\nresult: PASS\n')
     const request = await post({ OUTCOME: 'success' })
     expect(request).toContain('conclusion=success')
@@ -583,9 +601,18 @@ describe('when the key-scan job reports its result', () => {
   it.each(['failure', 'skipped', 'cancelled', ''])(
     'should fail the check when the scan outcome is %j',
     async (outcome) => {
+      await mkdir(path.join(root, 'key-scan-input'))
       const request = await post({ OUTCOME: outcome })
       expect(request).toContain('conclusion=failure')
       expect(request).toContain('output[summary]=The scan did not run.')
     }
   )
+
+  it('should name the missing key-scan-input artifact when a rerun finds it expired', async () => {
+    const request = await post({ OUTCOME: 'skipped' })
+    expect(request).toContain('conclusion=failure')
+    expect(request).toContain(
+      'output[summary]=The key-scan-input artifact is missing or expired: re-run all jobs.'
+    )
+  })
 })

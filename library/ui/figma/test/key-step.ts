@@ -11,6 +11,13 @@ export const GIT_HARDENING: Record<string, string> = {
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_NO_REPLACE_OBJECTS: '1'
 }
+// The actions a key job may use, each at the one commit the repository pins it to. Any other sha, a fork's
+// commit included, is refused.
+export const KEY_JOB_ACTIONS: Record<string, string> = {
+  'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'actions/setup-node': '949feb2413d6458794dcd2491c4babbbce0c15c1',
+  'actions/download-artifact': '9000827ccba6bdab643e8b6fd33ac0654aef8333'
+}
 export const GUARD_COPY = '$RUNNER_TEMP/key-guard.mjs'
 export const SCAN_OUTPUT = '$RUNNER_TEMP/key-scan.txt'
 // The scan inputs the unprivileged job uploads: the scanned commits as a bundle and the LFS objects they point to.
@@ -78,6 +85,7 @@ export const REPORT_TEMPLATE = {
     'conclusion=failure',
     '[ "$OUTCOME" = success ] && conclusion=success',
     `summary=$(head -c 60000 "${SCAN_OUTPUT}" 2> /dev/null || echo "The scan did not run.")`,
+    `[ -d "${SCAN_INPUT}" ] || summary="The key-scan-input artifact is missing or expired: re-run all jobs."`,
     'gh api --method POST "repos/$REPOSITORY/check-runs" \\',
     `  -f name='UI library key scan' -f head_sha="$HEAD_SHA" -f status=completed \\`,
     '  -f conclusion="$conclusion" -f "output[title]=Figma file key scan: $conclusion" \\',

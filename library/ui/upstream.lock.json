@@ -705,7 +705,7 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/key-guard.mjs": {
-          "sha256": "29d5fdc97dc770b6a8887b5d235536b5b68b651aedc490b540e01aa7a4c0516f",
+          "sha256": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -714,7 +714,7 @@
           ]
         },
         "library/ui/figma/key-guard.test.ts": {
-          "sha256": "3f60cad102741a65c28013dd06784572b13eb92b6307411ce189be6c2c7fef27",
+          "sha256": "63fa70c6542b815acfdec37a3310d1ed1cbe57f32c94b5db0463ee8a7583e4af",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -3982,7 +3982,7 @@
           ]
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "019d6d90275b6121474cd0cbf0d0596b958330d35de80cfcaa85ae305d955013",
+          "sha256": "43a7307bee1f6d3393ae40a067131aca92f453b2a2e3c5612c7d7a04f6b05250",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -3994,7 +3994,7 @@
           ]
         },
         "library/ui/figma/test/key-step.ts": {
-          "sha256": "bc50e100de0fcd3199bf131a304a4665cd41cc634c67c644321d5bb5bbec9ec8",
+          "sha256": "2bc9e767a09839a7dd243216c61ca4938c38dc60b63d057220cfaeb00bf3998b",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4018,7 +4018,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "81c1f9809869f788d6a87b568d8f91e4cc3d271ad187f1b2b62a6c39348b492e",
+          "sha256": "25baf7b99b3bc4e8a71f0cb3b52505c068369406aa1a494235a6a991c189213c",
           "fds": null,
           "deviation": [
             "capture-removed",

@@ -386,7 +386,8 @@ function parseArgs(argv) {
     } else if (arg === '--lfs-store') {
       // A directory of LFS objects laid out like .git/lfs/objects, read instead of the root's own store.
       options.lfsStore = argv[++i]
-      if (!options.lfsStore) throw new Error('--lfs-store takes a directory')
+      if (!options.lfsStore || options.lfsStore.startsWith('-'))
+        throw new Error('--lfs-store takes a directory')
     } else if (arg === '--lfs-objects') options.lfsObjects = true
     else throw new Error(`unknown argument: ${arg}`)
   }

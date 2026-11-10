@@ -7,6 +7,7 @@ import { parse } from 'yaml'
 import {
   GIT_HARDENING,
   GUARD_COPY,
+  KEY_JOB_ACTIONS,
   KEY_SECRET,
   KEY_STEP_TEMPLATES,
   REPORT_TEMPLATE,
@@ -190,9 +191,9 @@ function guardedSecretViolations(file: string, workflow: Workflow): string[] {
 // github.workflow_sha is the commit of the running workflow file. It is trusted only because the trigger rule
 // admits only workflow_run and push to main, where that file is main's copy.
 const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ github.workflow_sha }}']
-// Actions a key-holding job may use, each pinned by a full commit sha.
-const TRUSTED_ACTIONS =
-  /^(actions\/checkout|actions\/setup-node|actions\/download-artifact)@[0-9a-f]{40}$/
+// Actions a key-holding job may use, each at exactly the sha KEY_JOB_ACTIONS pins.
+const isTrustedAction = (uses: string) =>
+  Object.entries(KEY_JOB_ACTIONS).some(([action, sha]) => uses === `${action}@${sha}`)
 // The inputs each action may take in a key-holding job; anything else could change where code comes from.
 const ACTION_INPUTS: Record<string, string[]> = {
   'actions/checkout': [
@@ -210,15 +211,6 @@ const ACTION_INPUTS: Record<string, string[]> = {
   'actions/download-artifact': ['name', 'path', 'run-id', 'github-token', 'repository']
 }
 const THIS_REPOSITORY = '${{ github.repository }}'
-// Variables that make the shell, node or git load code, configuration or objects a step did not name. HOME and
-// XDG_CONFIG_HOME locate git's global config; GIT_CONFIG_* covers GLOBAL, SYSTEM, NOSYSTEM, PARAMETERS, COUNT and
-// each KEY_n/VALUE_n pair.
-const LOADER_VARIABLES =
-  /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|SHELLOPTS|HOME|XDG_CONFIG_HOME|GIT_DIR|GIT_WORK_TREE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_REPLACE_REF_BASE|GIT_NO_REPLACE_OBJECTS|GIT_NAMESPACE|GIT_INDEX_FILE|GIT_EXEC_PATH|GIT_CONFIG(?:_\w+)?)$/i
-// A workflow or key job env may give those variables only GIT_HARDENING's values (./key-step), which shut git's
-// config and replace refs out.
-const setsLoader = (name: string, value: unknown) =>
-  LOADER_VARIABLES.test(name) && GIT_HARDENING[name] !== String(value)
 
 // Every step a key-holding job may have: these pinned actions, the key step and, last, its report. No other step
 // runs, so no shell runs before the key step and nothing it could write needs to be read.
@@ -255,7 +247,7 @@ function envViolations(
   return problems
 }
 function actionViolations(id: string, step: WorkflowStep): string[] {
-  if (!TRUSTED_ACTIONS.test(step.uses!)) return [`${id}: uses ${step.uses}`]
+  if (!isTrustedAction(step.uses!)) return [`${id}: uses ${step.uses}`]
   const problems: string[] = []
   const action = step.uses!.split('@')[0]!
   for (const key of Object.keys(step))
@@ -337,8 +329,8 @@ function keyReaderViolations(workflow: Workflow): string[] {
   const { jobs, ...top } = workflow
   if (referencesKey(top)) problems.push('key in workflow env')
   if (top.defaults !== undefined) problems.push('sets workflow defaults')
-  for (const [name, value] of Object.entries(workflow.env ?? {}))
-    if (setsLoader(name, value)) problems.push(`sets ${name}`)
+  // Workflow and key job env reach the key step, whose env is an exact template, so neither may set any.
+  if (Object.keys(workflow.env ?? {}).length > 0) problems.push('sets workflow env')
   for (const [id, job] of Object.entries(jobs)) {
     if (!isKeyReaderJob(job)) continue
     const environment = environmentName(job)
@@ -352,8 +344,7 @@ function keyReaderViolations(workflow: Workflow): string[] {
     if (job.defaults !== undefined) problems.push(`${id}: sets job defaults`)
     if (job.uses === undefined && !HOSTED_RUNNER.test(String(job['runs-on'] ?? '')))
       problems.push(`${id}: runs on ${JSON.stringify(job['runs-on'] ?? null)}`)
-    for (const [name, value] of Object.entries(job.env ?? {}))
-      if (setsLoader(name, value)) problems.push(`${id}: sets ${name}`)
+    if (Object.keys(job.env ?? {}).length > 0) problems.push(`${id}: sets job env`)
     problems.push(...keyJobViolations(id, jobSteps))
   }
   return problems
@@ -505,6 +496,8 @@ jobs:
 
   // Readers that pass every rule, one per key step template; each case below breaks exactly one rule.
   const PINNED = '3d3c42e5aac5ba805825da76410c181273ba90b1'
+  const SETUP_NODE = `actions/setup-node@${KEY_JOB_ACTIONS['actions/setup-node']}`
+  const DOWNLOAD = `actions/download-artifact@${KEY_JOB_ACTIONS['actions/download-artifact']}`
   const [SCAN, ROOT_SCAN] = KEY_STEP_TEMPLATES as [
     (typeof KEY_STEP_TEMPLATES)[number],
     (typeof KEY_STEP_TEMPLATES)[number]
@@ -528,9 +521,9 @@ jobs:
           uses: `actions/checkout@${PINNED}`,
           with: { ref: TRUSTED_REFS[0], path: 'trusted', 'persist-credentials': false }
         },
-        { uses: `actions/setup-node@${PINNED}`, with: { 'node-version': 24 } },
+        { uses: SETUP_NODE, with: { 'node-version': 24 } },
         {
-          uses: `actions/download-artifact@${PINNED}`,
+          uses: DOWNLOAD,
           with: { name: 'key-scan-input', path: SCAN.downloads[0] }
         },
         { id: 'scan', env: keyEnv(SCAN), run: SCAN.run },
@@ -552,9 +545,9 @@ jobs:
           uses: `actions/checkout@${PINNED}`,
           with: { ref: TRUSTED_REFS[1], 'persist-credentials': false }
         },
-        { uses: `actions/setup-node@${PINNED}`, with: { 'node-version': 24 } },
+        { uses: SETUP_NODE, with: { 'node-version': 24 } },
         {
-          uses: `actions/download-artifact@${PINNED}`,
+          uses: DOWNLOAD,
           with: { name: 'web-preview-reviewer', path: ROOT_SCAN.downloads[0] }
         },
         { env: keyEnv(ROOT_SCAN), run: ROOT_SCAN.run }
@@ -926,18 +919,27 @@ jobs:
     'GIT_CONFIG_VALUE_0',
     'GIT_CONFIG',
     'OPTION'
-  ])('should reject %s on the key step, and a loader variable on the job or workflow', (name) => {
+  ])('should reject %s on the key step, and any env on the job or workflow', (name) => {
     const value = '$RUNNER_TEMP/pr-artifact/c'
     expect(keyReaderViolations(reader((job) => (job.steps[KEY]!.env![name] = value)))).toContain(
       `scan: key step env sets ${name}`
     )
     if (name === 'OPTION') return
     expect(keyReaderViolations(reader((job) => (job.env = { [name]: value })))).toContain(
-      `scan: sets ${name}`
+      'scan: sets job env'
     )
     expect(
       keyReaderViolations(reader((_, workflow) => (workflow.env = { [name]: value })))
-    ).toContain(`sets ${name}`)
+    ).toContain('sets workflow env')
+  })
+
+  it('should reject job or workflow env that no loader list names, even with the git hardening values', () => {
+    for (const env of [{ NODE_EXTRA_CA_CERTS: '/tmp/ca.pem' }, { ...GIT_HARDENING }]) {
+      expect(keyReaderViolations(reader((job) => (job.env = env)))).toContain('scan: sets job env')
+      expect(keyReaderViolations(reader((_, workflow) => (workflow.env = env)))).toContain(
+        'sets workflow env'
+      )
+    }
   })
 
   it.each([
@@ -948,6 +950,11 @@ jobs:
       'a look-alike checkout',
       { uses: `actions/checkout-pr@${PINNED}` },
       `scan: uses actions/checkout-pr@${PINNED}`
+    ],
+    [
+      'a trusted action at a sha it is not pinned to',
+      { uses: `actions/checkout@${'f'.repeat(40)}` },
+      `scan: uses actions/checkout@${'f'.repeat(40)}`
     ],
     [
       'an action pinned by tag',
@@ -961,41 +968,41 @@ jobs:
     ],
     [
       'setup-node with a cache',
-      { uses: `actions/setup-node@${PINNED}`, with: { 'node-version': 24, cache: 'npm' } },
+      { uses: SETUP_NODE, with: { 'node-version': 24, cache: 'npm' } },
       'scan: actions/setup-node sets cache'
     ],
     [
       'an action step with an env',
-      { uses: `actions/setup-node@${PINNED}`, env: { NODE_OPTIONS: '--require ./x.js' } },
+      { uses: SETUP_NODE, env: { NODE_OPTIONS: '--require ./x.js' } },
       'scan: actions/setup-node step sets env'
     ],
     [
       'an action step that maps the key',
-      { uses: `actions/setup-node@${PINNED}`, env: { K: '${{ secrets.FIGMA_FILE_KEY }}' } },
+      { uses: SETUP_NODE, env: { K: '${{ secrets.FIGMA_FILE_KEY }}' } },
       'scan: key in an action step'
     ],
     [
       'an artifact over the trusted checkout',
       {
-        uses: `actions/download-artifact@${PINNED}`,
+        uses: DOWNLOAD,
         with: { name: 'x', path: 'trusted/library/ui/figma' }
       },
       'scan: downloads an artifact into trusted/library/ui/figma'
     ],
     [
       'an artifact into the workspace root',
-      { uses: `actions/download-artifact@${PINNED}`, with: { name: 'x' } },
+      { uses: DOWNLOAD, with: { name: 'x' } },
       'scan: downloads an artifact into the workspace'
     ],
     [
       'an artifact into .github',
-      { uses: `actions/download-artifact@${PINNED}`, with: { name: 'x', path: '.github/actions' } },
+      { uses: DOWNLOAD, with: { name: 'x', path: '.github/actions' } },
       'scan: downloads an artifact into .github/actions'
     ],
     [
       'an artifact out of runner.temp',
       {
-        uses: `actions/download-artifact@${PINNED}`,
+        uses: DOWNLOAD,
         with: { name: 'x', path: '${{ runner.temp }}/../work/trusted' }
       },
       'scan: downloads an artifact into ${{ runner.temp }}/../work/trusted'
@@ -1003,7 +1010,7 @@ jobs:
     [
       'an artifact from another repository',
       {
-        uses: `actions/download-artifact@${PINNED}`,
+        uses: DOWNLOAD,
         with: { name: 'x', path: '${{ runner.temp }}/pr-artifact', repository: 'outside/fork' }
       },
       'scan: actions/download-artifact from outside/fork'
@@ -1071,9 +1078,7 @@ jobs:
     ],
     [
       'an action after the key step',
-      reader((job) =>
-        job.steps.push({ uses: `actions/setup-node@${PINNED}`, with: { 'node-version': 24 } })
-      ),
+      reader((job) => job.steps.push({ uses: SETUP_NODE, with: { 'node-version': 24 } })),
       'scan: runs an action after the key step'
     ],
     [
@@ -1486,9 +1491,7 @@ describe('ui-library-key-scan.yml', () => {
 
   it('should prefetch every LFS object the scan reads, by oid, from the fixed repository endpoint', () => {
     const lfs = prepare.find((step) => step.run?.includes('lfs-prefetch.mjs'))!
-    expect(lfs.run).toContain(
-      'node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range"'
-    )
+    expect(lfs.run).toContain(`node "${GUARD_COPY}" --root trusted --no-worktree --range "$range"`)
     expect(lfs.run).toContain('--lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"')
     expect(lfs.run).toContain('[ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")')
     expect(lfs.run).toContain(

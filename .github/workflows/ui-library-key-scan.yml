@@ -131,6 +131,7 @@ jobs:
           BASE: ${{ steps.trigger.outputs.base }}
           REPOSITORY: ${{ github.repository }}
           READ_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ github.sha }}
         run: |
           header=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')
           echo "::add-mask::$header"
@@ -152,11 +153,13 @@ jobs:
           fi
           echo "artifact_required=$required" >> "$GITHUB_OUTPUT"
           # Every LFS object the scan will read: each blob the range adds or changes, in any path and in
-          # commits a later one deletes, plus the library/ui tree when the scan reads it. Main's scripts list
-          # them and download them by oid from the fixed endpoint; the key-scan job reads them tokenless.
+          # commits a later one deletes, plus the library/ui tree when the scan reads it. The key guard of
+          # TRUSTED_SHA (github.sha), the copy key-scan runs, lists them, and main's prefetch downloads them by
+          # oid from the fixed endpoint; the key-scan job reads them tokenless.
           tree=()
           [ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")
-          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range" \
+          git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"
+          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree --range "$range" \
             "${tree[@]}" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
           LFS_AUTHORIZATION="Basic $header" node trusted/library/ui/figma/lfs-prefetch.mjs --root trusted \
             --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
@@ -193,7 +196,7 @@ jobs:
           name: key-scan-input
           path: ${{ runner.temp }}/key-scan-input
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           overwrite: true
 
       # The key-scan job posts the check when this job hands it the scan. Every other outcome, a skip included,
@@ -308,6 +311,7 @@ jobs:
           conclusion=failure
           [ "$OUTCOME" = success ] && conclusion=success
           summary=$(head -c 60000 "$RUNNER_TEMP/key-scan.txt" 2> /dev/null || echo "The scan did not run.")
+          [ -d "$RUNNER_TEMP/key-scan-input" ] || summary="The key-scan-input artifact is missing or expired: re-run all jobs."
           gh api --method POST "repos/$REPOSITORY/check-runs" \
             -f name='UI library key scan' -f head_sha="$HEAD_SHA" -f status=completed \
             -f conclusion="$conclusion" -f "output[title]=Figma file key scan: $conclusion" \
