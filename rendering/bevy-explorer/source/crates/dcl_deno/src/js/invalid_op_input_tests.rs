@@ -440,13 +440,16 @@ fn upload_from(is_server: bool, setup: &str) -> Upload {
         }
         evaluated.await.unwrap();
     });
+    // nothing reached the server: release its accept, and read its reply so it can finish
+    let mut release = None;
     if !server.is_finished() {
-        // nothing reached the server; release its accept
         if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
             let _ = stream.write_all(b"\r\n");
+            release = Some(stream);
         }
     }
     let (content_length, body) = server.join().unwrap();
+    drop(release);
     let left_a_stream = state
         .borrow()
         .resource_table
