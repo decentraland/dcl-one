@@ -376,6 +376,10 @@ copypwasmta = { git = "https://github.com/robtfm/copypwasmta" }
 web-fs = "0.2.6"
 getrandom = { version = "0.3" }
 
+# parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
+# `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
+parking_lot = { version = "0.12", features = ["nightly"] }
+
 [dependencies]
 url = { workspace = true }
 assets = { workspace = true }
@@ -468,9 +472,7 @@ windows = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cap = { workspace = true }
-# parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
-# `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
-parking_lot = { version = "0.12", features = ["nightly"] }
+parking_lot = { workspace = true }
 av = { workspace = true, features = ["html"] }
 copypwasmta = { workspace = true }
 bevy = { workspace = true, features = [
