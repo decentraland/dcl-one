@@ -19,15 +19,12 @@
 
 // The compositor's material (visuals/src/upscale.rs): draws the scene target onto the window.
 // Its EASU is a port of AMD FidelityFX FSR 1.0 EASU, the non-packed 32-bit version (FSR_EASU_F:
-// FsrEasuCon, FsrEasuTapF, FsrEasuSetF, FsrEasuF), from the copy of ffx_fsr1.h that URP ships,
-// unity:Explorer/Library/PackageCache/com.unity.render-pipelines.core@a4c9a9793789/Runtime/PostProcessing/Shaders/ffx/ffx_fsr1.hlsl
-// with the input callbacks of
-// unity:Explorer/Library/PackageCache/com.unity.render-pipelines.core@a4c9a9793789/Runtime/PostProcessing/Shaders/FSRCommon.hlsl
-// The port keeps the constants as floats rather than their bits in uints, and turns `inout`
-// parameters into pointers. EASU wants its input in gamma 2.0 (FSRCommon.hlsl, ApplyEASU) and
-// the sRGB scene target reads back linear, so the input callback takes the square root and the
-// result is squared. RCAS is not ported: bevy's contrast adaptive sharpening runs after this pass.
-// With PLAIN_BLIT (the scene target as large as the window) each pixel is copied untouched.
+// FsrEasuCon, FsrEasuTapF, FsrEasuSetF, FsrEasuF) of ffx_fsr1.h. The port keeps the constants as
+// floats rather than their bits in uints, and turns `inout` parameters into pointers. EASU wants
+// its input in gamma 2.0 and the sRGB scene target reads back linear, so the input callback
+// takes the square root and the result is squared. RCAS is not ported: bevy's contrast adaptive
+// sharpening runs after this pass. The compositor only runs below scale 1, so there is no copy
+// path.
 
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
@@ -35,15 +32,6 @@
 @group(2) @binding(1) var source_sampler: sampler;
 // xy: the scene target's size, zw: the window's, in physical pixels
 @group(2) @binding(2) var<uniform> params: vec4<f32>;
-
-#ifdef PLAIN_BLIT
-
-@fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureLoad(source, vec2<i32>(in.position.xy), 0);
-}
-
-#else
 
 // ffx_a.h's approximations, which EASU's weights are tuned with
 fn APrxLoRcpF1(a: f32) -> f32 {
@@ -344,5 +332,3 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureLoad(source, vec2<i32>(in.position.xy * params.xy / params.zw), 0).a;
     return vec4(pix * pix, alpha);
 }
-
-#endif

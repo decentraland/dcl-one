@@ -1,11 +1,8 @@
-//! Render scale: the primary camera draws the world into the scene target, an image at a share of
-//! the window's pixels, and the compositor, a 2D camera over the window, draws that image onto
-//! the window with FSR 1.0's EASU and sharpens it, as Unity's URP always does (`m_UpscalingFilter`
-//! FSR, `m_FsrSharpness`). EASU is `fsr_easu.wgsl`; bevy's contrast adaptive sharpening stands in
-//! for FSR's RCAS. At scale 1 the compositor copies the pixels untouched and does not sharpen.
-//!
-//! The compositor is the window camera with the highest order, so bevy's UI (the scene UI and the
-//! native HUD image) renders through it, at the window's full resolution.
+//! Render scale. At scale 1 the primary camera draws to the window and carries the UI, as with no
+//! render scale at all. Below it, the primary camera draws the world into the scene target, an
+//! image at a share of the window's pixels, and the compositor, a 2D camera over the window,
+//! draws that image onto the window with FSR 1.0's EASU (`fsr_easu.wgsl`), sharpens it with
+//! bevy's contrast adaptive sharpening, and carries the UI at the window's full resolution.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -15,35 +12,26 @@ use bevy::{
     prelude::*,
     render::{
         camera::{ImageRenderTarget, RenderTarget, ScalingMode},
-        mesh::MeshVertexBufferLayoutRef,
         render_asset::RenderAssetTransferPriority,
         render_resource::{
-            AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderRef,
-            SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureUsages,
+            AsBindGroup, Extent3d, ShaderRef, TextureDimension, TextureFormat, TextureUsages,
         },
         view::RenderLayers,
     },
-    sprite::{Material2d, Material2dKey, Material2dPlugin},
-    window::PrimaryWindow,
+    sprite::{Material2d, Material2dPlugin},
+    window::{PrimaryWindow, WindowRef},
 };
 use common::structs::{AppConfig, PrimaryCamera, SessionGraphics};
 
-/// unity: UniversalRenderPipeline - High.asset m_FsrSharpness
+/// Contrast adaptive sharpening strength after EASU.
 pub const FSR_SHARPNESS: f32 = 0.92;
 
 /// The compositor and its quad only: keeps them out of every other camera, and keeps 3D gizmos
 /// out of the compositor's 2D view.
 const COMPOSITOR_LAYER: RenderLayers = RenderLayers::layer(2);
 
-/// How many frames after a scene target retarget or resize the compositor's material is still
-/// touched. Bevy prepares 2D materials in no fixed order against GPU images, and the fork keeps
-/// a replaced image's old texture readable while the new one is prepared: a material touched
-/// only in the frame of the change can bind the texture of the previous size, which the plain
-/// copy then reads past (transparent black beyond it, the page showing through on the web).
-/// Touching it again on the next frames rebuilds the bind group once the new texture exists.
-const MATERIAL_REFRESH_FRAMES: u8 = 2;
-
-/// The image the primary camera renders the world into, and the render scale it is sized for.
+/// The image the primary camera renders the world into below scale 1 (1x1 at scale 1), and the
+/// render scale in effect.
 #[derive(Resource)]
 pub struct SceneTarget {
     pub image: Handle<Image>,
@@ -69,17 +57,15 @@ impl FromWorld for SceneTarget {
     }
 }
 
-/// The `Camera2d` (order 1) that draws the scene target and carries the UI. It is the only camera
-/// drawing to the window, so it clears it: while its quad's pipeline is still compiling (at
-/// startup, or on the first switch below scale 1) the window would otherwise show whatever was
-/// there before under the UI.
+/// The `Camera2d` (order 1) that draws the scene target and carries the UI below scale 1; it is
+/// inactive at scale 1. While active it is the only camera drawing to the window, so it clears
+/// it: while its quad's pipeline is still compiling (on the first switch below scale 1) the
+/// window would otherwise show whatever was there before under the UI.
 #[derive(Component)]
 pub struct Compositor;
 
-/// The compositor quad's material: EASU from the scene target, or a plain copy when the scene
-/// target is as large as the window.
+/// The compositor quad's material: EASU from the scene target.
 #[derive(AsBindGroup, Asset, TypePath, Clone)]
-#[bind_group_data(FsrMaterialKey)]
 pub struct FsrMaterial {
     #[texture(0)]
     #[sampler(1)]
@@ -89,35 +75,9 @@ pub struct FsrMaterial {
     pub params: Vec4,
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub struct FsrMaterialKey {
-    plain_blit: bool,
-}
-
-impl From<&FsrMaterial> for FsrMaterialKey {
-    fn from(material: &FsrMaterial) -> Self {
-        Self {
-            plain_blit: material.params.xy() == material.params.zw(),
-        }
-    }
-}
-
 impl Material2d for FsrMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://shaders/fsr_easu.wgsl".into()
-    }
-
-    fn specialize(
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        key: Material2dKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.bind_group_data.plain_blit {
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.push("PLAIN_BLIT".into());
-            }
-        }
-        Ok(())
     }
 }
 
@@ -157,6 +117,7 @@ fn spawn_compositor(
         Camera2d,
         Camera {
             order: 1,
+            is_active: false,
             ..default()
         },
         // a unit quad fills the view at any window size
@@ -169,7 +130,7 @@ fn spawn_compositor(
         }),
         Msaa::Off,
         ContrastAdaptiveSharpening {
-            enabled: false,
+            enabled: true,
             sharpening_strength: FSR_SHARPNESS,
             denoise: false,
         },
@@ -185,86 +146,108 @@ fn spawn_compositor(
     ));
 }
 
-/// Sizes the scene target for the window and render scale, and points the primary camera, the
-/// compositor's material and its sharpening at it.
+/// Below scale 1, sizes the scene target for the window and render scale and points the primary
+/// camera and the compositor's material at it. At scale 1, points the primary camera at the
+/// window and shrinks the scene target to 1x1. The UI goes to whichever camera draws the window.
 #[allow(clippy::too_many_arguments)]
 fn sync_scene_target(
+    mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
     config: Res<AppConfig>,
     session: Res<SessionGraphics>,
     mut scene_target: ResMut<SceneTarget>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<FsrMaterial>>,
-    mut primary: Query<&mut Camera, (With<PrimaryCamera>, Without<Compositor>)>,
-    mut compositor: Query<(&mut Camera, &mut ContrastAdaptiveSharpening), With<Compositor>>,
+    mut primary: Query<(Entity, &mut Camera), (With<PrimaryCamera>, Without<Compositor>)>,
+    mut compositor: Query<(Entity, &mut Camera), With<Compositor>>,
     quads: Query<&MeshMaterial2d<FsrMaterial>>,
-    mut refresh: Local<u8>,
+    mut ui_on_compositor: Local<Option<bool>>,
 ) {
-    let (Ok(window), Ok(mut primary)) = (windows.single(), primary.single_mut()) else {
+    let (Ok(window), Ok((primary_entity, mut primary))) = (windows.single(), primary.single_mut())
+    else {
         return;
     };
     let render_scale = session
         .render_scale(&config)
         .clamp(SessionGraphics::MIN_RENDER_SCALE, 1.0);
-    let size = scene_target_size(window.physical_size(), render_scale);
     let output = window.physical_size().max(UVec2::ONE);
-    let target = ImageRenderTarget {
-        handle: scene_target.image.clone(),
-        scale_factor: FloatOrd(scene_target_scale_factor(
-            window.scale_factor(),
-            render_scale,
-        )),
-    };
+    let size = scene_target_size(window.physical_size(), render_scale);
+    let upscale = size != output;
+    if scene_target.scale != render_scale {
+        scene_target.scale = render_scale;
+    }
 
-    let retarget = !matches!(&primary.target, RenderTarget::Image(current) if *current == target);
+    let image_size = if upscale { size } else { UVec2::ONE };
     let resize = images
         .get(&scene_target.image)
-        .is_some_and(|image| image.size() != size);
+        .is_some_and(|image| image.size() != image_size);
+    let target = if upscale {
+        RenderTarget::Image(ImageRenderTarget {
+            handle: scene_target.image.clone(),
+            scale_factor: FloatOrd(scene_target_scale_factor(
+                window.scale_factor(),
+                render_scale,
+            )),
+        })
+    } else {
+        RenderTarget::Window(WindowRef::Primary)
+    };
+    let retarget = match (&primary.target, &target) {
+        (RenderTarget::Image(current), RenderTarget::Image(wanted)) => current != wanted,
+        (RenderTarget::Window(WindowRef::Primary), RenderTarget::Window(WindowRef::Primary)) => {
+            false
+        }
+        _ => true,
+    };
+    if retarget {
+        primary.target = target;
+    }
     if retarget || resize {
         // touched either way: the image's change event is what makes bevy recompute the camera's
         // target size and scale factor
         if let Some(image) = images.get_mut(&scene_target.image) {
             image.texture_descriptor.size = Extent3d {
-                width: size.x,
-                height: size.y,
+                width: image_size.x,
+                height: image_size.y,
                 depth_or_array_layers: 1,
             };
         }
-        primary.target = RenderTarget::Image(target);
-        *refresh = MATERIAL_REFRESH_FRAMES;
-    }
-    if scene_target.scale != render_scale {
-        scene_target.scale = render_scale;
     }
 
+    // A retarget may give the image a new GPU texture, and the material's bind group only follows
+    // when the material changes too, so it is touched on every retarget. Bevy prepares 2D
+    // materials after the images they bind, so it binds the new texture in the same frame.
     let params = Vec4::new(
-        size.x as f32,
-        size.y as f32,
+        image_size.x as f32,
+        image_size.y as f32,
         output.x as f32,
         output.y as f32,
     );
     for quad in &quads {
-        // a retarget may give the image a new GPU texture, and the material's bind group only
-        // follows when the material changes too: `params` may not (a scale factor change at the
-        // same physical size), so the material is touched on every retarget, and on the frames
-        // after it (`MATERIAL_REFRESH_FRAMES`)
-        let stale = *refresh > 0 || materials.get(&quad.0).is_some_and(|m| m.params != params);
+        let stale =
+            retarget || resize || materials.get(&quad.0).is_some_and(|m| m.params != params);
         if stale {
             if let Some(material) = materials.get_mut(&quad.0) {
                 material.params = params;
             }
         }
     }
-    if !(retarget || resize) {
-        *refresh = refresh.saturating_sub(1);
-    }
-    let sharpen = size != output;
-    for (mut camera, mut cas) in &mut compositor {
-        if camera.is_active != primary.is_active {
-            camera.is_active = primary.is_active;
+
+    let active = upscale && primary.is_active;
+    for (compositor_entity, mut camera) in &mut compositor {
+        if camera.is_active != active {
+            camera.is_active = active;
         }
-        if cas.enabled != sharpen {
-            cas.enabled = sharpen;
+        if *ui_on_compositor != Some(upscale) {
+            // the inactive compositor still targets the window, so the UI camera is named
+            let (ui, other) = if upscale {
+                (compositor_entity, primary_entity)
+            } else {
+                (primary_entity, compositor_entity)
+            };
+            commands.entity(ui).try_insert(IsDefaultUiCamera);
+            commands.entity(other).remove::<IsDefaultUiCamera>();
+            *ui_on_compositor = Some(upscale);
         }
     }
 }
@@ -298,129 +281,197 @@ mod tests {
         assert!((scene_target_scale_factor(1.0, 1.0) - 1.0).abs() < 1e-6);
     }
 
-    /// An 800x600 window at half scale draws the world at 400x300 into the scene target; a window
-    /// minimised to nothing leaves a 1x1 target rather than an empty texture.
-    #[test]
-    fn scene_target_follows_the_window() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
-            .init_asset::<Image>()
-            .init_asset::<FsrMaterial>()
-            .init_resource::<SceneTarget>()
-            .insert_resource(AppConfig::default())
-            .insert_resource(SessionGraphics {
-                render_scale: Some(0.5),
-                ..default()
-            })
-            .add_systems(Update, sync_scene_target);
-        let window = app
-            .world_mut()
-            .spawn((
-                Window {
-                    resolution: WindowResolution::new(800.0, 600.0).with_scale_factor_override(1.0),
-                    ..default()
-                },
-                PrimaryWindow,
-            ))
-            .id();
-        let camera = app
-            .world_mut()
-            .spawn((Camera::default(), PrimaryCamera::default()))
-            .id();
+    /// An app with the scene target system, an 800x600 primary window, the primary camera and an
+    /// inactive compositor with its quad's material, as `spawn_compositor` leaves them.
+    struct Rig {
+        app: App,
+        window: Entity,
+        primary: Entity,
+        compositor: Entity,
+        material: Handle<FsrMaterial>,
+    }
 
-        app.update();
-        let image = app.world().resource::<SceneTarget>().image.clone();
-        let size = |app: &App| {
-            app.world()
+    impl Rig {
+        fn new(render_scale: Option<f32>) -> Self {
+            let mut app = App::new();
+            app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+                .init_asset::<Image>()
+                .init_asset::<FsrMaterial>()
+                .init_resource::<SceneTarget>()
+                .insert_resource(AppConfig::default())
+                .insert_resource(SessionGraphics {
+                    render_scale,
+                    ..default()
+                })
+                .add_systems(Update, sync_scene_target);
+            let window = app
+                .world_mut()
+                .spawn((
+                    Window {
+                        resolution: WindowResolution::new(800.0, 600.0)
+                            .with_scale_factor_override(1.0),
+                        ..default()
+                    },
+                    PrimaryWindow,
+                ))
+                .id();
+            let primary = app
+                .world_mut()
+                .spawn((Camera::default(), PrimaryCamera::default()))
+                .id();
+            let compositor = app
+                .world_mut()
+                .spawn((
+                    Compositor,
+                    Camera {
+                        order: 1,
+                        is_active: false,
+                        ..default()
+                    },
+                ))
+                .id();
+            let image = app.world().resource::<SceneTarget>().image.clone();
+            let material = app
+                .world_mut()
+                .resource_mut::<Assets<FsrMaterial>>()
+                .add(FsrMaterial {
+                    source: image,
+                    params: Vec4::ONE,
+                });
+            app.world_mut().spawn(MeshMaterial2d(material.clone()));
+            Self {
+                app,
+                window,
+                primary,
+                compositor,
+                material,
+            }
+        }
+
+        fn image_size(&self) -> UVec2 {
+            let image = &self.app.world().resource::<SceneTarget>().image;
+            self.app
+                .world()
                 .resource::<Assets<Image>>()
-                .get(&image)
+                .get(image)
                 .unwrap()
                 .size()
-        };
-        assert_eq!(size(&app), UVec2::new(400, 300));
-        match &app.world().get::<Camera>(camera).unwrap().target {
+        }
+
+        fn camera(&self, entity: Entity) -> &Camera {
+            self.app.world().get::<Camera>(entity).unwrap()
+        }
+
+        fn ui_camera(&self) -> Option<Entity> {
+            let ui = |entity| self.app.world().get::<IsDefaultUiCamera>(entity).is_some();
+            match (ui(self.primary), ui(self.compositor)) {
+                (true, false) => Some(self.primary),
+                (false, true) => Some(self.compositor),
+                _ => None,
+            }
+        }
+
+        fn resize(&mut self, width: u32, height: u32) {
+            self.app
+                .world_mut()
+                .get_mut::<Window>(self.window)
+                .unwrap()
+                .resolution
+                .set_physical_resolution(width, height);
+        }
+
+        /// Runs a frame and reports whether the compositor's material changed in it.
+        fn frame(&mut self) -> bool {
+            self.app.update();
+            let id = self.material.id();
+            self.app
+                .world_mut()
+                .resource_mut::<Events<AssetEvent<FsrMaterial>>>()
+                .drain()
+                .any(|event| matches!(event, AssetEvent::Modified { id: modified } if modified == id))
+        }
+    }
+
+    /// At scale 1 nothing is added: the primary camera draws to the window and carries the UI,
+    /// the compositor stays inactive and the scene target holds a single pixel.
+    #[test]
+    fn scale_one_draws_straight_to_the_window() {
+        let mut rig = Rig::new(Some(1.0));
+        rig.frame();
+        assert!(matches!(
+            rig.camera(rig.primary).target,
+            RenderTarget::Window(WindowRef::Primary)
+        ));
+        assert!(!rig.camera(rig.compositor).is_active);
+        assert_eq!(rig.ui_camera(), Some(rig.primary));
+        assert_eq!(rig.image_size(), UVec2::ONE);
+    }
+
+    /// An 800x600 window at half scale draws the world at 400x300 into the scene target, which
+    /// the active compositor draws with the UI; back at scale 1 the primary camera takes the
+    /// window again, and a window minimised to nothing has nothing to upscale.
+    #[test]
+    fn scene_target_follows_the_scale_and_the_window() {
+        let mut rig = Rig::new(Some(0.5));
+        rig.frame();
+        assert_eq!(rig.image_size(), UVec2::new(400, 300));
+        match &rig.camera(rig.primary).target {
             RenderTarget::Image(target) => {
-                assert_eq!(target.handle, image);
+                assert_eq!(
+                    target.handle,
+                    rig.app.world().resource::<SceneTarget>().image
+                );
                 assert_eq!(target.scale_factor.0, 0.5);
             }
             other => panic!("primary camera renders to {other:?}"),
         }
-        assert_eq!(app.world().resource::<SceneTarget>().scale, 0.5);
+        assert!(rig.camera(rig.compositor).is_active);
+        assert_eq!(rig.ui_camera(), Some(rig.compositor));
+        assert_eq!(rig.app.world().resource::<SceneTarget>().scale, 0.5);
 
-        app.world_mut()
-            .get_mut::<Window>(window)
-            .unwrap()
-            .resolution
-            .set_physical_resolution(0, 0);
-        app.update();
-        assert_eq!(size(&app), UVec2::ONE);
+        rig.app
+            .world_mut()
+            .resource_mut::<SessionGraphics>()
+            .render_scale = Some(1.0);
+        rig.frame();
+        assert!(matches!(
+            rig.camera(rig.primary).target,
+            RenderTarget::Window(WindowRef::Primary)
+        ));
+        assert!(!rig.camera(rig.compositor).is_active);
+        assert_eq!(rig.ui_camera(), Some(rig.primary));
+        assert_eq!(rig.image_size(), UVec2::ONE);
+
+        rig.app
+            .world_mut()
+            .resource_mut::<SessionGraphics>()
+            .render_scale = Some(0.5);
+        rig.resize(0, 0);
+        rig.frame();
+        assert!(!rig.camera(rig.compositor).is_active);
+        assert_eq!(rig.image_size(), UVec2::ONE);
     }
 
-    /// A resize touches the compositor's material in its own frame and on the next
-    /// `MATERIAL_REFRESH_FRAMES` frames, then leaves it alone.
+    /// The compositor's material is touched in the frame the scene target changes and left alone
+    /// after it.
     #[test]
-    fn material_is_refreshed_after_a_resize() {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
-            .init_asset::<Image>()
-            .init_asset::<FsrMaterial>()
-            .init_resource::<SceneTarget>()
-            .insert_resource(AppConfig::default())
-            .init_resource::<SessionGraphics>()
-            .add_systems(Update, sync_scene_target);
-        let window = app
-            .world_mut()
-            .spawn((
-                Window {
-                    resolution: WindowResolution::new(800.0, 600.0).with_scale_factor_override(1.0),
-                    ..default()
-                },
-                PrimaryWindow,
-            ))
-            .id();
-        app.world_mut()
-            .spawn((Camera::default(), PrimaryCamera::default()));
-        let image = app.world().resource::<SceneTarget>().image.clone();
-        let material = app
-            .world_mut()
-            .resource_mut::<Assets<FsrMaterial>>()
-            .add(FsrMaterial {
-                source: image,
-                params: Vec4::ONE,
-            });
-        app.world_mut().spawn(MeshMaterial2d(material.clone()));
-        let modified = |app: &mut App| {
-            app.world_mut()
-                .resource_mut::<Events<AssetEvent<FsrMaterial>>>()
-                .drain()
-                .any(|event| matches!(event, AssetEvent::Modified { id } if id == material.id()))
-        };
-
-        // the first frame sizes the target for the window
-        let mut touched = Vec::new();
-        for _ in 0..(MATERIAL_REFRESH_FRAMES as usize + 2) {
-            app.update();
-            touched.push(modified(&mut app));
-        }
-        assert_eq!(touched, [true, true, true, false]);
-
-        app.world_mut()
-            .get_mut::<Window>(window)
-            .unwrap()
-            .resolution
-            .set_physical_resolution(1024, 768);
-        touched.clear();
-        for _ in 0..(MATERIAL_REFRESH_FRAMES as usize + 2) {
-            app.update();
-            touched.push(modified(&mut app));
-        }
-        assert_eq!(touched, [true, true, true, false]);
+    fn material_follows_the_scene_target() {
+        let mut rig = Rig::new(Some(0.5));
+        assert_eq!([rig.frame(), rig.frame()], [true, false]);
+        rig.resize(1024, 768);
+        assert_eq!([rig.frame(), rig.frame()], [true, false]);
+        let material = rig
+            .app
+            .world()
+            .resource::<Assets<FsrMaterial>>()
+            .get(&rig.material)
+            .unwrap();
+        assert_eq!(material.params, Vec4::new(512.0, 384.0, 1024.0, 768.0));
     }
 
-    /// The compositor's pipelines compile on this machine's adapter, in a renderer with no
-    /// window: one 2D camera draws a 64x64 source onto a 64x64 image (the plain copy), another
-    /// onto a 128x128 image (EASU, with the sharpening after it). Needs a GPU, so `#[ignore]`d
-    /// and skipped by CI:
+    /// The compositor's pipeline compiles on this machine's adapter, in a renderer with no
+    /// window, and draws: one 2D camera upscales a 64x64 source onto a 128x128 image with EASU
+    /// and the sharpening after it. Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
     /// ```text
     /// cargo test -p visuals fsr_material_compiles -- --ignored --nocapture
@@ -468,7 +519,6 @@ mod tests {
             height: size,
             depth_or_array_layers: 1,
         };
-        // a per-pixel pattern, so an offset or a flip in the copy shows
         let pattern: Vec<u8> = (0..64u8)
             .flat_map(|y| (0..64u8).flat_map(move |x| [x, y, x ^ y, 255]))
             .collect();
@@ -476,60 +526,52 @@ mod tests {
         let source = images.add(Image::new(
             extent(64),
             TextureDimension::D2,
-            pattern.clone(),
+            pattern,
             TextureFormat::bevy_default(),
             RenderAssetUsages::all(),
         ));
-        // blank outputs, so a compositor that never draws fails the check
-        let output = |size: u32| {
-            let mut image = Image::new_fill(
-                extent(size),
-                TextureDimension::D2,
-                &[0, 0, 0, 0],
-                TextureFormat::bevy_default(),
-                RenderAssetUsages::all(),
-            );
-            image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-            image
-        };
-        let outputs = [images.add(output(64)), images.add(output(128))];
+        // a blank output, so a compositor that never draws fails the check
+        let mut output = Image::new_fill(
+            extent(128),
+            TextureDimension::D2,
+            &[0, 0, 0, 0],
+            TextureFormat::bevy_default(),
+            RenderAssetUsages::all(),
+        );
+        output.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+        let output = images.add(output);
         let mesh = world
             .resource_mut::<Assets<Mesh>>()
             .add(Rectangle::new(1.0, 1.0));
-        for (layer, output, size) in [(6, &outputs[0], 64.0), (7, &outputs[1], 128.0)] {
-            let material = world
-                .resource_mut::<Assets<FsrMaterial>>()
-                .add(FsrMaterial {
-                    source: source.clone(),
-                    params: Vec4::new(64.0, 64.0, size, size),
-                });
-            world.spawn((
-                Camera2d,
-                Camera {
-                    target: RenderTarget::Image(output.clone().into()),
-                    ..default()
+        let material = world
+            .resource_mut::<Assets<FsrMaterial>>()
+            .add(FsrMaterial {
+                source,
+                params: Vec4::new(64.0, 64.0, 128.0, 128.0),
+            });
+        let layer = RenderLayers::layer(7);
+        world.spawn((
+            Camera2d,
+            Camera {
+                target: RenderTarget::Image(output.clone().into()),
+                ..default()
+            },
+            Projection::Orthographic(OrthographicProjection {
+                scaling_mode: ScalingMode::Fixed {
+                    width: 1.0,
+                    height: 1.0,
                 },
-                Projection::Orthographic(OrthographicProjection {
-                    scaling_mode: ScalingMode::Fixed {
-                        width: 1.0,
-                        height: 1.0,
-                    },
-                    ..OrthographicProjection::default_2d()
-                }),
-                Msaa::Off,
-                ContrastAdaptiveSharpening {
-                    enabled: size != 64.0,
-                    sharpening_strength: FSR_SHARPNESS,
-                    denoise: false,
-                },
-                RenderLayers::layer(layer),
-            ));
-            world.spawn((
-                Mesh2d(mesh.clone()),
-                MeshMaterial2d(material),
-                RenderLayers::layer(layer),
-            ));
-        }
+                ..OrthographicProjection::default_2d()
+            }),
+            Msaa::Off,
+            ContrastAdaptiveSharpening {
+                enabled: true,
+                sharpening_strength: FSR_SHARPNESS,
+                denoise: false,
+            },
+            layer.clone(),
+        ));
+        world.spawn((Mesh2d(mesh), MeshMaterial2d(material), layer));
 
         // a few frames queue every pipeline; then they compile in the background, and once they
         // are ready a few more frames draw with them
@@ -560,14 +602,13 @@ mod tests {
                 "{pending} pipelines still compiling"
             );
         }
-        // the plain copy leaves every pixel as it was
-        let copied = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let sink = copied.clone();
-        app.world_mut()
-            .spawn(Screenshot::image(outputs[0].clone()))
-            .observe(move |trigger: Trigger<ScreenshotCaptured>| {
+        let drawn = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let sink = drawn.clone();
+        app.world_mut().spawn(Screenshot::image(output)).observe(
+            move |trigger: Trigger<ScreenshotCaptured>| {
                 *sink.lock().unwrap() = Some(trigger.0.clone());
-            });
+            },
+        );
         for _ in 0..5 {
             app.update();
         }
@@ -583,30 +624,32 @@ mod tests {
             .resource::<AssetServer>()
             .load::<Shader>("embedded://shaders/fsr_easu.wgsl")
             .id();
-        let render_world = app.sub_app(RenderApp).world();
-        let plain_blit: Vec<bool> = render_world
+        let compositor_pipelines = app
+            .sub_app(RenderApp)
+            .world()
             .resource::<PipelineCache>()
             .pipelines()
-            .filter_map(|pipeline| match &pipeline.descriptor {
-                PipelineDescriptor::RenderPipelineDescriptor(descriptor) => {
-                    descriptor.fragment.as_ref()
-                }
-                _ => None,
+            .filter(|pipeline| match &pipeline.descriptor {
+                PipelineDescriptor::RenderPipelineDescriptor(descriptor) => descriptor
+                    .fragment
+                    .as_ref()
+                    .is_some_and(|fragment| fragment.shader.id() == shader),
+                _ => false,
             })
-            .filter(|fragment| fragment.shader.id() == shader)
-            .map(|fragment| fragment.shader_defs.contains(&"PLAIN_BLIT".into()))
-            .collect();
-        assert_eq!(plain_blit.len(), 2, "one compositor pipeline per camera");
-        assert!(plain_blit.contains(&true) && plain_blit.contains(&false));
+            .count();
+        assert_eq!(compositor_pipelines, 1);
 
-        let copied = copied
+        let drawn = drawn
             .lock()
             .unwrap()
             .take()
-            .expect("the copy was captured");
+            .expect("the output was captured");
         assert!(
-            copied.data.as_deref() == Some(pattern.as_slice()),
-            "the plain copy changed pixels"
+            drawn
+                .data
+                .as_deref()
+                .is_some_and(|data| data.iter().any(|&byte| byte != 0)),
+            "the compositor drew nothing"
         );
     }
 }

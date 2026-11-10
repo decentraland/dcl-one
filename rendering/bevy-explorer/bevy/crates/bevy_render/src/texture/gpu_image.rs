@@ -112,9 +112,11 @@ impl RenderAsset for GpuImage {
             }
         };
 
+        // a view is only reusable over the texture it was made from: a texture without
+        // `COPY_DST` is re-created above even when its descriptor is unchanged
         let texture_view = if let Some(prev) = previous_gpu_asset.as_ref()
-            && prev.texture_descriptor == image.texture_descriptor
-            && prev.texture_view_descriptor == prev.texture_view_descriptor
+            && prev.texture.id() == texture.id()
+            && prev.texture_view_descriptor == image.texture_view_descriptor
         {
             prev.texture_view.clone()
         } else {

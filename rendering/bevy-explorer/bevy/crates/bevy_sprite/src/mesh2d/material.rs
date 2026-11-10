@@ -24,6 +24,7 @@ use bevy_reflect::{prelude::ReflectDefault, Reflect};
 use bevy_render::camera::extract_cameras;
 use bevy_render::render_phase::{DrawFunctionId, InputUniformIndex};
 use bevy_render::render_resource::CachedRenderPipelineId;
+use bevy_render::texture::GpuImage;
 use bevy_render::view::RenderVisibleEntities;
 use bevy_render::{
     mesh::{MeshVertexBufferLayoutRef, RenderMesh},
@@ -270,7 +271,9 @@ where
         app.init_asset::<M>()
             .init_resource::<EntitiesNeedingSpecialization<M>>()
             .register_type::<MeshMaterial2d<M>>()
-            .add_plugins(RenderAssetPlugin::<PreparedMaterial2d<M>>::default())
+            // prepared after the images it binds, so a material changed in the same frame as
+            // its image binds the new texture rather than the previous one (as `MaterialPlugin`)
+            .add_plugins(RenderAssetPlugin::<PreparedMaterial2d<M>, GpuImage>::default())
             .add_systems(
                 PostUpdate,
                 check_entities_needing_specialization::<M>.after(AssetEvents),
