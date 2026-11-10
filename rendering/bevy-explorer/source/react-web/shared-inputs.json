@@ -408,7 +408,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
-      "sha256": "1cfa47dbb649ed9845e4dc983c3811174ffc7c87c872f356970da7ee5a876d74"
+      "sha256": "0aedfa6f6632c887b67bc8c791f031dc6d97b2bc77f6f87add8a1b1d091234e8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/assets/backpack/add-gradient.webp",
@@ -1963,12 +1963,28 @@
       "sha256": "9473983ccddf25c992e3e5dbd3f15c9e6bf5c81c87c6ac231f820c2f284055a7"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/gate/FlagStep.module.css",
+      "sha256": "9498f232c203b0fc94cf217e180f3804006546042229a52b84ce181ef18f503b"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/gate/FlagStep.tsx",
+      "sha256": "809d01b7557797fbe08d62da9b98912f70372931199cee72223875ae3864a370"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/gate/IntegratedGpuGuide.module.css",
+      "sha256": "15859b543f0a2dec15b863a3aff3313dec57cd2a902ec75e6f22d36f19fc8a9e"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/gate/IntegratedGpuGuide.tsx",
+      "sha256": "f70d85b288dc63a043e60ae53f9bb6839c90043c7db6d2ecee2964e52afe1b0e"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/features/gate/MobileGate.module.css",
-      "sha256": "de0a4299bb7e8c932ece0eeea55a33e87692d1321b526cf3aa6b14f0e2f91e4f"
+      "sha256": "6fe960ab44478366fefafe646fdd989f8a1214f09ecdd75565ab83d96a12d11a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/gate/MobileGate.tsx",
-      "sha256": "01dc3c41cc97c0d57c5532c504556b4859d7fa09a1f14922f19a54468214e540"
+      "sha256": "a1b8ae4832c8d5fe511a7a7da89d0bc6787f76661a8da707cfb682975d53b946"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/gate/UntrustedLaunchGate.module.css",
@@ -2404,15 +2420,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "8ea5357376d1b55036c2914a70371d6980b0e86e29dcd5b876f6dda4f2981e9a"
+      "sha256": "8eb110db3ada3e5ff25ab7d028e82dd18cc3d7401680df60430c87e160fc469d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/gpu.test.ts",
-      "sha256": "4d5b532a114a3c97cbe55c00d0bbff71ccd8bc4f6236f03c6613ff918400b80a"
+      "sha256": "74bd1e89d9adbb69d3161431f008f927aaede96034ecf1935ba0d13f9e22437c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/gpu.ts",
-      "sha256": "0b6efaf3d85d2a4bb302935fae90034d4c091f40fbce6a19ea73a43a5e20d3a8"
+      "sha256": "d5007c71e38887a98d656ac7204350d543fafca81ec8eab7e7cb5e1923d97889"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/guestName.ts",
@@ -2447,6 +2463,14 @@
       "sha256": "0a273b3e1b99028fe915223d943215a4a9e209ed0ed2f525591982f65e8828c5"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/lib/integratedGpu.test.ts",
+      "sha256": "17e561ca5ff93444b3d9ec5075effea756368ad74598095b107d766dbf89bcd7"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/lib/integratedGpu.ts",
+      "sha256": "e4568c6391cac4f30db519935522e72ecc8e19fa6aef8ed6a7612acd4e7b0024"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/isMobile.ts",
       "sha256": "c7350a6ebe2cd5973e1e9ab63cb7e06bcfd2aebd5d90617acc6e18d82caa1a87"
     },
@@ -2476,7 +2500,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/prefs.ts",
-      "sha256": "c7d18ae534fed599a16b53c4184799145b50f15765199af30b2ed6efb0d1fdcd"
+      "sha256": "d48c28b714e2abb7384ae2f8ee0f725af94a1d6223ffe11b35f2999bfb092a41"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/publicUrl.ts",
@@ -2808,7 +2832,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/entryParams.test.ts",
-      "sha256": "7637970f231a8d526ee99561bcaf2aed4a9caae95167021f5e07ba897fb23e30"
+      "sha256": "b1be971a9f299efd4492cc9b011b51b1604536475338782acb4b7e040d46dfca"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/entryUrl.ts",
@@ -2873,6 +2897,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/inWorldConversion.test.tsx",
       "sha256": "ba153d1460a2b0bc10864ffab8ba9e28fa1138a4e140742e6bb90132032c5302"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/integratedGpuGuide.test.tsx",
+      "sha256": "0f23c6bdf4cfda1056cd6fd62d0dbc78a9850d5357e29232cc8525108450481c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/keyBindingsApply.test.ts",
@@ -3575,6 +3603,10 @@
     "rendering/bevy-explorer/source/react-web/src/features/gallery/PhotoDetail.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/gate/EntryParamsDialog.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/gate/EntryParamsDialog.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/gate/FlagStep.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/gate/FlagStep.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/gate/IntegratedGpuGuide.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/gate/IntegratedGpuGuide.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/gate/MobileGate.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/gate/MobileGate.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/gate/UntrustedLaunchGate.module.css",
@@ -3696,6 +3728,8 @@
     "rendering/bevy-explorer/source/react-web/src/lib/hudScale.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/identity.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/inputLock.ts",
+    "rendering/bevy-explorer/source/react-web/src/lib/integratedGpu.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/lib/integratedGpu.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/isMobile.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/launchCount.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -3803,6 +3837,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/hudLogin.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/hudScale.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/inWorldConversion.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/integratedGpuGuide.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/keyBindingsApply.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/keyBindingsCapture.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/loadingProgress.test.tsx",
