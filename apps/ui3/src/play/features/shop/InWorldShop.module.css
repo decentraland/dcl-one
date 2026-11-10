@@ -261,8 +261,11 @@
   justify-content: center;
   margin-top: 20px;
 }
+/* The web Shop/Marketplace page the redirect confirmation names: a url has no spaces, so it breaks anywhere rather
+   than run out of the dialog (whose card would scroll sideways). */
 .link {
   color: var(--chat-link);
+  overflow-wrap: anywhere;
 }
 
 /* The EMOTE controls sit on the avatar (its 573px slot), 864px down. */
