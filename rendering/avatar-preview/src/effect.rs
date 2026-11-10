@@ -239,6 +239,14 @@ fn quads(particles: &[Particle], right: Vec3, up: Vec3) -> Mesh {
         }
         indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
     }
+    // never an empty mesh: WebGL2 gives one a zero-sized buffer and panics slicing it. With no
+    // particles, a single triangle of no area, which draws nothing
+    if positions.is_empty() {
+        positions.extend([[0.0; 3]; 3]);
+        uvs.extend([[0.0; 2]; 3]);
+        colors.extend([[0.0; 4]; 3]);
+        indices.extend([0, 1, 2]);
+    }
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
