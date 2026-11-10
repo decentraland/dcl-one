@@ -20,7 +20,6 @@ bevy = { workspace = true }
 bevy_console = { workspace = true }
 clap = { workspace = true }
 alloy-core = { workspace = true }
-anyhow = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
