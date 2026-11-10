@@ -155,6 +155,14 @@ class CiLocalTest(unittest.TestCase):
                                      env=env, capture_output=True, text=True, check=True).stdout
                 self.assertEqual(out, expected)
 
+    def test_node_cargo_check_stops_when_the_catalyst_directory_is_missing(self):
+        step = next(s for s in ci.pre_commit_steps({'services/catalyst/Cargo.toml'}) if s.name == 'cargo check (node)')
+        command = step.command.replace('cargo check', 'echo ran', 1)
+        with tempfile.TemporaryDirectory() as empty:
+            result = subprocess.run(['bash', '-c', f'set -e; {command}'], cwd=empty, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('ran', result.stdout)
+
 
 class WindowsHookQueueTest(unittest.TestCase):
     def test_a_legitimate_run_holding_the_lock_longer_than_120_seconds_is_queued(self):
