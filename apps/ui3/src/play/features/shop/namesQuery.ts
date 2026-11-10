@@ -8,10 +8,11 @@ import { useEffect, useState } from 'react'
 import { pageCount } from './catalogueQuery'
 import type { ChainId } from '@shop/model/chain'
 import { creditsCeil, parseManaWei, type ManaWei } from '@shop/model/money'
-import { fetchBannedNames, fetchNameResales, nameOf, NAMES_PAGE_SIZE } from '../../../shop/names/api'
-import { landChainId } from '../../../shop/land/contracts'
-import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
-import { quoteNameCredits } from '../../../shop/names/offer'
+import { fetchNameResales, nameOf, NAMES_PAGE_SIZE, quoteNameCredits } from '@shop/names/api'
+import { readBannedNames } from '../../../shop/names/reads'
+import { landChainId } from '../../../shop/land/chain'
+import { rpcReader } from '../../../shop/land/evm'
+import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '@shop/names/name'
 import type { ShopNameStatus } from './ui'
 import { shopClient } from '../../../shop/api/host'
 
@@ -19,7 +20,7 @@ export const nameQueries = {
   banned: () =>
     queryOptions({
       queryKey: ['shop', 'names', 'banned'] as const,
-      queryFn: ({ signal }) => fetchBannedNames({ signal }).then((names) => new Set(names)),
+      queryFn: ({ signal }) => readBannedNames(signal).then((names) => new Set(names)),
       staleTime: 10 * 60_000
     }),
   /** A NAME's price in whole Credits (the credits quote of its 100 MANA), or null while none can be given. */
@@ -35,7 +36,7 @@ export const nameQueries = {
   availability: (name: string, chainId: ChainId = landChainId()) =>
     queryOptions({
       queryKey: ['shop', 'names', 'availability', chainId, name.toLowerCase()] as const,
-      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal, chainId }),
+      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal, reader: rpcReader(chainId), chainId }),
       staleTime: 30_000
     })
 }
@@ -57,7 +58,7 @@ export const nameResalesQuery = (page: number) =>
   queryOptions({
     queryKey: [...NAME_RESALES_KEY, page] as const,
     queryFn: async ({ signal }): Promise<{ items: NameResale[]; total: number }> => {
-      const { results, total } = await fetchNameResales({ search: '', sort: 'recently_listed', onlyOnSale: true, minPrice: '', maxPrice: '', page: page + 1 }, { signal })
+      const { results, total } = await fetchNameResales({ search: '', sort: 'recently_listed', onlyOnSale: true, minPrice: '', maxPrice: '', page: page + 1 }, { client: shopClient(), signal })
       const items = results.map((result) => ({
         name: nameOf(result),
         contract: result.nft.contractAddress.toLowerCase(),

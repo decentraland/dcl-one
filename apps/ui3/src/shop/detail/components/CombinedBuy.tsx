@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
-import { authorizeUsdCredit, cancelUsdIntents } from "../../credits/credits";
+import { authorizeUsdCredit, cancelUsdIntents } from "@shop/credits/credits";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";

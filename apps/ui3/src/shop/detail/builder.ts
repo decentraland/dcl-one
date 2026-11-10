@@ -9,7 +9,7 @@
 
 import { catalystBase } from "../../data/catalyst/client";
 import { shopPeers } from "../api/host";
-import { peerUrlFor } from "./lib/urn";
+import { peerUrlFor } from "@shop/detail/lib/urn";
 
 const VIDEO_FILE = "video.mp4";
 const SCENE_FILE = "scene.json";

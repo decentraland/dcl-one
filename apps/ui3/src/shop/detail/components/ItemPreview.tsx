@@ -10,7 +10,7 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { pickRenderer } from "../lib/pickRenderer";
-import { itemUrn } from "../lib/urn";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";

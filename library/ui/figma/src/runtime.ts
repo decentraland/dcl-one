@@ -1,3 +1,4 @@
+import { libraryComponentEntries } from './guard/library.js'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -45,7 +46,7 @@ function supersessionCandidates(
 async function syncedComponents(app: App): Promise<Map<string, string[]>> {
   const { specs } = await loadSpecsFromSource(app.createSource('snapshot'), app.config)
   const record = await readFile(path.resolve(app.cwd, '..', 'components/promotion.json'), 'utf8')
-    .then((text) => (JSON.parse(text) as { components: string[] }).components)
+    .then((text) => libraryComponentEntries(JSON.parse(text)).map((entry) => entry.name))
     .catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return [] as string[]
       throw error

@@ -6,9 +6,9 @@
 // own hooks keep it current (a money read such as a listing is refetched on mount, never trusted).
 
 import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
-import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@ui/shop/discovery/api";
-import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@ui/shop/detail/api";
-import { LAND_NETWORKS } from "@ui/shop/land/contracts";
+import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
+import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
@@ -21,6 +21,9 @@ import { catalystUrl, processEnv, publicCatalystUrl, type BaseEnv } from "../cat
 import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
+
+/** The creator-sales switch the reads map with: the page's, primed (primeRemoteFlags) before any read. */
+const creatorSales = (): boolean => shopFlags().creatorSales;
 
 /** How long one server read may hold the document before the page falls back to its own fetch. */
 export const SHOP_SSR_READ_MS = 1_500;
@@ -110,7 +113,7 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   if (!ADDRESS.test(contract) || (token ? !tokenId : !itemId)) return { queries: [], seo, status: 404 };
 
   const signal = deadline(request);
-  const opts = { client, signal };
+  const opts = { client, creatorSales, signal };
   const [listing, meta, desc, collection, owned] = await Promise.all([
     // The creator's primary sale only: the page's first render reads it while the Marketplace (resales, for a web3
     // session with the rollout on) is still pending, so a resale is never server-rendered as the item's price.
@@ -152,7 +155,7 @@ async function collectionPage(request: Request, params: ShopLoadInput["params"],
   const contract = routeSegment(params.contractAddress);
   const seo = defaultShopSeo("collection", canonicalFor(request, `/shop/collection/${contract ?? ""}`, env));
   if (!contract) return { queries: [], seo, status: 404 };
-  const found = await settle(fetchCollection(contract, { client, signal: deadline(request) }));
+  const found = await settle(fetchCollection(contract, { client, creatorSales, signal: deadline(request) }));
   if (!found.ok) return { queries: [], seo, status: 200 };
   const queries: PrimedQuery[] = [[["collection-meta", contract], found.value, now()]];
   if (!found.value) return { queries, seo: { ...seo, noindex: true }, status: 404 };
@@ -168,10 +171,10 @@ async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Pro
   const flags = shopFlags();
   // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
   const [listings, trending, deals] = await Promise.all([
-    settle(publicRead(ctx, "overview-listings", (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client, signal }))),
-    settle(publicRead(ctx, "overview-trending|primary", (signal) => fetchTrendingItems({ first: 12, listingType: "primary" }, { client, signal }))),
+    settle(publicRead(ctx, "overview-listings", (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client, creatorSales, signal }))),
+    settle(publicRead(ctx, "overview-trending|primary", (signal) => fetchTrendingItems({ first: 12, listingType: "primary" }, { client, creatorSales, signal }))),
     flags.creatorSales
-      ? settle(publicRead(ctx, "overview-deals", (signal) => fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { client, signal })))
+      ? settle(publicRead(ctx, "overview-deals", (signal) => fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { client, creatorSales, signal })))
       : Promise.resolve(null),
   ]);
   const queries: PrimedQuery[] = [];
@@ -189,7 +192,7 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
   const filters = readUrlFilters(url.searchParams, itemsFilterDefaults(q, dealsRequestedIn(url.searchParams)));
   const grid = itemsGrid(filters, q);
   if (!grid.key) return { queries: [], seo, status: 200 };
-  const page = await settle(publicRead(ctx, JSON.stringify(grid.key), (signal) => grid.fetchPage(0, { client, signal })));
+  const page = await settle(publicRead(ctx, JSON.stringify(grid.key), (signal) => grid.fetchPage(0, { client, creatorSales, signal })));
   return { queries: page.ok ? [[grid.key, page.value.value, page.value.at]] : [], seo, status: 200 };
 }
 

@@ -7,6 +7,7 @@
 // explain why. It reads the index, so it judges what would be committed; an LFS pointer fails.
 // `--write` reseals the digests from the index and keeps counterparts and codes. Dependency-free; it needs no install and no capture.
 import { publicFoundationProblems } from './public-foundations.mjs'
+import { publicComponentsProblems } from './public-components.mjs'
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -204,7 +205,10 @@ export function main(argv, root = process.cwd()) {
     for (const file of missing) process.stdout.write(`MISSING ${file}\n`)
     for (const file of unpinned) process.stdout.write(`UNPINNED ${file}\n`)
     for (const problem of problems) process.stdout.write(`DEVIATION ${problem}\n`)
-    const publicProblems = publicFoundationProblems(top, lock)
+    const publicProblems = [
+      ...publicFoundationProblems(top, lock),
+      ...publicComponentsProblems(top, lock)
+    ]
     for (const problem of publicProblems) process.stdout.write(`PUBLIC ${problem}\n`)
     const failed =
       mismatched.length + missing.length + unpinned.length + problems.length + publicProblems.length

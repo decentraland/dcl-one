@@ -5,7 +5,7 @@
 // one credit is $0.10, and the charge (`usd`) is what the card pays while `credits` is what the balance
 // gains; they differ on purpose (the Stripe fee). Nothing here exposes Stripe, cards or USDC.
 
-import { type ShopClient } from "../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import type { PackOrderStatus } from "@shop/api/types";
 import { createPackCheckoutReal, pollCreditGrantReal } from "./payments-stripe";
 import { shopClient } from "../api/host";
