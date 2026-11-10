@@ -2160,6 +2160,7 @@ dependencies = [
  "dashmap",
  "dcl-auth",
  "dcl-http",
+ "dragonbox_ecma",
  "flate2",
  "futures",
  "hashlink",

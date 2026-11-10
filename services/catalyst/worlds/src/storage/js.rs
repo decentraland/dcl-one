@@ -396,33 +396,9 @@ pub fn number_to_string(n: f64) -> String {
     if n == 0.0 {
         return "0".to_string();
     }
-    let sign = if n < 0.0 { "-" } else { "" };
-    // Rust's `{:e}` is the shortest round-trip digits, as ECMAScript requires.
-    let sci = format!("{:e}", n.abs());
-    let (mantissa, exp) = sci.split_once('e').expect("{:e} has an exponent");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let point = exp.parse::<i32>().expect("{:e} exponent") + 1;
-    let body = if k <= point && point <= 21 {
-        format!("{digits}{}", "0".repeat((point - k) as usize))
-    } else if 0 < point && point <= 21 {
-        format!(
-            "{}.{}",
-            &digits[..point as usize],
-            &digits[point as usize..]
-        )
-    } else if -6 < point && point <= 0 {
-        format!("0.{}{digits}", "0".repeat((-point) as usize))
-    } else {
-        let e = point - 1;
-        let sign_e = if e < 0 { '-' } else { '+' };
-        if k == 1 {
-            format!("{digits}e{sign_e}{}", e.abs())
-        } else {
-            format!("{}.{}e{sign_e}{}", &digits[..1], &digits[1..], e.abs())
-        }
-    };
-    format!("{sign}{body}")
+    // ECMAScript's shortest decimal uses ties-to-even; Rust's formatter
+    // can choose the other equally short decimal for the same float.
+    dragonbox_ecma::Buffer::new().format_finite(n).to_string()
 }
 
 /// ECMAScript WhiteSpace and LineTerminator (what `trim` and `Number` strip).
@@ -948,6 +924,13 @@ mod tests {
             (123e20, "1.23e+22"),
             (1e21, "1e+21"),
             (-2.5, "-2.5"),
+            (667_962_307_169_479.25, "667962307169479.2"),
+            (-667_962_307_169_479.25, "-667962307169479.2"),
+            (0.0, "0"),
+            (-0.0, "0"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
         ] {
             assert_eq!(number_to_string(n), s, "{n}");
         }
