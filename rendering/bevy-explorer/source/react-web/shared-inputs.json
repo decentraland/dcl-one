@@ -312,7 +312,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "d8854a4a9034a20e63ea176c4bbeff04bf1f65e217aaec80e7c9d2869de69bd9"
+      "sha256": "d9ec727a96a62537277835e50fb1f1c9b44da234f41679668cf20c51f5e538fb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -357,6 +357,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "01b2c66a271517abcc9b1ebec2d2d74cb47efa3b8c09dae9b139694ac89c4ade"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
+      "sha256": "db397fc04bacb8259322faebed4fb992af1c65611916c5ddfa088e6757d5ebba"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
@@ -1428,7 +1432,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Showcase.tsx",
-      "sha256": "1504fa553b3cd9c3b3688a9c20c976385f4f11234dc7d5f959e3df27bef8132b"
+      "sha256": "888bad38596a4aa7f3273960637bdda0d3774ee729a2e81cafc56b726e7493bd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Slider.module.css",
@@ -1472,11 +1476,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Toast.module.css",
-      "sha256": "0f48af1036680ccbe0dbcbbb2e6c725efd28cfb7042540337e10fb496137dee9"
+      "sha256": "2d31c21fd8a8b605ff3e6418af0b7ac51d627f1f11fbc449bf2569c9803e544f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Toast.tsx",
-      "sha256": "0b4e7ab5ca591c7ba6ca1675df26d9e869b4b3e66822e8d056adfc12097a2896"
+      "sha256": "f597a9c93dd2f1ef237c3ebc040d16dd31ec2f5a67c5483bbee1a574c541a84e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Toggle.module.css",
@@ -1516,7 +1520,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/index.ts",
-      "sha256": "9b6cdc2724df880e04dc7360652325b8a64e3040a648fe942c4f05d919e455c0"
+      "sha256": "5dcd9790f5111c71a95e9fc4119a2d72b29ea78846a1e71ef865264c2b61f8f1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/popups.module.css",
@@ -1576,7 +1580,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/mockBridge.ts",
-      "sha256": "1cdc56a921b11930aefa4faf7edacae2498241c84351f821f4bd3672873898ab"
+      "sha256": "620c63a5e84f610578487f0769abd193696fa6f3991b05c952cf3b8c698f3ea1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/nameColor.ts",
@@ -1600,7 +1604,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/protocol.ts",
-      "sha256": "9de1964a5e8900045aaa21caa307a15df251d0aefdb993341b7326008edc7265"
+      "sha256": "6a114d6c7454117a6b5e5c1241ecfcff7d004b705e56c3ec38a31540ed1d0d08"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/auth/guest.ts",
@@ -2203,6 +2207,10 @@
       "sha256": "9d173b860c2e037b600201c7112bd2a733495a7fc6ca2bfcd43a3afb712a82f3"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/preview/textureOptimizationToast.ts",
+      "sha256": "05d7344d846f6605bdec0cfdef787e7c68104412b904ac5077de1497e2ada9a5"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/features/profile/NameEditModal.module.css",
       "sha256": "0079d50e9d97b22383ec58b8682880ee218e8a633510cd80f2d5e77361aab9b6"
     },
@@ -2292,7 +2300,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/useEngineSession.ts",
-      "sha256": "64efab8543c0ade8c9efc2ecd49a64ec17255491c635d44dd726b46d897161e2"
+      "sha256": "485e68dc1c57cdfde29f3d2988ce0cf9b8dca6a8b98ad9cdb257c87e2d53c5c0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.module.css",
@@ -2717,6 +2725,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
       "sha256": "65804da1c612e8cb60f3502816011a35e9a031941ced6c182db48f2fd1ed9a95"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
+      "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/cancelKey.test.ts",
@@ -3163,6 +3175,10 @@
       "sha256": "4852715db7b5605cc2404945dd936b0241592387cba745c6558108ecfcf83e1b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/textureOptimization.test.tsx",
+      "sha256": "7ee15516f0980067bcf63c14b2f18bef33ad022582322526c3cb393952d9d22d"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/utm.test.ts",
       "sha256": "ef127eabccc61e88b4dcb2bfcc60d89bca3709bec2f74c0fffdb5c15a492258f"
     },
@@ -3196,7 +3212,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "1375386fa4994638b1e08ad3f5e40fde500ca16583268fb97c42715be0403e04"
+      "sha256": "9c168648a349d55cd0bddc8c4bd88e0d956c76ecfc9f01e953b41757ea3e3870"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -3663,6 +3679,7 @@
     "rendering/bevy-explorer/source/react-web/src/features/pointer/Pointer.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/pointer/Pointer.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/pointer/cursorStore.ts",
+    "rendering/bevy-explorer/source/react-web/src/features/preview/textureOptimizationToast.ts",
     "rendering/bevy-explorer/source/react-web/src/features/profile/NameEditModal.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/profile/NameEditModal.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/profile/Passport.tsx",
@@ -3792,6 +3809,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeReadiness.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/cancelKey.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/chat.clicks.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/chat.render.test.tsx",
@@ -3903,6 +3921,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/surfaceBoundary.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/systemActionShortcuts.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/textureOptimization.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/utm.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/voiceSpeaking.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/wearables.test.tsx",
