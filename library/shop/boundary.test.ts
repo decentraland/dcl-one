@@ -84,7 +84,7 @@ describe("library/shop", () => {
     expect(profile.include).toEqual(["."]);
     expect(profile.exclude).toEqual(["**/*.test.ts"]);
     const declared = [...readFileSync(join(ROOT, "globals.d.ts"), "utf8").matchAll(/^declare\s+\w+\s+(\w+)/gm)];
-    expect(declared.map((m) => m[1])).toEqual(["console", "TextEncoder", "URL", "URLSearchParams", "AbortSignal"]);
+    expect(declared.map((m) => m[1])).toEqual(["console", "TextEncoder", "URL", "URLSearchParams", "AbortSignal", "DOMException"]);
   });
 
   // This project runs in node, with no DOM: a module that touched one while loading would throw here.

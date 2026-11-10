@@ -29,7 +29,7 @@ import { requireContracts } from "../checkout/chain/contracts";
 import { isGaslessUnavailable, relayMetaTransaction } from "../checkout/chain/metatx";
 import { shopChainReader, type ChainReader as ShopChainReader } from "../checkout/chain/rpc";
 import { landChainId } from "../land/chain";
-import { landNetwork } from "../land/contracts";
+import { landNetwork } from "@shop/land/contracts";
 import {
   encodeCall,
   ensureAllowance,
@@ -42,7 +42,7 @@ import {
   type ChainReader,
 } from "../land/evm";
 import { shopClient } from "../api/host";
-import { NAME_PRICE_IN_WEI, NAME_PRICE_WEI, nameTokenIdOf, registrarAbi, validateName } from "./name";
+import { NAME_PRICE_IN_WEI, NAME_PRICE_WEI, nameTokenIdOf, registrarAbi, validateName } from "@shop/names/name";
 
 export {
   checkNameAvailability,
@@ -50,16 +50,13 @@ export {
   NAME_INVALID_TEXT,
   NAME_MAX_LENGTH,
   NAME_MIN_LENGTH,
-  NAME_PRICE_IN_WEI,
   NAME_PRICE_WEI,
   nameTokenIdOf,
   registrarAbi,
   sanitizeNameInput,
   validateName,
   type NameAvailability,
-  type NameInvalidReason,
-  type NameValidation,
-} from "./name";
+} from "@shop/names/name";
 
 export const controllerAbi = parseAbi([
   "function PRICE() view returns (uint256)",

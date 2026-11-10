@@ -5,8 +5,8 @@
 // MANA-only surface except the NAME registrar controller, which is the direct-MANA registration route
 // the payment rule offers a web3 wallet second, after credits.
 
-import { evmAddress, type EvmAddress } from "@shop/model/address";
-import { CHAIN, type ChainId } from "@shop/model/chain";
+import { evmAddress, type EvmAddress } from "../model/address";
+import { CHAIN, type ChainId } from "../model/chain";
 
 export type LandNetwork = {
   chainId: ChainId;
@@ -46,7 +46,7 @@ export const LAND_NETWORKS: Record<number, LandNetwork> = {
 /** The Rentals contract's EIP-712 domain (`Rentals`, version 1), as the signatures server verifies it. */
 export const RENTALS_DOMAIN = { name: "Rentals", version: "1" } as const;
 
-/** The contracts on `chainId` (the host's choice: land/chain.ts `landChainId`). */
+/** The contracts on `chainId` (the host's choice; ui3: land/chain.ts `landChainId`). */
 export function landNetwork(chainId: ChainId): LandNetwork {
   const found = LAND_NETWORKS[chainId];
   if (!found) throw new RangeError(`LAND and NAMEs do not live on chain ${chainId}`);

@@ -15,7 +15,7 @@ import type { RentalListing } from "@catalyst-api/market/RentalListing";
 import type { RentalListingPeriod } from "@catalyst-api/market/RentalListingPeriod";
 import { type ShopClient } from "@shop/api/shop";
 import { requireChain } from "../wallet/chain";
-import { landCategoryOf, landNetwork, RENTALS_DOMAIN } from "./contracts";
+import { landCategoryOf, landNetwork, RENTALS_DOMAIN } from "@shop/land/contracts";
 import { readEstateFingerprint, ZERO_FINGERPRINT } from "./estate";
 import {
   encodeCall,

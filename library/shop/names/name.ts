@@ -1,11 +1,11 @@
 // from: shop@94584a5c:app/src/lib/names.ts, marketplace@f3956826:webapp/src/modules/ens/{sagas,utils}.ts
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace sources). Licensed under the Apache License, Version 2.0.
 // A NAME itself, before any purchase: its price, what may be typed and registered, its registrar token, and whether
-// the registrar still has it. The registration, by credits or by MANA, is names.ts.
+// the registrar still has it. The registration, by credits or by MANA, is the host's (ui3: names/names.ts).
 
 import { keccak256, parseAbi, stringToHex } from "viem";
 
-import type { ChainId } from "@shop/model/chain";
+import type { ChainId } from "../model/chain";
 import { landNetwork } from "../land/contracts";
 import { readContract, type ChainReader } from "../land/read";
 

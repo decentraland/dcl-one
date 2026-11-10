@@ -8,7 +8,7 @@
 import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
 import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
 import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
-import { LAND_NETWORKS } from "@ui/shop/land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
