@@ -8,13 +8,10 @@ import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl }
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@hud/lib/webParams'
+import type { UntrustedParam } from '@hud/features/gate/UntrustedLaunchGate'
 
-export interface UntrustedParam {
-  name: string
-  value: string
-  /** what the param would let the link do — the gate's copy */
-  warning: string
-}
+export type { UntrustedParam }
+
 
 interface Gate {
   warning: string

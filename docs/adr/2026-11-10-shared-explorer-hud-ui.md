@@ -38,9 +38,11 @@ import it as `@hud/*`.
   once, in `library/ui/apps/hud/engine/generated`, beside the wire protocol that uses it.
   `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh` writes it, and the Sites import checks
   the tracked copy against the build.
-- **It moves in slices.** A slice holds only files whose import closure stays in
-  `library/ui/apps/hud` or reaches the host through `@hud-host`. The rest of the HUD stays copied
-  in both hosts until it moves.
+- **Hosts keep only their own code.** A file is shared when its import closure stays in
+  `library/ui/apps/hud` or reaches the host through `@hud-host`. Each host keeps its entry points,
+  shell, host module and the libraries behind it, the engine drivers and engine host, `App.tsx`,
+  its global stylesheet and what only it has. Where the two copies had drifted, the shared one
+  kept the fix or feature either host had.
 
 ## Consequences
 

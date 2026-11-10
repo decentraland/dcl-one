@@ -13,11 +13,19 @@
 // here having already clicked something the attacker gave them.
 
 import { useState } from 'react'
-import { Button, DclLogo, ModalShell } from '@hud/design'
-import type { UntrustedParam } from '../../lib/launchGate'
-import { inShell, postToShell } from '@hud/lib/shell'
-import styles from '@hud/features/gate/UntrustedLaunchGate.module.css'
+import { Button, DclLogo, ModalShell } from '../../design'
+import { inShell, postToShell } from '../../lib/shell'
+import styles from './UntrustedLaunchGate.module.css'
 import { siteUrl } from '@hud-host'
+
+/** A parameter of the entry url that points the session at infrastructure the page does not trust
+ *  (each host's lib/launchGate.ts decides which). */
+export interface UntrustedParam {
+  name: string
+  value: string
+  /** what the param would let the link do — the gate's copy */
+  warning: string
+}
 
 // A tab the user opened themselves can't be closed by script, so send them somewhere safe instead.
 // Inside the shell, the shell does it: from here it would only navigate the app's iframe.

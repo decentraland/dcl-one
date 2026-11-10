@@ -40,13 +40,13 @@ transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with
   `nativeProfileImage`, `react-web/src/host.ts`). Sites uses its web service configuration and the
   snapshot URLs returned by its backend (`apps/ui3/src/play/host.ts` returns them as given).
 - The shared UI foundations: `react-web` loads `@dcl/one-ui/foundations.css` in `main.tsx`; `/play`
-  does not, as its HUD adaptation stays as it is until Sites migrates (`docs/ui-standards.md`).
+  does not load them yet (`docs/ui-standards.md`, "Explorer HUD transition").
 - The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
   client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
   keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
-- Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
-  in `apps/ui3` under `tsconfig.play.json`. Tests of the shared HUD UI live in
-  `library/ui/apps/hud`, and `react-web`'s `npm test` runs them. `?native=1` is not built.
+- Tests of the shared HUD UI live once, in `library/ui/apps/hud`, and `react-web`'s `npm test` runs
+  them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
+  `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried. The shared session only knows that a host may
   have an unattended run (`@hud-host`'s `bootMode` and `unattendedRun`); react-web's `host.ts`
   supplies the autopilot's (`?autopilot` read by `lib/bootMode.ts`, the local guest's sign-in, the

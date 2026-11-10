@@ -313,14 +313,24 @@ page-engine wire protocol (`engine/protocol.ts`) and the tracked bindings
 generated from the Explorer's Rust structs (`engine/generated`, written by
 `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`).
 
-Each host keeps its entry points, its page shell (`shell/`, apart from the
-shared signer `shell/sign.ts`), its module `host.ts`, its global stylesheet
-(`styles/global.css`, which also gives the shared stylesheets the host's public
-files as CSS variables such as `--hud-logo`), `design/Showcase.tsx` (it renders host
-features) and the in-world Shop that only `/play` has. HUD code not yet in
-`library/ui/apps/hud` is still copied in both hosts and moves there feature
-by feature. Where the two copies have drifted, the shared copy keeps the fix or
-feature either host had, for both.
+Each host keeps only what is its own:
+
+- its entry points (`main.tsx`, `/play`'s `mount.tsx`) and page shell (`shell/`,
+  apart from the shared signer `shell/sign.ts`);
+- its module `host.ts` and the libraries behind it (`lib/baseDomain.ts`,
+  `lib/bootMode.ts`, `lib/entryParams.ts`, `lib/launchGate.ts`,
+  `lib/publicUrl.ts`, `lib/systemScene.ts`);
+- `App.tsx`, the engine drivers (`engine/EngineDriver.ts`, `engine/bridge.ts`,
+  `engine/bridgeChannel.ts`) and `features/engine/EngineHost.tsx`, which launch
+  and compose the HUD the way the host needs;
+- its global stylesheet (`styles/global.css`, which also gives the shared
+  stylesheets the host's public files as CSS variables such as `--hud-logo`);
+- what only one host has: react-web's benchmark autopilot
+  (`engine/autopilot.ts`, `shell/localGuest.ts`) and Shop query client, and
+  `/play`'s in-world Shop and Creator Hub editor embed.
+
+Where the two copies had drifted, the shared copy kept the fix or feature
+either host had, for both.
 
 Shared HUD code imports nothing from a host. Where the hosts behave
 differently, it imports the behavior from `@hud-host`, which each host maps
