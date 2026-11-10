@@ -28,10 +28,13 @@ use tokio::sync::Semaphore;
 use super::{Settings, Shared};
 
 /// Largest backend response buffered for one request.
-const BODY_CAP: usize = 64 << 20;
-/// Backend requests in flight at once; more are refused with 503, so the
-/// buffered responses stay bounded at `IN_FLIGHT * BODY_CAP`.
-const IN_FLIGHT: usize = 16;
+const BODY_CAP: usize = 32 << 20;
+/// Backend requests in flight at once, so the buffered responses stay bounded
+/// at `IN_FLIGHT * BODY_CAP`. Nothing is cached: every read is a backend call.
+const IN_FLIGHT: usize = 64;
+/// How long a read waits for a free slot before it is refused with 503: a
+/// boot burst queues briefly instead of failing at once.
+const SLOT_WAIT: Duration = Duration::from_secs(2);
 const TIMEOUT: Duration = Duration::from_secs(30);
 static PERMITS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(IN_FLIGHT));
 
@@ -132,7 +135,7 @@ async fn read(
         return message(StatusCode::BAD_REQUEST, "Invalid Registry path");
     }
     url.set_query(uri.query());
-    let Ok(_permit) = PERMITS.try_acquire() else {
+    let Some(_permit) = slot(&PERMITS, SLOT_WAIT).await else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [("retry-after", "1")],
@@ -196,6 +199,17 @@ async fn read(
         tracing::warn!(error = %format!("{error:#}"), "Registry request failed");
         message(StatusCode::BAD_GATEWAY, "Registry service unavailable")
     })
+}
+
+/// A backend slot, waiting at most `wait` for one to free up.
+pub(crate) async fn slot(
+    permits: &Semaphore,
+    wait: Duration,
+) -> Option<tokio::sync::SemaphorePermit<'_>> {
+    tokio::time::timeout(wait, permits.acquire())
+        .await
+        .ok()?
+        .ok()
 }
 
 /// `(native, base URL)`; an upstream goes through the SSRF guard on every call.

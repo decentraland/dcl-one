@@ -131,6 +131,11 @@ async fn respond(state: SharedState, body: Bytes, compact: bool) -> Response {
 
 /// Request order: an entity sits at its first requested (lowercased) pointer.
 fn sort_by_request(entities: &mut [Value], pointers: &[String]) {
+    let position: std::collections::HashMap<&str, usize> = pointers
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.as_str(), i))
+        .collect();
     entities.sort_by_cached_key(|entity| {
         entity
             .get("pointers")
@@ -138,7 +143,7 @@ fn sort_by_request(entities: &mut [Value], pointers: &[String]) {
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .filter_map(|p| pointers.iter().position(|q| *q == p.to_lowercase()))
+            .filter_map(|p| position.get(p.to_lowercase().as_str()).copied())
             .min()
             .unwrap_or(usize::MAX)
     });

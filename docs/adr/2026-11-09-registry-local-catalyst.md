@@ -46,7 +46,8 @@ fragment, and startup refuses any other value, naming the variable.
 - Any other host is a public Registry, for example the mirror posture default
   `https://asset-bundle-registry.decentraland.org`. It passes the same SSRF and
   own-host checks as the other explorer sources, at startup and on each request,
-  and receives no identity or path headers.
+  and receives no identity or path headers. Signed `GET /entities/status` calls
+  therefore fail with 401 in this mode; signed reads need the local runtime.
 - Empty, the island posture, answers `/entities/active` and `/entities/versions`
   with `200 []` and the other reads with 503.
 
@@ -56,9 +57,12 @@ POST/DELETE, `/queues/retry|pause|resume`, `/registry`, `/flush-cache`) are not
 routed: the abgen admin bearer stays on the host and those operations remain with
 the ops console, behind its sign-in, write switch and audit log.
 
-At most 16 backend requests run at once; more are refused with 503 and
-`Retry-After: 1`. A request times out after 30 seconds, does not follow redirects
-and buffers at most 64 MiB; a failed request or a larger response returns 502. A
+Nothing is cached, so every read, including each explorer boot read, is a
+backend call. At most 64 backend requests run at once, bounding buffered
+responses at 2 GiB; a read waits up to 2 seconds for a free slot and is then
+refused with 503 and `Retry-After: 1`. A request times out after 30 seconds, does
+not follow redirects and buffers at most 32 MiB; a failed request or a larger
+response returns 502. A
 path the URL parser would normalize, such as an encoded `..`, returns 400.
 Responses preserve status, body, content type, cache directives, validators,
 `Allow` and `Retry-After`. Local `/status` and `/health` describe the Catalyst

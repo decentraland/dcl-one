@@ -1142,6 +1142,27 @@ fn registry_backend_is_native_only_on_loopback() {
     }
 }
 
+/// A read queues for a backend slot instead of failing at once, and is
+/// refused only when none frees up within the wait.
+#[tokio::test]
+async fn registry_reads_wait_briefly_for_a_backend_slot() {
+    use tokio::sync::Semaphore;
+    let permits = Semaphore::new(1);
+    let held = permits.acquire().await.unwrap();
+    assert!(
+        registry::slot(&permits, Duration::from_millis(20))
+            .await
+            .is_none()
+    );
+    let waiting = registry::slot(&permits, Duration::from_secs(2));
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(held);
+    };
+    let (permit, ()) = tokio::join!(waiting, release);
+    assert!(permit.is_some());
+}
+
 /// Startup validation accepts the local runtime over http or https and a
 /// public Registry, and names the variable when it refuses one.
 #[test]
