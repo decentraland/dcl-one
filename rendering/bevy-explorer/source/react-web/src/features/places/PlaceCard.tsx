@@ -8,7 +8,7 @@ import {
   placePlayers,
   type DiscoverPlace
 } from './placesApi'
-import { useCreatorName } from './useCreatorName'
+import { useCreatorName } from '@hud/features/places/useCreatorName'
 
 export function PlaceCard({ place, onClick }: { place: DiscoverPlace; onClick: () => void }): React.JSX.Element {
   const players = placePlayers(place)

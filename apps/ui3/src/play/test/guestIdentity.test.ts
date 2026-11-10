@@ -9,7 +9,7 @@ import {
   webGuestBackendFor,
   type GuestBackend
 } from '../features/auth/guest'
-import { personalSign } from '../shell/sign'
+import { personalSign } from '@hud/shell/sign'
 
 function personalHash(message: string): Uint8Array {
   const body = new TextEncoder().encode(message)

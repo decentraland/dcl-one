@@ -3,6 +3,7 @@
 
 import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState } from '../session/useEngineSession'
+import { nativeProfileImage } from '@hud-host'
 import { notificationTimeMs } from '@hud/lib/notificationTime'
 import { relationshipOf } from '@hud/lib/relationship'
 import { openPassport } from '../profile/Passport'
@@ -41,7 +42,8 @@ export function ago(ts: string): string {
 }
 
 function pickImage(m: Record<string, unknown>): string | undefined {
-  return str(m, 'image', 'thumbnail', 'thumbnailUrl', 'tokenImage', 'profileImageUrl') ?? nested(m, 'sender', 'profileImageUrl', 'image')
+  const image = str(m, 'image', 'thumbnail', 'thumbnailUrl', 'tokenImage', 'profileImageUrl') ?? nested(m, 'sender', 'profileImageUrl', 'image')
+  return nativeProfileImage(image)
 }
 
 // Friendship notifications carry the OTHER user under metadata.sender (name/avatar) and have no

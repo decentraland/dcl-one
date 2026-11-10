@@ -5,7 +5,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
-import { personalSign } from '../../shell/sign'
+import { personalSign } from '@hud/shell/sign'
 import type { AuthIdentity } from './sso'
 import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from '@hud/features/auth/thirdweb'
 

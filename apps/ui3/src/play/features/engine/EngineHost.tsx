@@ -11,7 +11,7 @@ import { engineServiceOptions } from '../../lib/baseDomain'
 import { bootMode } from '../../lib/bootMode'
 import { EDITOR_SCENE, editorSession, isEditorScene } from '../../lib/editorEmbed'
 import { PAGE_DIR } from '../../lib/publicUrl'
-import { inShell, shellRequest } from '../../lib/shell'
+import { inShell, shellRequest } from '@hud/lib/shell'
 // Moved to lib/systemScene.ts; whether a link may override it is lib/launchGate.ts's call.
 import { SYSTEM_SCENE } from '../../lib/systemScene'
 import { launchOptionsFromUrl, type LaunchOptions } from '@hud/lib/webParams'

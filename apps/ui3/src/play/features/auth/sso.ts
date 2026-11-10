@@ -9,7 +9,7 @@
 
 import { attributionParams, sessionId } from '../../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../../lib/entryParams'
-import { inShell, postToShell, shellRequest } from '../../lib/shell'
+import { inShell, postToShell, shellRequest } from '@hud/lib/shell'
 import { GUEST_SESSION_KEY } from '@hud/features/auth/thirdweb'
 
 // The standard Decentraland AuthIdentity, as serialized by @dcl/crypto / @dcl/single-sign-on

@@ -21,8 +21,8 @@ describe('native HUD snapshot presentation', () => {
       params(base)
       vi.stubGlobal('fetch', async () => Response.json({ avatars: [{ avatar: { snapshots: { body: image } } }] }))
       const { Avatar } = await import('@hud/design/Avatar')
-      const { fetchStoredProfile } = await import('../features/login/useStoredProfile')
-      const { ProfilePassport } = await import('../features/profile/ProfilePassport')
+      const { fetchStoredProfile } = await import('@hud/features/login/useStoredProfile')
+      const { ProfilePassport } = await import('@hud/features/profile/ProfilePassport')
       const expected = base + '/avatar%2Fface?q=1'
       render(
         <>
@@ -52,7 +52,7 @@ describe('native HUD snapshot presentation', () => {
       history.replaceState(null, '', '?' + query)
       const fetcher = vi.fn(async () => Response.json({ ok: true, data: [] }))
       vi.stubGlobal('fetch', fetcher)
-      const { fetchEvents } = await import('../features/events/eventsApi')
+      const { fetchEvents } = await import('@hud/features/events/eventsApi')
       await fetchEvents('upcoming')
       expect(fetcher).toHaveBeenCalledWith(events + '/api/events?list=upcoming', { signal: undefined })
     }
@@ -64,7 +64,7 @@ describe('native HUD snapshot presentation', () => {
     history.replaceState(null, '', '?native=1&baseDomain=decentraland.zone')
     const fetcher = vi.fn(async () => Response.json({ok:true,data:[]}))
     vi.stubGlobal('fetch', fetcher)
-    const { fetchEvents } = await import('../features/events/eventsApi')
+    const { fetchEvents } = await import('@hud/features/events/eventsApi')
     await fetchEvents('live')
     expect(fetcher).toHaveBeenCalledWith('https://events.decentraland.zone/api/events?list=live', {signal:undefined})
   })

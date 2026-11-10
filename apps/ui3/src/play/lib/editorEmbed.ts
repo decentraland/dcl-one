@@ -2,7 +2,7 @@
 // own scene (served by Sites next to /play, apps/ui3/editor-scene) and the fragment carries the
 // editor's session (`#editorSession=<uuid>`). Not part of upstream react-web.
 
-import { PAGE_DIR } from './publicUrl'
+import { PAGE_DIR } from '@hud-host'
 
 // The static realm `pnpm run build` in apps/ui3/editor-scene exports into ui3/public/editor-scene.
 export const EDITOR_SCENE = new URL('../editor-scene/EditorScene', PAGE_DIR).href

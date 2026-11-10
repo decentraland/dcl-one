@@ -4,18 +4,16 @@ import { createGuestIdentity, webGuestBackend } from '../features/auth/guest'
 import {
   clearGuestLogin,
   clearStoredLogins,
-  getLocalGuestRootKey,
   getStoredLogin,
   loginExpired,
   publicLogin,
   rootAddress,
   storeGuestLogin,
-  storeLocalGuestRootKey,
   type StoredLogin
 } from '../features/auth/sso'
 import { isLoopbackHost } from '../lib/loopbackHost'
-import { createLocalGuestRootKey, localGuestIdentity } from './localGuest'
-import { personalSign } from './sign'
+import { createLocalGuestRootKey, getLocalGuestRootKey, localGuestIdentity, storeLocalGuestRootKey } from './localGuest'
+import { personalSign } from '@hud/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it

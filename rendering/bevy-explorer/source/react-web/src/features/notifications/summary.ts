@@ -3,7 +3,7 @@
 
 import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState } from '../session/useEngineSession'
-import { nativeProfileImage } from '../../lib/baseDomain'
+import { nativeProfileImage } from '@hud-host'
 import { notificationTimeMs } from '@hud/lib/notificationTime'
 import { relationshipOf } from '@hud/lib/relationship'
 import { openPassport } from '../profile/Passport'

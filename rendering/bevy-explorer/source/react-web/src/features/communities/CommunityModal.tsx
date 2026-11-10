@@ -5,17 +5,17 @@
 
 import { useEffect, useState } from 'react'
 import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '@hud/design'
-import { nameColor, splitName } from '../../lib/identity'
+import { nameColor, splitName } from '@hud/lib/identity'
 import { relationshipOf, type Relationship } from '@hud/lib/relationship'
-import { knownUserColor } from '../session/profileStore'
+import { knownUserColor } from '@hud/features/session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@hud/features/communities/roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { openPassport } from '../profile/Passport'
 import { openProfileCard } from '../profileCard/ProfileCard'
-import { confirmUnblock } from '../friends/friendDialogs'
+import { confirmUnblock } from '@hud/features/friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
-import type { CardAction } from '../chat/ProfileCardPresentation'
+import type { CardAction } from '@hud/features/chat/ProfileCardPresentation'
 import type {
   Community,
   CommunityDetailMessage,
@@ -27,6 +27,7 @@ import type {
   CommunityPost
 } from '@hud/engine/protocol'
 import styles from '@hud/features/communities/CommunityModal.module.css'
+import { siteUrl } from '@hud-host'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
 const TABS: TabItem<Tab>[] = [
@@ -439,7 +440,7 @@ export function CommunityModal({
     })
   }
   const copyLink = (): void => {
-    void navigator.clipboard?.writeText(`https://decentraland.org/communities/${community.id}`).catch(() => undefined)
+    void navigator.clipboard?.writeText(siteUrl(`/communities/${community.id}`)).catch(() => undefined)
     setMenuOpen(false)
   }
 

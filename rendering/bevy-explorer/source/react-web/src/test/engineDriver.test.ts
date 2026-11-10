@@ -17,14 +17,14 @@ describe('EngineDriver', () => {
   })
 
   describe('loginLocalGuest', () => {
-    afterEach(() => vi.doUnmock('../lib/shell'))
+    afterEach(() => vi.doUnmock('@hud/lib/shell'))
 
     it('asks the shell for the guest and signs in with its public identity', async () => {
       vi.resetModules()
       const identity = { ephemeralIdentity: { address: '0xe', publicKey: '0x04' }, expiration: '2099-01-01T00:00:00.000Z', authChain: [] }
       const shellRequest = vi.fn(async () => ({ address: '0xabc', identity, guest: true }))
-      const actual = await vi.importActual<typeof import('../lib/shell')>('../lib/shell')
-      vi.doMock('../lib/shell', () => ({ ...actual, inShell: true, shellRequest }))
+      const actual = await vi.importActual<typeof import('@hud/lib/shell')>('@hud/lib/shell')
+      vi.doMock('@hud/lib/shell', () => ({ ...actual, inShell: true, shellRequest }))
       const { EngineDriver: InShell } = await import('../engine/EngineDriver')
       const { EngineRpc: Rpc } = await import('@hud/engine/engineRpc')
       const rpc = new Rpc()

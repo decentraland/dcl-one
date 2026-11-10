@@ -10,8 +10,8 @@
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
-import { inShell, onShellMessage, shellRequest } from '../../lib/shell'
-import { isShellError, ShellError } from '../../lib/shellReply'
+import { inShell, onShellMessage, shellRequest } from '@hud/lib/shell'
+import { isShellError, ShellError } from '@hud/lib/shellReply'
 import {
   LEGACY_SHOP_BUSY_MESSAGE,
   parseOperationEvent,

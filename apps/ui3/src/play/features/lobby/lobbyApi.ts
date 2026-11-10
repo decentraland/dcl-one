@@ -1,8 +1,8 @@
 // The lobby's data: the curated destinations, the live events and busiest places, the landing
 // place for the home destination, and the places visited most recently.
 
-import { serviceUrl } from '../../lib/baseDomain'
-import { EVENTS_API, type DclEvent } from '../events/eventsApi'
+import { serviceUrl } from '@hud-host'
+import { EVENTS_API, type DclEvent } from '@hud/features/events/eventsApi'
 import { LIVE_FEED_ARGS, fetchDestinations, isHiddenPlace, placePlayers, type DiscoverPlace } from '../places/placesApi'
 import { getPref, PREF, setPref } from '../../lib/prefs'
 

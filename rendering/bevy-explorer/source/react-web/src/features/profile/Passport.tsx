@@ -5,14 +5,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { openPopup, showConfirm } from '@hud/design'
 import { useSession } from '../session/SessionContext'
-import { requestPassport, useProfile } from '../session/profileStore'
+import { requestPassport, useProfile } from '@hud/features/session/profileStore'
 import { relationshipOf } from '@hud/lib/relationship'
 import { openNameEdit } from './NameEditModal'
-import { ProfilePassport } from './ProfilePassport'
+import { ProfilePassport } from '@hud/features/profile/ProfilePassport'
 import type { Profile } from '@hud/engine/protocol'
-import { splitName, userColor } from '../../lib/identity'
+import { splitName, userColor } from '@hud/lib/identity'
 import { hexToColor3 } from '@hud/lib/color'
-import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
+import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '@hud/features/friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 
 export function Passport({

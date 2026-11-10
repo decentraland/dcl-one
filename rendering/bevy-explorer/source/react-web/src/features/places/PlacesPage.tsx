@@ -3,7 +3,7 @@
 // grid) is shared with the post-jump-in picker via PlacesBrowser; here a card click teleports
 // (parcel) or visits (world) and closes the page.
 
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from './placesApi'
 import type { ProfileState } from '../session/useEngineSession'
@@ -15,12 +15,14 @@ export interface PlacesState {
 
 export function PlacesPage({
   places,
+  account,
   profile,
   onNavigate,
   onTeleport,
   onVisitWorld
 }: {
   places: PlacesState
+  account?: string | null
   profile: ProfileState
   onNavigate: (page: string) => void
   onTeleport: (x: number, y: number) => void
@@ -47,7 +49,7 @@ export function PlacesPage({
       onNavigate={onNavigate}
       onClose={places.toggle}
     >
-      <PlacesBrowser onPick={visit} />
+      <PlacesBrowser account={account} onPick={visit} />
     </MainMenuShell>
   )
 }

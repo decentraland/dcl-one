@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { DiscoverPlace } from '../features/places/placesApi'
-import { GENESIS_SATELLITE_VIEW, isGenesisSatelliteView } from '../features/map/atlas'
+import { GENESIS_SATELLITE_VIEW, isGenesisSatelliteView } from '@hud/features/map/atlas'
 import {
   ALL_MARKER_CATEGORIES,
   DEFAULT_VISIBLE_METERS,

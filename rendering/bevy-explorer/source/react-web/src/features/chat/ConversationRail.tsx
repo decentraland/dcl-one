@@ -4,7 +4,7 @@
 
 import type { ChatState, CommunityConversation, Conversation } from '../session/useEngineSession'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '@hud/design'
-import { splitName, usePartner } from './chatIdentity'
+import { splitName, usePartner } from '@hud/features/chat/chatIdentity'
 import closeIcon from '@hud/assets/chat/close-thin.png'
 import styles from '@hud/features/chat/Chat.module.css'
 

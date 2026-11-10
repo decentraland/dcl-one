@@ -6,7 +6,7 @@ import { openProfileCard } from '../features/profileCard/ProfileCard'
 import type { ChatLine, ChatState } from '../features/session/useEngineSession'
 import type { NearbyMember } from '@hud/engine/protocol'
 import { fakeSession } from './harness'
-import { seedProfiles } from '../features/session/profileStore'
+import { seedProfiles } from '@hud/features/session/profileStore'
 
 // Chat opens the shared profile card via openProfileCard (the card itself is covered by the container
 // + presentational tests). Stub it so we can assert the trigger + the resolved address.

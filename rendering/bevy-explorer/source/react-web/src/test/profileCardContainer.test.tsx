@@ -6,7 +6,7 @@ import { openPassport } from '../features/profile/Passport'
 import { openFriendRequest } from '../features/friends/FriendRequestPopup'
 import { SessionProvider } from '../features/session/SessionContext'
 import { fakeSession } from './harness'
-import { seedProfiles } from '../features/session/profileStore'
+import { seedProfiles } from '@hud/features/session/profileStore'
 import { PopupHost, resetPopups } from '@hud/design'
 import type { EngineSession } from '../features/session/useEngineSession'
 

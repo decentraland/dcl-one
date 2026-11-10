@@ -313,11 +313,14 @@ page-engine wire protocol (`engine/protocol.ts`) and the tracked bindings
 generated from the Explorer's Rust structs (`engine/generated`, written by
 `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`).
 
-Each host keeps its entry points, its page shell (`shell/`), its global
-stylesheet (`styles/global.css`), `design/Showcase.tsx` (it renders host
+Each host keeps its entry points, its page shell (`shell/`, apart from the
+shared signer `shell/sign.ts`), its module `host.ts`, its global stylesheet
+(`styles/global.css`, which also gives the shared stylesheets the host's public
+files as CSS variables such as `--hud-logo`), `design/Showcase.tsx` (it renders host
 features) and the in-world Shop that only `/play` has. HUD code not yet in
 `library/ui/apps/hud` is still copied in both hosts and moves there feature
-by feature. A move preserves HUD behavior in both hosts.
+by feature. Where the two copies have drifted, the shared copy keeps the fix or
+feature either host had, for both.
 
 Shared HUD code imports nothing from a host. Where the hosts behave
 differently, it imports the behavior from `@hud-host`, which each host maps

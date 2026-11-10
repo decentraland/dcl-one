@@ -5,10 +5,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { sessionId } from '../lib/analytics'
-import { postToShell } from '../lib/shell'
+import { postToShell } from '@hud/lib/shell'
 import { enterAsGuest, renderSession } from './harness'
 
-vi.mock('../lib/shell', () => ({ inShell: true, postToShell: vi.fn(), shellRequest: vi.fn(async () => null) }))
+vi.mock('@hud/lib/shell', () => ({ inShell: true, postToShell: vi.fn(), shellRequest: vi.fn(async () => null) }))
 
 const inWorldPosts = (): unknown[] => vi.mocked(postToShell).mock.calls.map(([m]) => m).filter((m) => m.type === 'bevy-shell:in-world')
 

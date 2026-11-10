@@ -4,7 +4,7 @@ import { EngineDriver } from './engine/EngineDriver'
 import { EngineRpc } from '@hud/engine/engineRpc'
 import { EngineHost } from './features/engine/EngineHost'
 import type { LoginDriver } from './engine/driver'
-import { startMockBridge } from './engine/mockBridge'
+import { startMockBridge } from '@hud/engine/mockBridge'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
@@ -31,7 +31,7 @@ import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from '@hud/features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
-import { openWorldVisit } from './components/WorldVisitModal'
+import { openWorldVisit } from '@hud/components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from '@hud/features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from '@hud/design'
@@ -48,11 +48,11 @@ import { useWindowKeyDown } from '@hud/lib/useWindowKeyDown'
 import { useHudInsetReport } from '@hud/lib/hudInset'
 import { bootMode } from './lib/bootMode'
 import { isMobile, isChromiumBased, hasBypassCookie } from '@hud/lib/isMobile'
-import { inShell } from './lib/shell'
+import { inShell } from '@hud/lib/shell'
 import { probeGpu, type GpuAdapterInfo } from '@hud/lib/gpu'
 import { integratedGpuOnWindows } from '@hud/lib/integratedGpu'
 import { getPref, PREF, setPref } from './lib/prefs'
-import { MobileGate, GateChecking } from './features/gate/MobileGate'
+import { MobileGate, GateChecking } from '@hud/features/gate/MobileGate'
 import { openIntegratedGpuGuide } from '@hud/features/gate/IntegratedGpuGuide'
 import { UntrustedLaunchGate } from './features/gate/UntrustedLaunchGate'
 import { untrustedLaunchParams } from './lib/launchGate'
@@ -61,7 +61,7 @@ import { SurfaceBoundary } from '@hud/features/error/SurfaceBoundary'
 import { CrashModal } from '@hud/features/error/CrashModal'
 import { openRealmError } from '@hud/features/error/RealmErrorModal'
 import { DIALOG_TITLE, isDialogSource } from '@hud/features/error/fatalError'
-import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
+import { openEntryParamsDialog } from '@hud/features/gate/EntryParamsDialog'
 import { unrecognisedEntryParams } from './lib/entryParams'
 import { EDITOR_BUILD, editorOffered, EditorOffered, FEATURES_PARAM } from '@hud/features/editorHost/config'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
@@ -216,6 +216,8 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The signed-in account the places discovery reads for its favourites, once the profile names it.
+  const discoveryAccount = session.profile.data?.address
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
@@ -393,7 +395,7 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
           <LoadingAndLogin flow={session.login} />
         ))}
       {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
-      {session.phase === 'picking' && <PlacesPicker onPick={session.pickDestination} />}
+      {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>
           <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
@@ -482,6 +484,7 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
           </SurfaceBoundary>
           <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
             <PlacesPage
+              account={discoveryAccount}
               places={session.places}
               profile={session.profile}
               onNavigate={goToMenuPage}

@@ -15,7 +15,7 @@ import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
 import { roleLabel } from '@hud/features/communities/roles'
-import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
+import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from '@hud/features/chat/chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
 import { MessageText, mentionsMe } from '@hud/features/chat/chatText'
 import {
@@ -30,9 +30,9 @@ import {
   useTranslations,
   type Translation
 } from './translation'
-import { type ChatUser } from './ProfileCardPresentation'
+import { type ChatUser } from '@hud/features/chat/ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
-import { peekProfile, useProfile } from '../session/profileStore'
+import { peekProfile, useProfile } from '@hud/features/session/profileStore'
 import { isCancelKey } from '@hud/lib/bindingLabels'
 import { hudInsetRef } from '@hud/lib/hudInset'
 import { displayName, mentionName } from '@hud/engine/mention'
@@ -813,9 +813,13 @@ export function Chat({
   // the active/focused state, ready to type — matches Unity's "click chat → start typing". Also
   // reacts to focusTick alone: Enter while chat is already idle-open doesn't change `open`, so
   // the engine's "Chat" system action (see bridge-scene chat.ts) bumps this tick to force focus.
+  // Mounting already idle-open (entering the world) is not an opening: focusing then would take
+  // the keyboard from the engine, and WASD would type into the chat instead of walking.
+  const focusedFor = useRef({ open, tick: chat.focusTick })
   useEffect(() => {
-    if (open) inputRef.current?.focus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const prev = focusedFor.current
+    focusedFor.current = { open, tick: chat.focusTick }
+    if (open && (!prev.open || prev.tick !== chat.focusTick)) inputRef.current?.focus()
   }, [open, chat.focusTick])
 
   // Leaving the chat (click outside → not hovered/focused) resets the nearby-members

@@ -13,6 +13,7 @@ import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } fr
 import closeIcon from '@hud/assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
+import { siteUrl } from '@hud-host'
 import styles from '@hud/features/communities/CommunityCreateModal.module.css'
 
 const MEMBERSHIP = [
@@ -25,9 +26,9 @@ const VISIBILITY = [
   { value: 'unlisted', label: 'Unlisted', note: 'Hidden from non-members, invite-only' }
 ] as const
 
-const NAMES_URL = 'https://decentraland.org/marketplace/names/claim'
-const CONTENT_POLICY_URL = 'https://decentraland.org/content'
-const CODE_OF_ETHICS_URL = 'https://decentraland.org/ethics'
+const NAMES_URL = siteUrl('/marketplace/names/claim')
+const CONTENT_POLICY_URL = siteUrl('/content')
+const CODE_OF_ETHICS_URL = siteUrl('/ethics')
 
 // unity-explorer's limits (CreateOrEditCommunityPanel.prefab, CommunityCreationEditionController.cs),
 // which are also the social service's.

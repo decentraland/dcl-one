@@ -13,7 +13,7 @@ import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } fr
 import closeIcon from '@hud/assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
-import { siteUrl } from '../../lib/baseDomain'
+import { siteUrl } from '@hud-host'
 import styles from '@hud/features/communities/CommunityCreateModal.module.css'
 
 const MEMBERSHIP = [

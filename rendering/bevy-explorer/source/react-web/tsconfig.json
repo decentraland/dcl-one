@@ -32,6 +32,7 @@
       "zod": ["./node_modules/zod"],
       "zod/*": ["./node_modules/zod/*"],
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
+      "@noble/*": ["./node_modules/@noble/*"],
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],
       "vitest": ["./node_modules/vitest"],

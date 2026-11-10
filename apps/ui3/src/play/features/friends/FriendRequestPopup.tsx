@@ -3,9 +3,9 @@
 // friends service accepted the action, then close by themselves.
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '@hud/design'
-import { splitName, userColor } from '../../lib/identity'
+import { splitName, userColor } from '@hud/lib/identity'
 import { useSession } from '../session/SessionContext'
-import { knownUserColor } from '../session/profileStore'
+import { knownUserColor } from '@hud/features/session/profileStore'
 import { onFriendEvent } from '@hud/features/friends/friendEvents'
 import styles from '@hud/features/friends/FriendRequestPopup.module.css'
 

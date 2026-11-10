@@ -3,9 +3,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Dropdown, EmptyState, EquippedItemCard, SearchField, Tabs, type TabItem } from '@hud/design'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
-import { fetchShop, marketplaceUrl, shopItemPrice, type ShopCategory, type ShopItem, type ShopSort } from './shopApi'
+import { fetchShop, marketplaceUrl, shopItemPrice, type ShopCategory, type ShopItem, type ShopSort } from '@hud/features/shop/shopApi'
 import styles from '@hud/features/shop/ShopPage.module.css'
 
 const SECTIONS: TabItem<ShopCategory>[] = [

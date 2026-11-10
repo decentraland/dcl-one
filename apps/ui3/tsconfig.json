@@ -18,6 +18,7 @@
       // library/ui/apps/hud has no node_modules of its own: React resolves to this app's copy.
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],
+      "@noble/*": ["./node_modules/@noble/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
       "vitest": ["./node_modules/vitest"]

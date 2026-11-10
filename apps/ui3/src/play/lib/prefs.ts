@@ -6,7 +6,7 @@
 // config.json), as CEF's own storage is gone when the client exits. Elsewhere (the credentialless
 // embed, app.html opened directly in dev) in localStorage.
 import { cefPrefs } from './cefNativeBridge'
-import { inShell } from './shell'
+import { inShell } from '@hud/lib/shell'
 
 // Every key the HUD stores. The shell moves these out of localStorage (migratePrefs).
 export const PREF = {

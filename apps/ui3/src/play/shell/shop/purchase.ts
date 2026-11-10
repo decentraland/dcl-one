@@ -67,7 +67,7 @@ import {
   type ShopOperationState,
   type ShopWalletKind
 } from '../../lib/shopProtocol'
-import { withUtm } from '../../lib/utm'
+import { withUtm } from '@hud/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'

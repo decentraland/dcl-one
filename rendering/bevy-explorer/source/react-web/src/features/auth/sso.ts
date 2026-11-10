@@ -9,7 +9,7 @@
 
 import { attributionParams, sessionId } from '../../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../../lib/entryParams'
-import { inShell, postToShell, shellRequest } from '../../lib/shell'
+import { inShell, postToShell, shellRequest } from '@hud/lib/shell'
 import { GUEST_SESSION_KEY } from '@hud/features/auth/thirdweb'
 
 // The standard Decentraland AuthIdentity, as serialized by @dcl/crypto / @dcl/single-sign-on
@@ -41,11 +41,6 @@ const SSO_PREFIX = 'single-sign-on-'
 // The guest account. It is kept apart from the `single-sign-on-*` entries so the other sites on
 // this origin don't treat it as a sign-in.
 const GUEST_IDENTITY_KEY = 'dcl-guest-identity'
-// The root key of the autopilot's local guest (shell/localGuest.ts), which signs each of its identities.
-// Shell-only, like the identity's ephemeral key: the app never reads this storage. Kept apart from
-// the sign-ins and from `GUEST_IDENTITY_KEY`: signing in, signing out or making another guest never
-// removes it, so the benchmark's address stays the same.
-const LOCAL_GUEST_ROOT_KEY = 'dcl-local-guest-root-key'
 
 // Expiration: prefer the top-level field; fall back to the `Expiration: <date>` line in the
 // ECDSA_EPHEMERAL payload (what `sites` parses), for identities stored without the top field.
@@ -110,21 +105,7 @@ export function storeGuestLogin(identity: AuthIdentity): void {
   localStorage.setItem(GUEST_IDENTITY_KEY, JSON.stringify(identity))
 }
 
-/** The local guest's root key, or null when none is kept. A value that is there but is no key throws:
- *  making a new one over it would be a different account. */
-export function getLocalGuestRootKey(): string | null {
-  const key = localStorage.getItem(LOCAL_GUEST_ROOT_KEY)
-  if (key == null) return null
-  if (!/^0x[0-9a-f]{64}$/.test(key)) throw new Error('the local guest key kept in this profile is not a key')
-  return key
-}
-
-export function storeLocalGuestRootKey(key: string): void {
-  localStorage.setItem(LOCAL_GUEST_ROOT_KEY, key)
-}
-
-// Forget the guest account. Without its session id the (thirdweb) wallet cannot be reached again.
-// The local guest's root key stays: that account is the benchmark's, not a sign-in.
+// Forget the guest account. Without its session id the wallet cannot be reached again.
 export function clearGuestLogin(): void {
   localStorage.removeItem(GUEST_IDENTITY_KEY)
   localStorage.removeItem(GUEST_SESSION_KEY)

@@ -3,7 +3,7 @@
 // holds no key: host.ts passes the identity in.
 
 import type { AuthChainLink, AuthIdentity } from '../../auth/sso'
-import { personalSign } from '../../../shell/sign'
+import { personalSign } from '@hud/shell/sign'
 
 /** An Ethereum personal_sign of `message` by the ephemeral key `address`, wherever that key is kept. */
 export type SignMessage = (address: string, message: string) => Promise<string>

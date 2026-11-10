@@ -5,7 +5,7 @@
 
 import { memo, useMemo, useState } from 'react'
 import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '@hud/design'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import type { Setting } from '@hud/engine/protocol'
 import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'

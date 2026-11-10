@@ -2,8 +2,8 @@
 // Plain fetch; the pure helpers below derive card fields from a DiscoverPlace and
 // are kept side-effect free so they're unit-testable.
 
-import { serviceUrl } from '../../lib/baseDomain'
-import { inShell, shellRequest } from '../../lib/shell'
+import { serviceUrl } from '@hud-host'
+import { inShell, shellRequest } from '@hud/lib/shell'
 import type { StoredLogin } from '../auth/sso'
 
 const API_BASE = `${serviceUrl('places')}/api`

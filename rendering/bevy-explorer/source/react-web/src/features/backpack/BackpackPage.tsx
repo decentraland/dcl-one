@@ -41,20 +41,21 @@ import { isCompatible } from '@hud/engine/bodyShape'
 import { hiddenBy } from '@hud/engine/avatarHides'
 import { previewFocusFor } from '@hud/features/backpack/previewFocus'
 import { isEditableTarget } from '@hud/lib/bindingLabels'
-import { catalystThumbUrl } from '../../lib/identity'
-import { CatalystImg } from '../../components/CatalystImg'
+import { catalystThumbUrl } from '@hud/lib/identity'
+import { CatalystImg } from '@hud/components/CatalystImg'
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { AvatarDragSurface } from '@hud/features/engine/AvatarDragSurface'
-import { EngineViewport } from '../engine/EngineViewport'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { EngineViewport } from '@hud/features/engine/EngineViewport'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
 import type { AvatarColorTarget, Emote, Outfit, Wearable } from '@hud/engine/protocol'
 import type { BackpackState, EmotesState, OutfitHistory, ProfileState } from '../session/useEngineSession'
 import styles from '@hud/features/backpack/BackpackPage.module.css'
-import { withUtm } from '../../lib/utm'
+import { withUtm } from '@hud/lib/utm'
+import { siteUrl } from '@hud-host'
 
 const SILHOUETTES = [silhouette1, silhouette2, silhouette3, silhouette4, silhouette5]
-const NAMES_URL = 'https://decentraland.org/marketplace/names/claim'
+const NAMES_URL = siteUrl('/marketplace/names/claim')
 
 type BackpackTab = 'wearables' | 'emotes'
 const BACKPACK_TABS: TabItem<BackpackTab>[] = [
@@ -88,8 +89,8 @@ const HINTS = [
 
 const RARITIES: Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const RARITY_RANK: Record<string, number> = Object.fromEntries(RARITIES.map((r, i) => [r, i]))
-const SHOP_URL = 'https://decentraland.org/shop'
-const MARKETPLACE_URL = 'https://decentraland.org/marketplace'
+const SHOP_URL = siteUrl('/shop')
+const MARKETPLACE_URL = siteUrl('/marketplace')
 
 type Section = 'categories' | 'outfits'
 const SECTION_TABS: TabItem<Section>[] = [

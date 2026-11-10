@@ -11,7 +11,7 @@ import { BASE_DOMAIN, SERVICE_OVERRIDES } from '../../lib/baseDomain'
 import { benchmarkSwitchesHonoured, bootMode } from '../../lib/bootMode'
 import { perfStreamPath } from '../../lib/entryParams'
 import { PAGE_DIR } from '../../lib/publicUrl'
-import { inShell, shellRequest } from '../../lib/shell'
+import { inShell, shellRequest } from '@hud/lib/shell'
 // Moved to lib/systemScene.ts; whether a link may override it is lib/launchGate.ts's call.
 import { SYSTEM_SCENE } from '../../lib/systemScene'
 import { launchOptionsFromUrl, type LaunchOptions } from '@hud/lib/webParams'

@@ -4,16 +4,12 @@
 // embedding page's to set, never a link's) and this page's own switches — the user-facing ones
 // with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
 
+import type { AcceptedParam } from '@hud/hostContract'
 import { WEB_PARAMS } from '@hud/engine/generated'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from './analytics'
 import { BENCHMARK_PARAMS } from './bootMode'
 
-export interface AcceptedParam {
-  name: string
-  doc: string
-  /** who consumes it: the engine (via the table) or this page */
-  reader: 'engine' | 'page'
-}
+export type { AcceptedParam } from '@hud/hostContract'
 
 // The page's own user-facing params — read by App / bootMode, never handed to the engine.
 const PAGE_PARAMS: Record<string, string> = {

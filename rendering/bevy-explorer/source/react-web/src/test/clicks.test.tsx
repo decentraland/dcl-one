@@ -10,7 +10,7 @@ import { renderSettled, fakeSession } from './harness'
 import { openFriendRequest } from '../features/friends/FriendRequestPopup'
 
 vi.mock('../features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
-vi.mock('../features/friends/friendDialogs', () => ({ confirmUnblock: vi.fn(async () => true) }))
+vi.mock('@hud/features/friends/friendDialogs', () => ({ confirmUnblock: vi.fn(async () => true) }))
 
 // CLICK coverage: render the real components and assert each click invokes the
 // session method. Tier 1 proves every method posts the right wire message, so

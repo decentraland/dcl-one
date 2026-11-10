@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { bugReportUrl } from '@hud/lib/bugReport'
-import { isNativeHud } from '../../lib/bootMode'
+import { isNativeHud } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
 import { openDebugPanel, useCommandResult, type DebugSection } from '@hud/features/debug/DebugPanel'
 

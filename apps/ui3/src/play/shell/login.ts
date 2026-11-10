@@ -11,7 +11,7 @@ import {
   storeGuestLogin,
   type StoredLogin
 } from '../features/auth/sso'
-import { personalSign } from './sign'
+import { personalSign } from '@hud/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it

@@ -15,7 +15,7 @@ import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
 import { roleLabel } from '@hud/features/communities/roles'
-import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
+import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from '@hud/features/chat/chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
 import { MessageText, mentionsMe } from '@hud/features/chat/chatText'
 import {
@@ -30,9 +30,9 @@ import {
   useTranslations,
   type Translation
 } from './translation'
-import { type ChatUser } from './ProfileCardPresentation'
+import { type ChatUser } from '@hud/features/chat/ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
-import { peekProfile, useProfile } from '../session/profileStore'
+import { peekProfile, useProfile } from '@hud/features/session/profileStore'
 import { isCancelKey } from '@hud/lib/bindingLabels'
 import { hudInsetRef } from '@hud/lib/hudInset'
 import { displayName, mentionName } from '@hud/engine/mention'

@@ -6,7 +6,7 @@
 // waits in prefs, so the sign-in screen's events survive the auth redirect.
 
 import { getPref, PREF, setPref } from './prefs'
-import { onShellMessage } from './shell'
+import { onShellMessage } from '@hud/lib/shell'
 
 export interface QueuedEvent {
   event: string

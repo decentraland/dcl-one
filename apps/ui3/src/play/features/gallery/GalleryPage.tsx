@@ -5,11 +5,11 @@
 
 import { useMemo, useState } from 'react'
 import { EmptyState, Icon, Spinner } from '@hud/design'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { PhotoDetail } from './PhotoDetail'
 import { photoTime, type GalleryState, type ProfileState } from '../session/useEngineSession'
 import type { GalleryPhoto } from '@hud/engine/protocol'
-import type { ChatUser } from '../chat/ProfileCardPresentation'
+import type { ChatUser } from '@hud/features/chat/ProfileCardPresentation'
 import styles from '@hud/features/gallery/GalleryPage.module.css'
 
 function monthLabel(ms: number): string {

@@ -3,7 +3,7 @@
 
 import { useEffect, useRef } from 'react'
 import { showToast, Spinner } from '@hud/design'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { EditorOffered } from '@hud/features/editorHost/config'
 import type { EngineSession, ProfileState } from '../session/useEngineSession'
 import type { EditorEntry } from './EditorHost'

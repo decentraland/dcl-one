@@ -3,9 +3,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverCard, DiscoverGrid, EmptyState, Tabs, type TabItem } from '@hud/design'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import type { EventsState, ProfileState } from '../session/useEngineSession'
-import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from './eventsApi'
+import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from '@hud/features/events/eventsApi'
 
 const SECTIONS: TabItem<EventsList>[] = [
   { id: 'live', label: 'Live now' },

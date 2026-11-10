@@ -12,6 +12,9 @@ const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
+// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own.
+const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -255,6 +258,9 @@ export default defineConfig({
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
       "@hud-host": hudHost,
+      "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
+      "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
+      "@noble/hashes/utils.js": noble("hashes/utils.js"),
       "@hud": hud,
       "@": src,
       "monaco-editor": monaco,

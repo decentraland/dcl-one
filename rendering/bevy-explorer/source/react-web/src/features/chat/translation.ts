@@ -7,7 +7,7 @@
 import { useSyncExternalStore } from 'react'
 import { LANGUAGES } from '@hud/engine/generated'
 import type { Setting } from '@hud/engine/protocol'
-import { serviceUrl } from '../../lib/baseDomain'
+import { serviceUrl } from '@hud-host'
 import { PREF, getPref, setPref } from '../../lib/prefs'
 import { parseMessage } from '@hud/features/chat/chatText'
 

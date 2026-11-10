@@ -7,8 +7,8 @@ import { landChainId } from '../../../shop/land/chain'
 import { landNetwork } from '@shop/land/contracts'
 import { CHAIN } from '@shop/model/chain'
 import { nameTokenIdOf } from '@shop/names/name'
-import { siteUrl } from '../../lib/baseDomain'
-import { withUtm } from '../../lib/utm'
+import { siteUrl } from '@hud-host'
+import { withUtm } from '@hud/lib/utm'
 
 /** The item a try-on puts on: its own URN, else its collections-v2 URN where one exists (Polygon). */
 export function tryOnUrn(item: CatalogItem): string | null {

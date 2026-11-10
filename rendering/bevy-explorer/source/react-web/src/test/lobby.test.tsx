@@ -6,7 +6,7 @@ import modalStyles from '@hud/features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../features/lobby/LobbyHome'
 import { fetchHomePlace, fetchRecents } from '../features/lobby/lobbyApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
-import { receiveProfile, resetProfileStore, setProfileRequester } from '../features/session/profileStore'
+import { receiveProfile, resetProfileStore, setProfileRequester } from '@hud/features/session/profileStore'
 import { SessionProvider } from '../features/session/SessionContext'
 import { fakeSession } from './harness'
 

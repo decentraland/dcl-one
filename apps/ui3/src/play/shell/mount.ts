@@ -12,7 +12,7 @@ import { onInWorld } from './googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { siteUrl } from '../lib/baseDomain'
 import { loadOnce } from '../lib/loadOnce'
-import { shellResponse } from '../lib/shellReply'
+import { shellResponse } from '@hud/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its

@@ -5,12 +5,12 @@
 import { openPopup } from '@hud/design'
 import { relationshipOf } from '@hud/lib/relationship'
 import { useSession } from '../session/SessionContext'
-import { useProfile } from '../session/profileStore'
+import { useProfile } from '@hud/features/session/profileStore'
 import { openPassport } from '../profile/Passport'
-import { ProfileCardPresentation, type CardAction, type ChatUser, type MenuContext } from '../chat/ProfileCardPresentation'
-import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
+import { ProfileCardPresentation, type CardAction, type ChatUser, type MenuContext } from '@hud/features/chat/ProfileCardPresentation'
+import { confirmBlock, confirmUnfriend, reportUser } from '@hud/features/friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
-import { splitName } from '../../lib/identity'
+import { splitName } from '@hud/lib/identity'
 
 export function ProfileCard({
   userId,

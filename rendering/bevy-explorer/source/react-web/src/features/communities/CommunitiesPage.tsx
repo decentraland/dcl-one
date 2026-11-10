@@ -7,8 +7,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, SearchField, Spinner, Tooltip } from '@hud/design'
-import { nameColor } from '../../lib/identity'
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { nameColor } from '@hud/lib/identity'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
 import type { Community } from '@hud/engine/protocol'

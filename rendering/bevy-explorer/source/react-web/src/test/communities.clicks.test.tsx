@@ -9,7 +9,7 @@ import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '@hud/design'
 import type { Community, CommunityDetailMessage, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@hud/engine/protocol'
 import type { CommunitiesState, CommunitySave } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
-import type { CardAction } from '../features/chat/ProfileCardPresentation'
+import type { CardAction } from '@hud/features/chat/ProfileCardPresentation'
 
 afterEach(resetPopups) // the community modal now lives on the module-level popup stack
 

@@ -3,7 +3,7 @@
 // card to play it. Built from the Figma-matched EmoteSlot (node 10386-4701).
 
 import { useState } from 'react'
-import { catalystThumbUrl } from '../../lib/identity'
+import { catalystThumbUrl } from '@hud/lib/identity'
 import { useWindowKeyDown } from '@hud/lib/useWindowKeyDown'
 import { EmoteSlot } from '@hud/features/emotes/EmoteSlot'
 import type { EmotesState } from '../session/useEngineSession'

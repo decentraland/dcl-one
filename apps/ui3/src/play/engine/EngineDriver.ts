@@ -8,7 +8,7 @@
 import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
 import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
 import { attachEngine, launchAnalytics } from '../lib/analytics'
-import { inShell, shellRequest } from '../lib/shell'
+import { inShell, shellRequest } from '@hud/lib/shell'
 import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
 import type { EngineRpc, LaunchHostOptions } from '@hud/engine/engineRpc'
 import { BridgeChannel } from './bridgeChannel'

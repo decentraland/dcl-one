@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 // Sources the HUD compiles from library/: the in-world Shop's logic, the catalyst's DTOs, the shared UI
 // foundations and the HUD UI itself (library/ui/apps/hud, shared with the Sites /play adaptation). library/
 // has no node_modules, so the packages they import resolve to this app's copies
-// (`SHARED_DEDUPE`), and the bundle holds one viem, zod, React and React Query. tsconfig.json maps the same
+// (`SHARED_DEDUPE`), and the bundle holds one viem, zod, React, React Query and @noble. tsconfig.json maps the same
 // paths for the type check. tooling/play-artifact.py hashes these trees with the HUD (`HUD_SHARED`); a test
 // keeps the lists together.
 export const SHARED_SOURCES: Record<string, string> = {
@@ -34,7 +34,7 @@ export const SHARED_TREES = [
   SHARED_SOURCES['@hud']
 ]
 
-export const SHARED_DEDUPE = ['react', 'react-dom', 'viem', 'zod', '@tanstack/react-query']
+export const SHARED_DEDUPE = ['react', 'react-dom', 'viem', 'zod', '@tanstack/react-query', '@noble/curves', '@noble/hashes']
 
 // library/ui registers its Inter faces (foundations/typography/inter.css) from Git LFS copies of
 // @fontsource-variable/inter 5.3.0, and the HUD's builds don't fetch LFS. Those faces take this app's copy of

@@ -6,10 +6,10 @@ import { useEditorHost } from '../features/editorHost/EditorHost'
 import type { DclEditorHostV1 } from '../features/editorHost/host/host'
 import { localSigner, signDeployment, signFetch } from '../features/editorHost/host/sign'
 import type { Signer } from '../features/editorHost/host/signer'
-import { shellRequest } from '../lib/shell'
+import { shellRequest } from '@hud/lib/shell'
 import { fakeSession } from './harness'
 
-vi.mock('../lib/shell', () => ({ inShell: true, postToShell: vi.fn(), shellRequest: vi.fn() }))
+vi.mock('@hud/lib/shell', () => ({ inShell: true, postToShell: vi.fn(), shellRequest: vi.fn() }))
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1

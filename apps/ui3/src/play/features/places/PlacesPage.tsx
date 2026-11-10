@@ -3,7 +3,7 @@
 // grid) is shared with the post-jump-in picker via PlacesBrowser; here a card click teleports
 // (parcel) or visits (world) and closes the page.
 
-import { MainMenuShell } from '../menu/MainMenuShell'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from './placesApi'
 import type { ProfileState } from '../session/useEngineSession'

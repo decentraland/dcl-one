@@ -12,7 +12,7 @@ const shell = vi.hoisted(() => ({
   handlers: new Map<string, (message: Record<string, unknown>) => void>(),
   request: vi.fn()
 }))
-vi.mock('../lib/shell', () => ({
+vi.mock('@hud/lib/shell', () => ({
   inShell: true,
   postToShell: vi.fn(),
   shellRequest: (method: string, params?: unknown) => shell.request(method, params),

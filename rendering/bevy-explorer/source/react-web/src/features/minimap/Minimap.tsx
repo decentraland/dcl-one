@@ -13,10 +13,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '@hud/design'
-import { EngineViewport } from '../engine/EngineViewport'
-import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '../map/atlas'
+import { EngineViewport } from '@hud/features/engine/EngineViewport'
+import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@hud/features/map/atlas'
 import { pinForCategories } from '@hud/features/map/mapArt'
-import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
+import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from '@hud/features/minimap/MinimapTiles'
 import { loadMinimapPlaces, placesNear, type MinimapPlace } from './minimapPlaces'
 import {
   MAX_VISIBLE_METERS,

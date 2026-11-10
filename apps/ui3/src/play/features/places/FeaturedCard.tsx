@@ -4,7 +4,7 @@
 
 import { useState } from 'react'
 import { placeCoords, placeCreator, type DiscoverPlace } from './placesApi'
-import { useCreatorName } from './useCreatorName'
+import { useCreatorName } from '@hud/features/places/useCreatorName'
 import styles from '@hud/features/places/FeaturedCard.module.css'
 
 function hueOf(id: string): number {

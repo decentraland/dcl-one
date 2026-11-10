@@ -15,7 +15,7 @@ export default defineConfig({
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
     ],
     // library/ has no node_modules of its own: viem and React resolve to ui3's copies.
-    dedupe: ["viem", "react", "react-dom"],
+    dedupe: ["viem", "react", "react-dom", "@noble/curves", "@noble/hashes"],
   },
   // The HUD UI lives outside this app; its assets load through the dev server like ui3's own.
   server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url))] } },

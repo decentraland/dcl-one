@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@hud/design'
 import { prefetchPlaces } from '../places/placesApi'
 import type { LoginFlow, LoginStatus } from '../session/useEngineSession'
-import styles from './LoadingAndLogin.module.css'
+import styles from '@hud/features/login/LoadingAndLogin.module.css'
 
 // Pending-CTA label: surface the real boot progress while the WASM downloads (the long phase),
 // e.g. "DOWNLOADING… 47%", then a generic "STARTING…" for the quick compile/GPU tail. The percent

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bridgeChannelName } from '@hud/engine/protocol'
-import { BASE_DOMAIN, DEFAULT_REALM } from '../../lib/baseDomain'
-import { PAGE_DIR } from '../../lib/publicUrl'
+import { BASE_DOMAIN, DEFAULT_REALM } from '@hud-host'
+import { PAGE_DIR } from '@hud-host'
 import { getLogin, rootAddress } from '../auth/sso'
 import type { EngineSession } from '../session/useEngineSession'
 import { CreatePage } from './CreatePage'
