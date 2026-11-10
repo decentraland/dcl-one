@@ -1,6 +1,7 @@
 use super::{
-    ipc_socket_name, run_host_connection, ConnectionEnd, HostScenes, NewSceneCommand,
-    EXIT_ON_SIDECAR_LOSS, KILL_GRACE_PERIOD,
+    ipc_socket_name, read_frame, run_host_connection, ConnectionEnd, HostScenes, NewSceneCommand,
+    Rejected, SandboxMode, SandboxStatus, SceneToEngine, EXIT_ON_SIDECAR_LOSS, HOST_EXIT_SANDBOX,
+    HOST_FRAME_BUDGET, KILL_GRACE_PERIOD, MAX_DECODE_DEPTH,
 };
 use anyhow::{anyhow, Context};
 use bevy::{
@@ -21,7 +22,7 @@ use std::{
     pin::Pin,
     process::Stdio,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex, RwLock, Weak,
     },
     time::{Duration, Instant},
@@ -44,6 +45,13 @@ const HOST_LOG_LINE_BYTES: usize = 4096;
 const HOST_LOG_LINES_PER_SECOND: u32 = 200;
 // and over this many per second of every host together
 const ALL_HOSTS_LOG_LINES_PER_SECOND: u32 = 1000;
+// a connected host that has not reported ready by then (V8 is starting) has failed to start
+const HOST_READY_TIMEOUT: Duration = Duration::from_secs(30);
+// how long a host that closed its connection before reporting gets to exit with its own status
+const HOST_EXIT_WAIT: Duration = Duration::from_secs(2);
+// The headless launcher's "permanently unavailable here" status (EX_CONFIG), for hosts that keep
+// failing the required sandbox.
+const EXIT_SANDBOX_UNAVAILABLE: i32 = 78;
 // how often a host whose scenes were all removed checks whether its grace period is over
 const RETIRE_POLL: Duration = Duration::from_millis(250);
 // how often the resident memory of per-scene hosts is sampled
@@ -96,6 +104,9 @@ pub struct HostOptions {
     pub spares: usize,
     /// `PerScene` only: a host whose resident memory goes over this many bytes is ended.
     pub memory_cap: Option<u64>,
+    /// What each host applies to itself before it takes a scene. A host whose report does not
+    /// meet it is ended without a scene.
+    pub sandbox: SandboxMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +126,8 @@ pub enum HostExitReason {
     Memory,
     /// It could not be started.
     Spawn,
+    /// It did not apply the sandbox the engine requires.
+    Sandbox,
 }
 
 impl HostExitReason {
@@ -124,6 +137,7 @@ impl HostExitReason {
             HostExitReason::Protocol => "protocol",
             HostExitReason::Memory => "memory",
             HostExitReason::Spawn => "spawn",
+            HostExitReason::Sandbox => "sandbox",
         }
     }
 }
@@ -143,6 +157,7 @@ pub struct HostExit {
 pub struct PoolInfo {
     pub placement: Placement,
     pub memory_cap: Option<u64>,
+    pub sandbox: SandboxMode,
     pub hosts: Vec<SceneHostInfo>,
     /// Hosts that ended while the engine still served them, since the pool started.
     pub lost_hosts: u64,
@@ -157,7 +172,21 @@ pub struct SceneHostInfo {
     pub scenes: Vec<SceneId>,
     /// Resident memory at the last sample; sampled only with [`Placement::PerScene`].
     pub rss_bytes: Option<u64>,
+    /// The sandbox it reported, once it has.
+    pub sandbox: Option<SandboxStatus>,
 }
+
+/// The scene host could not apply the sandbox the engine requires.
+#[derive(Debug)]
+pub struct SandboxRefused(pub String);
+
+impl std::fmt::Display for SandboxRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SandboxRefused {}
 
 /// How a scene host process ended.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -183,6 +212,7 @@ pub(crate) struct Host {
     pid: Mutex<Option<u32>>,
     // 0 until sampled
     rss_bytes: AtomicU64,
+    sandbox: Mutex<Option<SandboxStatus>>,
     // set, then notified, to make the IPC thread end the host
     end_reason: Mutex<Option<HostExitReason>>,
     end: Notify,
@@ -195,6 +225,7 @@ impl Host {
             state: Mutex::new(HostState::Starting),
             pid: Default::default(),
             rss_bytes: Default::default(),
+            sandbox: Default::default(),
             end_reason: Default::default(),
             end: Notify::new(),
         }
@@ -229,6 +260,7 @@ impl Host {
                 .map(|(id, _)| SceneId(Entity::from_bits(id)))
                 .collect(),
             rss_bytes: Some(self.rss_bytes.load(Ordering::Relaxed)).filter(|rss| *rss > 0),
+            sandbox: *self.sandbox.lock().unwrap(),
         }
     }
 }
@@ -243,7 +275,11 @@ pub(crate) struct HostCommand {
 }
 
 impl HostCommand {
-    fn scene_host(endpoint: &str, placement: Placement) -> anyhow::Result<Self> {
+    fn scene_host(
+        endpoint: &str,
+        placement: Placement,
+        sandbox: SandboxMode,
+    ) -> anyhow::Result<Self> {
         let mut program = std::env::current_exe().context("locate the scene host binary")?;
         program.pop();
 
@@ -257,19 +293,25 @@ impl HostCommand {
             program.set_extension("exe");
         }
         let mut args = vec![endpoint.into()];
-        let mut env = None;
+        if sandbox != SandboxMode::Off {
+            args.extend(["--sandbox".into(), sandbox.as_str().into()]);
+        }
         if placement == Placement::PerScene {
             args.extend([
                 "--v8-threads".into(),
                 PER_SCENE_V8_THREADS.to_string().into(),
             ]);
+        }
+        // a sandboxed host, shared or not, can still open outbound connections, so it gets none
+        // of the engine's own settings
+        let env = (placement == Placement::PerScene || sandbox != SandboxMode::Off).then(|| {
             let inherited = std::env::vars_os().filter(|(name, _)| {
                 PER_SCENE_HOST_ENV
                     .iter()
                     .any(|allowed| name.as_os_str() == *allowed)
             });
-            env = Some(inherited.collect());
-        }
+            inherited.collect()
+        });
         Ok(Self { program, args, env })
     }
 }
@@ -605,6 +647,8 @@ struct PoolEvents {
     ready_hosts: AtomicU32,
     // hosts that ended other than by retiring
     lost: AtomicU64,
+    // the sandbox the first host to report one reported
+    first_sandbox: Mutex<Option<SandboxStatus>>,
 }
 
 impl PoolEvents {
@@ -624,8 +668,11 @@ pub struct HostPool {
     events: Arc<PoolEvents>,
     // how long a per-scene host outlives the removal of its scene
     pub(crate) retire_after: Duration,
+    // how long a connected host has to report ready
+    pub(crate) ready_timeout: Duration,
     memory: Mutex<Option<Box<dyn SampleMemory>>>,
     pub(crate) sample_every: Duration,
+    inspect_refused: AtomicBool,
 }
 
 impl HostPool {
@@ -640,8 +687,10 @@ impl HostPool {
             hosts: Default::default(),
             events: Default::default(),
             retire_after: KILL_GRACE_PERIOD,
+            ready_timeout: HOST_READY_TIMEOUT,
             memory: Mutex::new(Some(memory)),
             sample_every: MEMORY_SAMPLE_PERIOD,
+            inspect_refused: AtomicBool::new(false),
         }
     }
 
@@ -712,7 +761,13 @@ impl HostPool {
     }
 
     /// Queues a scene on the host its placement picks. Never waits for a host to start.
-    pub(crate) fn place(&self, command: NewSceneCommand) -> anyhow::Result<()> {
+    pub(crate) fn place(&self, mut command: NewSceneCommand) -> anyhow::Result<()> {
+        if command.info.inspect && self.options.sandbox != SandboxMode::Off {
+            command.info.inspect = false;
+            if !self.inspect_refused.swap(true, Ordering::Relaxed) {
+                warn!("scenes run without the inspector: their scene hosts are sandboxed");
+            }
+        }
         let mut hosts = self.hosts.lock().unwrap();
         match self.options.placement {
             Placement::Shared => {
@@ -727,9 +782,12 @@ impl HostPool {
             }
             Placement::PerScene => {
                 hosts.retain(|entry| entry.host.state() != HostState::Lost);
-                let spare = hosts
-                    .iter_mut()
-                    .find(|entry| entry.spare && command.assign_to(&entry.host.scenes));
+                // a spare is ready once its sandbox report was accepted
+                let spare = hosts.iter_mut().find(|entry| {
+                    entry.spare
+                        && entry.host.state() == HostState::Ready
+                        && command.assign_to(&entry.host.scenes)
+                });
                 match spare {
                     Some(entry) => {
                         entry.spare = false;
@@ -760,7 +818,9 @@ impl HostPool {
             launcher: self.launcher.clone(),
             events: self.events.clone(),
             placement: self.options.placement,
+            sandbox: self.options.sandbox,
             retire_after: self.retire_after,
+            ready_timeout: self.ready_timeout,
         };
         let spawned = std::thread::Builder::new()
             .name("scene-host-ipc".to_owned())
@@ -797,9 +857,15 @@ impl HostPool {
         PoolInfo {
             placement: self.options.placement,
             memory_cap: self.options.memory_cap,
+            sandbox: self.options.sandbox,
             hosts: self.hosts(),
             lost_hosts: self.events.lost.load(Ordering::Relaxed),
         }
+    }
+
+    /// The sandbox the first host to report one reported.
+    pub(crate) fn first_sandbox(&self) -> Option<SandboxStatus> {
+        *self.events.first_sandbox.lock().unwrap()
     }
 
     /// Ends the running host with process id `pid`, as if it had exited. False if there is none.
@@ -830,7 +896,26 @@ struct HostThread {
     launcher: Arc<dyn Launch>,
     events: Arc<PoolEvents>,
     placement: Placement,
+    sandbox: SandboxMode,
     retire_after: Duration,
+    ready_timeout: Duration,
+}
+
+/// Why a scene host did not become ready.
+struct StartFailure {
+    reason: HostExitReason,
+    status: HostStatus,
+    error: anyhow::Error,
+}
+
+impl StartFailure {
+    fn spawn(error: anyhow::Error) -> Self {
+        Self {
+            reason: HostExitReason::Spawn,
+            status: HostStatus::default(),
+            error,
+        }
+    }
 }
 
 impl HostThread {
@@ -844,29 +929,37 @@ impl HostThread {
             .build()
             .context("build the scene host's runtime");
         let endpoint = ipc_socket_name();
-        let launched = rt.and_then(|rt| {
-            let command = HostCommand::scene_host(&endpoint, self.placement)?;
-            let link = rt.block_on(self.launcher.launch(endpoint, command))?;
+        let launched = rt.map_err(StartFailure::spawn).and_then(|rt| {
+            let command = HostCommand::scene_host(&endpoint, self.placement, self.sandbox)
+                .map_err(StartFailure::spawn)?;
+            let link = rt.block_on(self.start(endpoint, command))?;
             Ok((rt, link))
         });
         let (rt, mut link) = match launched {
             Ok(launched) => launched,
-            Err(e) => {
-                error!("runtime initialization failed: {e:#}");
+            Err(StartFailure {
+                reason,
+                status,
+                error,
+            }) => {
+                error!("runtime initialization failed: {error:#}");
                 self.host.set_state(HostState::Lost);
                 if let Some(ready) = ready {
-                    let _ = ready.send(Err(e));
+                    let _ = ready.send(Err(error));
                     return;
                 }
                 let failed = self.events.failed_spawns.fetch_add(1, Ordering::SeqCst) + 1;
                 self.report_loss(
-                    HostStatus::default(),
-                    HostExitReason::Spawn,
-                    "scene host failed to start".to_owned(),
+                    status,
+                    reason,
+                    format!("scene host failed to start: {error}"),
                 );
                 if self.events.unavailable() && EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                     error!("{failed} scene hosts in a row failed to start and none runs; exiting process");
-                    std::process::exit(1);
+                    std::process::exit(match reason {
+                        HostExitReason::Sandbox => EXIT_SANDBOX_UNAVAILABLE,
+                        _ => 1,
+                    });
                 }
                 return;
             }
@@ -932,6 +1025,83 @@ impl HostThread {
         }
     }
 
+    // Starts the host and reads its sandbox report. The host gets no scene before it is accepted.
+    async fn start(
+        &self,
+        endpoint: String,
+        command: HostCommand,
+    ) -> Result<HostLink, StartFailure> {
+        let mut link = self
+            .launcher
+            .launch(endpoint, command)
+            .await
+            .map_err(|error| StartFailure {
+                reason: HostExitReason::Spawn,
+                status: HostStatus::default(),
+                error,
+            })?;
+        let ready = tokio::time::timeout(self.ready_timeout, host_ready(&mut link.inbound)).await;
+        let (reason, error) = match ready {
+            Ok(Ok(Some(sandbox))) => {
+                self.events
+                    .first_sandbox
+                    .lock()
+                    .unwrap()
+                    .get_or_insert(sandbox);
+                *self.host.sandbox.lock().unwrap() = Some(sandbox);
+                if sandbox.satisfies(self.sandbox) {
+                    return Ok(link);
+                }
+                let refused = SandboxRefused(format!(
+                    "its sandbox {sandbox:?} does not meet {}",
+                    self.sandbox.as_str()
+                ));
+                (HostExitReason::Sandbox, refused.into())
+            }
+            // a host that cannot apply its sandbox says so with its exit status; any other early
+            // end (V8 failing to start, a kill) is a failed start
+            Ok(Ok(None)) => {
+                let status = match tokio::time::timeout(HOST_EXIT_WAIT, link.process.wait()).await {
+                    Ok(status) => status.unwrap_or_default(),
+                    Err(_) => {
+                        link.process.start_kill();
+                        link.process.wait().await.unwrap_or_default()
+                    }
+                };
+                let failure = if status.code == Some(HOST_EXIT_SANDBOX) {
+                    StartFailure {
+                        reason: HostExitReason::Sandbox,
+                        status,
+                        error: SandboxRefused(format!(
+                            "it could not apply the {} sandbox",
+                            self.sandbox.as_str()
+                        ))
+                        .into(),
+                    }
+                } else {
+                    StartFailure {
+                        reason: HostExitReason::Spawn,
+                        status,
+                        error: anyhow!("it ended before reporting ready ({status})"),
+                    }
+                };
+                return Err(failure);
+            }
+            Ok(Err(e)) => (HostExitReason::Protocol, e),
+            Err(_) => (
+                HostExitReason::Spawn,
+                anyhow!("it did not report ready within {:?}", self.ready_timeout),
+            ),
+        };
+        link.process.start_kill();
+        let status = link.process.wait().await.unwrap_or_default();
+        Err(StartFailure {
+            reason,
+            status,
+            error,
+        })
+    }
+
     // Reports the host's live scenes as lost: the record first, so it is there by the time a
     // scene is seen broken, then an error to each scene. Outside the runtime: it may wait. False
     // when the host ran no scene.
@@ -955,6 +1125,26 @@ impl HostThread {
             let _ = responses.blocking_send((scene, SceneResponse::Error(message.clone())));
         }
         true
+    }
+}
+
+// The sandbox a host reports in its first frame; `None` if it ends first.
+async fn host_ready(
+    inbound: &mut (impl AsyncRead + Unpin),
+) -> anyhow::Result<Option<SandboxStatus>> {
+    let buffer = match read_frame(inbound, &HOST_FRAME_BUDGET).await {
+        Ok(Some((buffer, _charge))) => buffer,
+        Ok(None) => return Ok(None),
+        Err(e) if e.is::<Rejected>() => return Err(e),
+        // a truncated frame or a read error: the host closed the connection
+        Err(_) => return Ok(None),
+    };
+    let mut decoder = rmp_serde::Deserializer::from_read_ref(&buffer);
+    decoder.set_max_depth(MAX_DECODE_DEPTH);
+    match <SceneToEngine as serde::Deserialize>::deserialize(&mut decoder) {
+        Ok(SceneToEngine::HostReady { sandbox }) => Ok(Some(sandbox)),
+        Ok(_) => Err(Rejected("the first frame is not host-ready".to_owned()).into()),
+        Err(e) => Err(Rejected(format!("undecodable frame of {} bytes: {e}", buffer.len())).into()),
     }
 }
 
@@ -1010,6 +1200,12 @@ pub fn scene_hosts() -> Vec<SceneHostInfo> {
 pub fn scene_host_pool() -> Option<PoolInfo> {
     let pool = POOL.read().unwrap();
     pool.as_ref().map(|pool| pool.info())
+}
+
+/// The sandbox the pool's first scene host reported, once one has.
+pub fn first_host_sandbox() -> Option<SandboxStatus> {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().and_then(|pool| pool.first_sandbox())
 }
 
 /// Ends the scene host with process id `pid` as if it had exited: its scenes are lost. False if

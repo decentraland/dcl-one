@@ -23,9 +23,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 mod pool;
 pub use pool::{
-    drain_host_exits, end_scene_host, init_runtime_with, scene_host_pool, scene_hosts, HostExit,
-    HostExitReason, HostOptions, HostState, Placement, PoolInfo, SceneHostInfo,
+    drain_host_exits, end_scene_host, first_host_sandbox, init_runtime_with, scene_host_pool,
+    scene_hosts, HostExit, HostExitReason, HostOptions, HostState, Placement, PoolInfo,
+    SandboxRefused, SceneHostInfo,
 };
+pub use scene_host_sandbox::{Landlock, Mode as SandboxMode, Status as SandboxStatus};
 
 // A frame over this ends the scene host. It must stay above the largest frame a host builds:
 // a CRDT snapshot carries a scene's whole store, which the scene runtime caps at 512 MiB.
@@ -37,6 +39,9 @@ const MAX_HOST_IPC_CHANNELS: usize = 65536;
 /// Reply channels one scene may hold open at once. The scene host ends a scene over it, so that
 /// sixteen scenes at their limit fill a host's.
 pub const MAX_SCENE_IPC_CHANNELS: usize = 4096;
+/// The scene host's exit status when it cannot apply the sandbox it was asked for. EX_CONFIG, as
+/// the headless launcher reads it: unavailable here, not worth a retry.
+pub const HOST_EXIT_SANDBOX: i32 = 78;
 // decoding recurses on the engine's stack, and scene RPC parameters are arbitrary JSON
 const MAX_DECODE_DEPTH: usize = 32;
 /// Bytes every scene host's frames may hold in the engine at once: a frame is charged twice its
@@ -152,6 +157,10 @@ pub enum SceneToEngine {
     SceneResponse(SceneId, SceneResponse),
     SystemApi(SystemApi),
     IpcMessage(u64, IpcMessage),
+    /// A host's first frame, and only that one: the sandbox it applied before reading any frame.
+    HostReady {
+        sandbox: SandboxStatus,
+    },
 }
 
 // The scenes one scene host was given, and where their responses go.
@@ -311,8 +320,17 @@ fn ipc_socket_name() -> String {
     }
 }
 
+/// Runs every scene in one scene host. `DCL_SCENE_HOST_SANDBOX` (`on` or `require`) sandboxes it, so
+/// a test suite can run under the sandbox.
 pub fn init_runtime() -> anyhow::Result<()> {
-    init_runtime_with(HostOptions::default())
+    let sandbox = match std::env::var("DCL_SCENE_HOST_SANDBOX") {
+        Err(std::env::VarError::NotPresent) => SandboxMode::Off,
+        mode => mode?.parse()?,
+    };
+    init_runtime_with(HostOptions {
+        sandbox,
+        ..Default::default()
+    })
 }
 
 // Serves one scene host until either direction ends. Runs on a current-thread runtime, since
@@ -639,6 +657,9 @@ async fn renderer_ipc_in(
                         token.cancel();
                     }
                 })
+            }
+            SceneToEngine::HostReady { .. } => {
+                return Err(Rejected("a second host-ready message".to_owned()).into());
             }
             SceneToEngine::SystemApi(system_command) => {
                 let mut scenes = scenes.lock().unwrap();

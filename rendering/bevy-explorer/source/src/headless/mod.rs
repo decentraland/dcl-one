@@ -17,4 +17,4 @@ mod web;
 pub use app::{assemble, config};
 pub use logs::{drain_scene_logs, scene_log_level, SceneLogReceivers};
 #[cfg(not(target_arch = "wasm32"))]
-pub use scene_hosts::{host_rss_by_scene, scene_host_exited_event};
+pub use scene_hosts::{host_rss_by_scene, scene_host_exited_event, scene_host_sandbox_event};

@@ -4355,11 +4355,13 @@ dependencies = [
  "platform",
  "reqwest",
  "rmp-serde",
+ "scene_host_sandbox",
  "serde",
  "serde_json",
  "sysinfo",
  "system_bridge",
  "tokio",
+ "tungstenite 0.21.0",
 ]
 
 [[package]]
@@ -5297,6 +5299,26 @@ dependencies = [
  "num-traits",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "enumflags2"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
+dependencies = [
+ "enumflags2_derive",
+]
+
+[[package]]
+name = "enumflags2_derive"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -7587,6 +7609,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de8b303297635ad57c9f5059fd9cee7a47f8e8daa09df0fcd07dd39fb22977f"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "landlock"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -11148,6 +11181,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "scene_host_sandbox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "scene_inspector"
 version = "0.1.0"
 dependencies = [
@@ -11299,6 +11344,15 @@ dependencies = [
  "serdect",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

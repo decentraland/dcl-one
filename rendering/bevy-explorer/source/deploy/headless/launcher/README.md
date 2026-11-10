@@ -26,6 +26,7 @@ enabled; you rarely need to run it by hand.
 | `--scene-hosts <shared\|per-scene>` | `shared` (default): one scene host process runs every scene. `per-scene`: each scene runs in its own scene host process, so losing one ends only that scene. |
 | `--scene-host-spares <n>` | `per-scene` only: scene hosts kept started with no scene, so a new scene does not wait for one. Defaults to 1. |
 | `--scene-host-memory-mb <n>` | `per-scene` only: a scene host running a scene whose resident memory goes over this many MiB is ended and reported with reason `memory`; idle spares are not capped. Memory is sampled every 2 seconds, so this is not a hard limit. No cap by default. |
+| `--scene-host-sandbox <off\|on\|require>` | The sandbox each scene host applies to itself before it takes a scene, on Linux (see [Scene host sandbox](#scene-host-sandbox)). `on` applies what the kernel offers and ends a host that cannot apply it at all; `require` also refuses a host that is not fully sandboxed. Defaults to `require` with `--orchestrated` on Linux, `off` otherwise. |
 
 `--scene-id`, `--private-key` and `--env` are accepted for hammurabi compatibility and ignored.
 
@@ -41,21 +42,22 @@ With `--scene-hosts per-scene`, a lost scene host process (it exited, closed its
 the engine ended it over a message it could not accept) ends only its scenes. The engine prints
 
 ```
-@bevy-ctl {"type":"scene-host-exited","scenes":["<hash>"],"code":<int|null>,"signal":<int|null>,"reason":"exit"|"protocol"|"memory"|"spawn"}
+@bevy-ctl {"type":"scene-host-exited","scenes":["<hash>"],"code":<int|null>,"signal":<int|null>,"reason":"exit"|"protocol"|"memory"|"spawn"|"sandbox"}
 ```
 
-before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene`
-for the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
+before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene` for
+the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
 connection, `protocol` when the engine ended it over a message or because it read nothing the
-engine sent for 10 seconds, `memory` when it went over `--scene-host-memory-mb`, and `spawn` when
-it could not be started. The engine exits with status 1 only after three host starts in a row
-fail while no other host is running. A removed scene's host process is ended once the scene's
-5-second kill grace period is over, and reported to nobody. A per-scene host starts with a fixed
-pool of two V8 worker threads and an environment holding only the variables it reads (logging,
-the scene log budget, temporary files, TLS roots, HTTP proxies, time zone and locale); on Linux
-it is killed when the engine exits, and the kernel's out-of-memory killer picks a host before the
-engine. With the default `shared`, losing the one host process exits
-the engine with status 1, as before. The `starting` event names the mode in `sceneHosts`.
+engine sent for 10 seconds, `memory` when it went over `--scene-host-memory-mb`, `spawn` when it
+could not be started, and `sandbox` when it did not apply the sandbox `--scene-host-sandbox
+require` asks for. The engine exits with status 1 only after three host starts in a row fail
+while no other host is running (`78` when they failed the sandbox). A removed scene's host process
+is ended once the scene's 5-second kill grace period is over, and reported to nobody. A per-scene
+host starts with a fixed pool of two V8 worker threads and an environment holding only the
+variables it reads (logging, the scene log budget, temporary files, TLS roots, HTTP proxies, time
+zone and locale); on Linux it is killed when the engine exits, and the kernel's out-of-memory
+killer picks a host before the engine. With the default `shared`, losing the one host process
+exits the engine with status 1, as before. The `starting` event names the mode in `sceneHosts`.
 
 Orchestrators that manage the process themselves can skip the CLI and resolve the engine
 path programmatically:
@@ -64,6 +66,53 @@ path programmatically:
 const { resolveBinary } = require('@dcl-regenesislabs/bevy-headless-server')
 spawn(resolveBinary(), ['--orchestrated'], { stdio: ['pipe', 'pipe', 'inherit'] })
 ```
+
+### Scene host sandbox
+
+On Linux each scene host sandboxes itself (Landlock and seccomp) after it connects to the engine
+and before it reads a scene. Sandboxed, it cannot start programs, read or write files beyond the
+system libraries, TLS and resolver configuration and time zone data, change file metadata, open
+Unix sockets or System V IPC, or signal, trace, reschedule or read the memory of another process.
+A sandboxed host, shared or per scene, starts with only the environment variables it reads (no
+`HOME`). It still opens its own TCP connections for fetch and WebSocket, and the address rules
+for those are enforced inside the host, which a host that is broken into does not keep: block
+cloud metadata endpoints (169.254.169.254, 169.254.170.2; with an IMDS hop limit of 1) and the
+internal networks the server should not reach at the network layer, for the whole container.
+
+**With `--orchestrated` on Linux the default is `require`.** A host that cannot meet it reports
+what the kernel offered and exits with status `78`. An engine that cannot start a sandboxed
+shared host exits with status `78` and prints that report on stderr; with `per-scene`, each such
+host ends its scene with `reason: "sandbox"`, and three in a row, with no host running, exit the
+engine with `78`. A host that ends before its report for another reason (V8 failed to start, it
+was killed), or that does not report within 30 seconds of connecting, is a failed start
+(`reason: "spawn"`; a shared host that fails this way exits the engine with status `1`).
+`--scene-host-sandbox off` runs hosts unsandboxed. `on` applies what the kernel offers, but it
+fails closed too: a host whose kernel or container refuses the sandbox calls themselves exits
+`78` like a refused `require`. The kernel needs Landlock (5.13 or later, enabled in the LSM list)
+and seccomp, and a container runtime whose seccomp profile allows `landlock_*` and `seccomp` (the
+default profiles of Docker 28.0 and 29.8 do). macOS and Windows hosts are not sandboxed:
+`require` refuses to start there.
+
+The `starting` event carries the mode, and the first host's report follows once (not with `off`):
+
+```
+@bevy-ctl {"type":"starting","realm":"...","sceneHosts":"shared","sceneHostSandbox":{"mode":"require"}}
+@bevy-ctl {"type":"scene-host-sandbox","mode":"require","landlock":"fullyEnforced"|"partiallyEnforced"|"notEnforced"|"unsupported","seccomp":true,"noNewPrivs":true}
+```
+
+`partiallyEnforced` means the kernel enforces an older Landlock version than the host asks for.
+On a sandboxed host a scene's `localStorage` is unavailable (it is a file, and the host has no
+`HOME`) and the scene inspector is off.
+
+Check a machine or image before deploying, with the sidecar next to the engine:
+
+```bash
+dcl_deno_ipc --sandbox-self-test --require
+```
+
+It applies the sandbox to itself, tries each action the sandbox denies and each it must allow,
+prints the result as one JSON line and exits `0` only if every check holds. In a container, do
+not run it as PID 1 (`docker run --init`).
 
 ## How the binary is delivered
 

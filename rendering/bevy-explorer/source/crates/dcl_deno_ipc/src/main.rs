@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bevy::{
     log::{
-        debug, info,
+        debug, error, info,
         tracing_subscriber::{self, EnvFilter},
         warn,
     },
@@ -9,8 +9,8 @@ use bevy::{
 };
 use common::rpc::{rmp_encode, IpcMessage, RequestContext, SCENE_IPC_CONTEXT};
 use dcl_deno_ipc::{
-    write_frame, write_msg, EngineToScene, SceneChannels, SceneToEngine, KILL_GRACE_PERIOD,
-    MAX_SCENE_IPC_CHANNELS,
+    write_frame, write_msg, EngineToScene, SandboxMode, SceneChannels, SceneToEngine,
+    HOST_EXIT_SANDBOX, KILL_GRACE_PERIOD, MAX_SCENE_IPC_CHANNELS,
 };
 use dcl_types::{
     SceneId, SceneResponse, SceneResponseReceiver, SceneResponseSender, TaggedSceneResponseSender,
@@ -37,6 +37,35 @@ fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")))
         .init();
 
+    let mut args = env::args().skip(1);
+    let name_str = args.next().expect("No socket name provided");
+    if name_str == "--sandbox-self-test" {
+        let mode = match args.next().as_deref() {
+            None => SandboxMode::On,
+            Some("--require") => SandboxMode::Require,
+            Some(arg) => panic!("unknown argument {arg}"),
+        };
+        std::process::exit(sandbox_self_test(mode));
+    }
+    let mut v8_threads = None;
+    let mut sandbox = SandboxMode::Off;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--v8-threads" => {
+                let threads = args.next().and_then(|n| n.parse::<u32>().ok());
+                let threads = threads.filter(|n| *n > 0);
+                v8_threads = Some(threads.expect("--v8-threads takes a positive count"));
+            }
+            "--sandbox" => {
+                let mode = args.next().map(|mode| mode.parse::<SandboxMode>());
+                sandbox = mode.expect("--sandbox takes off, on or require")?;
+            }
+            _ => panic!("unknown argument {arg}"),
+        }
+    }
+
+    let name = name_str.to_fs_name::<GenericFilePath>()?;
+
     info!("IPC scene host initializing");
 
     // spawn runtime
@@ -45,28 +74,42 @@ fn main() -> Result<()> {
         .build()
         .unwrap();
 
-    let mut args = env::args().skip(1);
-    let name_str = args.next().expect("No socket name provided");
-    let name = name_str.to_fs_name::<GenericFilePath>()?;
-    let mut v8_threads = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--v8-threads" => {
-                let threads = args.next().and_then(|n| n.parse::<u32>().ok());
-                let threads = threads.filter(|n| *n > 0);
-                v8_threads = Some(threads.expect("--v8-threads takes a positive count"));
-            }
-            _ => panic!("unknown argument {arg}"),
-        }
-    }
-
     // connect ipc stream
     let stream = rt.block_on(async move { Stream::connect(name).await.unwrap() });
 
-    let (recv_half, send_half) = stream.split();
+    let (recv_half, mut send_half) = stream.split();
+
+    // after the connect, which the sandbox would refuse, and before V8 starts its threads, which
+    // must start under it. `require` is checked here, so that the engine gets the report.
+    let required = sandbox;
+    let applied = match required {
+        SandboxMode::Require => SandboxMode::On,
+        mode => mode,
+    };
+    let sandbox = match scene_host_sandbox::apply(applied) {
+        Ok(status) => status,
+        Err(e) => {
+            error!("scene host sandbox not applied: {e:#}");
+            std::process::exit(HOST_EXIT_SANDBOX);
+        }
+    };
+    if !sandbox.satisfies(required) {
+        error!(
+            "scene host sandbox {sandbox:?} does not meet {}",
+            required.as_str()
+        );
+        let report = SceneToEngine::HostReady { sandbox };
+        let _ = rt.block_on(write_msg(&mut send_half, &report));
+        std::process::exit(HOST_EXIT_SANDBOX);
+    }
 
     // init engine
     dcl_deno::init_runtime(v8_threads);
+
+    rt.block_on(write_msg(
+        &mut send_half,
+        &SceneToEngine::HostReady { sandbox },
+    ))?;
 
     // init context
     let (close_sx, close_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -96,6 +139,29 @@ fn main() -> Result<()> {
     });
 
     Ok(())
+}
+
+// Applies the sandbox to this process and tries what it must deny and allow. Prints the report as
+// one JSON line; the exit code is 0 only when every check holds.
+fn sandbox_self_test(mode: SandboxMode) -> i32 {
+    let probe = scene_host_sandbox::Probe::prepare().expect("prepare the sandbox probe");
+    match scene_host_sandbox::apply(mode) {
+        Ok(status) => {
+            let report = probe.run();
+            let holds = report.all_hold();
+            let output = serde_json::json!({ "status": status, "report": report, "holds": holds });
+            println!("{output}");
+            if holds {
+                0
+            } else {
+                1
+            }
+        }
+        Err(e) => {
+            println!("{}", serde_json::json!({ "error": format!("{e:#}") }));
+            1
+        }
+    }
 }
 
 async fn scene_ipc_out(

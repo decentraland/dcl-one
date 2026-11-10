@@ -114,7 +114,10 @@ Do not carry old measurements forward as evidence for a new revision.
 The same package serves the multiplayer-server: the CLI passes `--orchestrated` through
 (stdin control protocol, no realm), and the package's main export exposes
 `resolveBinary()` for orchestrators that spawn the engine directly — replacing the
-Dockerfile's build-from-source stage with an `npm install`.
+Dockerfile's build-from-source stage with an `npm install`. With `--orchestrated` on Linux the
+engine requires each scene host to sandbox itself and exits `78` when the kernel cannot; the
+launcher README ("Scene host sandbox") lists the option, the control events and the
+deploy-time self-test.
 
 To validate a platform package, pack it and the launcher with `npm pack`, install both
 in a clean project, and run `./node_modules/.bin/bevy-headless-server --realm=<preview-url>`

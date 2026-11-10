@@ -23,6 +23,7 @@ pub(super) fn register(app: &mut App) {
                 ("Lost hosts since start", "lost"),
                 ("Messages rejected from hosts since start", "rejected"),
                 ("Memory cap per host (MiB)", "memoryCapMiB"),
+                ("Sandbox required of each host", "sandbox"),
             ],
             actions: &[],
             inputs: &[DebugInput {
@@ -38,8 +39,8 @@ pub(super) fn register(app: &mut App) {
         });
 }
 
-/// List the scene host processes: placement, each host's process, state, scenes and resident
-/// memory, and the hosts lost and messages rejected since start.
+/// List the scene host processes: placement, each host's process, state, scenes, resident memory
+/// and sandbox, and the hosts lost and messages rejected since start.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_hosts")]
 struct SceneHostsCommand;
@@ -98,6 +99,7 @@ fn state(pool: &PoolInfo, rejected: u64, scene_name: impl Fn(Entity) -> Option<S
                 },
                 "scenes": scenes,
                 "residentMiB": host.rss_bytes.map(|rss| (rss as f64 / MIB * 10.0).round() / 10.0),
+                "sandbox": host.sandbox,
             })
         })
         .collect::<Vec<_>>();
@@ -121,6 +123,7 @@ fn state(pool: &PoolInfo, rejected: u64, scene_name: impl Fn(Entity) -> Option<S
         "lost": pool.lost_hosts,
         "rejected": rejected,
         "memoryCapMiB": pool.memory_cap.map(|cap| cap as f64 / MIB),
+        "sandbox": pool.sandbox.as_str(),
         "unavailable": unavailable,
     })
 }
@@ -128,18 +131,24 @@ fn state(pool: &PoolInfo, rejected: u64, scene_name: impl Fn(Entity) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dcl_deno_ipc::SceneHostInfo;
+    use dcl_deno_ipc::{Landlock, SandboxMode, SandboxStatus, SceneHostInfo};
     use dcl_types::SceneId;
 
     fn pool(placement: Placement, memory_cap: Option<u64>) -> PoolInfo {
         PoolInfo {
             placement,
             memory_cap,
+            sandbox: SandboxMode::Require,
             hosts: vec![SceneHostInfo {
                 pid: Some(42),
                 state: HostState::Ready,
                 scenes: vec![SceneId(Entity::from_raw(7))],
                 rss_bytes: memory_cap.map(|_| 3 * 1024 * 1024 / 2),
+                sandbox: Some(SandboxStatus {
+                    landlock: Landlock::PartiallyEnforced,
+                    seccomp: true,
+                    no_new_privs: true,
+                }),
             }],
             lost_hosts: 2,
         }
@@ -162,6 +171,12 @@ mod tests {
         assert_eq!(state["memoryCapMiB"], 512.0);
         assert_eq!(state["lost"], 2);
         assert_eq!(state["rejected"], 5);
+        assert_eq!(state["sandbox"], "require");
+        assert_eq!(
+            state["hosts"][0]["sandbox"]["landlock"],
+            "partiallyEnforced"
+        );
+        assert_eq!(state["hosts"][0]["sandbox"]["seccomp"], true);
         assert!(state["unavailable"].as_object().unwrap().is_empty());
     }
 
