@@ -1323,7 +1323,9 @@ async fn update_operator_page_carries_the_total() {
 }
 
 async fn present(pool: &PgPool) -> bool {
-    indexer::ready_cursor(pool, NETWORK_MAINNET).await.is_some()
+    indexer::ready_cursor(pool, NETWORK_MAINNET, LAND, ESTATE)
+        .await
+        .is_some()
 }
 
 async fn set(pool: &PgPool, block: i64) {
@@ -2483,6 +2485,28 @@ async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
     assert!(!mark_folded(pool, &old, old_last as u64).await.unwrap());
     let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(row.folded_block, Some((START + 1_000) as i64));
+
+    // A node still configured with the old registries (a rolling deploy)
+    // never reads the published index as its own: its rights rows are of
+    // the old registries, the estate links of the new one. It falls back
+    // (here there is no fallback reader), and its status shows why.
+    assert!(full.ready().await.is_some());
+    let stale_reader = state_over(pool.clone(), old.clone(), None);
+    assert!(stale_reader.ready().await.is_none());
+    let answer = can_deploy(&stale_reader, (37, 55), ALICE).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    let (_, _, body) = get_json(&router(stale_reader), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], false);
+    assert_eq!(
+        (
+            body["landRegistry"].as_str(),
+            body["cursor"]["landRegistry"].as_str(),
+            body["cursor"]["estateRegistry"].as_str(),
+        ),
+        (Some(OLD_LAND), Some(LAND), Some(ESTATE))
+    );
+    let (_, _, body) = get_json(&router(full.clone()), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], true);
     db.drop().await;
 }
 
@@ -3612,7 +3636,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     sqlx::query("UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())").execute(&db.pool).await.unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_some()
     );
@@ -3633,7 +3657,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     .await
     .unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_none()
     );
@@ -3644,7 +3668,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     for (minutes, expected) in [(29, true), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
-            indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+            indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
             expected
@@ -3811,7 +3835,7 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
         )
         .await
         .unwrap();
-        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .unwrap();
         assert_eq!(

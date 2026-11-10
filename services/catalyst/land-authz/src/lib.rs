@@ -329,9 +329,16 @@ impl LandAuthzState {
         )
     }
 
-    /// The cursor row when the local index may answer on the database clock.
+    /// The cursor row when the local index of the configured registries may
+    /// answer on the database clock.
     pub async fn ready(&self) -> Option<Cursor> {
-        indexer::ready_cursor(&self.pool, &self.settings.network).await
+        indexer::ready_cursor(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
     }
 
     /// One indexed coordinate lookup on the caller's connection, including the

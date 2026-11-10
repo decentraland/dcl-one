@@ -104,11 +104,18 @@ fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
     }
 }
 
-/// The land_authz index is the LAND/estate source: published and recent.
+/// The land_authz index is the LAND/estate source: published, recent, and
+/// indexed from the mainnet registries these reads name.
 pub async fn land_ready(pool: &PgPool) -> bool {
-    crate::land_authz::indexer::ready_cursor(pool, crate::land_authz::NETWORK_MAINNET)
-        .await
-        .is_some()
+    use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, NETWORK_MAINNET};
+    crate::land_authz::indexer::ready_cursor(
+        pool,
+        NETWORK_MAINNET,
+        LAND_REGISTRY_MAINNET,
+        ESTATE_REGISTRY_MAINNET,
+    )
+    .await
+    .is_some()
 }
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published.

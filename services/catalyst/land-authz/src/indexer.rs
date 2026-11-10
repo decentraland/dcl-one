@@ -848,7 +848,10 @@ pub async fn set_cursor(
 /// switch registries: the new registries' log then starts exactly at `from`,
 /// wherever the old cursor stood, and the history timestamps are owed again.
 /// The old registries' events and rights are kept, since every reader names
-/// its registry; the estate links are not (a link does not record its
+/// its registry and the readiness gate requires the cursor to be of the
+/// reader's registries ([`observation_ready`]), so a node still configured
+/// with the old ones falls back instead of answering; the estate links are
+/// not (a link does not record its
 /// registry, so an old one would join a new estate of the same id), and the
 /// replay's fold rebuilds them from the new estate registry alone. A partial
 /// rewind never touches a cursor indexed from other registries. Returns
@@ -939,12 +942,36 @@ pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
         && age <= READY_WINDOW
 }
 
-/// `Some(cursor)` when the local index may answer on the database clock.
-/// a database error reads as not ready (the fallback, never a grant).
-pub async fn ready_cursor(pool: &PgPool, network: &str) -> Option<Cursor> {
+/// Whether a reader of `land_registry` and `estate_registry` may answer from
+/// the local index: the readiness rule ([`index_ready`]) on a cursor indexed
+/// from exactly those registries. A full replay can rebind the network's
+/// cursor to other registries ([`begin_replay`]); for a node still
+/// configured with the old ones, that published cursor is not its index.
+/// Its rights rows are of its own registries, while `estate_land` (which
+/// names no registry) now follows the cursor's estate registry, so an answer
+/// from both would mix two contracts.
+pub fn observation_ready(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+) -> bool {
+    observation.cursor.land_registry == land_registry
+        && observation.cursor.estate_registry == estate_registry
+        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+}
+
+/// `Some(cursor)` when the local index of these registries may answer on the
+/// database clock ([`observation_ready`]). A database error reads as not
+/// ready (the fallback, never a grant).
+pub async fn ready_cursor(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+) -> Option<Cursor> {
     match cursor_observed(pool, network).await {
         Ok(Some(observation))
-            if index_ready(&observation.cursor, observation.observed_at.and_utc()) =>
+            if observation_ready(&observation, land_registry, estate_registry) =>
         {
             Some(observation.cursor)
         }
