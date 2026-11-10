@@ -27,6 +27,8 @@
       - services/catalyst/**
       - schemas/**
       - library/**
+      # the SDK is TypeScript nothing here builds; SDK / CI tests it
+      - '!library/js-sdk-toolchain/**'
       - apps/sites/**
       - apps/ui3/**
       - tooling/image-*
@@ -60,6 +62,8 @@
       - services/catalyst/**
       - schemas/**
       - library/**
+      # the SDK is TypeScript nothing here builds; SDK / CI tests it
+      - '!library/js-sdk-toolchain/**'
       - apps/sites/**
       - apps/ui3/**
       - tooling/image-*
