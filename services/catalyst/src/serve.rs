@@ -687,6 +687,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         polygon_rpc_url: Config::non_empty(&config.economy.rpc_endpoint_polygon),
         max_gas_price_allowed_in_wei: config.economy.max_gas_price_allowed_in_wei,
         max_gas_limit: config.economy.max_gas_limit,
+        relayer_max_fee_per_gas_wei: config.economy.relayer_max_fee_per_gas_wei,
+        trial_mode: config.shop.credits_trial_mode,
         oz_relayer_url: Config::non_empty(&config.economy.oz_relayer_url),
         oz_relayer_id: Config::non_empty(&config.economy.oz_relayer_id),
         oz_relayer_api_key: Config::non_empty(&config.economy.oz_relayer_api_key),

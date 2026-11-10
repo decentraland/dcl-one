@@ -92,6 +92,7 @@ pub mod reconcile;
 pub mod settlement;
 pub mod store;
 pub mod stripe;
+pub mod trial;
 pub mod usage;
 pub mod wallet;
 pub mod wallet_flags;
@@ -205,6 +206,10 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `CREDITS_TRIAL_MODE` (false): a closed trial (`trial.rs`).
+    pub trial_mode: bool,
+    /// `CREDITS_TRIAL_BUYERS` (or `_FILE`): the trial's buyers.
+    pub trial_buyers: Option<String>,
     /// `SHOP_BASE_URL`: the grant notification's link (the old `${DECENTRALAND_URL}/shop`).
     pub shop_base_url: String,
 }
@@ -249,6 +254,8 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            trial_mode: false,
+            trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
         }
     }
@@ -287,6 +294,9 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    /// `Some` under `CREDITS_TRIAL_MODE`: only these buyers get new credit authorizations, and
+    /// the MANA top-up routes refuse.
+    pub trial: Option<trial::TrialBuyers>,
     pub shop_base_url: String,
 }
 
@@ -435,6 +445,54 @@ impl Settings {
                 "CREDITS_REVOKER_KEY is set but the CreditUsed index is not configured: revocations queue and are never sent"
             );
         }
+        // A trial issues credits through the on-chain authorization alone, to the buyers it
+        // names, and revokes each credit it sees consumed: no card rail, no mock card, and a
+        // revoker, or it does not start. An unreadable CREDITS_TRIAL_BUYERS_FILE already failed
+        // the start (Config::resolve_secret_files) and can't reach here as an empty list.
+        let trial = if raw.trial_mode {
+            if !raw.writes_enabled {
+                anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs OPS_WRITES_ENABLED=true: with the switch off every credit write, an authorization or an admin grant, answers 503"
+                );
+            }
+            if stripe_secret_key.is_some() {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_SECRET_KEY");
+            }
+            if raw.mock_card {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no mock card: unset CREDITS_MOCK_CARD");
+            }
+            // Parsed as the revoker's signer parses it: a key that would fail there (malformed, or
+            // a 32-byte scalar off the curve such as zero) would leave the node issuing without a
+            // revoker, since a revoker that can't be built is only logged.
+            match credits_revoker_key.as_deref() {
+                None => anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs CREDITS_REVOKER_KEY_FILE: every consumed credit is revoked"
+                ),
+                Some(key) if crate::evm::signer::parse_signing_key(key).is_err() => anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs a valid CREDITS_REVOKER_KEY_FILE: not a 32-byte secp256k1 key"
+                ),
+                Some(_) => {}
+            }
+            let buyers = trial::TrialBuyers::parse(raw.trial_buyers.as_deref())?;
+            if buyers.is_empty() {
+                tracing::warn!(
+                    "CREDITS_TRIAL_MODE is on and CREDITS_TRIAL_BUYERS names no one: no new credit is authorized"
+                );
+            } else {
+                tracing::info!(
+                    buyers = buyers.len(),
+                    "CREDITS_TRIAL_MODE: new credit authorizations only for the trial's buyers; MANA top-ups refuse"
+                );
+            }
+            Some(buyers)
+        } else {
+            if non_empty(raw.trial_buyers).is_some() {
+                tracing::warn!(
+                    "CREDITS_TRIAL_BUYERS is set but CREDITS_TRIAL_MODE is false: ignored"
+                );
+            }
+            None
+        };
         Ok(Self {
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
@@ -470,6 +528,7 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            trial,
             shop_base_url: non_empty(Some(raw.shop_base_url))
                 .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
                 .trim_end_matches('/')
