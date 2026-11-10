@@ -1,0 +1,95 @@
+// TODO(figma-ds): replace with the generated BlogArticle template when the DCL UI library lands
+import { useId, type CSSProperties } from 'react'
+import { GeneralLeftArrow } from '../../../foundations/icons/general'
+import { BlogAvatar } from './BlogAvatar'
+import { BlogBadge } from './BlogBadge'
+import { BlogPostCard } from './BlogPostCard'
+import { BlogRichText } from './BlogRichText'
+import { BlogShare } from './BlogShare'
+import { BlogShell } from './BlogShell'
+import { BlogTabsMenu } from './BlogTabsMenu'
+import {
+  BLOG_HOME,
+  formatBlogDate,
+  type BlogArticle,
+  type BlogCategory,
+  type BlogRelatedCard
+} from './blogModel'
+import styles from './BlogArticlePage.module.css'
+
+export type BlogArticlePageProps = {
+  post: BlogArticle
+  /** The post's absolute public URL, for sharing. */
+  shareUrl: string
+  related: readonly BlogRelatedCard[]
+  categories: readonly BlogCategory[]
+}
+
+/** One post: header, byline and share, the hero, the standfirst, the body, then related posts. */
+export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArticlePageProps) {
+  const relatedId = useId()
+  const date = formatBlogDate(post.publishedAt)
+  const sameCategory = related.every((r) => r.category.slug === post.category.slug)
+  return (
+    <BlogShell>
+      <BlogTabsMenu
+        categories={categories}
+        activeCategory={post.category.slug}
+        current="true"
+        query=""
+        sort="newest"
+        searchCategory=""
+      />
+      <article className={styles.article}>
+        <a className={styles.back} href={BLOG_HOME}>
+          <GeneralLeftArrow size={20} aria-hidden="true" />
+          Back to blog
+        </a>
+        <p className={styles.meta}>
+          <BlogBadge category={post.category} />
+          <span>
+            {date ? (
+              <>
+                <time dateTime={post.publishedAt}>{date}</time> ·{' '}
+              </>
+            ) : null}
+            {post.readMinutes} min read
+          </span>
+        </p>
+        <h1 className={styles.title}>{post.title}</h1>
+        <div className={styles.byline}>
+          {post.author ? (
+            <p className={styles.author}>
+              <BlogAvatar name={post.author} size="md" />
+              <span className={styles.authorName}>{post.author}</span>
+            </p>
+          ) : null}
+          <div className={styles.share}>
+            <BlogShare title={post.title} url={shareUrl} />
+          </div>
+        </div>
+        <div
+          className={styles.hero}
+          style={{ '--blog-hue': post.hue } as CSSProperties}
+          aria-hidden="true"
+        />
+        <p className={styles.lead}>{post.description}</p>
+        <BlogRichText blocks={post.body} />
+      </article>
+      {related.length ? (
+        <section className={styles.related} aria-labelledby={relatedId}>
+          <h2 className={styles.relatedTitle} id={relatedId}>
+            {sameCategory ? `More on ${post.category.title}` : 'More from the blog'}
+          </h2>
+          <ul className={styles.relatedList}>
+            {related.map((card) => (
+              <li key={card.slug}>
+                <BlogPostCard variant="related" post={card} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </BlogShell>
+  )
+}

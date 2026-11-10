@@ -1,0 +1,97 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-heading-4);
+  line-height: 1.65;
+}
+
+.p {
+  margin: 0;
+}
+
+.h2,
+.h3,
+.h4 {
+  margin: var(--dcl-space-32) 0 0;
+  color: var(--dcl-text-primary);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.body > :first-child {
+  margin-top: 0;
+}
+
+.h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  font-size: var(--dcl-font-size-heading-1);
+}
+
+/* The accent bar before a section heading. */
+.h2::before {
+  content: '';
+  flex: none;
+  align-self: stretch;
+  width: 5px;
+  max-height: 22px;
+  margin: auto 0;
+  min-height: 22px;
+  border-radius: var(--dcl-radius-xs);
+  background: linear-gradient(90deg, var(--dcl-brand-ruby) 15%, var(--dcl-brand-orange) 85%);
+}
+
+.h3 {
+  font-size: var(--dcl-font-size-heading-2);
+}
+
+.h4 {
+  font-size: var(--dcl-font-size-heading-4);
+}
+
+.quote {
+  margin: var(--dcl-space-16) 0;
+  padding-left: var(--dcl-space-16);
+  border-left: 4px solid var(--dcl-neutrals-onix);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-heading-2);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.quote p {
+  margin: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding-left: var(--dcl-space-24);
+}
+
+.list li::marker {
+  color: var(--dcl-brand-ruby);
+}
+
+@media (max-width: 767px) {
+  .body {
+    font-size: var(--dcl-font-size-body-md);
+  }
+
+  .h2 {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  .h3 {
+    font-size: var(--dcl-font-size-heading-4);
+  }
+
+  .quote {
+    font-size: var(--dcl-font-size-heading-5);
+  }
+}

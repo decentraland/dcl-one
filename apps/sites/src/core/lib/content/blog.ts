@@ -14,9 +14,15 @@ export type BlogPostCard = {
   title: string;
   description: string;
   publishedDate: string;
-  category: { title: string; url: string };
+  /** `publishedDate` as an ISO date (YYYY-MM-DD), or "" when it does not parse. */
+  publishedAt: string;
+  readMinutes: number;
+  category: { title: string; slug: string; url: string };
+  author: string;
   hue: number;
 };
+
+export type BlogSort = "newest" | "oldest";
 
 export type BlogPost = {
   id: string;
@@ -150,18 +156,92 @@ const BLOG_POSTS: BlogPost[] = [
   },
 ];
 
-export function blogPostCards(categorySlug?: string): BlogPostCard[] {
-  return BLOG_POSTS.filter(
-    (p) => !categorySlug || p.category.slug === categorySlug,
-  ).map((p) => ({
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** Reads the "JUL 2, 2026" dates the posts carry as an ISO date; "" when the value does not parse. */
+export function blogDateToIso(value: string): string {
+  const m = /^([A-Za-z]{3}) (\d{1,2}), (\d{4})$/.exec(value.trim());
+  if (!m) return "";
+  const month = MONTHS.indexOf(m[1].toUpperCase());
+  const day = Number(m[2]);
+  if (month < 0 || day < 1 || day > 31) return "";
+  return `${m[3]}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+const WORDS_PER_MINUTE = 200;
+
+/** Reading time of a post's body at 200 words per minute, at least one minute. */
+export function blogReadMinutes(body: BlogBlock[]): number {
+  const text = body.map((b) => (b.type === "ul" ? b.items.join(" ") : b.content)).join(" ");
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / WORDS_PER_MINUTE));
+}
+
+function toCard(p: BlogPost): BlogPostCard {
+  return {
     id: p.id,
     slug: p.slug,
     title: p.title,
     description: p.description,
     publishedDate: p.publishedDate,
-    category: { title: p.category.title, url: p.category.url },
+    publishedAt: blogDateToIso(p.publishedDate),
+    readMinutes: blogReadMinutes(p.body),
+    category: { title: p.category.title, slug: p.category.slug, url: p.category.url },
+    author: p.author.title,
     hue: p.hue,
-  }));
+  };
+}
+
+export function blogPostCards(categorySlug?: string): BlogPostCard[] {
+  return BLOG_POSTS.filter(
+    (p) => !categorySlug || p.category.slug === categorySlug,
+  ).map(toCard);
+}
+
+/** The categories that have at least one post, in the order they first appear. */
+export function blogCategoryList(): { slug: string; title: string }[] {
+  const seen = new Map<string, string>();
+  for (const p of BLOG_POSTS) if (!seen.has(p.category.slug)) seen.set(p.category.slug, p.category.title);
+  return [...seen].map(([slug, title]) => ({ slug, title }));
+}
+
+/** `?sort=`: "oldest" sorts oldest first; anything else, including no value, is newest first. */
+export function parseBlogSort(value: string | null | undefined): BlogSort {
+  return value === "oldest" ? "oldest" : "newest";
+}
+
+export const BLOG_QUERY_MAX = 200;
+
+/** `?q=` trimmed and capped; "" means no search. */
+export function parseBlogQuery(value: string | null | undefined): string {
+  return (value ?? "").trim().slice(0, BLOG_QUERY_MAX);
+}
+
+/** Sorts by publication date; posts whose date does not parse go last, in data order. */
+export function sortBlogCards(cards: BlogPostCard[], sort: BlogSort): BlogPostCard[] {
+  return cards
+    .map((card, index) => ({ card, index }))
+    .sort((a, b) => {
+      const x = a.card.publishedAt;
+      const y = b.card.publishedAt;
+      if (!x || !y) return x === y ? a.index - b.index : x ? -1 : 1;
+      if (x === y) return a.index - b.index;
+      return (x < y ? -1 : 1) * (sort === "oldest" ? 1 : -1);
+    })
+    .map(({ card }) => card);
+}
+
+/** The index listing: category filter, then a case-insensitive match of `query` in title or description, sorted. */
+export function searchBlogPosts({
+  category = "",
+  query = "",
+  sort = "newest",
+}: { category?: string; query?: string; sort?: BlogSort }): BlogPostCard[] {
+  const needle = query.trim().toLowerCase();
+  const matches = blogPostCards(category).filter(
+    (p) => !needle || p.title.toLowerCase().includes(needle) || p.description.toLowerCase().includes(needle),
+  );
+  return sortBlogCards(matches, sort);
 }
 
 export function findBlogPost(slug: string): BlogPost | null {
@@ -177,10 +257,13 @@ export function relatedBlogPosts(post: BlogPost, limit = 3) {
     .slice(0, limit)
     .map((p) => ({
       id: p.id,
+      slug: p.slug,
       title: p.title,
       publishedDate: p.publishedDate,
+      publishedAt: blogDateToIso(p.publishedDate),
       image: { url: "" },
       category: { title: p.category.title, slug: p.category.slug, url: p.category.url },
       url: `/blog/${p.slug}`,
+      hue: p.hue,
     }));
 }

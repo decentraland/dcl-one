@@ -18,6 +18,7 @@
     "index.ts",
     "css-modules.d.ts",
     "components",
+    "apps/sites",
     "foundations",
     "templates",
     "test",

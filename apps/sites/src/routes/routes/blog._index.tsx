@@ -1,10 +1,17 @@
 import { useEffect, useRef } from "react";
 
-import StBlogHome from "@ui/web/pages/StBlogHome";
-import { blogCategories } from "@ui/data/blogCategories";
-import "@ui/web/pages/stbloghome.css";
+import SitesChrome from "@ui/web/frames/SitesChrome";
+import { BlogIndexPage } from "@dcl/one-ui/apps/sites/blog";
+import "@dcl/one-ui/foundations/foundations.css";
 
-import { blogPostCards, type BlogPostCard } from "@/core/lib/content/blog";
+import {
+  blogCategoryList,
+  parseBlogQuery,
+  parseBlogSort,
+  searchBlogPosts,
+  type BlogPostCard,
+  type BlogSort,
+} from "@/core/lib/content/blog";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
@@ -30,19 +37,24 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { sid, wrap } = await pageLoader(request,  FALLBACK);
 
   const category = url.searchParams.get("category") ?? "";
-  const posts = blogPostCards(category);
+  const query = parseBlogQuery(url.searchParams.get("q"));
+  const sort = parseBlogSort(url.searchParams.get("sort"));
+  const posts = searchBlogPosts({ category, query, sort });
 
-  return wrap({ sid, posts, category });
+  return wrap({ sid, posts, category, query, sort, categories: blogCategoryList() });
 }
 
 type LoaderData = {
   sid: string;
   posts: BlogPostCard[];
   category: string;
+  query: string;
+  sort: BlogSort;
+  categories: { slug: string; title: string }[];
 };
 
 export default function BlogIndexRoute({ loaderData }: Route.ComponentProps) {
-  const { sid, posts, category } = loaderData as LoaderData;
+  const { sid, posts, category, query, sort, categories } = loaderData as LoaderData;
 
   const viewed = useRef(false);
   useEffect(() => {
@@ -61,8 +73,10 @@ export default function BlogIndexRoute({ loaderData }: Route.ComponentProps) {
   }
 
   return (
-    <div className="blog-index-route" onClickCapture={onPostClick}>
-      <StBlogHome posts={posts} categories={blogCategories(category)} />
-    </div>
+    <SitesChrome active="learn">
+      <div onClickCapture={onPostClick}>
+        <BlogIndexPage categories={categories} category={category} query={query} sort={sort} posts={posts} />
+      </div>
+    </SitesChrome>
   );
 }

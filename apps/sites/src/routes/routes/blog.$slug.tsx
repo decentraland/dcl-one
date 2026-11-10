@@ -1,10 +1,16 @@
 import { useEffect, useRef } from "react";
 
-import StBlogPost from "@ui/web/pages/StBlogPost";
 import SitesChrome from "@ui/web/frames/SitesChrome";
-import "@ui/web/pages/stblogpost.css";
+import { BlogArticlePage, BlogNotFound } from "@dcl/one-ui/apps/sites/blog";
+import "@dcl/one-ui/foundations/foundations.css";
 
-import { findBlogPost, relatedBlogPosts } from "@/core/lib/content/blog";
+import {
+  blogCategoryList,
+  blogDateToIso,
+  blogReadMinutes,
+  findBlogPost,
+  relatedBlogPosts,
+} from "@/core/lib/content/blog";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
@@ -32,8 +38,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const post = findBlogPost(slug);
   const related = post ? relatedBlogPosts(post) : [];
+  // The address this request was served under, so a shared link points at this deployment.
+  const shareUrl = post ? new URL(`/blog/${encodeURIComponent(post.slug)}`, request.url).href : "";
 
-  const payload = { slug, post, related, sid };
+  const payload = { slug, post, related, sid, shareUrl, categories: blogCategoryList() };
   return wrap(payload, { status: post ? 200 : 404 });
 }
 
@@ -46,7 +54,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 export default function BlogPostRoute({ loaderData }: Route.ComponentProps) {
-  const { slug, post, related, sid } = loaderData;
+  const { slug, post, related, sid, shareUrl, categories } = loaderData;
 
   const viewed = useRef(false);
   useEffect(() => {
@@ -59,42 +67,30 @@ export default function BlogPostRoute({ loaderData }: Route.ComponentProps) {
 
   if (!post) {
     return (
-      <SitesChrome>
-        <div style={EMPTY_WRAP}>
-          <h1 style={EMPTY_TITLE}>Post not found</h1>
-          <p style={EMPTY_SUB}>
-            We couldn&apos;t find a blog post at &ldquo;{slug}&rdquo;.
-          </p>
-          <a href="/blog" style={EMPTY_LINK}>
-            &#x2190; Back to the Blog
-          </a>
-        </div>
+      <SitesChrome active="learn">
+        <BlogNotFound slug={slug} />
       </SitesChrome>
     );
   }
 
-  return <StBlogPost post={post} related={related} state="ready" />;
+  return (
+    <SitesChrome active="learn">
+      <BlogArticlePage
+        post={{
+          slug: post.slug,
+          title: post.title,
+          description: post.description,
+          publishedAt: blogDateToIso(post.publishedDate),
+          readMinutes: blogReadMinutes(post.body),
+          category: { slug: post.category.slug, title: post.category.title },
+          author: post.author.title,
+          hue: post.hue,
+          body: post.body,
+        }}
+        shareUrl={shareUrl}
+        related={related}
+        categories={categories}
+      />
+    </SitesChrome>
+  );
 }
-
-const EMPTY_WRAP: React.CSSProperties = {
-  maxWidth: 640,
-  margin: "0 auto",
-  padding: "120px 24px",
-  color: "#fff",
-  textAlign: "center",
-};
-const EMPTY_TITLE: React.CSSProperties = {
-  fontSize: 32,
-  fontWeight: 800,
-  margin: "0 0 12px",
-};
-const EMPTY_SUB: React.CSSProperties = {
-  fontSize: 16,
-  color: "rgba(255,255,255,.7)",
-  margin: "0 0 24px",
-};
-const EMPTY_LINK: React.CSSProperties = {
-  color: "#ff2d55",
-  fontWeight: 600,
-  textDecoration: "none",
-};
