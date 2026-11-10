@@ -30,7 +30,12 @@ vi.mock("@/data/lib/account/credits", () => ({
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import type { SubscriptionDetails, SubscriptionResponse } from "@/data/lib/account/notifications";
-import { accountKeys } from "@/data/lib/account/queries";
+import {
+  ACCOUNT_STALE_MS,
+  accountKeys,
+  creditsStatusQuery,
+  subscriptionQuery,
+} from "@/data/lib/account/queries";
 import {
   useCreditsStatus,
   useOptOutOfCredits,
@@ -73,6 +78,11 @@ describe("account keys", () => {
   it("keep every account read under the lowercased account's private prefix", () => {
     expect(subscriptionKey).toEqual(["private", SIGNER.toLowerCase(), "account", "subscription"]);
     expect(creditsKey).toEqual(["private", SIGNER.toLowerCase(), "account", "credits-status"]);
+  });
+
+  it("declare their freshness, so loader data and the page agree on it", () => {
+    expect(subscriptionQuery(identity).staleTime).toBe(ACCOUNT_STALE_MS);
+    expect(creditsStatusQuery(identity).staleTime).toBe(ACCOUNT_STALE_MS);
   });
 });
 
