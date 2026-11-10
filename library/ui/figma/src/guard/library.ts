@@ -1,4 +1,7 @@
-import { componentRegistryEntries } from '../../component-generation.mjs'
+import {
+  componentRegistryEntries,
+  componentRegistryEntryName
+} from '../../component-generation.mjs'
 import { componentOwnerById, componentIdOfFile } from './component-identity.js'
 import path from 'node:path'
 import { exportStatements, publicExportSet, removePublicExports } from './exports.js'
@@ -117,20 +120,15 @@ async function removeLibraryEntries(root: string, owned: string[]): Promise<stri
     else {
       const data = JSON.parse(text)
       libraryComponentEntries(data)
+      // Entries are names or { name, limits }; match by the registry's own entry name, never the raw value.
+      const kept = (entries: unknown[]) =>
+        entries.filter((entry) => !keys.includes(`component:${componentRegistryEntryName(entry)}`))
       next =
         JSON.stringify(
           {
             ...data,
-            components: (data.components ?? []).filter(
-              (name: string) => !keys.includes(`component:${name}`)
-            ),
-            ...(data.internal === undefined
-              ? {}
-              : {
-                  internal: data.internal.filter(
-                    (name: string) => !keys.includes(`component:${name}`)
-                  )
-                })
+            components: kept(data.components ?? []),
+            ...(data.internal === undefined ? {} : { internal: kept(data.internal) })
           },
           null,
           2

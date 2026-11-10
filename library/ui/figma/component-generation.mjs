@@ -137,6 +137,11 @@ function accepted(entry) {
   return { name, limits: limits.map(({ id, text }) => ({ id, text })) }
 }
 
+/** The name of one validated registry entry, whether it is a bare name or { name, limits }. */
+export function componentRegistryEntryName(entry) {
+  return accepted(entry).name
+}
+
 /**
  * Names and accepted limits of a component registry (components/promotion.json), validated once for the
  * installer, the guard and the generation record.
