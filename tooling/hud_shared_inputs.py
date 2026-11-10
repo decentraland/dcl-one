@@ -11,6 +11,7 @@ import subprocess
 WEB = 'rendering/bevy-explorer/source/react-web/'
 MANIFEST = WEB + 'shared-inputs.json'
 DOMAINS = (WEB, 'library/ui/', 'library/shop/', 'library/catalyst-api/')
+RESOLVER_FILES = ('package.json', 'tsconfig.json', 'jsconfig.json')
 CONTROLS = tuple(WEB + name for name in ('package.json', 'package-lock.json', 'tsconfig.json',
                                        'vite.config.ts', 'vitest.config.ts', 'vite.shared.ts',
                                        'scripts/shared-inputs.mjs')) + ('library/ui/package.json', 'library/ui/foundations/typography/font-source.json')
@@ -87,21 +88,38 @@ class Tree:
             if stream.read(1) != b'\n':
                 raise ManifestError('Invalid HUD input blob framing: ' + name)
 
-    def read(self, name):
+    def check_regular(self, name, allow_missing=False):
         safe_path(name)
-        if name not in self.entries:
+        tracked = name in self.entries
+        if not tracked and not allow_missing:
             raise ManifestError('Missing or untracked HUD input: ' + name)
-        entry = self.entries[name]
+        entry = self.entries.get(name)
         if entry and (entry[0] not in ('100644', '100755') or entry[1] != 'blob'):
             raise ManifestError('Unsupported HUD input mode: ' + name)
         if self.revision:
-            return self.blobs[name] if name in self.blobs else self.command('cat-file', 'blob', entry[2])
-        path = self.root / name
-        parents = [self.root.joinpath(*PurePosixPath(name).parts[:index])
-                   for index in range(1, len(PurePosixPath(name).parts) + 1)]
-        if any(p.is_symlink() for p in parents) or not path.is_file():
-            raise ManifestError('Missing or linked HUD input: ' + name)
-        return path.read_bytes()
+            return tracked
+        parts = PurePosixPath(name).parts
+        for index in range(1, len(parts) + 1):
+            path = self.root.joinpath(*parts[:index])
+            try:
+                mode = path.lstat().st_mode
+            except FileNotFoundError:
+                if allow_missing:
+                    return False
+                raise ManifestError('Missing or linked HUD input: ' + name)
+            if stat.S_ISLNK(mode) or (index < len(parts) and not stat.S_ISDIR(mode)):
+                raise ManifestError('Missing or linked HUD input: ' + name)
+            if index == len(parts) and not stat.S_ISREG(mode):
+                raise ManifestError('Non-regular HUD input: ' + name)
+        if not tracked:
+            raise ManifestError('Missing or untracked HUD input: ' + name)
+        return True
+
+    def read(self, name):
+        self.check_regular(name)
+        if self.revision:
+            return self.blobs[name] if name in self.blobs else self.command('cat-file', 'blob', self.entries[name][2])
+        return (self.root / name).read_bytes()
 
 
 def root_paths(names):
@@ -114,7 +132,7 @@ def resolver_controls(names, inputs):
     found = set()
     for name in inputs:
         for directory in PurePosixPath(name).parents:
-            for control in ('package.json', 'tsconfig.json', 'jsconfig.json'):
+            for control in RESOLVER_FILES:
                 candidate = str(directory / control)
                 if candidate in names:
                     found.add(candidate)
@@ -154,8 +172,16 @@ def read_manifest(root, revision=None):
                 if isinstance(row, dict) and isinstance(row.get('path'), str)}
     tree.prefetch(candidates | declared)
     # A cache miss may rebuild only after every newly discovered input is safe.
-    for name in sorted(candidates):
+    missing_owned = set()
+    owned_roots = {name for name in roots if name.startswith(WEB + 'src/')
+                   and PurePosixPath(name).name not in RESOLVER_FILES}
+    for name in sorted(candidates | owned_roots):
+        if name in owned_roots and not tree.check_regular(name, allow_missing=True):
+            missing_owned.add(name)
+            continue
         tree.read(name)
+    if missing_owned:
+        stale.append('Removed owned HUD root; regenerate shared-inputs.json')
     if roots != current_roots:
         stale.append('HUD root inventory changed; regenerate shared-inputs.json')
     if not current_controls <= controls:
@@ -175,17 +201,21 @@ def read_manifest(root, revision=None):
             expected = row['sha256']
             if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
                 raise ManifestError('Invalid HUD input hash: ' + name)
-            content = tree.read(name)
             lfs = row.get('lfs')
             if lfs is not None:
                 if (not isinstance(lfs, dict) or set(lfs) != {'oid', 'size'} or lfs['oid'] != expected
                         or type(lfs['size']) is not int or lfs['size'] < 0):
                     raise ManifestError('Invalid HUD LFS identity: ' + name)
-                pointer = re.fullmatch(rb'version https://git-lfs.github.com/spec/v1\noid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n?', content)
-                valid = ((pointer[1].decode() == expected and int(pointer[2]) == lfs['size']) if pointer
-                         else sha(content) == expected and len(content) == lfs['size'])
+            if name in missing_owned:
+                valid = False
             else:
-                valid = not content.startswith(b'version https://git-lfs.github.com/spec/v1\n') and sha(content) == expected
+                content = tree.read(name)
+                if lfs is not None:
+                    pointer = re.fullmatch(rb'version https://git-lfs.github.com/spec/v1\noid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n?', content)
+                    valid = ((pointer[1].decode() == expected and int(pointer[2]) == lfs['size']) if pointer
+                             else sha(content) == expected and len(content) == lfs['size'])
+                else:
+                    valid = not content.startswith(b'version https://git-lfs.github.com/spec/v1\n') and sha(content) == expected
             if not valid:
                 stale.append('Stale HUD input: ' + name)
             if name in hashes and hashes[name] != expected:

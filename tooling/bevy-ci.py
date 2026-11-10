@@ -52,6 +52,7 @@ IMAGES_INPUTS = (
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
+    'tooling/hud_shared_inputs.py',
     'tooling/tests/test_play_*.py',
     'rust-toolchain*',
     'infra/packages/**',
@@ -233,7 +234,7 @@ def select(base, head):
     except _artifact.shared_inputs.ManifestError:
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
-    paths = changed_inputs(base, head, (*INPUTS, *sorted(shared_paths)))
+    paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths))))
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
     if bootstrap:
         selected['web'] = True

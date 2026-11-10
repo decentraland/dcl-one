@@ -1,6 +1,7 @@
 """Engine selection uses committed inputs; publication requires explicit producers."""
 import importlib.util
 import fnmatch
+import re
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,14 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_nix_play_tooling_dependencies_are_watched_by_image_selection(self):
+        contract = (ci.ROOT / 'infra/packages/play.nix').read_text()
+        paths = set(re.findall(r'/tooling/[a-zA-Z0-9_-]+\.py', contract))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path.lstrip('/'), pattern) for pattern in ci.IMAGES_INPUTS))
+
     def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
         for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
@@ -121,6 +130,14 @@ class SelectionTest(unittest.TestCase):
                 result = ci.select(before, self.commit())
                 self.assertTrue(result['web'])
                 self.assertFalse(any(result[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
+
+    def test_shared_reader_only_change_selects_images_without_engine_lanes(self):
+        self.write('tooling/hud_shared_inputs.py', 'changed image verification dependency')
+        head = self.commit()
+        self.assertTrue(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+        selected = ci.select(self.base, head)
+        self.assertTrue(selected['web'])
+        self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
     def test_sites_hud_review_does_not_select_engine_builds(self):
         self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))

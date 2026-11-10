@@ -169,6 +169,98 @@ class CheckedGraphTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertFalse(calls.exists())
 
+    def test_native_owned_root_deletion_and_rename_are_safe_misses_but_strict_reads_fail(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        name = WEB + 'src/main.ts'
+        original = (self.root / name).read_bytes()
+        manifest = (self.root / MANIFEST).read_bytes()
+        for operation in ('delete', 'rename', 'unstaged-delete'):
+            with self.subTest(operation=operation):
+                if operation == 'delete':
+                    self.git('rm', name)
+                elif operation == 'rename':
+                    self.git('mv', name, WEB + 'src/renamed.ts')
+                else:
+                    (self.root / name).unlink()
+                with self.assertRaises(reader.StaleManifestError):
+                    reader.read_manifest(self.root)
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls.read_text().strip(), 'bundle-native')
+                self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+                calls.unlink()
+                if operation == 'rename':
+                    (self.root / (WEB + 'src/renamed.ts')).unlink()
+                    self.git('add', '-u', WEB + 'src/renamed.ts')
+                (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+                (self.root / name).write_bytes(original)
+                self.git('add', name)
+
+    def test_native_missing_shared_or_resolver_and_unsafe_old_root_still_abort(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        manifest = (self.root / MANIFEST).read_bytes()
+        for name in (SHARED[0], WEB + 'package.json', WEB + 'src/main.ts'):
+            with self.subTest(path=name):
+                path = self.root / name
+                original = path.read_bytes()
+                path.unlink()
+                if name.endswith('main.ts'):
+                    path.symlink_to(self.root / 'missing-target.ts')
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(calls.exists())
+                self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+                if path.is_symlink():
+                    path.unlink()
+                path.write_bytes(original)
+
+    @unittest.skipIf(os.name == 'nt', 'Windows cannot materialize colon filenames')
+    def test_literal_manifest_paths_cannot_exclude_engine_changes_or_disable_static_globs(self):
+        name = ':(exclude)rendering'
+        self.write(name, 'visible literal control')
+        self.manifest(lambda data: data['controls'].append({'path': name, 'sha256': reader.sha(b'visible literal control')}))
+        self.manifest(lambda data: data['controls'].sort(key=lambda row: row['path']))
+        before = self.commit()
+        self.write('rendering/bevy-explorer/source/src/lib.rs', 'changed engine source')
+        head = self.commit()
+        with patch.object(ci, 'ROOT', self.root):
+            result = ci.select(before, head)
+            self.assertTrue(all(result[lane] for lane in ('clippy', 'test', 'headless', 'web', 'scenes')))
+        before = head
+        self.write('tooling/tests/test_play_literal.py', 'static glob must still match')
+        head = self.commit()
+        with patch.object(ci, 'ROOT', self.root):
+            self.assertIn('tooling/tests/test_play_literal.py', ci.changed_inputs(before, head, ci.INPUTS))
+            self.assertFalse(any(ci.select(before, head)[lane] for lane in ci.LANES))
+
+    def test_native_index_only_removed_owned_file_is_not_a_genuinely_missing_root(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        name = WEB + 'src/main.ts'
+        self.git('rm', '--cached', name)
+        self.assertTrue((self.root / name).is_file())
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+
+    def test_native_removed_old_src_resolver_aborts_instead_of_becoming_a_missing_root(self):
+        name = WEB + 'src/package.json'
+        self.write(name, '{}')
+        seal(self.root)
+        def record_control(data):
+            data['files'] = [row for row in data['files'] if row['path'] != name]
+            data['controls'].append({'path': name, 'sha256': reader.sha(b'{}')})
+            data['controls'].sort(key=lambda row: row['path'])
+        self.manifest(record_control)
+        self.commit()
+        reader.read_manifest(self.root)
+        source, calls, tools, recipe, env = self.native_recipe()
+        manifest = (self.root / MANIFEST).read_bytes()
+        self.git('rm', name)
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+        self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+
     def test_native_new_symlink_roots_and_controls_abort_before_rebuild(self):
         source, calls, tools, recipe, env = self.native_recipe()
         manifest = (self.root / MANIFEST).read_bytes()

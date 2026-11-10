@@ -202,10 +202,12 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
     !Array.isArray(manifest.edges)
   )
     throw Error('Invalid HUD shared-input contract')
-  const paths = sourceInventory(
-    root,
-    [...manifest.controls, ...manifest.files].map((entry) => entry.path)
-  )
+  const paths = strict
+    ? sourceInventory(
+        root,
+        [...manifest.controls, ...manifest.files].map((entry) => entry.path)
+      )
+    : undefined
   const required = CONTROL_PATHS
   if (required.some((file) => !manifest.controls.some((entry) => entry.path === file)))
     throw Error('Missing HUD resolver control')
@@ -217,13 +219,15 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
   )
     throw Error('Invalid HUD declared root inventory')
   const declaredControls = new Set(manifest.controls.map((entry) => entry.path))
-  for (const file of resolverControls(
-    paths,
-    [...manifest.roots, ...manifest.files.map((entry) => entry.path)],
-    hasGit(root) ? undefined : root
-  ))
-    if (strict && !declaredControls.has(file))
-      throw Error('New HUD resolver control; regenerate shared-inputs.json: ' + file)
+  if (strict) {
+    for (const file of resolverControls(
+      paths,
+      [...manifest.roots, ...manifest.files.map((entry) => entry.path)],
+      hasGit(root) ? undefined : root
+    ))
+      if (!declaredControls.has(file))
+        throw Error('New HUD resolver control; regenerate shared-inputs.json: ' + file)
+  }
   for (const group of ['controls', 'files']) {
     if (
       manifest[group].some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))
@@ -233,6 +237,7 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
     if (JSON.stringify(sorted(new Set(names))) !== JSON.stringify(names))
       throw Error('Invalid HUD shared-input list')
   }
+  const sharedFiles = new Set(manifest.files.map((entry) => entry.path))
   const seen = new Set()
   for (const entry of [...manifest.controls, ...manifest.files]) {
     if (!portable(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256) || seen.has(entry.path))
@@ -256,8 +261,17 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
         JSON.stringify(actual.lfs) !== JSON.stringify(entry.lfs)
       )
         throw Error('Stale HUD shared-input bytes: ' + entry.path)
-    } else {
-      const bytes = regular(root, entry.path)
+    } else if (sharedFiles.has(entry.path)) {
+      let bytes
+      try {
+        bytes = regular(root, entry.path)
+      } catch (error) {
+        if (error.code === 'ENOENT')
+          throw Error('Missing shared input ' + entry.path + '; run npm run gen:shared-inputs', {
+            cause: error
+          })
+        throw error
+      }
       if (bytes.subarray(0, 43).toString().startsWith('version https://git-lfs.github.com/spec/'))
         throw Error('Unmaterialized shared input: ' + entry.path)
     }

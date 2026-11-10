@@ -353,6 +353,82 @@ describe('the actual compiler and Vite shared-source contract', () => {
         assert.deepEqual(readFileSync(path.join(root, MANIFEST)), before)
       }
     )
+  for (const operation of ['delete', 'rename'])
+    it(
+      'loads actual Vite config after an owned root ' +
+        operation +
+        ' while strict validation refuses it',
+      async () => {
+        const file = WEB + '/src/local-edit.ts'
+        put(file, 'export const local=1;')
+        put(
+          WEB + '/vite.shared.ts',
+          "import {readSharedPaths} from './scripts/shared-inputs.mjs';export const paths=readSharedPaths(" +
+            JSON.stringify(root) +
+            ",{mode:'config'});"
+        )
+        const config = WEB + '/vite.config.ts'
+        put(config, "import './vite.shared';\n" + readFileSync(path.join(root, config)))
+        git('add', '.')
+        await save()
+        const before = readFileSync(path.join(root, MANIFEST))
+        if (operation === 'delete') {
+          rmSync(path.join(root, file))
+          git('add', '-u', file)
+        } else git('mv', file, WEB + '/src/renamed-edit.ts')
+        assert.throws(() => readSharedPaths(root), /Stale/)
+        const { loadConfigFromFile } = await import(
+          pathToFileURL(path.join(web, 'node_modules/vite/dist/node/index.js')).href
+        )
+        assert(
+          await loadConfigFromFile(
+            { command: 'serve', mode: 'development' },
+            path.join(web, 'vite.config.ts'),
+            web
+          )
+        )
+        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), before)
+      }
+    )
+  it('reports a missing shared input actionably and allows its canonical regeneration', async () => {
+    put(
+      WEB + '/vite.shared.ts',
+      "import {readSharedPaths} from './scripts/shared-inputs.mjs';export const paths=readSharedPaths(" +
+        JSON.stringify(root) +
+        ",{mode:'config'});"
+    )
+    const config = WEB + '/vite.config.ts'
+    put(config, "import './vite.shared';\n" + readFileSync(path.join(root, config)))
+    git('add', '.')
+    await save()
+    git('mv', 'library/ui/foundations/token.ts', 'library/ui/foundations/token-next.ts')
+    put(
+      'library/ui/foundations/index.ts',
+      readFileSync(path.join(root, 'library/ui/foundations/index.ts'), 'utf8').replace(
+        './token',
+        './token-next'
+      )
+    )
+    git('add', 'library/ui/foundations/index.ts')
+    assert.throws(
+      () => readSharedPaths(root, { mode: 'config' }),
+      /Missing shared input .*run npm run gen:shared-inputs/
+    )
+    const { loadConfigFromFile } = await import(
+      pathToFileURL(path.join(web, 'node_modules/vite/dist/node/index.js')).href
+    )
+    await assert.rejects(
+      loadConfigFromFile(
+        { command: 'serve', mode: 'development' },
+        path.join(web, 'vite.config.ts'),
+        web
+      ),
+      /Missing shared input .*run npm run gen:shared-inputs/
+    )
+    const regenerated = await save()
+    assert(regenerated.files.some((entry) => entry.path === 'library/ui/foundations/token-next.ts'))
+    assert(readSharedPaths(root).length > 0)
+  })
   it('keeps malformed metadata and unsafe physical inputs closed in config mode despite owned-byte drift', async () => {
     await save()
     const original = JSON.parse(readFileSync(path.join(root, MANIFEST)))
