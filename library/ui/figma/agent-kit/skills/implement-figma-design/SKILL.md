@@ -18,14 +18,30 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 
 ## Workflow
 
-1. **Read the design.** Take the file and node from the link the user gave you, and open the file the way the connected Figma MCP's own instructions say (some versions require a session first). Keep the link and the file key in memory only: never write them to a file, commit, pull request, issue, log or report. For every component instance, note its component set id (not the id of one variant), its variant properties (for example `Kind=Primary`, `Hover=No`) and the text it shows.
-2. **Resolve each instance** with the CLI, from `library/ui`:
+1. **Read the design.** Take the file and node from the link the user gave you, and open the file the way the connected Figma MCP's own instructions say (some versions require a session first). Keep the link, the file key and any component key in memory only: never write them to a file, commit, pull request, issue, log or report. In a design file, library instances do not carry the library's node ids, and `get_metadata` / `get_design_context` return only the instance's own id and its renamable layer name. For every component instance, read its component set name, variant properties and the text it shows with a read-only `use_figma` script, for example:
 
-   ```sh
-   pnpm --silent figma resolve --mapping-only --node-id <component set id> --variant "Kind=Primary" --text "Label=Buy"
+   ```js
+   const instance = await figma.getNodeByIdAsync('<instance id>')
+   const main = await instance.getMainComponentAsync()
+   const texts = Object.fromEntries(
+     instance.findAll((node) => node.type === 'TEXT').map((node) => [node.name, node.characters])
+   )
+   return {
+     name: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
+     variantProperties: instance.variantProperties ?? undefined,
+     texts
+   }
    ```
 
-   Repeat `--variant` and `--text` as needed. `--node-id` is preferred over `--name`. Without a capture only a component set id matches a mapping: pass the set id, not a variant id; a name lookup is refused. The command exits 0 with `ok: true`, or 1 with coded `errors`. List the instances you resolved when you report back, so the user can spot one you missed: the list comes from your reading of the design, the resolver does not walk the file.
+2. **Resolve the instances** with the CLI, from `library/ui`, in one batch read from standard input, so no file is written in the repository:
+
+   ```sh
+   pnpm --silent figma resolve --mapping-only --batch - <<'EOF'
+   [{ "name": "NavBar", "variantProperties": { "viewport": "desktop" }, "texts": { "Label": "Buy" } }]
+   EOF
+   ```
+
+   Each entry is one script result: `name`, `variantProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant "Prop=Value"` and `--text "Layer=Value"`.
 
 3. **Read the answer.** `ok: true`: import from `resolved.component.importSpecifier` and copy the props from `resolved.usage` and `resolved.propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
    Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The codes, severities and audiences in this table are checked against the resolver's registry; `action` is the authority on what to do.
@@ -48,6 +64,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 | `figma-drift`                 | warning  | Mapping and captured component differ in some options                                | Use only mapped values; mention the drift                                       |
 | `export-unverifiable`         | warning  | The export cannot be confirmed statically                                            | Let the app typecheck confirm the import                                        |
 | `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                    |
+| `identity-name-match`         | warning  | Identified by set name and variant properties, not a stable id                       | Repeat it when you report the result                                            |
 | `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                            |
 
 4. **Stop on any error.** Do not duplicate the component in the app and do not add a stopgap. Report it to the contributor (the user), in this form and nothing more; the `Code:` line tells the cases apart:
@@ -55,7 +72,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    ```text
    Unresolved component
    Component: <name from the design>
-   Node: <component set id>
+   Name or node: <component set name, or the node id you passed>
    Code: <code> (<details.reason>, when present)
    Variant properties: <Prop=Value, ...>
    Library: <context.library.name>@<context.library.version>
