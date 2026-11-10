@@ -1,16 +1,17 @@
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BackpackModal } from '@hud/features/backpack/BackpackModal'
-import modalStyles from '@hud/features/backpack/BackpackModal.module.css'
-import { LobbyHome } from '@hud/features/lobby/LobbyHome'
-import { fetchHomePlace, fetchRecents } from '@hud/features/lobby/lobbyApi'
-import type { DiscoverPlace } from '@hud/features/places/placesApi'
-import { receiveProfile, resetProfileStore, setProfileRequester } from '@hud/features/session/profileStore'
-import { SessionProvider } from '@hud/features/session/SessionContext'
-import { fakeSession } from '@hud/test/harness'
+import { BackpackModal } from '../../features/backpack/BackpackModal'
+import modalStyles from '../../features/backpack/BackpackModal.module.css'
+import { LobbyHome } from '../../features/lobby/LobbyHome'
+import { fetchHomePlace, fetchRecents } from '../../features/lobby/lobbyApi'
+import type { DiscoverPlace } from '../../features/places/placesApi'
+import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
+import { SessionProvider } from '../../features/session/SessionContext'
+import { fakeSession } from '../harness'
 
-vi.mock('@hud/features/lobby/lobbyApi', () => ({
+vi.mock('../../features/lobby/lobbyApi', () => ({
   fetchHomePlace: vi.fn(async () => null),
   fetchRecents: vi.fn(async () => []),
   fetchHighlighted: vi.fn(async () => []),
@@ -78,7 +79,7 @@ describe('lobby controls', () => {
 
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
     const sheet = document.createElement('style')
-    const css = readFileSync('../../../../library/ui/apps/hud/features/backpack/BackpackModal.module.css', 'utf8')
+    const css = readFileSync(join(__dirname, '../../features/backpack/BackpackModal.module.css'), 'utf8')
     sheet.textContent = css.replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => modalStyles[name] ? `.${modalStyles[name]}` : selector)
     document.head.append(sheet)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 1600, 850))

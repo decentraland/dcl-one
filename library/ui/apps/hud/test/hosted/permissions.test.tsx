@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { renderSession, enterAsGuest } from '@hud/test/harness'
-import { PermissionDialog } from '@hud/features/permissions/PermissionDialog'
-import { Sidebar } from '@hud/features/sidebar/Sidebar'
-import { PopupHost, resetPopups } from '@hud/design'
-import { fakeSession } from '@hud/test/harness'
-import type { PermissionRequestMessage, PermissionUsedMessage } from '@hud/engine/protocol'
-import type { PermissionSubject } from '@hud/features/session/useEngineSession'
+import { renderSettled, renderSession, enterAsGuest } from '../harness'
+import { PermissionDialog } from '../../features/permissions/PermissionDialog'
+import { Sidebar } from '../../features/sidebar/Sidebar'
+import { PopupHost, resetPopups } from '../../design'
+import { fakeSession } from '../harness'
+import type { PermissionRequestMessage, PermissionUsedMessage } from '../../engine/protocol'
+import type { PermissionSubject } from '../../features/session/useEngineSession'
 
 const REQ: PermissionRequestMessage = {
   kind: 'permissionRequest',
@@ -226,8 +226,8 @@ describe('permissions domain', () => {
 })
 
 describe('PermissionDialog', () => {
-  it('shows the scene name + the request clause', () => {
-    render(<PermissionDialog kind="request" request={REQ} onResolve={vi.fn()} />)
+  it('shows the scene name + the request clause', async () => {
+    await renderSettled(<PermissionDialog kind="request" request={REQ} onResolve={vi.fn()} />)
     expect(screen.getByText('Genesis Plaza')).toBeInTheDocument()
     expect(screen.getByText(/move you to a new realm/)).toBeInTheDocument()
     expect(screen.getByText('Jump to DCL Kickoff Challenge?')).toBeInTheDocument()
@@ -235,7 +235,7 @@ describe('PermissionDialog', () => {
 
   it('Allow resolves with the default "This visit" scope', async () => {
     const onResolve = vi.fn()
-    render(<PermissionDialog kind="request" request={REQ} onResolve={onResolve} />)
+    await renderSettled(<PermissionDialog kind="request" request={REQ} onResolve={onResolve} />)
     expect(screen.getByRole('radio', { name: 'This visit' })).toBeChecked()
     await userEvent.click(screen.getByRole('button', { name: 'Allow' }))
     expect(onResolve).toHaveBeenCalledWith(true, 'visit')
@@ -243,7 +243,7 @@ describe('PermissionDialog', () => {
 
   it('Deny carries the selected scope', async () => {
     const onResolve = vi.fn()
-    render(<PermissionDialog kind="request" request={REQ} onResolve={onResolve} />)
+    await renderSettled(<PermissionDialog kind="request" request={REQ} onResolve={onResolve} />)
     await userEvent.click(screen.getByRole('radio', { name: 'Always for Realm' }))
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }))
     expect(onResolve).toHaveBeenCalledWith(false, 'realm')
@@ -407,7 +407,7 @@ describe('reset defaults', () => {
 describe('PermissionDialog review', () => {
   it('describes a visit answer and offers the same scopes, "This visit" first', async () => {
     const onRule = vi.fn()
-    render(<PermissionDialog kind="review" subject={SUBJECT} initial="visit" onRule={onRule} />)
+    await renderSettled(<PermissionDialog kind="review" subject={SUBJECT} initial="visit" onRule={onRule} />)
     expect(screen.getByText(/Genesis Plaza/).parentElement?.textContent).toMatch(/may not open a url in your browser this visit/)
     expect(screen.getAllByRole('radio').map((r) => r.parentElement?.textContent)).toEqual(['This visit', 'Always for Scene', 'Always for Realm', 'Always for Global'])
     expect(screen.getByRole('radio', { name: 'This visit' })).toBeChecked()
@@ -417,11 +417,11 @@ describe('PermissionDialog review', () => {
 
   it('a stored rule opens on its own level: "may not" for a scene rule, "Scenes …" for realm and global', async () => {
     const onRule = vi.fn()
-    const { unmount } = render(<PermissionDialog kind="review" subject={{ ...SUBJECT, scope: 'scene' }} initial="scene" onRule={onRule} />)
+    const { unmount } = await renderSettled(<PermissionDialog kind="review" subject={{ ...SUBJECT, scope: 'scene' }} initial="scene" onRule={onRule} />)
     expect(screen.getByText(/Genesis Plaza/).parentElement?.textContent).toMatch(/may not open a url/)
     expect(screen.getByRole('radio', { name: 'Always for Scene' })).toBeChecked()
     unmount()
-    render(<PermissionDialog kind="review" subject={{ ...SUBJECT, scope: 'global', value: 'Ask' }} initial="global" onRule={onRule} />)
+    await renderSettled(<PermissionDialog kind="review" subject={{ ...SUBJECT, scope: 'global', value: 'Ask' }} initial="global" onRule={onRule} />)
     expect(screen.getByText(/Scenes ask before they open a url/)).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Always for Global' })).toBeChecked()
     await userEvent.click(screen.getByRole('button', { name: 'Allow' }))
@@ -430,19 +430,19 @@ describe('PermissionDialog review', () => {
 })
 
 describe('sidebar permissions button', () => {
-  afterEach(resetPopups)
+  afterEach(() => act(() => resetPopups()))
 
-  it('shows the unseen refused count', () => {
+  it('shows the unseen refused count', async () => {
     const session = fakeSession()
     session.permissions.unseenDenied = 2
-    render(<Sidebar session={session} />)
+    await renderSettled(<Sidebar session={session} />)
     expect(screen.getByRole('button', { name: 'Scene permissions' }).textContent).toBe('2')
   })
 
   it('lists visit answers; a click clears the answer and opens the review dialog', async () => {
     const session = fakeSession()
     session.permissions.visit = [{ ty: 'Fetch', sceneName: 'Genesis Plaza', scene: 'bafkscenehash', realm: USED.realm, allowed: true }, { ...SUBJECT, allowed: false }]
-    render(
+    await renderSettled(
       <>
         <Sidebar session={session} />
         <PopupHost />
@@ -463,7 +463,7 @@ describe('sidebar permissions button', () => {
   it('opening the list marks the badge seen and loads the rules; a rule row clears the rule and opens the review on its level', async () => {
     const session = fakeSession()
     session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: RULES }
-    render(
+    await renderSettled(
       <>
         <Sidebar session={session} />
         <PopupHost />
@@ -486,7 +486,7 @@ describe('sidebar permissions button', () => {
     const session = fakeSession()
     session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { ...RULES, scene: [{ ty: 'OpenUrl', allow: 'Allow' }] } }
     session.permissions.triggered = [{ ty: 'OpenUrl', allowed: false }, { ty: 'Fetch', allowed: true }]
-    const { rerender } = render(<Sidebar session={session} />)
+    const { rerender } = await renderSettled(<Sidebar session={session} />)
     await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
     const hits = (): string[] => screen.getAllByRole('button', { name: /open a url|fetch data/ }).filter((b) => b.hasAttribute('data-hit')).map((b) => b.textContent)
     // the scene rule shadows the global one; the realm Fetch rule is the one in force for Fetch
@@ -497,7 +497,7 @@ describe('sidebar permissions button', () => {
   })
 
   it('closes on a pointerdown outside, the event the engine canvas lets through', async () => {
-    render(<Sidebar session={fakeSession()} />)
+    await renderSettled(<Sidebar session={fakeSession()} />)
     await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
     expect(screen.getByRole('dialog', { name: 'Scene permissions' })).toBeInTheDocument()
     fireEvent.pointerDown(document.body)
@@ -506,7 +506,7 @@ describe('sidebar permissions button', () => {
 
   it('Reset defaults asks first, then resets', async () => {
     const session = fakeSession()
-    render(
+    await renderSettled(
       <>
         <Sidebar session={session} />
         <PopupHost />

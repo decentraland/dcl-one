@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { ToastHost } from '@hud/design'
-import type { Community } from '@hud/engine/protocol'
-import { renderSession, enterAsGuest } from '@hud/test/harness'
-import { peekProfile } from '@hud/features/session/profileStore'
+import { ToastHost } from '../../design'
+import type { Community } from '../../engine/protocol'
+import { renderSession, enterAsGuest } from '../harness'
+import { peekProfile } from '../../features/session/profileStore'
 
 // DOMAIN: communities — browse list, join/leave, per-community detail.
 describe('communities domain', () => {
@@ -57,6 +57,7 @@ describe('communities domain', () => {
     expect(h.session().communities.detail?.id).toBe('c1')
     expect(h.session().communities.detail?.members).toHaveLength(1)
   })
+
   // A save's answer belongs to the form that asked: one that comes after the form closed is dropped.
   it('drops a save answer that arrives after the form closed', async () => {
     const h = renderSession()
