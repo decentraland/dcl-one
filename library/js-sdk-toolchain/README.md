@@ -91,16 +91,16 @@ their placeholder version; the run stamps the one you give it.
 
 1. Run `SDK / Release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
-   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag or a
-   version any of the five packages already has on npm under their current scope.
+   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
    others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
    prerelease) and creates the `sdk-v<version>` release with the tarballs, the `library/protocol`
    commit the packages were generated from, and the SDK and protocol commits since the previous
    `sdk-v*` tag. The `notes` input goes at the top of the body.
 
-If publishing succeeded but the release step failed, create the release by hand with
-`gh release create sdk-v<version> --target <sha> --latest=false`; a rerun stops at the npm check.
+If a run stops midway (some packages published, or all of them but no release), rerun its failed
+jobs: packages already on npm are skipped and the release is created. A new run with the same
+version from the same commit does the same.
 
 ## Testing Infrastructure
 

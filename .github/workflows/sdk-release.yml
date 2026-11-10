@@ -38,7 +38,7 @@ jobs:
       - name: Release from main only
         if: github.ref != 'refs/heads/main'
         run: |
-          echo "SDK releases are cut from main, not ${{ github.ref }}" >&2
+          echo "SDK releases are cut from main, not $GITHUB_REF" >&2
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,7 +65,7 @@ jobs:
             echo "prerelease=$prerelease"
             echo "dist-tag=$dist_tag"
           } >> "$GITHUB_OUTPUT"
-      - name: The tag and the npm versions are new
+      - name: The tag is new
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SCOPE: ${{ steps.version.outputs.scope }}
@@ -76,10 +76,10 @@ jobs:
             echo "$TAG already exists; pick a new version" >&2
             exit 1
           fi
+          # without the tag, a version already on npm is a release that stopped midway: the run completes it
           for name in $SDK_PACKAGES; do
             if npm view "$SCOPE/$name@$VERSION" version > /dev/null 2>&1; then
-              echo "$SCOPE/$name@$VERSION is already on npm; pick a new version" >&2
-              exit 1
+              echo "::warning::$SCOPE/$name@$VERSION is already on npm; this run completes that release"
             fi
           done
   build:
@@ -164,8 +164,12 @@ jobs:
         run: |
           set -euo pipefail
           for name in $SDK_PACKAGES; do
-            # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-            npm publish "./dist/${SCOPE#@}-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
+            if npm view "$SCOPE/$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$SCOPE/$name@$VERSION is already on npm; skipping"
+            else
+              # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
+              npm publish "./dist/${SCOPE#@}-$name-$VERSION.tgz" --access public --tag "$DIST_TAG"
+            fi
           done
       - name: Create the tag and the release
         env:
