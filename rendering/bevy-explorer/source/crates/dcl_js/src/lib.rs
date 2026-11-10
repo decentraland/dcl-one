@@ -333,6 +333,19 @@ pub fn player_identity(state: &impl State) -> Result<PbPlayerIdentityData, anyho
         .map_err(|e| anyhow!(format!("{e:?}")))
 }
 
+/// The player address a scene's `localStorage` is partitioned by. An error on a scene server,
+/// which has no player, and until the player's identity has reached the scene.
+pub fn storage_address(state: &impl State) -> Result<String, anyhow::Error> {
+    if state.borrow::<CrdtContext>().is_server {
+        anyhow::bail!("localStorage is not available on a scene server");
+    }
+    player_identity(state)
+        .ok()
+        .map(|identity| identity.address)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| anyhow!("localStorage is not available until the player has signed in"))
+}
+
 #[cfg(test)]
 pub(crate) mod test_state {
     use super::State;
@@ -373,6 +386,51 @@ pub(crate) mod test_state {
                 .remove(&TypeId::of::<T>())
                 .map(|v| *v.downcast().unwrap())
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_address_tests {
+    use super::{test_state::TestState, *};
+    use dcl_component::DclWriter;
+
+    fn state(is_server: bool, address: Option<&str>) -> TestState {
+        let mut s = TestState::default();
+        s.put(CrdtContext::new(
+            dcl_types::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            is_server,
+        ));
+        let mut store = CrdtStore::default();
+        if let Some(address) = address {
+            let mut buf = Vec::new();
+            DclWriter::new(&mut buf).write(&PbPlayerIdentityData {
+                address: address.to_owned(),
+                is_guest: false,
+            });
+            store.force_update(
+                SceneComponentId::PLAYER_IDENTITY_DATA,
+                CrdtType::LWW_ANY,
+                SceneEntityId::PLAYER,
+                Some(&mut DclReader::new(&buf)),
+            );
+        }
+        s.put(RendererStore(store));
+        s
+    }
+
+    #[test]
+    fn scene_storage_needs_a_signed_in_player_and_is_never_on_a_server() {
+        assert_eq!(
+            storage_address(&state(false, Some("0xabc"))).unwrap(),
+            "0xabc"
+        );
+        assert!(storage_address(&state(false, None)).is_err());
+        assert!(storage_address(&state(false, Some(""))).is_err());
+        assert!(storage_address(&state(true, Some("0xabc"))).is_err());
     }
 }
 
