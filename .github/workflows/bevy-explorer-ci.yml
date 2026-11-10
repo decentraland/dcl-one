@@ -490,6 +490,16 @@ jobs:
           assert "scene-live" in events and "scene-broken" not in events, events
           assert "scene-host-exited" not in events, events
           EOF
+      - name: Smoke test the headless image
+        run: |
+          # the sandbox needs a runtime whose seccomp profile allows landlock_* and seccomp
+          echo "Docker $(docker version --format '{{.Server.Version}}')"
+          context="$RUNNER_TEMP/headless-image"
+          mkdir -p "$context/dist/headless"
+          cp ../../../apps/bevy-explorer/dist/headless/native/{headless,dcl_deno_ipc,LICENSE} "$context/dist/headless/"
+          docker build --build-arg "VCS_REF=$GITHUB_SHA" -f ../../../apps/bevy-explorer/Dockerfile.headless \
+            -t bevy-explorer-headless:ci "$context"
+          python3 ../../../apps/bevy-explorer/image-smoke.py headless --revision "$GITHUB_SHA" --arch amd64
       - name: Upload smoke log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

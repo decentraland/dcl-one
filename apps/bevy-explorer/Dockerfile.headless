@@ -1,5 +1,6 @@
 FROM ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     ca-certificates libasound2 libudev1 libgl1 libx11-6 libxext6 libssl3 libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 explorer && useradd --uid 1000 --gid 1000 --home-dir /data explorer \

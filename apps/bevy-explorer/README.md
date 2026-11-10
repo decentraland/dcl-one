@@ -203,6 +203,30 @@ Web: port 8080, UID/GID 101; serves the app at `/` (a gateway must keep engine, 
 service-worker paths same-origin). Headless: UID/GID 1000, writable `/data` and `/tmp`; supply realm,
 scene, admission and deployment settings explicitly (no Catalyst or LiveKit included).
 
+Run the headless image as `image-smoke.py` does: a read-only root filesystem, every capability
+dropped, `no-new-privileges`, and bounded tmpfs mounts nothing is executed from: `/data` (`HOME`:
+the session log and the engine's content cache; size it for the scenes the server hosts) and
+`/tmp` (the scene hosts' sockets):
+
+```bash
+docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
+  --tmpfs /data:rw,nosuid,nodev,noexec,size=1g,uid=1000,gid=1000 <image> --orchestrated
+```
+
+The engine needs no capability for its scene hosts to sandbox themselves, but the runtime's
+seccomp profile must allow `landlock_*` and `seccomp` (the defaults of Docker 28.0, which CI
+uses, and 29.8 do), or an `--orchestrated` engine exits `78`. Scene hosts open their own outbound
+connections, so block cloud metadata endpoints and internal networks for the container at the
+network layer (see the launcher README's "Scene host sandbox"). Check a host before deploying with
+the scene host's self-test, not as PID 1 (it tries, among others, to create a file in `/tmp`):
+
+```bash
+docker run --rm --init --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m --entrypoint /usr/local/bin/dcl_deno_ipc \
+  <image> --sandbox-self-test --require
+```
+
 ## Headless scene metrics
 
 The native scene runtime samples counters and memory after completed updates, at
