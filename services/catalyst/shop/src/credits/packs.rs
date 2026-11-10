@@ -10,12 +10,25 @@ use sqlx::Row;
 use super::errors::ApiError;
 use super::store::Credits;
 
+/// A purchase a settled event just flipped to `paid`, read from its row:
+/// what the grant credits, and the keys its ledger row and its recorded
+/// reversals go by, whichever Stripe event settled it.
+#[derive(Debug, Clone)]
+pub struct SettledPurchase {
+    pub address: String,
+    pub credits: String,
+    pub sku: String,
+    /// Set for a pack order opened as a Checkout Session.
+    pub order_id: Option<String>,
+    pub checkout_session: Option<String>,
+    /// The payment intent the purchase holds after the flip: the one it
+    /// already had (an unpaid completion records it), else the event's.
+    pub payment_intent: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum MarkPaidOutcome {
-    Granted {
-        address: String,
-        credits: String,
-    },
+    Granted(SettledPurchase),
     AmountMismatch {
         expected_cents: i64,
         charged_cents: i64,
@@ -26,7 +39,14 @@ pub enum MarkPaidOutcome {
         expected: String,
         charged: String,
     },
-    NoPendingPurchase,
+    /// No purchase goes by the event's key.
+    NoPurchase,
+    /// The purchase is no longer settleable ([`SETTLEABLE_STATUSES`]): an
+    /// earlier event credited it (`paid`, `refunded`, `disputed`), or its
+    /// payment failed (`failed`).
+    NotSettleable {
+        status: String,
+    },
 }
 
 /// A reversal returns the buyer's money, so our side must REMOVE the credits
@@ -311,33 +331,17 @@ impl Credits {
         }))
     }
 
-    pub async fn mark_order_paid_by_session(
-        &self,
-        session_id: &str,
-        event_id: &str,
-        charged: Charge<'_>,
-        payment_intent: Option<&str>,
-    ) -> Result<MarkPaidOutcome, ApiError> {
-        let mut tx = self.pool.begin().await?;
-        let outcome = self
-            .mark_order_paid_by_session_in_tx(
-                &mut tx,
-                session_id,
-                event_id,
-                charged,
-                payment_intent,
-            )
-            .await?;
-        tx.commit().await?;
-        Ok(outcome)
-    }
-
     /// Only for a session whose payment has SETTLED (the caller checks
     /// `payment_status`). `payment_intent` is the session's `payment_intent`,
-    /// stored on the order so a later `charge.refunded` / `charge.dispute.*`
-    /// (keyed by payment intent) finds the purchase to revoke; it is locked
-    /// first ([`Self::lock_payment_in_tx`]), and after a grant the caller
-    /// applies [`Self::apply_recorded_reversals_in_tx`].
+    /// stored on the order when it has none yet, so a later `charge.refunded`
+    /// / `charge.dispute.*` (keyed by payment intent) finds the purchase to
+    /// revoke; it is locked first ([`Self::lock_payment_in_tx`]). After a
+    /// grant the caller applies [`Self::apply_recorded_reversals_in_tx`] for
+    /// the intent the purchase holds ([`SettledPurchase::payment_intent`]).
+    /// When that one was already stored, no further lock is needed: a
+    /// reversal's own apply locks this same purchase row, so it either ran
+    /// before this flip (and committed its record first) or waits for this
+    /// transaction and then finds the purchase paid.
     pub(crate) async fn mark_order_paid_by_session_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -443,21 +447,9 @@ impl Credits {
         .await?)
     }
 
-    pub async fn mark_purchase_paid(
-        &self,
-        payment_intent_id: &str,
-        event_id: &str,
-        charged: Charge<'_>,
-    ) -> Result<MarkPaidOutcome, ApiError> {
-        let mut tx = self.pool.begin().await?;
-        let outcome = self
-            .mark_purchase_paid_in_tx(&mut tx, payment_intent_id, event_id, charged)
-            .await?;
-        tx.commit().await?;
-        Ok(outcome)
-    }
-
-    /// Locks the PaymentIntent first; after a grant the caller applies
+    /// Any purchase holding this PaymentIntent, a Checkout order's included
+    /// (its unpaid completion records it). Locks the PaymentIntent first;
+    /// after a grant the caller applies
     /// [`Self::apply_recorded_reversals_in_tx`].
     pub(crate) async fn mark_purchase_paid_in_tx(
         &self,
@@ -500,10 +492,8 @@ impl Credits {
             .fetch_optional(&mut **tx)
             .await?;
         let Some(row) = row else {
-            return Ok(MarkPaidOutcome::NoPendingPurchase);
+            return Ok(MarkPaidOutcome::NoPurchase);
         };
-        let address: String = row.get("address");
-        let credits: String = row.get("credits");
         let amount_cents: i64 = row.get("amount_cents");
         let currency: String = row.get("currency");
         let status: String = row.get("status");
@@ -511,10 +501,17 @@ impl Credits {
         let updated: bool = row.get("updated");
 
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
-            return Ok(MarkPaidOutcome::Granted { address, credits });
+            return Ok(MarkPaidOutcome::Granted(SettledPurchase {
+                address: row.get("address"),
+                credits: row.get("credits"),
+                sku: row.get("sku"),
+                order_id: row.get("order_id"),
+                checkout_session: row.get("stripe_checkout_session"),
+                payment_intent: row.get("payment_intent"),
+            }));
         }
         if !SETTLEABLE_STATUSES.contains(&status.as_str()) {
-            return Ok(MarkPaidOutcome::NoPendingPurchase);
+            return Ok(MarkPaidOutcome::NotSettleable { status });
         }
         if !currency.eq_ignore_ascii_case(charged.currency) {
             return Ok(MarkPaidOutcome::CurrencyMismatch {
@@ -810,7 +807,8 @@ macro_rules! mark_paid_sql {
     ($column:literal) => {
         concat!(
             "WITH cur AS ( \
-                 SELECT id, address, credits::text AS credits, amount_cents, currency, status, stripe_event_id \
+                 SELECT id, address, credits::text AS credits, amount_cents, currency, status, stripe_event_id, \
+                        sku, order_id, stripe_checkout_session, stripe_payment_intent \
                  FROM credits.purchases WHERE ",
             $column,
             " = $1 FOR UPDATE \
@@ -823,6 +821,8 @@ macro_rules! mark_paid_sql {
                  RETURNING p.id \
              ) \
              SELECT cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
+                    cur.sku, cur.order_id, cur.stripe_checkout_session, \
+                    COALESCE(cur.stripe_payment_intent, $4::text) AS payment_intent, \
                     EXISTS (SELECT 1 FROM upd) AS updated \
              FROM cur"
         )
