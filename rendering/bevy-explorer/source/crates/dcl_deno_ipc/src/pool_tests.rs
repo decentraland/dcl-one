@@ -412,6 +412,7 @@ async fn a_removed_scene_leaves_no_host_and_no_loss_report() {
     eventually(|| pool.hosts().len() == 1).await;
     assert!(nothing_delivered(&mut receiver).await);
     assert!(pool.drain_exits().is_empty());
+    assert_eq!(pool.info().lost_hosts, 0);
     assert!(!kept_host.killed());
     assert_eq!(pool.hosts()[0].scenes, [SceneId(Entity::from_raw(2))]);
 }
@@ -579,6 +580,31 @@ async fn per_scene_hosts_start_with_a_filtered_environment() {
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("PATH")));
     assert_eq!(per_scene_host.command.args[1..], ["--v8-threads", "2"]);
+}
+
+#[tokio::test]
+async fn an_ended_host_loses_only_its_scene_and_counts_as_lost() {
+    let (pool, mut launched, _) = pool(Placement::PerScene);
+    let (responses, mut receiver) = scene_response_channel();
+    let _ended = place(&pool, &responses, [1]);
+    let (ended, ended_host) = next_host(&mut launched).await;
+    let _kept = place(&pool, &responses, [2]);
+    let (_, kept_host) = next_host(&mut launched).await;
+    eventually(|| pool.hosts().iter().all(|host| host.pid.is_some())).await;
+
+    assert!(!pool.end_host(u32::MAX));
+    assert!(pool.end_host(ended_host.pid));
+
+    let (errored, response) = delivered(&mut receiver).await;
+    assert_eq!(errored, ended);
+    assert!(is_error_starting_with(&response, "scene host exited"));
+    assert_eq!(pool.drain_exits()[0].reason, HostExitReason::Exit);
+    let info = pool.info();
+    assert_eq!(info.lost_hosts, 1);
+    assert_eq!(info.hosts.len(), 1);
+    assert_eq!(info.hosts[0].pid, Some(kept_host.pid));
+    assert!(!kept_host.killed());
+    assert!(!pool.end_host(ended_host.pid));
 }
 
 // set in the copy of this test binary that plays the engine

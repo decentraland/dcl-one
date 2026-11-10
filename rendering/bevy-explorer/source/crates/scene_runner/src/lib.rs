@@ -48,6 +48,8 @@ use ui_core::ui_actions::{Click, On};
 use update_world::lights::LightsPlugin;
 use util::SceneUtilPlugin;
 mod debug_panel;
+#[cfg(not(target_arch = "wasm32"))]
+mod scene_host_panel;
 
 use web_time::Instant;
 
@@ -433,6 +435,9 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(SceneInputPlugin);
         app.add_plugins(SceneOutputPlugin);
         app.add_plugins(SceneUtilPlugin);
+        // with or without rendering: per-scene hosts run only in the headless engine
+        #[cfg(not(target_arch = "wasm32"))]
+        scene_host_panel::register(app);
         if app.world().get_resource::<NoRenderApp>().is_none() {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             debug_panel::register(app);

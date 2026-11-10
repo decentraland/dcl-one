@@ -132,6 +132,16 @@ pub struct HostExit {
     pub reason: HostExitReason,
 }
 
+/// The pool as a tester sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolInfo {
+    pub placement: Placement,
+    pub memory_cap: Option<u64>,
+    pub hosts: Vec<SceneHostInfo>,
+    /// Hosts that ended while the engine still served them, since the pool started.
+    pub lost_hosts: u64,
+}
+
 /// A scene host as the pool sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneHostInfo {
@@ -480,6 +490,8 @@ struct PoolEvents {
     exits: Mutex<Vec<HostExit>>,
     failed_spawns: AtomicU32,
     ready_hosts: AtomicU32,
+    // hosts that ended other than by retiring
+    lost: AtomicU64,
 }
 
 impl PoolEvents {
@@ -666,6 +678,26 @@ impl HostPool {
         self.events.unavailable()
     }
 
+    pub(crate) fn info(&self) -> PoolInfo {
+        PoolInfo {
+            placement: self.options.placement,
+            memory_cap: self.options.memory_cap,
+            hosts: self.hosts(),
+            lost_hosts: self.events.lost.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Ends the running host with process id `pid`, as if it had exited. False if there is none.
+    pub(crate) fn end_host(&self, pid: u32) -> bool {
+        let hosts = self.hosts.lock().unwrap();
+        let host = hosts
+            .iter()
+            .map(|entry| &entry.host)
+            .find(|host| host.state() != HostState::Lost && *host.pid.lock().unwrap() == Some(pid));
+        host.inspect(|host| host.end(HostExitReason::Exit))
+            .is_some()
+    }
+
     pub(crate) fn hosts(&self) -> Vec<SceneHostInfo> {
         let hosts = self.hosts.lock().unwrap();
         hosts
@@ -750,6 +782,9 @@ impl HostThread {
         let status = rt.block_on(link.process.wait()).unwrap_or_default();
         self.host.set_state(HostState::Lost);
         self.events.ready_hosts.fetch_sub(1, Ordering::SeqCst);
+        if ended.is_some() {
+            self.events.lost.fetch_add(1, Ordering::Relaxed);
+        }
 
         match self.placement {
             Placement::Shared => {
@@ -848,4 +883,17 @@ pub fn drain_host_exits() -> Vec<HostExit> {
 pub fn scene_hosts() -> Vec<SceneHostInfo> {
     let pool = POOL.read().unwrap();
     pool.as_ref().map(|pool| pool.hosts()).unwrap_or_default()
+}
+
+/// The pool `spawn_scene` uses, if the runtime is initialized.
+pub fn scene_host_pool() -> Option<PoolInfo> {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().map(|pool| pool.info())
+}
+
+/// Ends the scene host with process id `pid` as if it had exited: its scenes are lost. False if
+/// the pool has no such running host.
+pub fn end_scene_host(pid: u32) -> bool {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().is_some_and(|pool| pool.end_host(pid))
 }
