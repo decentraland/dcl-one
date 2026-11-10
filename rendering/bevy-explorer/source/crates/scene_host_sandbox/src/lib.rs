@@ -12,10 +12,9 @@
 //!   the JIT stay allowed.
 //!
 //! On other targets [`apply`] reports [`Landlock::Unsupported`], or fails for [`Mode::Require`],
-//! and [`probe`] runs no check.
+//! and [`Probe::run`] runs no check.
 
 use serde::{Deserialize, Serialize};
-use std::net::TcpListener;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -96,13 +95,22 @@ pub enum Landlock {
 pub struct Report {
     pub cannot_spawn_program: bool,
     pub cannot_replace_program: bool,
+    pub cannot_execute_memfd: bool,
     pub cannot_fork: bool,
+    pub cannot_use_clone3: bool,
     pub cannot_create_temp_file: bool,
+    pub cannot_change_file_metadata: bool,
     pub cannot_open_home: bool,
-    pub cannot_read_init_environ: bool,
+    pub cannot_read_other_process: bool,
     pub cannot_open_unix_socket: bool,
-    pub cannot_signal_parent: bool,
-    pub cannot_ptrace_parent: bool,
+    pub cannot_open_non_route_netlink: bool,
+    pub cannot_signal_other_process: bool,
+    pub cannot_signal_process_group: bool,
+    pub cannot_set_signal_owner: bool,
+    pub cannot_inject_terminal_input: bool,
+    pub cannot_ptrace_other_process: bool,
+    pub cannot_reschedule_other_process: bool,
+    pub cannot_read_other_limits: bool,
     pub can_run_thread: bool,
     pub can_run_jit_code: bool,
     pub can_connect_loopback_tcp: bool,
@@ -117,13 +125,22 @@ impl Report {
         let Report {
             cannot_spawn_program,
             cannot_replace_program,
+            cannot_execute_memfd,
             cannot_fork,
+            cannot_use_clone3,
             cannot_create_temp_file,
+            cannot_change_file_metadata,
             cannot_open_home,
-            cannot_read_init_environ,
+            cannot_read_other_process,
             cannot_open_unix_socket,
-            cannot_signal_parent,
-            cannot_ptrace_parent,
+            cannot_open_non_route_netlink,
+            cannot_signal_other_process,
+            cannot_signal_process_group,
+            cannot_set_signal_owner,
+            cannot_inject_terminal_input,
+            cannot_ptrace_other_process,
+            cannot_reschedule_other_process,
+            cannot_read_other_limits,
             can_run_thread,
             can_run_jit_code,
             can_connect_loopback_tcp,
@@ -135,13 +152,22 @@ impl Report {
         [
             cannot_spawn_program,
             cannot_replace_program,
+            cannot_execute_memfd,
             cannot_fork,
+            cannot_use_clone3,
             cannot_create_temp_file,
+            cannot_change_file_metadata,
             cannot_open_home,
-            cannot_read_init_environ,
+            cannot_read_other_process,
             cannot_open_unix_socket,
-            cannot_signal_parent,
-            cannot_ptrace_parent,
+            cannot_open_non_route_netlink,
+            cannot_signal_other_process,
+            cannot_signal_process_group,
+            cannot_set_signal_owner,
+            cannot_inject_terminal_input,
+            cannot_ptrace_other_process,
+            cannot_reschedule_other_process,
+            cannot_read_other_limits,
             can_run_thread,
             can_run_jit_code,
             can_connect_loopback_tcp,
@@ -175,17 +201,32 @@ pub fn apply(mode: Mode) -> anyhow::Result<Status> {
     }
 }
 
-/// Tries each action the sandbox denies and each it must still allow. `loopback` is a listener the
-/// caller opened before [`apply`]; the probe connects to it once and accepts that connection.
-pub fn probe(loopback: &TcpListener) -> Report {
+/// What the checks need from outside the sandbox: a loopback listener to connect to, and a second
+/// process of the same user, a child that exits when the probe is dropped.
+pub struct Probe {
     #[cfg(target_os = "linux")]
-    {
-        probe::run(loopback)
+    targets: probe::Targets,
+}
+
+impl Probe {
+    /// Call before [`apply`], which would refuse both.
+    pub fn prepare() -> std::io::Result<Self> {
+        Ok(Probe {
+            #[cfg(target_os = "linux")]
+            targets: probe::Targets::prepare()?,
+        })
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = loopback;
-        Report::default()
+
+    /// Tries each action the sandbox denies and each it must still allow.
+    pub fn run(&self) -> Report {
+        #[cfg(target_os = "linux")]
+        {
+            probe::run(&self.targets)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Report::default()
+        }
     }
 }
 

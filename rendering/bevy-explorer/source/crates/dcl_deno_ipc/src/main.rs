@@ -20,7 +20,7 @@ use interprocess::local_socket::{
     traits::tokio::Stream as _,
     GenericFilePath, ToFsName,
 };
-use std::{env, net::TcpListener, sync::Arc};
+use std::{env, sync::Arc};
 use system_bridge::SystemApi;
 use tokio::io::AsyncReadExt;
 
@@ -130,10 +130,10 @@ fn main() -> Result<()> {
 // Applies the sandbox to this process and tries what it must deny and allow. Prints the report as
 // one JSON line; the exit code is 0 only when every check holds.
 fn sandbox_self_test(mode: SandboxMode) -> i32 {
-    let loopback = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+    let probe = scene_host_sandbox::Probe::prepare().expect("prepare the sandbox probe");
     match scene_host_sandbox::apply(mode) {
         Ok(status) => {
-            let report = scene_host_sandbox::probe(&loopback);
+            let report = probe.run();
             let holds = report.all_hold();
             let output = serde_json::json!({ "status": status, "report": report, "holds": holds });
             println!("{output}");
