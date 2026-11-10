@@ -15,14 +15,7 @@ import { sendMetaTransaction } from "./metaTx";
 import { readContract } from "./rpc";
 import { sendCall, waitForReceipt, walletAccount, type WaitOptions } from "./tx";
 
-/** A typed MANA amount ("12.5") as exact wei; null for anything that is not a positive amount with at most 18 decimals. */
-export function parseManaInput(text: string): ManaWei | null {
-  const t = text.trim();
-  if (!/^\d+(\.\d{1,18})?$/.test(t)) return null;
-  const [whole, fraction = ""] = t.split(".");
-  const wei = BigInt(whole!) * 10n ** 18n + BigInt(fraction.padEnd(18, "0") || "0");
-  return wei > 0n ? (wei as ManaWei) : null;
-}
+export { parseManaInput } from "@shop/model/money";
 
 export async function readManaBalance(chainId: ChainId, owner: string): Promise<ManaWei> {
   const mana = manaToken(chainId);

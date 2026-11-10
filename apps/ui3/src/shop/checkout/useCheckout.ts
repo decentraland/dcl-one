@@ -14,7 +14,7 @@ import { presentPayment, presentUnpriced, type PaymentPresentation } from "@shop
 import { ruleFor } from "@shop/payment/rule";
 import { assetKindOf } from "@shop/discovery/cardPrice";
 import { useShopWallet, type ShopWalletState } from "../wallet/context";
-import { cancelUsdIntents, type UsdBalance } from "../credits/credits";
+import { cancelUsdIntents, type UsdBalance } from "@shop/credits/credits";
 import { useBalance, useManaBalance } from "../credits/hooks";
 import { bindTopUpReturn, stashTopUpReturn } from "../credits/returns";
 import { settlementChainId } from "./chain/config";

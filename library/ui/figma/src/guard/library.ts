@@ -1,5 +1,4 @@
-import { componentOwnerById } from './component-identity.js'
-import { componentIdOfFile } from './ownership.js'
+import { componentOwnerById, componentIdOfFile } from './component-identity.js'
 import path from 'node:path'
 import { exportStatements, publicExportSet, removePublicExports } from './exports.js'
 import { atomicWrite, listFiles, readIfExists, resolveContained, toPosix } from './fs-safe.js'
@@ -8,6 +7,28 @@ import type { Ownership } from './ownership.js'
 const LIBRARY_GENERATED = 'components/'
 const LIBRARY_INDEX = 'index.ts'
 const LIBRARY_PROMOTION = 'components/promotion.json'
+type LibraryComponentEntry = { name: string; visibility: 'public' | 'internal' }
+function libraryComponentEntries(value: unknown): LibraryComponentEntry[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid library component registry')
+  const data = value as { components?: unknown; internal?: unknown }
+  const entries: LibraryComponentEntry[] = []
+  const names = new Set<string>()
+  for (const [key, visibility] of [
+    ['components', 'public'],
+    ['internal', 'internal']
+  ] as const) {
+    const list = data[key] === undefined ? [] : data[key]
+    if (!Array.isArray(list)) throw new Error('Invalid library component registry name list')
+    for (const name of list) {
+      if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name) || names.has(name))
+        throw new Error('Invalid or duplicate library component registry name')
+      names.add(name)
+      entries.push({ name, visibility })
+    }
+  }
+  return entries
+}
 type Target = { pageId: string; componentId?: string }
 function ownsComponent(ownership: Ownership, target: Target, id: string): boolean {
   const owner = componentOwnerById(ownership, id)
@@ -37,7 +58,10 @@ async function libraryOwned(root: string, ownership: Ownership, target: Target):
     if (bases.some((base) => statement.from === `./components/${base}`))
       owned.push(...statement.symbols.map((symbol) => `${LIBRARY_INDEX}#${symbol.key}`))
   const promotion = await readIfExists(await resolveContained(root, LIBRARY_PROMOTION))
-  const promoted = promotion === undefined ? [] : (JSON.parse(promotion).components as string[])
+  const promoted =
+    promotion === undefined
+      ? []
+      : libraryComponentEntries(JSON.parse(promotion)).map((entry) => entry.name)
   for (const name of names)
     if (promoted?.includes(name)) owned.push(`${LIBRARY_PROMOTION}#component:${name}`)
   return owned.sort()
@@ -48,12 +72,14 @@ async function libraryEntryPresent(root: string, artifact: string): Promise<bool
   if (text === undefined) return false
   if (file === LIBRARY_INDEX) return publicExportSet(text).has(key)
   if (file === LIBRARY_PROMOTION)
-    return ((JSON.parse(text).components as string[]) ?? []).includes(
-      key.replace(/^component:/, '')
+    return libraryComponentEntries(JSON.parse(text)).some(
+      (entry) => entry.name === key.replace(/^component:/, '')
     )
   return false
 }
 async function removeLibraryEntries(root: string, owned: string[]): Promise<string[]> {
+  const promotion = await readIfExists(await resolveContained(root, LIBRARY_PROMOTION))
+  if (promotion !== undefined) libraryComponentEntries(JSON.parse(promotion))
   const removed: string[] = []
   for (const file of [LIBRARY_INDEX, LIBRARY_PROMOTION]) {
     const keys = owned
@@ -67,13 +93,21 @@ async function removeLibraryEntries(root: string, owned: string[]): Promise<stri
     if (file === LIBRARY_INDEX) next = removePublicExports(text, new Set(keys))
     else {
       const data = JSON.parse(text)
+      libraryComponentEntries(data)
       next =
         JSON.stringify(
           {
             ...data,
             components: (data.components ?? []).filter(
               (name: string) => !keys.includes(`component:${name}`)
-            )
+            ),
+            ...(data.internal === undefined
+              ? {}
+              : {
+                  internal: data.internal.filter(
+                    (name: string) => !keys.includes(`component:${name}`)
+                  )
+                })
           },
           null,
           2
@@ -87,6 +121,7 @@ async function removeLibraryEntries(root: string, owned: string[]): Promise<stri
   return removed
 }
 export {
+  libraryComponentEntries,
   LIBRARY_GENERATED,
   LIBRARY_INDEX,
   LIBRARY_PROMOTION,

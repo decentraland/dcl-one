@@ -141,3 +141,25 @@
   background: linear-gradient(transparent 9.5px, var(--divider-strong) 9.5px, var(--divider-strong) 10.5px, transparent 10.5px);
 }
 
+/* a member-menu row that can't run here: greyed, its reason on hover (Tooltip) and to assistive tech */
+.row[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.4;
+}
+.row[aria-disabled='true']:hover {
+  background: none;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.rowTip {
+  display: flex;
+}
+.rowTip > .row {
+  flex: 1;
+}

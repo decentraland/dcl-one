@@ -7,10 +7,10 @@ import { Link, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
 import type { NftResult } from "@catalyst-api/market/NftResult";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
 import { fetchNftResult, indexOutage, landData } from "./api";
-import { landCategoryOf } from "./contracts";
+import { landCategoryOf } from "@shop/land/contracts";
 import { dateText, epochMs, Mana, relativeText } from "./format";
 import {
   EstateParcels,

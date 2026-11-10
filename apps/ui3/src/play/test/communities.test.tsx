@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import type { Community } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
+import { peekProfile } from '../features/session/profileStore'
 
 // DOMAIN: communities — browse list, join/leave, per-community detail.
 describe('communities domain', () => {
@@ -94,6 +95,47 @@ describe('communities domain', () => {
     expect(h.driver.sent).toContainEqual({ kind: 'removeCommunityPlace', id: 'c1', placeId: 'pl1' })
     act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'removePlace', message: 'HTTP 403' }))
     expect(h.session().communities.error).toEqual({ id: 'c1', message: 'There was an error deleting the community place. Please try again.' })
+  })
+
+  // The card's member menu: sent as asked, and each refusal said on the card in unity-explorer's words
+  // (MembersListController's error texts).
+  it.each([
+    ['promote', 'There was an error adding moderator to user. Please try again.'],
+    ['demote', 'There was an error removing moderator from user. Please try again.'],
+    ['transfer', 'There was an error transfering ownership. Please try again.'],
+    ['kick', 'There was an error kicking the user. Please try again.'],
+    ['ban', 'There was an error banning the user. Please try again.']
+  ] as const)('sends a %s on a member, and says so on the card when it fails', async (action, message) => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.memberAction('c1', '0xm', action))
+    expect(h.driver.sent).toContainEqual({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action, message: 'HTTP 403' }))
+    expect(h.session().communities.error).toEqual({ id: 'c1', message })
+  })
+
+  // The card's members are seeded into the profile store (an unclaimed name with its #tag), so the
+  // member menu and the passport show them.
+  it("seeds the card's members into the profile store", async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.loadDetail('c1'))
+    act(() =>
+      h.driver.emit({
+        kind: 'communityDetail',
+        id: 'c1',
+        posts: [],
+        places: [],
+        events: [],
+        photos: [],
+        members: [
+          { address: '0xclaimed', name: 'Named', role: 'member', hasClaimedName: true, picture: 'n.png' },
+          { address: '0xabcd1234', name: 'Plain', role: 'member', hasClaimedName: false }
+        ]
+      })
+    )
+    expect(peekProfile('0xclaimed')).toMatchObject({ name: 'Named', picture: 'n.png', hasClaimedName: true })
+    expect(peekProfile('0xabcd1234')).toMatchObject({ name: 'Plain#1234', hasClaimedName: false })
   })
 
   // The form's places are read as it opens; an answer for another form, or after it closed, is dropped.

@@ -7,9 +7,13 @@ import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene,
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
-const { signed, getCompactProfiles } = vi.hoisted(() => ({ signed: vi.fn(), getCompactProfiles: vi.fn() }))
+const { signed, getCompactProfiles, serviceBase } = vi.hoisted(() => ({
+  signed: vi.fn(),
+  getCompactProfiles: vi.fn(),
+  serviceBase: vi.fn(async (name: string) => `https://${name}.example`)
+}))
 vi.mock('../../bridge-scene/src/http', () => ({
-  serviceBase: async (name: string) => `https://${name}.example`,
+  serviceBase,
   signed,
   getJson: vi.fn(async () => undefined),
   signedForm: vi.fn(),
@@ -181,6 +185,66 @@ describe('bridge community card places', () => {
     const h = fakeCtx()
     await h.req({ kind: 'removeCommunityPlace', id: 'c1', placeId: 'land-1' })
     expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'removePlace', message: 'HTTP 403' })
+    expect(detail(h.sent)).toBeUndefined()
+  })
+})
+
+// The card's member menu, as unity-explorer's MembersListController: the role PATCH (moderator,
+// member, owner), the member DELETE and the ban POST, then the card's members read again.
+describe('bridge community member actions', () => {
+  const member = 'https://socialApi.example/v1/communities/c1/members/0xm'
+  const members = 'https://socialApi.example/v2/communities/c1/members?limit=100'
+
+  it.each([
+    ['promote', 'PATCH', member, { role: 'moderator' }],
+    ['demote', 'PATCH', member, { role: 'member' }],
+    ['transfer', 'PATCH', member, { role: 'owner' }],
+    ['kick', 'DELETE', member, undefined],
+    ['ban', 'POST', `${member}/bans`, undefined]
+  ] as const)('%s sends %s and reads the members again', async (action, method, url, body) => {
+    serve({ [`GET ${members}`]: { results: [{ memberAddress: '0xm', role: 'moderator' }] } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    expect(signed).toHaveBeenCalledWith(url, method, ...(body != null ? [body] : []))
+    expect(detail(h.sent)?.members).toEqual([{ address: '0xm', name: '0xm', role: 'moderator', picture: undefined, hasClaimedName: false }])
+    expect(h.sent.some((s) => s.kind === 'communityActionFailed')).toBe(false)
+  })
+
+  it('reads the community again after a transfer, since the user is no longer its owner', async () => {
+    serve({ [`GET https://socialApi.example/v2/communities/c1`]: { id: 'c1', name: 'Builders', description: '', membersCount: 2, role: 'moderator' } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'transfer' })
+    const card = h.sent.find((s) => s.kind === 'community')
+    expect(card?.kind === 'community' ? card.community.role : undefined).toBe('moderator')
+  })
+
+  it.each(['kick', 'ban'] as const)('reads the community again after a %s, for its member count', async (action) => {
+    serve({ [`GET https://socialApi.example/v2/communities/c1`]: { id: 'c1', name: 'Builders', description: '', membersCount: 1, role: 'owner' } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    const card = h.sent.find((s) => s.kind === 'community')
+    expect(card?.kind === 'community' ? card.community.membersCount : undefined).toBe(1)
+    expect(h.sent.some((s) => s.kind === 'communities')).toBe(true)
+  })
+
+  it('does not read the community again after a promote', async () => {
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'promote' })
+    expect(h.sent.some((s) => s.kind === 'community')).toBe(false)
+  })
+
+  it('says on the card when the service cannot be located', async () => {
+    serviceBase.mockRejectedValueOnce(new Error('no socialApi service'))
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'kick' })
+    expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'kick', message: 'no socialApi service' })
+  })
+
+  it('says on the card when the action fails, and reads nothing', async () => {
+    serve({ [`POST ${member}/bans`]: new Error('HTTP 401') })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'ban' })
+    expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'ban', message: 'HTTP 401' })
     expect(detail(h.sent)).toBeUndefined()
   })
 })

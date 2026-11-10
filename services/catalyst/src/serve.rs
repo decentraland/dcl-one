@@ -942,6 +942,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
+    // The gatekeeper's room events feed the worlds access log and, when
+    // enabled, the presence badges (stored here, applied by a leased job).
+    let presence_badges =
+        config.social.badges_presence_enabled && config.writes.social_writes_enabled;
+    let mut room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
+        vec![stage5.core.clone()];
+    let presence_badge_settings = badges::presence::Settings::default();
+    if presence_badges {
+        let sink = Arc::new(badges::presence::EventSink::new(
+            presence_badge_settings.clone(),
+        ));
+        sink.spawn_writer(pool.clone(), &jobs);
+        room_event_sinks.push(sink);
+    }
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -951,7 +965,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_settings,
         &policy,
         ban_status.clone(),
-        stage5.core.clone(),
+        Arc::new(comms::gatekeeper::events::RoomEventFanout::new(
+            room_event_sinks,
+        )),
         live_presence.clone(),
         eip1654.clone(),
         primary,
@@ -1114,7 +1130,17 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
     social.segment_webhooks.spawn_jobs(&jobs);
+    if presence_badges {
+        badges::presence::spawn_jobs(
+            pool.clone(),
+            social.badges.badges.asset_base_url().to_owned(),
+            live_presence.clone(),
+            presence_badge_settings,
+            &jobs,
+        );
+    }
     if config.writes.social_writes_enabled {
+        badges::jobs::spawn(&social.badges, &jobs);
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(
             "social-referral-rewards",
@@ -2463,6 +2489,17 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_badges_admin_token),
             public_asset_base_url: config.social.badges_public_asset_base_url.clone(),
             assets_dir: non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from),
+            commit_hash: config.commit_hash(),
+            processor: badges::jobs::ProcessorSettings {
+                enabled: config.social.badges_processor_enabled,
+                batch_size: i64::from(config.social.badges_processor_batch_size),
+                max_event_age: (config.social.badges_event_max_age_secs > 0)
+                    .then(|| Duration::from_secs(config.social.badges_event_max_age_secs)),
+                deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
+                    .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
+                items_mirror_enabled: config.marketplace.marketplace_mirrors_enabled,
+                ..badges::jobs::ProcessorSettings::default()
+            },
         },
     ));
 

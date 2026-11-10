@@ -7,8 +7,8 @@ import { decodeFunctionData, encodeFunctionResult, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { ENDPOINTS, SHOP_API_PREFIX, type EndpointName } from "@shop/api/endpoints";
-import { createShopClient, type ShopClient } from "../api/shop";
-import type { ShopTransport, TransportRequest } from "../api/signer";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { ShopTransport, TransportRequest } from "@shop/api/signer";
 import { CHAIN } from "@shop/model/chain";
 import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
 import { AGGREGATOR_ABI, ERC20_ABI, ERC721_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
