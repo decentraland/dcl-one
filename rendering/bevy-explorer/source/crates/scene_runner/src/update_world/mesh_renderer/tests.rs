@@ -266,7 +266,11 @@ fn a_changed_primitive_is_neither_charged_nor_deferred() {
     }
     app.update();
 
-    let sphere = app.world().resource::<MeshPrimitiveDefaults>().sphere.clone();
+    let sphere = app
+        .world()
+        .resource::<MeshPrimitiveDefaults>()
+        .sphere
+        .clone();
     for entity in &boxes {
         assert_eq!(app.world().get::<Mesh3d>(*entity).unwrap().0, sphere);
     }

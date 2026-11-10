@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use comms::profile::{ProfileCache, ProfileMetaCache};
 use common::structs::{OutOfWorld, PrimaryUser};
+use comms::profile::{ProfileCache, ProfileMetaCache};
 use dcl_component::proto_components::{
     common::Color4,
     sdk::components::pb_material::{self, PbrMaterial},
@@ -12,7 +12,7 @@ use crate::{
     scene_spawn_slice::{InstantiationCharges, SCENE_SPAWN_SLICE},
     update_world::mesh_renderer::{
         tests::{a_box, fit, record_charges, scene_entity, test_app, Charged},
-        MeshDefinition, PendingPrimitive, PRIMITIVE_COST,
+        PendingPrimitive, PRIMITIVE_COST,
     },
 };
 
@@ -66,7 +66,11 @@ fn container(root: Entity) -> ContainerEntity {
 }
 
 /// Entities with only a material, as glTF node modifiers make them.
-fn spawn_materials(app: &mut App, root: Entity, indices: impl Iterator<Item = usize>) -> Vec<Entity> {
+fn spawn_materials(
+    app: &mut App,
+    root: Entity,
+    indices: impl Iterator<Item = usize>,
+) -> Vec<Entity> {
     indices
         .map(|index| {
             app.world_mut()
@@ -79,7 +83,11 @@ fn spawn_materials(app: &mut App, root: Entity, indices: impl Iterator<Item = us
 fn created(app: &App, entities: &[Entity]) -> usize {
     entities
         .iter()
-        .filter(|e| app.world().get::<MeshMaterial3d<SceneMaterial>>(**e).is_some())
+        .filter(|e| {
+            app.world()
+                .get::<MeshMaterial3d<SceneMaterial>>(**e)
+                .is_some()
+        })
         .count()
 }
 

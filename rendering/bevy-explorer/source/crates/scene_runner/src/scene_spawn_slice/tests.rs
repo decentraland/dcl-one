@@ -86,7 +86,10 @@ fn admissions(world: &mut World, charged: Duration, costs: &[Duration]) -> Vec<b
     world
         .run_system_once(move |mut budget: InstantiationBudget| {
             let mut gate = budget.gate();
-            costs.iter().map(|cost| gate.admit(*cost)).collect::<Vec<_>>()
+            costs
+                .iter()
+                .map(|cost| gate.admit(*cost))
+                .collect::<Vec<_>>()
         })
         .unwrap()
 }

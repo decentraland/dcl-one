@@ -2,14 +2,18 @@
 //! spawner writes queued scene instances (glTF models, avatar parts) an entity at a time, then
 //! `update_ready_gltfs` processes spawned glTFs a node at a time, within one slice; the rest waits
 //! for the next frame. The spawner stops a little before the slice ends, so processing gets time
-//! even while spawns are queued. Behind the loading backdrop and on headless both run whole.
+//! even while spawns are queued. Earlier in the frame, in `PostLoop`, the mesh renderer and
+//! materials charge each entity's first mesh and first material to the same slice
+//! ([`InstantiationBudget`]), which then ends that much earlier. Behind the loading backdrop and
+//! on headless everything runs whole.
 
 use std::time::Duration;
 
 use bevy::{ecs::system::SystemParam, platform::time::Instant, prelude::*, scene::SceneSpawner};
 use common::structs::{NoRenderApp, OutOfWorld, PrimaryUser};
 
-/// How long spawning and glTF processing run together each frame.
+/// How long instantiation runs each frame: what primitives and materials charge, then spawning
+/// and glTF processing.
 pub const SCENE_SPAWN_SLICE: Duration = Duration::from_millis(4);
 
 /// The end of the slice kept for glTF processing.
