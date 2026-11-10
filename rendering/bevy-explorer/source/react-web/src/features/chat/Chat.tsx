@@ -46,6 +46,7 @@ import { callGate } from '../voiceChat/callGate'
 import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
+import { dmRefusal } from './dmStateCopy'
 
 const MAX_LEN = 500
 
@@ -556,23 +557,12 @@ function MembersOverlay({
   )
 }
 
-/** Why a DM cannot be sent right now, in unity-explorer's words. */
-const BLOCKED_COPY: Record<Exclude<DmUserState, 'connected'>, string> = {
-  notConnected: 'You are not connected to chat.',
-  disconnected: 'The user you are trying to message is offline.',
-  privateMessagesBlocked: 'The user you are trying to message only accepts DMs from friends.',
-  blockedByOwnUser: 'To message this user you must first unblock them.',
-  privateMessagesBlockedByOwnUser: 'Add this user as a friend to chat, or update your DM settings to connect with everyone.',
-  otherClient: 'User is not connected to chat. They may be using a client without DM support.',
-  noRouter: 'Community chat is not available right now.'
-}
-
 /** The words in the own-privacy copy that become the settings link. */
 const SETTINGS_LINK = 'DM settings'
 
 /** Replaces the input while the partner cannot be messaged. The own-setting case links to settings. */
 function BlockedInput({ state, onSettings }: { state: Exclude<DmUserState, 'connected'>; onSettings?: () => void }): React.JSX.Element {
-  const copy = BLOCKED_COPY[state]
+  const copy = dmRefusal(state, 'message')
   const [before, after] = copy.split(SETTINGS_LINK)
   const linked = state === 'privateMessagesBlockedByOwnUser' && onSettings && after != null
   return (

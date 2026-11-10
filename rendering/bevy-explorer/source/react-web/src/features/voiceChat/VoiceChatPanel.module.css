@@ -298,15 +298,6 @@
   align-items: center;
   gap: 4px;
 }
-.menuWrap {
-  position: relative;
-}
-.menu {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  z-index: 1;
-}
 .search {
   flex: 1;
   min-width: 0;

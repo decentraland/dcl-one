@@ -2,8 +2,6 @@
 //! a room or participant change) is applied to [`CallState`] and answered with the effects the
 //! engine must perform.
 
-use std::collections::BTreeMap;
-
 use alloy_core::primitives::Address;
 use serde::Deserialize;
 use social::voice::{
@@ -11,100 +9,41 @@ use social::voice::{
     VoiceRefusal,
 };
 
-/// Where the call stands.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Status {
-    #[default]
-    Disconnected,
-    /// A private call is ringing for the local user.
-    ReceivedCall,
-    /// The start / join / accept procedure is in flight.
-    StartingCall,
-    /// A private call is ringing on the other side.
-    StartedCall,
-    InCall,
-    EndingCall,
-    RejectingCall,
-    /// The other side (or the local user) is already in a call.
-    Busy,
-    GenericError,
+pub use system_bridge::{VoiceChatKind as Kind, VoiceChatRole as Role, VoiceChatStatus as Status};
+
+/// How the call's room went away, as the user reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallEnding {
+    /// The other side hung up, or the stream was closed.
+    Ended,
+    /// A moderator removed the local user.
+    Removed,
+    /// The local user joined from another client.
+    OtherDevice,
+    /// The connection dropped and did not come back.
+    ConnectionLost,
+    /// The room refused every dial.
+    Refused,
 }
 
-impl Status {
-    /// A new call may start.
-    pub fn is_not_connected(self) -> bool {
+impl CallEnding {
+    pub fn message(self, kind: Kind) -> &'static str {
+        match (self, kind) {
+            (CallEnding::Ended, Kind::Community) => "The stream ended.",
+            (CallEnding::Ended, _) => "The call ended.",
+            (CallEnding::Removed, Kind::Community) => "You were removed from the stream.",
+            (CallEnding::Removed, _) => "You were removed from the call.",
+            (CallEnding::OtherDevice, _) => "You joined from another device.",
+            (CallEnding::ConnectionLost, _) => "The call's connection was lost.",
+            (CallEnding::Refused, _) => "Couldn't connect to the call.",
+        }
+    }
+
+    pub fn is_notice(self) -> bool {
         matches!(
             self,
-            Status::Disconnected | Status::Busy | Status::GenericError
+            CallEnding::Ended | CallEnding::Removed | CallEnding::OtherDevice
         )
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Status::Disconnected => "disconnected",
-            Status::ReceivedCall => "receivedCall",
-            Status::StartingCall => "startingCall",
-            Status::StartedCall => "startedCall",
-            Status::InCall => "inCall",
-            Status::EndingCall => "endingCall",
-            Status::RejectingCall => "rejectingCall",
-            Status::Busy => "busy",
-            Status::GenericError => "genericError",
-        }
-    }
-}
-
-/// The kind of call (nearby voice is the existing, separate feature).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Kind {
-    #[default]
-    None,
-    Private,
-    Community,
-}
-
-impl Kind {
-    pub fn name(self) -> &'static str {
-        match self {
-            Kind::None => "none",
-            Kind::Private => "private",
-            Kind::Community => "community",
-        }
-    }
-}
-
-/// A participant's community role, from the participant metadata `role`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Role {
-    #[default]
-    None,
-    User,
-    Moderator,
-    Owner,
-}
-
-impl Role {
-    pub fn parse(role: &str) -> Self {
-        match role.to_ascii_lowercase().as_str() {
-            "user" | "member" => Role::User,
-            "moderator" => Role::Moderator,
-            "owner" => Role::Owner,
-            _ => Role::None,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Role::None => "none",
-            Role::User => "user",
-            Role::Moderator => "moderator",
-            Role::Owner => "owner",
-        }
-    }
-
-    /// A moderator or the owner.
-    pub fn is_moderator(self) -> bool {
-        matches!(self, Role::Moderator | Role::Owner)
     }
 }
 
@@ -127,31 +66,6 @@ impl Metadata {
     /// Missing or malformed metadata is the default (a listener with no role).
     pub fn parse(json: &str) -> Self {
         serde_json::from_str(json).unwrap_or_default()
-    }
-}
-
-/// What the state knows of a room participant.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Participant {
-    pub name: String,
-    pub profile_picture_url: String,
-    pub has_claimed_name: bool,
-    pub role: Role,
-    pub is_speaker: bool,
-    pub is_requesting_to_speak: bool,
-    pub is_muted: bool,
-    pub is_speaking: bool,
-}
-
-impl Participant {
-    fn apply(&mut self, metadata: &Metadata) {
-        self.name = metadata.name.clone();
-        self.profile_picture_url = metadata.profile_picture_url.clone();
-        self.has_claimed_name = metadata.has_claimed_name;
-        self.role = Role::parse(&metadata.role);
-        self.is_speaker = metadata.is_speaker;
-        self.is_requesting_to_speak = metadata.is_requesting_to_speak;
-        self.is_muted = metadata.muted;
     }
 }
 
@@ -294,20 +208,14 @@ pub enum Input {
     /// identity, …) or the reconnection budget is spent.
     RoomDisconnected {
         terminal: bool,
-        reason: String,
+        ending: CallEnding,
     },
-    ParticipantJoined {
-        address: Address,
-        metadata: Metadata,
-    },
-    ParticipantLeft(Address),
+    /// A participant joined or its metadata changed; `raised_hand` when it changed to
+    /// requesting to speak.
     ParticipantMetadata {
         address: Address,
         metadata: Metadata,
-    },
-    Speaking {
-        address: Address,
-        active: bool,
+        raised_hand: bool,
     },
     /// The call microphone publishes (or stopped); mirrors the mic plugin.
     CallMicChanged(bool),
@@ -345,9 +253,10 @@ pub struct CallState {
     /// Why the last action failed or the call could not happen; cleared by the next call or
     /// stream. Set through [`Self::set_error`].
     pub error: Option<String>,
+    /// `error` tells how the call ended, not a failure.
+    pub error_is_notice: bool,
     /// Bumped on every error (never reset), so the HUD tells a repeated message from a stale one.
     error_seq: u32,
-    pub participants: BTreeMap<Address, Participant>,
     /// Whether the user wants the call mic up: set on the first connect of a call (a private call
     /// or a speaker), then only by the user or a demotion, so a re-dial restores it.
     mic_wanted: bool,
@@ -394,6 +303,7 @@ impl CallState {
     fn reset(&mut self) {
         let me = self.me;
         let error = self.error.take();
+        let error_is_notice = self.error_is_notice;
         let deferred = self.deferred.take();
         let pending_end = self.pending_end.take();
         let rejected_on_reconnect = self.rejected_on_reconnect.take();
@@ -401,6 +311,7 @@ impl CallState {
         let error_seq = self.error_seq;
         *self = Self::new(me);
         self.error = error;
+        self.error_is_notice = error_is_notice;
         self.deferred = deferred;
         self.pending_end = pending_end;
         self.rejected_on_reconnect = rejected_on_reconnect;
@@ -411,7 +322,13 @@ impl CallState {
     /// Records a failure; the same message again still counts as a new one.
     pub fn set_error(&mut self, message: impl Into<String>) {
         self.error = Some(message.into());
+        self.error_is_notice = false;
         self.error_seq = self.error_seq.wrapping_add(1);
+    }
+
+    fn set_notice(&mut self, message: impl Into<String>) {
+        self.set_error(message);
+        self.error_is_notice = true;
     }
 
     pub fn error_seq(&self) -> u32 {
@@ -716,37 +633,27 @@ impl CallState {
                     effects.push(Effect::SetCallMic(true));
                 }
             }
-            Input::RoomDisconnected { terminal, reason } => {
+            Input::RoomDisconnected { terminal, ending } => {
                 self.room_connected = false;
                 if terminal && self.status == Status::InCall {
+                    let message = ending.message(self.kind);
                     self.drop_call(&mut effects);
-                    self.set_error(reason);
+                    if ending.is_notice() {
+                        self.set_notice(message);
+                    } else {
+                        self.set_error(message);
+                    }
                 }
             }
-            Input::ParticipantJoined { address, metadata } => {
-                let participant = self.participants.entry(address).or_default();
-                participant.apply(&metadata);
-                self.sync_local(address, &metadata, &mut effects);
-            }
-            Input::ParticipantLeft(address) => {
-                self.participants.remove(&address);
-            }
-            Input::ParticipantMetadata { address, metadata } => {
-                let participant = self.participants.entry(address).or_default();
-                let was_requesting = participant.is_requesting_to_speak;
-                participant.apply(&metadata);
-                if !was_requesting
-                    && metadata.is_requesting_to_speak
-                    && self.local_role.is_moderator()
-                {
+            Input::ParticipantMetadata {
+                address,
+                metadata,
+                raised_hand,
+            } => {
+                if raised_hand && self.local_role.is_moderator() {
                     effects.push(Effect::Sound(Sound::RaiseHand));
                 }
                 self.sync_local(address, &metadata, &mut effects);
-            }
-            Input::Speaking { address, active } => {
-                if let Some(participant) = self.participants.get_mut(&address) {
-                    participant.is_speaking = active;
-                }
             }
             Input::CallMicChanged(enabled) => {
                 self.mic_enabled = enabled;
@@ -1153,7 +1060,6 @@ mod tests {
         );
         assert_eq!(s.status, Status::Disconnected);
         assert_eq!(s.kind, Kind::None);
-        assert!(s.participants.is_empty());
     }
 
     #[test]
@@ -1423,9 +1329,10 @@ mod tests {
             ..Default::default()
         };
         s.apply(
-            Input::ParticipantJoined {
+            Input::ParticipantMetadata {
                 address: me(),
                 metadata: listener,
+                raised_hand: false,
             },
             0.0,
         );
@@ -1445,6 +1352,7 @@ mod tests {
             Input::ParticipantMetadata {
                 address: me(),
                 metadata: speaker,
+                raised_hand: false,
             },
             0.0,
         );
@@ -1473,6 +1381,7 @@ mod tests {
             Input::ParticipantMetadata {
                 address: me(),
                 metadata: demoted,
+                raised_hand: false,
             },
             0.0,
         );
@@ -1493,21 +1402,23 @@ mod tests {
             0.0,
         );
         s.apply(
-            Input::ParticipantJoined {
+            Input::ParticipantMetadata {
                 address: me(),
                 metadata: Metadata {
                     role: "owner".to_owned(),
                     is_speaker: true,
                     ..Default::default()
                 },
+                raised_hand: false,
             },
             0.0,
         );
         assert_eq!(s.local_role, Role::Owner);
         s.apply(
-            Input::ParticipantJoined {
+            Input::ParticipantMetadata {
                 address: addr(5),
                 metadata: Metadata::default(),
+                raised_hand: false,
             },
             0.0,
         );
@@ -1518,11 +1429,11 @@ mod tests {
                     is_requesting_to_speak: true,
                     ..Default::default()
                 },
+                raised_hand: true,
             },
             0.0,
         );
         assert_eq!(effects, vec![Effect::Sound(Sound::RaiseHand)]);
-        assert!(s.participants[&addr(5)].is_requesting_to_speak);
         let effects = s.apply(Input::PromoteSpeaker(addr(5)), 0.0);
         assert_eq!(
             effects,
@@ -1549,7 +1460,7 @@ mod tests {
         let effects = s.apply(
             Input::RoomDisconnected {
                 terminal: false,
-                reason: "SignalClose".to_owned(),
+                ending: CallEnding::ConnectionLost,
             },
             0.0,
         );
@@ -1559,7 +1470,7 @@ mod tests {
         let effects = s.apply(
             Input::RoomDisconnected {
                 terminal: true,
-                reason: "ParticipantRemoved".to_owned(),
+                ending: CallEnding::Removed,
             },
             0.0,
         );
@@ -1568,7 +1479,49 @@ mod tests {
             vec![Effect::DespawnRoom, Effect::Sound(Sound::Leave)]
         );
         assert_eq!(s.status, Status::Disconnected);
-        assert_eq!(s.error.as_deref(), Some("ParticipantRemoved"));
+        assert_eq!(
+            s.error.as_deref(),
+            Some("You were removed from the stream.")
+        );
+        assert!(s.error_is_notice);
+    }
+
+    #[test]
+    fn a_lost_connection_is_an_error_and_a_closed_room_a_notice() {
+        let join = |s: &mut CallState| {
+            s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+            s.apply(
+                Input::Reply(Reply::JoinCommunity(
+                    "c1".to_owned(),
+                    s.attempt,
+                    Ok("livekit:c".to_owned()),
+                )),
+                0.0,
+            );
+            s.apply(Input::RoomConnected, 0.0);
+        };
+        let mut s = state();
+        join(&mut s);
+        s.apply(
+            Input::RoomDisconnected {
+                terminal: true,
+                ending: CallEnding::ConnectionLost,
+            },
+            0.0,
+        );
+        assert_eq!(s.error.as_deref(), Some("The call's connection was lost."));
+        assert!(!s.error_is_notice);
+
+        join(&mut s);
+        s.apply(
+            Input::RoomDisconnected {
+                terminal: true,
+                ending: CallEnding::Ended,
+            },
+            0.0,
+        );
+        assert_eq!(s.error.as_deref(), Some("The stream ended."));
+        assert!(s.error_is_notice);
     }
 
     #[test]
@@ -1851,7 +1804,7 @@ mod tests {
         s.apply(Input::CallMicChanged(false), 0.0);
         let blip = Input::RoomDisconnected {
             terminal: false,
-            reason: "MediaFailure".to_owned(),
+            ending: CallEnding::ConnectionLost,
         };
         s.apply(blip.clone(), 0.0);
         assert_eq!(
@@ -1886,6 +1839,7 @@ mod tests {
                     is_speaker: true,
                     ..Default::default()
                 },
+                raised_hand: false,
             },
             0.0,
         );
@@ -1893,7 +1847,7 @@ mod tests {
         s.apply(
             Input::RoomDisconnected {
                 terminal: false,
-                reason: "MediaFailure".to_owned(),
+                ending: CallEnding::ConnectionLost,
             },
             0.0,
         );

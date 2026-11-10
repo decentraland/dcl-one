@@ -11,6 +11,7 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
+import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -481,6 +482,13 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="KebabMenu (md · sm)">
+        <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
+          <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
+          <KebabMenu size="sm" label="Participant options" items={(close) => [{ label: 'View profile', onClick: close }]} />
+        </div>
       </Section>
 
       <Section title="HintsButton (opens upward)">

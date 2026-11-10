@@ -26,6 +26,7 @@ import {
   type Setting,
   type VoiceChatActionWire,
   type VoiceChatParticipant,
+  type VoiceChatRole,
   type VoiceChatState,
   type Wearable
 } from './protocol'
@@ -143,10 +144,10 @@ const MOCK_ACTIVE_CHATS: ActiveCommunityVoiceChat[] = [
 /** Voice chat: a scripted call so every panel state shows in ?mock=1. `?mockcall=incoming` rings
  *  on start; the Call buttons and the community Start / Join flows drive the rest. */
 const MOCK_ME = '0x0000000000000000000000000000000000000001'
-function mockParticipant(address: string, name: string, picture: string | undefined, role: string, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
+function mockParticipant(address: string, name: string, picture: string | undefined, role: VoiceChatRole, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
   return { address, name, hasClaimedName: !/\d/.test(name), profilePictureUrl: picture ?? '', role, isSpeaker, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...extra }
 }
-const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorSeq: 0 }
+const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false, errorSeq: 0 }
 let voice: VoiceChatState = { ...idleVoice }
 let mockVoiceAction: ((action: VoiceChatActionWire) => void) | null = null
 const voiceTimers: ReturnType<typeof setTimeout>[] = []
@@ -550,7 +551,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     reply({ kind: 'realmInfo', realm: 'https://realm-provider.decentraland.org/main', satelliteView: GENESIS_SATELLITE_VIEW })
     // The real bridge resolves this per parcel from the live scene list; the mock circles
     // inside one scene, so a single push is the whole story.
-    reply({ kind: 'sceneInfo', title: 'Genesis Plaza', scene: 'bafkreigenesisplazahash' })
+    reply({ kind: 'sceneInfo', title: 'Genesis Plaza', scene: 'bafkreigenesisplazahash', parcel: { x: 0, y: 0 }, realm: 'main' })
     let t = 0
     poseTimer = setInterval(() => {
       t += 0.05
@@ -575,7 +576,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
 
-    // Voice chat: the engine's first snapshot, the live streams, and the stream in this scene.
+    // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
       voice = { ...voice, ...next }
       reply({ kind: 'voiceChatState', state: voice })
@@ -586,7 +587,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     setTimeout(() => {
       pushVoice({})
       reply({ kind: 'activeCommunityVoiceChats', chats: [...MOCK_ACTIVE_CHATS] })
-      reply({ kind: 'sceneVoiceChat', chat: MOCK_ACTIVE_CHATS[0] })
     }, 1600)
     const setLive = (id: string, live: boolean): void => {
       const c = mockCommunities.find((m) => m.id === id)

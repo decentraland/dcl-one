@@ -7,7 +7,15 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, VoiceChatAction, WelcomeState } from './generated'
+import type {
+  Color3,
+  HomeScene,
+  SatelliteView,
+  SceneLoadingUi,
+  VoiceChatAction,
+  VoiceChatState,
+  WelcomeState,
+} from './generated'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -348,54 +356,7 @@ export interface VoiceActivityMessage {
 
 // ---- voice chat: private calls and community streams ----------------------
 
-/** A participant of the voice room the local user is in. */
-export interface VoiceChatParticipant {
-  address: string
-  name: string
-  hasClaimedName: boolean
-  profilePictureUrl: string
-  /** 'none' | 'user' | 'moderator' | 'owner' */
-  role: string
-  isSpeaker: boolean
-  isRequestingToSpeak: boolean
-  isMuted: boolean
-  isSpeaking: boolean
-}
-
-export type VoiceChatStatus =
-  | 'disconnected'
-  | 'receivedCall'
-  | 'startingCall'
-  | 'startedCall'
-  | 'inCall'
-  | 'endingCall'
-  | 'rejectingCall'
-  | 'busy'
-  | 'genericError'
-
-/** The voice chat the local user is in or being offered (scene → page, one per change). Mirrors the
- *  engine's VoiceChatState. */
-export interface VoiceChatState {
-  status: VoiceChatStatus
-  /** 'none' | 'private' | 'community' */
-  kind: 'none' | 'private' | 'community'
-  callId: string | null
-  communityId: string | null
-  /** The other party of a private call. */
-  peer: string | null
-  /** The LiveKit room: 'none' | 'connecting' | 'connected' | 'reconnecting' */
-  connection: 'none' | 'connecting' | 'connected' | 'reconnecting'
-  participants: VoiceChatParticipant[]
-  micEnabled: boolean
-  localSpeaker: boolean
-  /** 'none' | 'user' | 'moderator' | 'owner' */
-  localRole: string
-  localRequestingToSpeak: boolean
-  /** Why the last action failed, or why the call ended in busy / error. */
-  error: string | null
-  /** Counts the errors set, so the same message twice in a row is two failures. */
-  errorSeq: number
-}
+export type { VoiceChatParticipant, VoiceChatRole, VoiceChatState } from './generated'
 
 export interface VoiceChatStateMessage {
   kind: 'voiceChatState'
@@ -445,12 +406,6 @@ export interface ActiveCommunityVoiceChatsMessage {
   chats: ActiveCommunityVoiceChat[]
   /** False when the list was cleared (no account), not read: it says nothing about what is live. */
   loaded?: boolean
-}
-
-/** The live community stream whose places include where the player stands, or none. */
-export interface SceneVoiceChatMessage {
-  kind: 'sceneVoiceChat'
-  chat: ActiveCommunityVoiceChat | null
 }
 
 /** Nearby members + count, polled by the scene (chat header "Nearby · N"). */
@@ -1960,7 +1915,6 @@ export type SceneToPage =
   | VoiceChatStateMessage
   | CommunityVoiceUpdateMessage
   | ActiveCommunityVoiceChatsMessage
-  | SceneVoiceChatMessage
   | RpcResponse
   | HoverMessage
   | CursorLockMessage

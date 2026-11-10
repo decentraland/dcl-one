@@ -4,6 +4,7 @@
 import { showToast } from '../../design'
 import type { DmUserState, VoiceChatActionWire, VoiceChatState } from '../../engine/protocol'
 import type { EngineSession, VoiceChatSession } from '../session/useEngineSession'
+import { dmRefusal } from '../chat/dmStateCopy'
 
 export type CallGate = { allowed: true; reason?: undefined } | { allowed: false; reason: string }
 
@@ -22,21 +23,8 @@ export function callGate(
     return { allowed: false, reason: 'You are already in a call.' }
   }
   if (partner == null || partner.state == null) return { allowed: true }
-  switch (partner.state) {
-    case 'connected':
-      return partner.online ? { allowed: true } : { allowed: false, reason: 'This user is offline.' }
-    case 'disconnected':
-    case 'notConnected':
-    case 'otherClient':
-    case 'noRouter': // a community channel's state; never a DM partner's
-      return { allowed: false, reason: 'This user is offline.' }
-    case 'privateMessagesBlocked':
-      return { allowed: false, reason: 'This user only accepts calls from friends.' }
-    case 'privateMessagesBlockedByOwnUser':
-      return { allowed: false, reason: 'Your privacy settings only allow calls with friends.' }
-    case 'blockedByOwnUser':
-      return { allowed: false, reason: 'Unblock this user to call them.' }
-  }
+  if (partner.state === 'connected') return partner.online ? { allowed: true } : { allowed: false, reason: dmRefusal('disconnected', 'call') }
+  return { allowed: false, reason: dmRefusal(partner.state, 'call') }
 }
 
 /** Whether the user may join a community stream. Another call does not block it: the engine hangs

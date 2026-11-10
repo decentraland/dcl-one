@@ -1435,7 +1435,10 @@ fn remove_transport_from_foreign_audio_source(
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
     mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
-    #[cfg(feature = "livekit")] voice: Option<Res<crate::voice_chat::VoiceChat>>,
+    #[cfg(feature = "livekit")] call_rooms: Query<
+        &crate::livekit::participant::ParticipantIndex,
+        With<crate::voice_chat::VoiceRoom>,
+    >,
 ) {
     let transports = transports
         .iter()
@@ -1445,8 +1448,10 @@ fn handle_foreign_audio(
     for (mut source, player) in q.iter_mut() {
         // a call's peers are heard flat through the call, not spatially as well
         #[cfg(feature = "livekit")]
-        let in_call_with = voice.as_ref().is_some_and(|voice| {
-            voice.state.is_in_call() && voice.state.participants.contains_key(&player.address)
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
         });
         #[cfg(not(feature = "livekit"))]
         let in_call_with = false;

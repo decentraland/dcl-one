@@ -34,6 +34,8 @@ use crate::livekit::{
     track::HtmlMediaEntity,
     web::{RemoteTrack, TrackKind, TrackSource},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::voice_chat::VoiceRoom;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -47,7 +49,6 @@ use crate::{
         },
         LivekitRuntimeRes,
     },
-    voice_chat::VoiceRoom,
 };
 
 pub struct LivekitTrackPlugin;

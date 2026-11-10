@@ -31,7 +31,7 @@ use crate::{
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
     },
-    voice_chat::{is_terminal_disconnect, VoiceRoom, VoiceRoomDisconnected},
+    voice_chat::{VoiceRoom, VoiceRoomDisconnected},
     NetworkMessageRecipient,
 };
 #[cfg(target_arch = "wasm32")]
@@ -242,10 +242,9 @@ fn process_room_events(
                         // a call's room ends the call, never every other room's connection:
                         // a community kick or a deleted call room is the voice module's to
                         // handle (see `voice_chat`)
-                        commands.entity(entity).try_insert(VoiceRoomDisconnected {
-                            terminal: is_terminal_disconnect(&reason),
-                            reason: format!("{reason:?}"),
-                        });
+                        commands
+                            .entity(entity)
+                            .try_insert(VoiceRoomDisconnected::new(&reason));
                     } else if matches!(
                         reason,
                         DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved

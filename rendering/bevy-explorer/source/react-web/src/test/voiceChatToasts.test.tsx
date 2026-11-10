@@ -29,6 +29,7 @@ const idle: VoiceChatState = {
   localRole: 'none',
   localRequestingToSpeak: false,
   error: null,
+  errorIsNotice: false,
   errorSeq: 0
 }
 
@@ -63,6 +64,14 @@ describe('voice chat toasts', () => {
     expect(showToast).not.toHaveBeenCalled()
     emit({ ...started(true), status: 'ended' })
     expect(showToast).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows how a call ended as a plain toast and a lost connection as an error', () => {
+    const { rerender } = renderHook(({ state }) => useVoiceChatToasts(state), { initialProps: { state: idle } })
+    rerender({ state: { ...idle, error: 'The stream ended.', errorIsNotice: true, errorSeq: 1 } })
+    expect(showToast).toHaveBeenLastCalledWith('The stream ended.', { tone: 'default' })
+    rerender({ state: { ...idle, error: "The call's connection was lost.", errorSeq: 2 } })
+    expect(showToast).toHaveBeenLastCalledWith("The call's connection was lost.", { tone: 'error' })
   })
 
   it('shows the same error twice, and not an error from before it mounted', () => {

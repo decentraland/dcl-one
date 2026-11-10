@@ -363,10 +363,6 @@ type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<Ac
 #[command(name = "/voice_state")]
 struct VoiceStateCommand;
 
-#[cfg(feature = "livekit")]
-type CallRooms<'w, 's> =
-    Query<'w, 's, (Has<Connected>, Has<Reconnecting>), With<crate::voice_chat::VoiceRoom>>;
-
 fn voice_state_cmd(
     mut input: ConsoleCommand<VoiceStateCommand>,
     mic: Res<MicState>,
@@ -374,18 +370,13 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
-    #[cfg(feature = "livekit")] call_rooms: CallRooms,
+    #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
         let call = call.zip(call_mic).map(|(call, call_mic)| {
-            let connection = match call_rooms.iter().next() {
-                Some((true, _)) => "connected",
-                Some((_, true)) => "reconnecting",
-                Some(_) => "connecting",
-                None => "none",
-            };
-            serde_json::to_value(call.snapshot(&call_mic, connection)).unwrap_or(Value::Null)
+            serde_json::to_value(call.snapshot(&call_mic, &call_participants))
+                .unwrap_or(Value::Null)
         });
         #[cfg(not(feature = "livekit"))]
         let call = None;

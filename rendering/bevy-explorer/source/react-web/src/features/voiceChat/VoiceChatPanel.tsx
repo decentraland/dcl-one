@@ -6,10 +6,9 @@
 // the People view in its place. Actions go to the engine, whose next snapshot
 // moves the panel.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, ContextMenu, ControlButton, Kebab, MaskIcon, SearchField, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, ControlButton, KebabMenu, MaskIcon, SearchField, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
 import type { VoiceChatParticipant, VoiceChatState } from '../../engine/protocol'
 import { nameColor, splitName } from '../../lib/identity'
-import { registerCancelLayer } from '../../lib/cancelLayers'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { useSession } from '../session/SessionContext'
@@ -105,7 +104,7 @@ export function VoiceChatPanel(): React.JSX.Element | null {
   )
 }
 
-function peerName(address: string | null, fallback: string): { name: string; picture?: string; claimed: boolean; color: string } {
+function usePeerName(address: string | null, fallback: string): { name: string; picture?: string; claimed: boolean; color: string } {
   const profile = useProfile(address ?? '')
   const name = profile?.name ?? fallback
   return { name, picture: profile?.picture, claimed: profile?.hasClaimedName ?? false, color: knownUserColor(address ?? '', name) }
@@ -139,7 +138,7 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
   const { voiceChat } = useSession()
   const act = voiceChat.act
   const remote = state.participants.find((p) => p.address.toLowerCase() === (state.peer ?? '').toLowerCase())
-  const peer = peerName(state.peer, remote?.name || state.peer || 'Unknown')
+  const peer = usePeerName(state.peer, remote?.name || state.peer || 'Unknown')
   const { base, tag } = splitName(peer.name)
   const speaking = remote?.isSpeaking ?? false
   const ringing = state.status === 'receivedCall' || state.status === 'startedCall'
@@ -246,46 +245,32 @@ function Face({ p, size }: { p: VoiceChatParticipant; size: number }): React.JSX
 function ParticipantMenu({ p, me, moderator }: { p: VoiceChatParticipant; me: boolean; moderator: boolean }): React.JSX.Element | null {
   const { voiceChat } = useSession()
   const act = voiceChat.act
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent): void => {
-      if (ref.current != null && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    const off = registerCancelLayer(() => setOpen(false))
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true)
-      off()
-    }
-  }, [open])
+  const ref = useRef<HTMLSpanElement>(null)
   if (me) return null
-  const viewProfile = (): void => {
-    setOpen(false)
-    const r = ref.current?.getBoundingClientRect()
-    openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true })
-  }
-  const items: ContextMenuItem[] = [{ label: 'View profile', onClick: viewProfile }]
-  if (moderator && !isModerator(p.role)) {
-    items.push(
-      p.isSpeaker
-        ? { label: 'Demote to listener', onClick: () => { setOpen(false); act({ op: 'demoteSpeaker', address: p.address }) } }
-        : { label: 'Promote to speaker', onClick: () => { setOpen(false); act({ op: 'promoteSpeaker', address: p.address }) } },
-      { label: 'Remove from stream', danger: true, onClick: () => { setOpen(false); act({ op: 'kickPlayer', address: p.address }) } }
-    )
+  const items = (close: () => void): ContextMenuItem[] => {
+    const then = (run: () => void) => () => {
+      close()
+      run()
+    }
+    const viewProfile = (): void => {
+      const r = ref.current?.getBoundingClientRect()
+      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true })
+    }
+    const list: ContextMenuItem[] = [{ label: 'View profile', onClick: then(viewProfile) }]
+    if (moderator && !isModerator(p.role)) {
+      list.push(
+        p.isSpeaker
+          ? { label: 'Demote to listener', onClick: then(() => act({ op: 'demoteSpeaker', address: p.address })) }
+          : { label: 'Promote to speaker', onClick: then(() => act({ op: 'promoteSpeaker', address: p.address })) },
+        { label: 'Remove from stream', danger: true, onClick: then(() => act({ op: 'kickPlayer', address: p.address })) }
+      )
+    }
+    return list
   }
   return (
-    <div ref={ref} className={styles.menuWrap}>
-      <ControlButton variant="faint" size="sm" aria-label={`Options for ${splitName(p.name || p.address).base}`} aria-expanded={open} active={open} onClick={() => setOpen((o) => !o)}>
-        <Kebab vertical size={16} r={2} />
-      </ControlButton>
-      {open && (
-        <div className={styles.menu}>
-          <ContextMenu items={items} />
-        </div>
-      )}
-    </div>
+    <span ref={ref}>
+      <KebabMenu size="sm" label={`Options for ${splitName(p.name || p.address).base}`} items={items} />
+    </span>
   )
 }
 

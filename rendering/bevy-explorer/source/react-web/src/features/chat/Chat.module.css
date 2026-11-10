@@ -197,16 +197,6 @@
 .dmOnline {
   color: var(--online);
 }
-.menuWrap {
-  position: relative;
-}
-.menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  z-index: 1;
-}
 /* The input while the partner cannot be messaged: the reason, in the input's box. */
 .blocked {
   display: flex;

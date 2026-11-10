@@ -50,6 +50,7 @@ import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
 import { hudActsOn, type EditorHudMode } from '../editorHost/hudMode'
+import { streamHere } from '../voiceChat/streamHere'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -1194,7 +1195,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
-  const [sceneVoiceChat, setSceneVoiceChat] = useState<ActiveCommunityVoiceChat | null>(null)
+  const [scenePlace, setScenePlace] = useState<{ parcel: string; realm: string } | null>(null)
   const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -1602,9 +1603,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setActiveVoiceChats(msg.chats)
           setActiveVoiceChatsLoaded(msg.loaded !== false)
           break
-        case 'sceneVoiceChat':
-          setSceneVoiceChat(msg.chat)
-          break
         case 'menuVisibility':
           setMenuOpen(msg.open)
           break
@@ -1960,6 +1958,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         case 'sceneInfo':
           setSceneTitle(msg.title)
+          setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
           if (msg.scene !== currentScene.current) {
@@ -3153,6 +3152,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const voiceChatAct = useCallback((action: VoiceChatActionWire) => {
     driverRef.current?.send({ kind: 'voiceChatAction', action })
   }, [])
+  const sceneVoiceChat = useMemo(
+    () => (scenePlace == null ? null : streamHere(activeVoiceChats, scenePlace.parcel, scenePlace.realm)),
+    [activeVoiceChats, scenePlace]
+  )
   const toggleMic = useCallback(() => {
     setMic((m) => {
       driverRef.current?.send({ kind: 'setMic', enabled: !m.enabled })
@@ -3311,7 +3314,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // the live streams are per account (`isMember`)
     setActiveVoiceChats([])
     setActiveVoiceChatsLoaded(false)
-    setSceneVoiceChat(null)
     setCommunities([])
     setCommunityCards({})
     clearCommunitySave()

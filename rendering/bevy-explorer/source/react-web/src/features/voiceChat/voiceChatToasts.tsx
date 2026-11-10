@@ -1,7 +1,7 @@
 // Toasts for voice chat: a community stream ending (the social service's broadcast; its start comes
 // as a `community_voice_chat_started` notification, toasted with the other notifications), and
 // the errors the engine reports outside the call panel's own Busy / Error views (a refused
-// moderation action, a guest trying to call).
+// moderation action, a guest trying to call), and how a call room went away.
 import { useEffect, useRef } from 'react'
 import { showToast } from '../../design'
 import type { VoiceChatState } from '../../engine/protocol'
@@ -46,6 +46,6 @@ export function useVoiceChatToasts(state: VoiceChatState | null): void {
     lastSeq.current = state.errorSeq
     if (state.error == null) return
     if (state.status === 'busy' || state.status === 'genericError') return
-    showToast(state.error, { tone: 'error' })
+    showToast(state.error, { tone: state.errorIsNotice ? 'default' : 'error' })
   }, [state])
 }

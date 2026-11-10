@@ -6,7 +6,6 @@ const player = vi.hoisted(() => ({ current: null as { userId: string; position?:
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player.current }))
 const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
-vi.mock('~system/Runtime', () => ({ getRealm: vi.fn(async () => ({})) }))
 const { kernelFetch } = vi.hoisted(() => ({ kernelFetch: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
@@ -16,7 +15,8 @@ vi.mock('../../bridge-scene/src/bevy-api', () => ({
   }
 }))
 
-const { fetchActiveChats, patchActive, registerVoiceChat, streamHere } = await import('../../bridge-scene/src/domains/voiceChat')
+const { fetchActiveChats, patchActive, registerVoiceChat } = await import('../../bridge-scene/src/domains/voiceChat')
+const { streamHere } = await import('../features/voiceChat/streamHere')
 
 const chats = (...ids: string[]): { ok: true; body: string } => ({
   ok: true,
@@ -123,7 +123,7 @@ describe('active community streams', () => {
     player.current = null
     b.frame()
     expect(lists(b.sent).at(-1)).toEqual([])
-    expect(b.sent.at(-1)).toEqual({ kind: 'sceneVoiceChat', chat: null })
+    expect(b.sent.at(-1)).toEqual({ kind: 'activeCommunityVoiceChats', chats: [], loaded: false })
   })
 })
 
@@ -182,31 +182,26 @@ describe('patching the live list from a broadcast', () => {
   })
 })
 
-describe('the scene banner', () => {
+describe('a stream ending', () => {
   beforeEach(() => {
     kernelFetch.mockReset()
     relay.mockReset()
   })
 
-  it('goes away when the stream here ends, without a read per broadcast', async () => {
-    player.current = { userId: '0xa', position: { x: 8, y: 0, z: 8 } } as never
-    const runtime = await import('~system/Runtime')
-    vi.mocked(runtime.getRealm).mockResolvedValue({ realmInfo: { realmName: 'main' } } as never)
+  it('leaves the live list without a read per broadcast', async () => {
+    player.current = { userId: '0xa' }
     kernelFetch.mockResolvedValueOnce({ ok: true, body: JSON.stringify({ data: { activeChats: [chat('c1', { positions: ['0,0'] })] } }) })
-    const sent: { kind: string; chat?: { communityId: string } | null }[] = []
+    const sent: { kind: string; chats?: { communityId: string }[] }[] = []
     let system: (dt: number) => void = () => undefined
     registerVoiceChat({ send: (msg) => sent.push(msg as never), on: () => undefined, push: (s) => (system = s) })
     const onUpdate = relay.mock.calls.find(([kind]) => kind === 'communityVoiceUpdate')?.[2] as (u: unknown) => void
-    const banner = (): unknown => sent.filter((m) => m.kind === 'sceneVoiceChat').at(-1)?.chat?.communityId ?? null
 
-    system(2) // sign-in read; the realm is not known yet
+    system(0) // sign-in read
     await settle()
-    system(2)
-    expect(banner()).toBe('c1')
+    expect(lists(sent).at(-1)).toEqual(['c1'])
 
     onUpdate({ ...update('c1', 'ended'), createdAt: 0n, endedAt: 1n })
-    system(2)
-    expect(banner()).toBeNull()
+    expect(lists(sent).at(-1)).toEqual([])
     expect(kernelFetch).toHaveBeenCalledTimes(1)
   })
 

@@ -26,6 +26,7 @@ const idle: VoiceChatState = {
   localRole: 'none',
   localRequestingToSpeak: false,
   error: null,
+  errorIsNotice: false,
   errorSeq: 0
 }
 
@@ -253,6 +254,8 @@ describe('the call gate', () => {
     expect(callGate(null, { state: 'connected', online: true }, false).reason).toBe('Voice chat is not available.')
     expect(callGate(idle, { state: 'connected', online: true }, false)).toEqual({ allowed: true })
     expect(callGate(idle, { state: 'connected', online: false }, false).reason).toBe('This user is offline.')
+    // the local user's own chat link, not the partner's
+    expect(callGate(idle, { state: 'notConnected', online: true }, false).reason).toBe('You are not connected to chat.')
     expect(callGate(idle, { state: 'privateMessagesBlocked', online: true }, false).reason).toMatch(/friends/)
     expect(callGate(idle, { state: 'privateMessagesBlockedByOwnUser', online: true }, false).reason).toMatch(/privacy/)
     expect(callGate(idle, { state: 'blockedByOwnUser', online: true }, false).reason).toMatch(/Unblock/)

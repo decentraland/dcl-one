@@ -141,6 +141,90 @@ pub struct VoiceMessage {
     pub active: bool,
 }
 
+/// Where the call stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum VoiceChatStatus {
+    #[default]
+    Disconnected,
+    /// A private call is ringing for the local user.
+    ReceivedCall,
+    /// The start / join / accept procedure is in flight.
+    StartingCall,
+    /// A private call is ringing on the other side.
+    StartedCall,
+    InCall,
+    EndingCall,
+    RejectingCall,
+    /// The other side (or the local user) is already in a call.
+    Busy,
+    GenericError,
+}
+
+impl VoiceChatStatus {
+    /// A new call may start.
+    pub fn is_not_connected(self) -> bool {
+        matches!(self, Self::Disconnected | Self::Busy | Self::GenericError)
+    }
+}
+
+/// The kind of call (nearby voice is the existing, separate feature).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum VoiceChatKind {
+    #[default]
+    None,
+    Private,
+    Community,
+}
+
+/// A participant's community role, from the participant metadata `role`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum VoiceChatRole {
+    #[default]
+    None,
+    User,
+    Moderator,
+    Owner,
+}
+
+impl VoiceChatRole {
+    pub fn parse(role: &str) -> Self {
+        match role.to_ascii_lowercase().as_str() {
+            "user" | "member" => Self::User,
+            "moderator" => Self::Moderator,
+            "owner" => Self::Owner,
+            _ => Self::None,
+        }
+    }
+
+    /// A moderator or the owner.
+    pub fn is_moderator(self) -> bool {
+        matches!(self, Self::Moderator | Self::Owner)
+    }
+}
+
+/// The call's LiveKit room.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum VoiceChatConnection {
+    #[default]
+    None,
+    Connecting,
+    Connected,
+    /// Dropped, and being re-dialled.
+    Reconnecting,
+}
+
 /// A participant of the voice room the local user is in (a private call's peer, or a community
 /// stream's speakers and listeners), as the gatekeeper's participant metadata describes them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -152,8 +236,7 @@ pub struct VoiceChatParticipant {
     pub name: String,
     pub has_claimed_name: bool,
     pub profile_picture_url: String,
-    /// "none", "user", "moderator" or "owner"
-    pub role: String,
+    pub role: VoiceChatRole,
     pub is_speaker: bool,
     pub is_requesting_to_speak: bool,
     pub is_muted: bool,
@@ -167,29 +250,28 @@ pub struct VoiceChatParticipant {
 #[derive(ts_rs::TS)]
 #[ts(export)]
 pub struct VoiceChatState {
-    /// "disconnected", "receivedCall", "startingCall", "startedCall", "inCall", "endingCall",
-    /// "rejectingCall", "busy" or "genericError"
-    pub status: String,
-    /// "none", "private" or "community"
-    pub kind: String,
+    pub status: VoiceChatStatus,
+    pub kind: VoiceChatKind,
     /// The private call's id.
     pub call_id: Option<String>,
     /// The community whose stream this is.
     pub community_id: Option<String>,
     /// The other party of a private call.
     pub peer: Option<String>,
-    /// The LiveKit room: "none", "connecting", "connected" or "reconnecting"
-    pub connection: String,
+    pub connection: VoiceChatConnection,
     pub participants: Vec<VoiceChatParticipant>,
     /// The call microphone is publishing.
     pub mic_enabled: bool,
     /// The local user may publish (always in a private call; a community speaker).
     pub local_speaker: bool,
-    /// The local user's role in the community: "none", "user", "moderator" or "owner"
-    pub local_role: String,
+    /// The local user's role in the community.
+    pub local_role: VoiceChatRole,
     pub local_requesting_to_speak: bool,
-    /// Why the last action failed, or why the call ended in busy / error.
+    /// Why the last action failed, why the call ended in busy / error, or how the call room
+    /// went away.
     pub error: Option<String>,
+    /// `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure.
+    pub error_is_notice: bool,
     /// Counts the errors set, so the same message twice in a row is two failures.
     pub error_seq: u32,
 }

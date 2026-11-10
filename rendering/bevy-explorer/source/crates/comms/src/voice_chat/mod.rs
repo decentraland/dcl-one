@@ -12,7 +12,10 @@ pub mod state;
 use std::collections::VecDeque;
 
 use alloy_core::primitives::Address;
-use bevy::{ecs::relationship::Relationship, prelude::*};
+use bevy::{
+    ecs::{relationship::Relationship, system::SystemParam},
+    prelude::*,
+};
 use bevy_console::ConsoleCommand;
 #[cfg(target_arch = "wasm32")]
 use common::structs::AudioSettings;
@@ -22,33 +25,38 @@ use common::{
     structs::SystemAudio,
     util::{redact_access_token, AsH160},
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+#[cfg(not(target_arch = "wasm32"))]
+use livekit::DisconnectReason;
 use social::{
     voice::{VoiceEvent, VoiceQuery, VoiceRefusal},
     SocialClient, VoiceEventReceived,
 };
 use system_bridge::{
     CommunityVoiceUpdate as CommunityVoiceUpdateData, SystemApi, VoiceChatAction,
-    VoiceChatParticipant as VoiceChatParticipantData, VoiceChatState as VoiceChatStateData,
+    VoiceChatConnection, VoiceChatParticipant as VoiceChatParticipantData,
+    VoiceChatState as VoiceChatStateData,
 };
 use tokio::sync::{mpsc::Sender, oneshot};
 use wallet::Wallet;
 
+#[cfg(target_arch = "wasm32")]
+use crate::livekit::web::DisconnectReason;
 use crate::{
     global_crdt::ChannelControl,
     livekit::{
         participant::{
-            ActiveSpeaker, HostedBy, LivekitParticipant, ParticipantConnected,
-            ParticipantDisconnected, ParticipantMetadataChanged,
+            ActiveSpeaker, HostedBy, LivekitParticipant, ParticipantIndex,
+            ParticipantMetadataChanged,
         },
-        room::{ConnectFailed, Connected, Connecting, Reconnecting},
+        room::{ConnectFailed, Connected, Connecting, Disconnected, Reconnecting},
         standalone_room_components,
         track::{Audio, Microphone, PublishedBy, SubscribeToTrack},
     },
     DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage,
 };
 
-use self::state::{CallState, Effect, Input, Kind, Metadata, Reply, Rpc, Sound};
+use self::state::{CallEnding, CallState, Effect, Input, Kind, Metadata, Reply, Role, Rpc, Sound};
 
 pub struct VoiceChatPlugin;
 
@@ -64,8 +72,7 @@ impl Plugin for VoiceChatPlugin {
         }
         app.init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
-            .init_resource::<VoiceInputs>()
-            .init_resource::<VoiceCommands>();
+            .init_resource::<VoiceInputs>();
         app.add_systems(
             Update,
             (
@@ -80,26 +87,75 @@ impl Plugin for VoiceChatPlugin {
             )
                 .chain(),
         );
-        app.add_observer(participant_connected);
-        app.add_observer(participant_disconnected);
         app.add_observer(participant_metadata_changed);
-        app.add_observer(speaker_added);
-        app.add_observer(speaker_removed);
 
-        app.add_console_command::<VoiceCallCommand, _>(voice_call);
-        app.add_console_command::<VoiceAcceptCommand, _>(voice_accept);
-        app.add_console_command::<VoiceRejectCommand, _>(voice_reject);
-        app.add_console_command::<VoiceEndCommand, _>(voice_end);
-        app.add_console_command::<VoiceCommunityCommand, _>(voice_community);
-        app.add_console_command::<VoiceHandCommand, _>(voice_hand);
-        app.add_console_command::<VoiceMicCommand, _>(voice_mic);
-        app.add_console_command::<VoiceModerateCommand, _>(voice_moderate);
+        app.add_console_command::<VoiceCommand, _>(voice_command);
+        app.add_debug_section(DebugSection {
+            title: "Voice call",
+            query: "/voice_state",
+            fields: &[
+                ("Status", "call.status"),
+                ("Kind", "call.kind"),
+                ("Room", "call.connection"),
+                ("Call id", "call.callId"),
+                ("Community id", "call.communityId"),
+                ("Peer", "call.peer"),
+                ("Local role", "call.localRole"),
+                ("Local speaker", "call.localSpeaker"),
+                ("Hand raised", "call.localRequestingToSpeak"),
+                ("Participants", "call.participants"),
+                ("Last error", "call.error"),
+            ],
+            actions: &[
+                ("Accept", "/voice accept"),
+                ("Reject", "/voice reject"),
+                ("Hang up / leave", "/voice end"),
+                ("Close the stream", "/voice close"),
+            ],
+            inputs: &[
+                DebugInput {
+                    label: "Call mic",
+                    field: "call.micEnabled",
+                    command: "/voice mic {value}",
+                    kind: DebugInputKind::Toggle,
+                },
+                DebugInput {
+                    label: "Hand",
+                    field: "call.localRequestingToSpeak",
+                    command: "/voice hand {value}",
+                    kind: DebugInputKind::ActionButton {
+                        enable: ("Raise hand", "up"),
+                        disable: ("Lower hand", "down"),
+                    },
+                },
+                DebugInput {
+                    label: "Call (wallet address)",
+                    field: "",
+                    command: "/voice call {value}",
+                    kind: DebugInputKind::Text,
+                },
+                DebugInput {
+                    label: "Join stream (community id)",
+                    field: "",
+                    command: "/voice join {value}",
+                    kind: DebugInputKind::Text,
+                },
+                DebugInput {
+                    label: "Start stream (community id)",
+                    field: "",
+                    command: "/voice start {value}",
+                    kind: DebugInputKind::Text,
+                },
+            ],
+        });
     }
 }
 
 /// How often, and how far apart, a dropped call room is re-dialled.
 const MAX_RECONNECTION_ATTEMPTS: u32 = 3;
 const RECONNECTION_DELAY_SECS: f64 = 2.0;
+/// How long a dropped room waits for LiveKit's reason before it counts as a lost connection.
+const UNEXPLAINED_DROP_SECS: f64 = 1.0;
 /// `voice_chat_call_tune.mp3` plays once; the ring loops
 /// it by re-triggering it this often (its length).
 const CALL_TUNE_SECS: f32 = 3.056;
@@ -120,10 +176,6 @@ pub struct CallMic {
 #[derive(Resource, Default)]
 pub struct VoiceInputs(pub VecDeque<Input>);
 
-/// Console commands, refused like the HUD's actions.
-#[derive(Resource, Default)]
-struct VoiceCommands(VecDeque<Input>);
-
 /// The voice room entity: the LiveKit room of the call, with its outgoing channels (unused, the
 /// room carries no data of ours, but the control channel must stay open) and its re-dial budget.
 #[derive(Component)]
@@ -131,109 +183,321 @@ pub struct VoiceRoom {
     pub kind: Kind,
     reconnects: u32,
     redial_at: Option<f64>,
+    /// When the room was seen dropped with no reason yet.
+    unexplained_drop_at: Option<f64>,
     _sender: Sender<NetworkMessage>,
     _control: Sender<ChannelControl>,
 }
 
-/// Set by the room plugin when the voice room's connection dropped, with LiveKit's reason:
-/// `terminal` when the room will not come back (kicked, deleted, closed, duplicate identity…).
+impl VoiceRoom {
+    fn new(kind: Kind, sender: Sender<NetworkMessage>, control: Sender<ChannelControl>) -> Self {
+        Self {
+            kind,
+            reconnects: 0,
+            redial_at: None,
+            unexplained_drop_at: None,
+            _sender: sender,
+            _control: control,
+        }
+    }
+}
+
+/// Set by the room plugin when the voice room's connection dropped, from LiveKit's reason.
 #[derive(Component, Debug)]
 pub struct VoiceRoomDisconnected {
+    /// The room will not come back (kicked, deleted, closed, duplicate identity…).
     pub terminal: bool,
+    pub ending: CallEnding,
+    /// LiveKit's reason, for the log.
     pub reason: String,
+}
+
+impl VoiceRoomDisconnected {
+    /// A timeout, a media failure or an agent error gets the re-dial budget; every other
+    /// reason ends the call.
+    pub(crate) fn new(reason: &DisconnectReason) -> Self {
+        let terminal = !matches!(
+            reason,
+            DisconnectReason::ConnectionTimeout
+                | DisconnectReason::MediaFailure
+                | DisconnectReason::AgentError
+        );
+        let ending = match reason {
+            DisconnectReason::ClientInitiated
+            | DisconnectReason::RoomDeleted
+            | DisconnectReason::RoomClosed => CallEnding::Ended,
+            DisconnectReason::ParticipantRemoved => CallEnding::Removed,
+            DisconnectReason::DuplicateIdentity => CallEnding::OtherDevice,
+            _ => CallEnding::ConnectionLost,
+        };
+        Self {
+            terminal,
+            ending,
+            reason: format!("{reason:?}"),
+        }
+    }
+}
+
+/// A voice room participant: its address and the gatekeeper's metadata, refreshed as it changes.
+/// Speaking is the participant's [`ActiveSpeaker`].
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct CallParticipant {
+    pub address: Address,
+    pub metadata: Metadata,
 }
 
 /// A microphone track of the voice room, subscribed by this module and played flat.
 #[derive(Component)]
 pub struct VoiceRoomTrack;
 
-enum Pending {
-    StartPrivate(u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
-    AcceptPrivate(String, oneshot::Receiver<Result<String, VoiceRefusal>>),
-    RejectPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
-    EndPrivate(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
-    StartCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
-    JoinCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
-    EndCommunity(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
-    Moderation(oneshot::Receiver<Result<(), VoiceRefusal>>),
-    Mute(oneshot::Receiver<Result<bool, VoiceRefusal>>),
+/// A procedure in flight, `None` until its reply. A dropped channel is a transport failure.
+struct Pending(Box<dyn FnMut() -> Option<Reply> + Send + Sync>);
+
+fn awaiting<T: Send + Sync + 'static>(
+    reply: impl FnOnce(Result<T, VoiceRefusal>) -> Reply + Send + Sync + 'static,
+) -> (oneshot::Sender<Result<T, VoiceRefusal>>, Pending) {
+    let (tx, mut rx) = oneshot::channel();
+    let mut reply = Some(reply);
+    let poll = move || {
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(oneshot::error::TryRecvError::Empty) => return None,
+            Err(oneshot::error::TryRecvError::Closed) => Err(VoiceRefusal::Transport(
+                "the social service dropped the request".to_owned(),
+            )),
+        };
+        reply.take().map(|reply| reply(result))
+    };
+    (tx, Pending(Box::new(poll)))
 }
 
-impl Pending {
-    /// The reply, or `None` while it is in flight. A dropped channel is a transport failure.
-    fn poll(&mut self) -> Option<Reply> {
-        fn take<T>(
-            rx: &mut oneshot::Receiver<Result<T, VoiceRefusal>>,
-        ) -> Option<Result<T, VoiceRefusal>> {
-            match rx.try_recv() {
-                Ok(result) => Some(result),
-                Err(oneshot::error::TryRecvError::Empty) => None,
-                Err(oneshot::error::TryRecvError::Closed) => Some(Err(VoiceRefusal::Transport(
-                    "the social service dropped the request".to_owned(),
-                ))),
-            }
+fn query(rpc: Rpc) -> (VoiceQuery, Pending) {
+    let hex = |address: Address| format!("{address:#x}");
+    match rpc {
+        Rpc::StartPrivate { callee, attempt } => {
+            let (response, pending) = awaiting(move |r| Reply::StartPrivate(attempt, r));
+            let callee = hex(callee);
+            (VoiceQuery::StartPrivate { callee, response }, pending)
         }
-        Some(match self {
-            Pending::StartPrivate(attempt, rx) => Reply::StartPrivate(*attempt, take(rx)?),
-            Pending::AcceptPrivate(id, rx) => Reply::AcceptPrivate(id.clone(), take(rx)?),
-            Pending::RejectPrivate(rx) => Reply::RejectPrivate(take(rx)?),
-            Pending::EndPrivate(id, rx) => Reply::EndPrivate(id.clone(), take(rx)?),
-            Pending::StartCommunity(id, attempt, rx) => {
-                Reply::StartCommunity(id.clone(), *attempt, take(rx)?)
-            }
-            Pending::JoinCommunity(id, attempt, rx) => {
-                Reply::JoinCommunity(id.clone(), *attempt, take(rx)?)
-            }
-            Pending::EndCommunity(id, rx) => Reply::EndCommunity(id.clone(), take(rx)?),
-            Pending::Moderation(rx) => Reply::Moderation(take(rx)?),
-            Pending::Mute(rx) => Reply::Moderation(take(rx)?.map(|_| ())),
-        })
+        Rpc::AcceptPrivate { call_id } => {
+            let id = call_id.clone();
+            let (response, pending) = awaiting(move |r| Reply::AcceptPrivate(id, r));
+            (VoiceQuery::AcceptPrivate { call_id, response }, pending)
+        }
+        Rpc::RejectPrivate { call_id } => {
+            let (response, pending) = awaiting(Reply::RejectPrivate);
+            (VoiceQuery::RejectPrivate { call_id, response }, pending)
+        }
+        Rpc::EndPrivate { call_id } => {
+            let id = call_id.clone();
+            let (response, pending) = awaiting(move |r| Reply::EndPrivate(id, r));
+            (VoiceQuery::EndPrivate { call_id, response }, pending)
+        }
+        Rpc::StartCommunity {
+            community_id,
+            attempt,
+        } => {
+            let id = community_id.clone();
+            let (response, pending) = awaiting(move |r| Reply::StartCommunity(id, attempt, r));
+            let query = VoiceQuery::StartCommunity {
+                community_id,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::JoinCommunity {
+            community_id,
+            attempt,
+        } => {
+            let id = community_id.clone();
+            let (response, pending) = awaiting(move |r| Reply::JoinCommunity(id, attempt, r));
+            let query = VoiceQuery::JoinCommunity {
+                community_id,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::EndCommunity { community_id } => {
+            let id = community_id.clone();
+            let (response, pending) = awaiting(move |r| Reply::EndCommunity(id, r));
+            let query = VoiceQuery::EndCommunity {
+                community_id,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::RequestToSpeak {
+            community_id,
+            raise,
+        } => {
+            let (response, pending) = awaiting(Reply::Moderation);
+            let query = VoiceQuery::RequestToSpeak {
+                community_id,
+                raising_hand: raise,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::PromoteSpeaker {
+            community_id,
+            address,
+        } => {
+            let (response, pending) = awaiting(Reply::Moderation);
+            let address = hex(address);
+            let query = VoiceQuery::PromoteSpeaker {
+                community_id,
+                address,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::DemoteSpeaker {
+            community_id,
+            address,
+        } => {
+            let (response, pending) = awaiting(Reply::Moderation);
+            let address = hex(address);
+            let query = VoiceQuery::DemoteSpeaker {
+                community_id,
+                address,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::KickPlayer {
+            community_id,
+            address,
+        } => {
+            let (response, pending) = awaiting(Reply::Moderation);
+            let address = hex(address);
+            let query = VoiceQuery::KickPlayer {
+                community_id,
+                address,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::RejectSpeakRequest {
+            community_id,
+            address,
+        } => {
+            let (response, pending) = awaiting(Reply::Moderation);
+            let address = hex(address);
+            let query = VoiceQuery::RejectSpeakRequest {
+                community_id,
+                address,
+                response,
+            };
+            (query, pending)
+        }
+        Rpc::MuteSpeaker {
+            community_id,
+            address,
+            muted,
+        } => {
+            let (response, pending) =
+                awaiting(|r: Result<bool, _>| Reply::Moderation(r.map(|_| ())));
+            let address = hex(address);
+            let query = VoiceQuery::MuteSpeaker {
+                community_id,
+                address,
+                muted,
+                response,
+            };
+            (query, pending)
+        }
     }
 }
 
 #[derive(Resource, Default)]
 pub struct VoiceChat {
     pub state: CallState,
+    /// The call room, as the HUD and `/voice_state` show it.
+    pub connection: VoiceChatConnection,
     pending: Vec<Pending>,
     state_streams: Vec<RpcStreamSender<VoiceChatStateData>>,
     update_streams: Vec<RpcStreamSender<CommunityVoiceUpdateData>>,
     ring: Option<Timer>,
-    last_snapshot: Option<VoiceChatStateData>,
 }
 
 impl VoiceChat {
     /// The state as the HUD sees it.
-    pub fn snapshot(&self, mic: &CallMic, connection: &str) -> VoiceChatStateData {
+    pub fn snapshot(&self, mic: &CallMic, participants: &CallParticipants) -> VoiceChatStateData {
         let state = &self.state;
         VoiceChatStateData {
-            status: state.status.name().to_owned(),
-            kind: state.kind.name().to_owned(),
+            status: state.status,
+            kind: state.kind,
             call_id: state.call_id.clone(),
             community_id: state.community_id.clone(),
             peer: state.peer.map(|a| format!("{a:#x}")),
-            connection: connection.to_owned(),
-            participants: state
-                .participants
-                .iter()
-                .map(|(address, p)| VoiceChatParticipantData {
-                    address: format!("{address:#x}"),
-                    name: p.name.clone(),
-                    has_claimed_name: p.has_claimed_name,
-                    profile_picture_url: p.profile_picture_url.clone(),
-                    role: p.role.name().to_owned(),
-                    is_speaker: p.is_speaker,
-                    is_requesting_to_speak: p.is_requesting_to_speak,
-                    is_muted: p.is_muted,
-                    is_speaking: p.is_speaking,
-                })
-                .collect(),
+            connection: self.connection,
+            participants: participants.list(),
             mic_enabled: mic.enabled,
             local_speaker: state.local_speaker,
-            local_role: state.local_role.name().to_owned(),
+            local_role: state.local_role,
             local_requesting_to_speak: state.local_requesting_to_speak,
             error: state.error.clone(),
+            error_is_notice: state.error_is_notice,
             error_seq: state.error_seq(),
         }
+    }
+}
+
+#[derive(SystemParam)]
+pub struct CallParticipants<'w, 's> {
+    participants: Query<'w, 's, (&'static CallParticipant, Has<ActiveSpeaker>)>,
+}
+
+impl CallParticipants<'_, '_> {
+    fn list(&self) -> Vec<VoiceChatParticipantData> {
+        let mut list = self
+            .participants
+            .iter()
+            .map(|(participant, speaking)| {
+                let metadata = &participant.metadata;
+                VoiceChatParticipantData {
+                    address: format!("{:#x}", participant.address),
+                    name: metadata.name.clone(),
+                    has_claimed_name: metadata.has_claimed_name,
+                    profile_picture_url: metadata.profile_picture_url.clone(),
+                    role: Role::parse(&metadata.role),
+                    is_speaker: metadata.is_speaker,
+                    is_requesting_to_speak: metadata.is_requesting_to_speak,
+                    is_muted: metadata.muted,
+                    is_speaking: speaking,
+                }
+            })
+            .collect::<Vec<_>>();
+        list.sort_by(|a, b| a.address.cmp(&b.address));
+        list
+    }
+}
+
+type ChangedCallParticipant = (
+    With<CallParticipant>,
+    Or<(Changed<CallParticipant>, Added<ActiveSpeaker>)>,
+);
+
+#[derive(SystemParam)]
+struct CallParticipantChanges<'w, 's> {
+    changed: Query<'w, 's, (), ChangedCallParticipant>,
+    participants: Query<'w, 's, (), With<CallParticipant>>,
+    left: RemovedComponents<'w, 's, CallParticipant>,
+    silent: RemovedComponents<'w, 's, ActiveSpeaker>,
+}
+
+impl CallParticipantChanges<'_, '_> {
+    fn any(&mut self) -> bool {
+        // every removal is read, so none is left over for the next drive
+        let left = self.left.read().count() > 0;
+        let participants = &self.participants;
+        let silent = self
+            .silent
+            .read()
+            .filter(|entity| participants.contains(*entity))
+            .count()
+            > 0;
+        left || silent || !self.changed.is_empty()
     }
 }
 
@@ -276,31 +540,19 @@ fn sound_clip(sound: Sound) -> Option<&'static str> {
     })
 }
 
-/// Every reason the SDK names is terminal; what is left
-/// (a media failure, an agent error, a refused dial) gets the re-dial budget.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn is_terminal_disconnect(reason: &livekit::DisconnectReason) -> bool {
-    !matches!(
-        reason,
-        livekit::DisconnectReason::MediaFailure | livekit::DisconnectReason::AgentError
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn is_terminal_disconnect(_reason: &crate::livekit::web::DisconnectReason) -> bool {
-    true
-}
-
 type VoiceRoomQuery<'w, 's> = Query<
     'w,
     's,
     (
         Entity,
         &'static mut VoiceRoom,
-        Has<Connected>,
-        Has<Connecting>,
-        Has<Reconnecting>,
-        Has<ConnectFailed>,
+        (
+            Has<Connected>,
+            Has<Connecting>,
+            Has<Reconnecting>,
+            Has<ConnectFailed>,
+            Has<Disconnected>,
+        ),
         Option<&'static VoiceRoomDisconnected>,
     ),
 >;
@@ -325,19 +577,20 @@ fn drive_voice_chat(
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
     mut inputs: ResMut<VoiceInputs>,
-    mut console: ResMut<VoiceCommands>,
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
     social: Res<SocialClient>,
     wallet: Res<Wallet>,
     time: Res<Time>,
     mut rooms: VoiceRoomQuery,
+    participants: CallParticipants,
+    mut participant_changes: CallParticipantChanges,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
     disable_gatekeeper: Res<DisableSceneRoomGatekeeper>,
 ) {
     let now = time.elapsed_secs_f64();
     let me = wallet.address();
-    let mut force_snapshot = false;
+    let mut force_snapshot = participant_changes.any();
     if voice.state.me() != me {
         if voice.state.is_active() {
             info!(target: "comms::voice_chat", "the account changed: ending the call");
@@ -346,18 +599,9 @@ fn drive_voice_chat(
         // the HUD clears its call state on logout
         force_snapshot = true;
     }
-    let refusal = user_refusal(disable_realm_comms.as_deref(), &disable_gatekeeper, &wallet);
-    for input in console.0.drain(..) {
-        match refusal {
-            Some(reason) => {
-                voice.state.set_error(reason.to_owned());
-                force_snapshot = true;
-            }
-            None => inputs.0.push_back(input),
-        }
-    }
 
-    // the HUD
+    // the HUD and the console
+    let refusal = user_refusal(disable_realm_comms.as_deref(), &disable_gatekeeper, &wallet);
     for event in system_api.read() {
         match event {
             SystemApi::GetVoiceChatStateStream(sender) => {
@@ -418,59 +662,82 @@ fn drive_voice_chat(
     }
 
     // the procedures' replies
-    let mut pending = std::mem::take(&mut voice.pending);
-    pending.retain_mut(|p| match p.poll() {
-        Some(reply) => {
-            debug!(target: "comms::voice_chat", "reply {}", redact_access_token(&format!("{reply:?}")));
-            inputs.0.push_back(Input::Reply(reply));
-            false
-        }
-        None => true,
-    });
-    voice.pending = pending;
+    if !voice.pending.is_empty() {
+        let mut pending = std::mem::take(&mut voice.pending);
+        pending.retain_mut(|p| match (p.0)() {
+            Some(reply) => {
+                debug!(target: "comms::voice_chat", "reply {}", redact_access_token(&format!("{reply:?}")));
+                inputs.0.push_back(Input::Reply(reply));
+                false
+            }
+            None => true,
+        });
+        voice.pending = pending;
+    }
 
     // the room
-    let mut connection = "none";
-    for (entity, mut room, connected, connecting, reconnecting, failed, disconnected) in
-        rooms.iter_mut()
+    let mut connection = VoiceChatConnection::None;
+    for (
+        entity,
+        mut room,
+        (connected, connecting, reconnecting, failed, disconnected),
+        disconnected_reason,
+    ) in rooms.iter_mut()
     {
         connection = if connected {
-            "connected"
+            VoiceChatConnection::Connected
         } else if reconnecting || room.redial_at.is_some() {
-            "reconnecting"
+            VoiceChatConnection::Reconnecting
         } else {
-            "connecting"
+            VoiceChatConnection::Connecting
         };
         if connected && !voice.state.room_connected {
             room.reconnects = 0;
             inputs.0.push_back(Input::RoomConnected);
         }
+        if !disconnected && room.unexplained_drop_at.is_some() {
+            room.unexplained_drop_at = None;
+        }
         // a refused dial keeps its `Connecting` marker beside `ConnectFailed`
-        let dropped = match disconnected {
-            Some(d) => Some((d.terminal, d.reason.clone())),
-            None if failed && room.redial_at.is_none() => {
-                Some((false, "the connection was refused".to_owned()))
+        let dropped = match disconnected_reason {
+            Some(d) => Some((d.terminal, d.ending, d.reason.clone())),
+            None if failed && room.redial_at.is_none() => Some((
+                false,
+                CallEnding::Refused,
+                "the connection was refused".to_owned(),
+            )),
+            // the reason may trail the drop, or never come (one the web mirror cannot parse)
+            None if disconnected && room.redial_at.is_none() => {
+                let since = *room.unexplained_drop_at.get_or_insert(now);
+                (now - since >= UNEXPLAINED_DROP_SECS).then(|| {
+                    (
+                        false,
+                        CallEnding::ConnectionLost,
+                        "dropped without a reason".to_owned(),
+                    )
+                })
             }
             None => None,
         };
-        if let Some((terminal, reason)) = dropped {
+        if let Some((terminal, ending, reason)) = dropped {
+            room.unexplained_drop_at = None;
             commands
                 .entity(entity)
                 .remove::<(VoiceRoomDisconnected, ConnectFailed)>();
             if terminal || room.reconnects >= MAX_RECONNECTION_ATTEMPTS {
-                let reason = if terminal {
-                    reason
-                } else {
-                    format!("{reason} ({MAX_RECONNECTION_ATTEMPTS} reconnection attempts)")
-                };
-                warn!(target: "comms::voice_chat", "voice room dropped: {reason}");
+                warn!(
+                    target: "comms::voice_chat",
+                    "voice room dropped: {reason} (after {} re-dials)",
+                    room.reconnects
+                );
                 inputs.0.push_back(Input::RoomDisconnected {
                     terminal: true,
-                    reason,
+                    ending,
                 });
             } else {
                 room.reconnects += 1;
                 room.redial_at = Some(now + RECONNECTION_DELAY_SECS);
+                connection = VoiceChatConnection::Reconnecting;
                 info!(
                     target: "comms::voice_chat",
                     "voice room dropped ({reason}); re-dialling in {RECONNECTION_DELAY_SECS}s ({}/{MAX_RECONNECTION_ATTEMPTS})",
@@ -478,7 +745,7 @@ fn drive_voice_chat(
                 );
                 inputs.0.push_back(Input::RoomDisconnected {
                     terminal: false,
-                    reason,
+                    ending,
                 });
             }
         } else if room.redial_at.is_some_and(|due| now >= due) {
@@ -492,207 +759,37 @@ fn drive_voice_chat(
     }
 
     // the ring
-    if let Some(ring) = voice.ring.as_mut() {
-        ring.tick(time.delta());
-        if ring.just_finished() {
-            commands.send_event(SystemAudio(
-                sound_clip(Sound::RingStart).unwrap_or_default().to_owned(),
-            ));
+    if voice.ring.is_some() {
+        if let Some(ring) = voice.ring.as_mut() {
+            ring.tick(time.delta());
+            if ring.just_finished() {
+                commands.send_event(SystemAudio(
+                    sound_clip(Sound::RingStart).unwrap_or_default().to_owned(),
+                ));
+            }
         }
     }
 
-    // drive
-    let mut effects = voice.state.tick(now);
-    let mut queued = std::mem::take(&mut inputs.0);
-    while let Some(input) = queued.pop_front() {
-        effects.extend(voice.state.apply(input, now));
+    // drive; an idle tick must not mark the resource changed
+    let mut effects = voice.bypass_change_detection().state.tick(now);
+    let had_inputs = !inputs.0.is_empty();
+    if had_inputs {
+        let mut queued = std::mem::take(&mut inputs.0);
+        while let Some(input) = queued.pop_front() {
+            effects.extend(voice.state.apply(input, now));
+        }
     }
-    let changed = !effects.is_empty();
+    let changed = had_inputs || !effects.is_empty();
     for effect in effects {
         debug!(target: "comms::voice_chat", "effect {}", redact_access_token(&format!("{effect:?}")));
         match effect {
             Effect::Rpc(rpc) => {
-                let client = social.0.as_ref();
-                let outcome = match rpc {
-                    Rpc::StartPrivate { callee, attempt } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::StartPrivate(attempt, rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::StartPrivate {
-                                callee: format!("{callee:#x}"),
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::AcceptPrivate { call_id } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice
-                            .pending
-                            .push(Pending::AcceptPrivate(call_id.clone(), rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::AcceptPrivate {
-                                call_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::RejectPrivate { call_id } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::RejectPrivate(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::RejectPrivate {
-                                call_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::EndPrivate { call_id } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::EndPrivate(call_id.clone(), rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::EndPrivate {
-                                call_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::StartCommunity {
-                        community_id,
-                        attempt,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::StartCommunity(
-                            community_id.clone(),
-                            attempt,
-                            rx,
-                        ));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::StartCommunity {
-                                community_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::JoinCommunity {
-                        community_id,
-                        attempt,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::JoinCommunity(
-                            community_id.clone(),
-                            attempt,
-                            rx,
-                        ));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::JoinCommunity {
-                                community_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::EndCommunity { community_id } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice
-                            .pending
-                            .push(Pending::EndCommunity(community_id.clone(), rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::EndCommunity {
-                                community_id,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::RequestToSpeak {
-                        community_id,
-                        raise,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Moderation(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::RequestToSpeak {
-                                community_id,
-                                raising_hand: raise,
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::PromoteSpeaker {
-                        community_id,
-                        address,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Moderation(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::PromoteSpeaker {
-                                community_id,
-                                address: format!("{address:#x}"),
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::DemoteSpeaker {
-                        community_id,
-                        address,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Moderation(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::DemoteSpeaker {
-                                community_id,
-                                address: format!("{address:#x}"),
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::KickPlayer {
-                        community_id,
-                        address,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Moderation(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::KickPlayer {
-                                community_id,
-                                address: format!("{address:#x}"),
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::RejectSpeakRequest {
-                        community_id,
-                        address,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Moderation(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::RejectSpeakRequest {
-                                community_id,
-                                address: format!("{address:#x}"),
-                                response: tx,
-                            })
-                        })
-                    }
-                    Rpc::MuteSpeaker {
-                        community_id,
-                        address,
-                        muted,
-                    } => {
-                        let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::Mute(rx));
-                        client.map(|c| {
-                            c.voice(VoiceQuery::MuteSpeaker {
-                                community_id,
-                                address: format!("{address:#x}"),
-                                muted,
-                                response: tx,
-                            })
-                        })
-                    }
-                };
-                match outcome {
+                let (query, pending) = query(rpc);
+                voice.pending.push(pending);
+                // no client, or its channel is gone: the reply channel was dropped with the
+                // query and the next drive reads that as a transport failure
+                match social.0.as_ref().map(|c| c.voice(query)) {
                     Some(Ok(())) => (),
-                    // no client, or its channel is gone: the reply channel was dropped with the
-                    // query and the next drive reads that as a transport failure
                     Some(Err(e)) => warn!(target: "comms::voice_chat", "voice query failed: {e}"),
                     None => warn!(target: "comms::voice_chat", "voice query with no social client"),
                 }
@@ -705,29 +802,23 @@ fn drive_voice_chat(
                     warn!(target: "comms::voice_chat", "unsupported voice adapter `{}`", redact_access_token(&url));
                     inputs.0.push_back(Input::RoomDisconnected {
                         terminal: true,
-                        reason: "unsupported voice adapter".to_owned(),
+                        ending: CallEnding::Refused,
                     });
                     continue;
                 };
                 let (components, sender, control) = standalone_room_components(address.to_owned());
                 commands.spawn((
                     components,
-                    VoiceRoom {
-                        kind: voice.state.kind,
-                        reconnects: 0,
-                        redial_at: None,
-                        _sender: sender,
-                        _control: control,
-                    },
+                    VoiceRoom::new(voice.state.kind, sender, control),
                 ));
-                connection = "connecting";
+                connection = VoiceChatConnection::Connecting;
                 info!(target: "comms::voice_chat", "joining the voice room");
             }
             Effect::DespawnRoom => {
                 for (entity, ..) in rooms.iter() {
                     commands.entity(entity).despawn();
                 }
-                connection = "none";
+                connection = VoiceChatConnection::None;
             }
             Effect::Sound(sound) => {
                 match sound {
@@ -747,12 +838,26 @@ fn drive_voice_chat(
             }
         }
     }
-    voice.state.set_me(me);
-    call_mic.in_call = voice.state.is_in_call() && voice.state.room_connected;
-    if voice.state.is_in_call() {
-        call_mic.suppress_nearby = true;
+    let connection_changed = voice.connection != connection;
+    if connection_changed {
+        voice.connection = connection;
+    }
+    if voice.state.me() != me {
+        voice.state.set_me(me);
+    }
+    let in_call = voice.state.is_in_call() && voice.state.room_connected;
+    if call_mic.in_call != in_call {
+        call_mic.in_call = in_call;
+    }
+    let suppress_nearby = if voice.state.is_in_call() {
+        true
     } else if voice.state.status.is_not_connected() {
-        call_mic.suppress_nearby = false;
+        false
+    } else {
+        call_mic.suppress_nearby
+    };
+    if call_mic.suppress_nearby != suppress_nearby {
+        call_mic.suppress_nearby = suppress_nearby;
     }
     if !call_mic.in_call && call_mic.enabled {
         call_mic.enabled = false;
@@ -760,16 +865,16 @@ fn drive_voice_chat(
     }
 
     // the HUD's snapshot
-    voice.state_streams.retain(|s| !s.is_closed());
-    if voice.state_streams.is_empty() {
+    if voice.state_streams.iter().any(|s| s.is_closed()) {
+        voice.state_streams.retain(|s| !s.is_closed());
+    }
+    let dirty = force_snapshot || changed || connection_changed || call_mic.is_changed();
+    if voice.state_streams.is_empty() || !dirty {
         return;
     }
-    let snapshot = voice.snapshot(&call_mic, connection);
-    if force_snapshot || changed || voice.last_snapshot.as_ref() != Some(&snapshot) {
-        for sender in &voice.state_streams {
-            let _ = sender.send(snapshot.clone());
-        }
-        voice.last_snapshot = Some(snapshot);
+    let snapshot = voice.snapshot(&call_mic, &participants);
+    for sender in &voice.state_streams {
+        let _ = sender.send(snapshot.clone());
     }
 }
 
@@ -835,272 +940,141 @@ fn participant_address(participant: &LivekitParticipant) -> Option<Address> {
     participant.identity().as_str().as_h160()
 }
 
-fn participant_connected(
-    trigger: Trigger<ParticipantConnected>,
-    rooms: Query<(), With<VoiceRoom>>,
-    mut inputs: ResMut<VoiceInputs>,
-) {
-    let ParticipantConnected { participant, room } = trigger.event();
-    if !rooms.contains(*room) {
-        return;
-    }
-    let Some(address) = participant_address(participant) else {
-        return;
-    };
-    debug!(target: "comms::voice_chat", "{address:#x} joined the voice room");
-    inputs.0.push_back(Input::ParticipantJoined {
-        address,
-        metadata: Metadata::parse(&participant.metadata()),
-    });
-}
-
-fn participant_disconnected(
-    trigger: Trigger<ParticipantDisconnected>,
-    rooms: Query<(), With<VoiceRoom>>,
-    mut inputs: ResMut<VoiceInputs>,
-) {
-    let ParticipantDisconnected { participant, room } = trigger.event();
-    if !rooms.contains(*room) {
-        return;
-    }
-    let Some(address) = participant_address(participant) else {
-        return;
-    };
-    debug!(target: "comms::voice_chat", "{address:#x} left the voice room");
-    inputs.0.push_back(Input::ParticipantLeft(address));
-}
-
+/// A voice room participant's metadata arrives on join and on every change.
 fn participant_metadata_changed(
     trigger: Trigger<ParticipantMetadataChanged>,
-    rooms: Query<(), With<VoiceRoom>>,
+    mut commands: Commands,
+    rooms: Query<&ParticipantIndex, With<VoiceRoom>>,
+    participants: Query<&CallParticipant>,
     mut inputs: ResMut<VoiceInputs>,
 ) {
     let ParticipantMetadataChanged { participant, room } = trigger.event();
-    if !rooms.contains(*room) {
+    let Ok(index) = rooms.get(*room) else {
         return;
-    }
+    };
     let Some(address) = participant_address(participant) else {
         return;
     };
-    inputs.0.push_back(Input::ParticipantMetadata {
-        address,
-        metadata: Metadata::parse(&participant.metadata()),
-    });
-}
-
-fn speaker_changed(
-    entity: Entity,
-    active: bool,
-    participants: &Query<(&LivekitParticipant, &HostedBy)>,
-    rooms: &Query<(), With<VoiceRoom>>,
-    inputs: &mut VoiceInputs,
-) {
-    let Ok((participant, hosted_by)) = participants.get(entity) else {
+    let Some(&entity) = index.get(&ParticipantIndex::key(participant.identity().as_str())) else {
         return;
     };
-    if !rooms.contains(hosted_by.get()) {
+    let metadata = Metadata::parse(&participant.metadata());
+    let previous = participants.get(entity).ok();
+    if previous.is_some_and(|p| p.metadata == metadata) {
         return;
     }
-    if let Some(address) = participant_address(participant) {
-        inputs.0.push_back(Input::Speaking { address, active });
+    if previous.is_none() {
+        debug!(target: "comms::voice_chat", "{address:#x} joined the voice room");
     }
-}
-
-fn speaker_added(
-    trigger: Trigger<OnInsert, ActiveSpeaker>,
-    participants: Query<(&LivekitParticipant, &HostedBy)>,
-    rooms: Query<(), With<VoiceRoom>>,
-    mut inputs: ResMut<VoiceInputs>,
-) {
-    speaker_changed(trigger.target(), true, &participants, &rooms, &mut inputs);
-}
-
-fn speaker_removed(
-    trigger: Trigger<OnReplace, ActiveSpeaker>,
-    participants: Query<(&LivekitParticipant, &HostedBy)>,
-    rooms: Query<(), With<VoiceRoom>>,
-    mut inputs: ResMut<VoiceInputs>,
-) {
-    speaker_changed(trigger.target(), false, &participants, &rooms, &mut inputs);
+    // a participant who joins with the hand already up raised it before the local user came
+    let raised_hand = previous.is_some_and(|p| !p.metadata.is_requesting_to_speak)
+        && metadata.is_requesting_to_speak;
+    commands.entity(entity).try_insert(CallParticipant {
+        address,
+        metadata: metadata.clone(),
+    });
+    inputs.0.push_back(Input::ParticipantMetadata {
+        address,
+        metadata,
+        raised_hand,
+    });
 }
 
 // --- console ---
 
-/// `/voice_call <address>` rings a user (a private call).
+/// `/voice <action>` does what the HUD's voice chat buttons do, through the same path and
+/// refusals (`SystemApi::VoiceChatAction`). It only queues the request: read `/voice_state`
+/// `call` for the outcome.
 #[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_call")]
-struct VoiceCallCommand {
-    address: String,
+#[command(name = "/voice")]
+struct VoiceCommand {
+    #[command(subcommand)]
+    action: VoiceSubcommand,
 }
 
-fn voice_call(mut input: ConsoleCommand<VoiceCallCommand>, mut inputs: ResMut<VoiceCommands>) {
+#[derive(clap::Subcommand)]
+enum VoiceSubcommand {
+    /// Ring a user (a private call).
+    Call { address: String },
+    /// Answer the ringing private call.
+    Accept,
+    /// Decline the ringing private call.
+    Reject,
+    /// Hang up the private call, or leave the community stream.
+    End,
+    /// Open a community's stream (owner or moderator).
+    Start { community_id: String },
+    /// Join a community's stream.
+    Join { community_id: String },
+    /// Close the community's stream for everyone (owner or moderator).
+    Close,
+    /// Raise (`up`) or lower (`down`) the hand in a community stream.
+    Hand { position: String },
+    /// Publish (`on`) or stop (`off`) the call microphone.
+    Mic { state: String },
+    /// Make a listener a speaker.
+    Promote { address: String },
+    /// Make a speaker a listener (the local user's own address leaves the stage).
+    Demote { address: String },
+    /// Remove a participant from the stream.
+    Kick { address: String },
+    /// Turn down a request to speak.
+    Deny { address: String },
+}
+
+fn voice_command(mut input: ConsoleCommand<VoiceCommand>, mut events: EventWriter<SystemApi>) {
     let Some(Ok(command)) = input.take() else {
         return;
     };
-    let Some(address) = command.address.as_h160() else {
-        input.reply_failed(format!("`{}` is not a wallet address", command.address));
-        return;
+    let address = |address: String| match address.as_h160() {
+        Some(_) => Ok(address),
+        None => Err(format!("`{address}` is not a wallet address")),
     };
-    inputs.0.push_back(Input::StartPrivate(address));
-    input.reply_ok(format!("calling {address:#x}"));
-}
-
-/// `/voice_accept` answers the ringing private call.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_accept")]
-struct VoiceAcceptCommand;
-
-fn voice_accept(mut input: ConsoleCommand<VoiceAcceptCommand>, mut inputs: ResMut<VoiceCommands>) {
-    if input.take().is_some() {
-        inputs.0.push_back(Input::Accept);
-        input.reply_ok("accepting");
+    let switch = |value: &str, on: &str, off: &str| match value {
+        v if v == on || v == "true" => Ok(true),
+        v if v == off || v == "false" => Ok(false),
+        other => Err(format!("`{other}`: use `{on}` or `{off}`")),
+    };
+    let action = match command.action {
+        VoiceSubcommand::Call { address: a } => {
+            address(a).map(|address| VoiceChatAction::StartPrivateCall { address })
+        }
+        VoiceSubcommand::Accept => Ok(VoiceChatAction::AcceptCall),
+        VoiceSubcommand::Reject => Ok(VoiceChatAction::RejectCall),
+        VoiceSubcommand::End => Ok(VoiceChatAction::EndCall),
+        VoiceSubcommand::Start { community_id } => {
+            Ok(VoiceChatAction::StartCommunityCall { community_id })
+        }
+        VoiceSubcommand::Join { community_id } => {
+            Ok(VoiceChatAction::JoinCommunityCall { community_id })
+        }
+        VoiceSubcommand::Close => Ok(VoiceChatAction::EndCommunityCall),
+        VoiceSubcommand::Hand { position } => {
+            switch(&position, "up", "down").map(|raise| VoiceChatAction::RequestToSpeak { raise })
+        }
+        VoiceSubcommand::Mic { state } => {
+            switch(&state, "on", "off").map(|enabled| VoiceChatAction::SetMic { enabled })
+        }
+        VoiceSubcommand::Promote { address: a } => {
+            address(a).map(|address| VoiceChatAction::PromoteSpeaker { address })
+        }
+        VoiceSubcommand::Demote { address: a } => {
+            address(a).map(|address| VoiceChatAction::DemoteSpeaker { address })
+        }
+        VoiceSubcommand::Kick { address: a } => {
+            address(a).map(|address| VoiceChatAction::KickPlayer { address })
+        }
+        VoiceSubcommand::Deny { address: a } => {
+            address(a).map(|address| VoiceChatAction::RejectSpeakRequest { address })
+        }
+    };
+    match action {
+        Ok(action) => {
+            input.reply_ok(format!("{action:?}"));
+            events.write(SystemApi::VoiceChatAction(action));
+        }
+        Err(e) => input.reply_failed(e),
     }
-}
-
-/// `/voice_reject` declines the ringing private call.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_reject")]
-struct VoiceRejectCommand;
-
-fn voice_reject(mut input: ConsoleCommand<VoiceRejectCommand>, mut inputs: ResMut<VoiceCommands>) {
-    if input.take().is_some() {
-        inputs.0.push_back(Input::Reject);
-        input.reply_ok("rejecting");
-    }
-}
-
-/// `/voice_end` hangs up the private call or leaves the community stream.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_end")]
-struct VoiceEndCommand;
-
-fn voice_end(mut input: ConsoleCommand<VoiceEndCommand>, mut inputs: ResMut<VoiceCommands>) {
-    if input.take().is_some() {
-        inputs.0.push_back(Input::EndCall);
-        input.reply_ok("ending");
-    }
-}
-
-/// `/voice_community <start|join|end> <community_id>` opens, joins or closes a community
-/// stream (`leave` is `/voice_end`).
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_community")]
-struct VoiceCommunityCommand {
-    /// `start`, `join` or `end`
-    action: String,
-    community_id: Option<String>,
-}
-
-fn voice_community(
-    mut input: ConsoleCommand<VoiceCommunityCommand>,
-    mut inputs: ResMut<VoiceCommands>,
-) {
-    let Some(Ok(command)) = input.take() else {
-        return;
-    };
-    let id = command.community_id.clone().unwrap_or_default();
-    let action = match command.action.as_str() {
-        "start" if !id.is_empty() => Input::StartCommunity(id),
-        "join" if !id.is_empty() => Input::JoinCommunity(id),
-        "end" => Input::EndCommunity,
-        "leave" => Input::EndCall,
-        other => {
-            input.reply_failed(format!(
-                "unknown action `{other}`: use `start <id>`, `join <id>`, `end` or `leave`"
-            ));
-            return;
-        }
-    };
-    input.reply_ok(format!(
-        "{} {}",
-        command.action,
-        command.community_id.unwrap_or_default()
-    ));
-    inputs.0.push_back(action);
-}
-
-/// `/voice_hand <up|down>` raises or lowers the hand in a community stream.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_hand")]
-struct VoiceHandCommand {
-    /// `up` or `down`
-    position: String,
-}
-
-fn voice_hand(mut input: ConsoleCommand<VoiceHandCommand>, mut inputs: ResMut<VoiceCommands>) {
-    let Some(Ok(command)) = input.take() else {
-        return;
-    };
-    let raise = match command.position.as_str() {
-        "up" => true,
-        "down" => false,
-        other => {
-            input.reply_failed(format!("`{other}`: use `up` or `down`"));
-            return;
-        }
-    };
-    inputs.0.push_back(Input::RequestToSpeak(raise));
-    input.reply_ok(format!("hand {}", command.position));
-}
-
-/// `/voice_mic <on|off>` publishes or stops the call microphone.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_mic")]
-struct VoiceMicCommand {
-    /// `on` or `off`
-    state: String,
-}
-
-fn voice_mic(mut input: ConsoleCommand<VoiceMicCommand>, mut inputs: ResMut<VoiceCommands>) {
-    let Some(Ok(command)) = input.take() else {
-        return;
-    };
-    let enabled = match command.state.as_str() {
-        "on" => true,
-        "off" => false,
-        other => {
-            input.reply_failed(format!("`{other}`: use `on` or `off`"));
-            return;
-        }
-    };
-    inputs.0.push_back(Input::SetMic(enabled));
-    input.reply_ok(format!("call mic {}", command.state));
-}
-
-/// `/voice_moderate <promote|demote|kick|reject> <address>` moderates a community stream.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/voice_moderate")]
-struct VoiceModerateCommand {
-    /// `promote`, `demote`, `kick` or `reject`
-    action: String,
-    address: String,
-}
-
-fn voice_moderate(
-    mut input: ConsoleCommand<VoiceModerateCommand>,
-    mut inputs: ResMut<VoiceCommands>,
-) {
-    let Some(Ok(command)) = input.take() else {
-        return;
-    };
-    let Some(address) = command.address.as_h160() else {
-        input.reply_failed(format!("`{}` is not a wallet address", command.address));
-        return;
-    };
-    let action = match command.action.as_str() {
-        "promote" => Input::PromoteSpeaker(address),
-        "demote" => Input::DemoteSpeaker(address),
-        "kick" => Input::KickPlayer(address),
-        "reject" => Input::RejectSpeakRequest(address),
-        other => {
-            input.reply_failed(format!(
-                "unknown action `{other}`: use `promote`, `demote`, `kick` or `reject`"
-            ));
-            return;
-        }
-    };
-    inputs.0.push_back(action);
-    input.reply_ok(format!("{} {address:#x}", command.action));
 }
 
 #[cfg(test)]
@@ -1117,7 +1091,6 @@ mod tests {
             .init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
             .init_resource::<VoiceInputs>()
-            .init_resource::<VoiceCommands>()
             .init_resource::<SocialClient>()
             .init_resource::<Wallet>()
             .init_resource::<DisableSceneRoomGatekeeper>()
@@ -1148,13 +1121,7 @@ mod tests {
             .world_mut()
             .spawn((
                 components,
-                VoiceRoom {
-                    kind: Kind::Community,
-                    reconnects: 0,
-                    redial_at: None,
-                    _sender: sender,
-                    _control: control,
-                },
+                VoiceRoom::new(Kind::Community, sender, control),
                 Connecting,
             ))
             .id();
@@ -1186,6 +1153,10 @@ mod tests {
             let entity = app.world().entity(room);
             assert!(!entity.contains::<ConnectFailed>());
             assert_eq!(entity.get::<VoiceRoom>().unwrap().reconnects, attempt);
+            assert_eq!(
+                app.world().resource::<VoiceChat>().connection,
+                VoiceChatConnection::Reconnecting
+            );
             wait(&mut app, RECONNECTION_DELAY_SECS / 2.0);
             assert_eq!(app.world().resource::<Dials>().0, attempt);
             wait(&mut app, RECONNECTION_DELAY_SECS);
@@ -1200,7 +1171,37 @@ mod tests {
             .state
             .error
             .as_deref()
-            .is_some_and(|e| e.contains("refused")));
+            .is_some_and(|e| e.contains("Couldn't connect")));
         assert!(app.world().get_entity(room).is_err());
+    }
+
+    #[test]
+    fn a_media_failure_is_redialled_and_a_deleted_room_ends_the_call_quietly() {
+        let (mut app, room) = in_call();
+        app.world_mut()
+            .entity_mut(room)
+            .insert(VoiceRoomDisconnected::new(&DisconnectReason::MediaFailure));
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(room)
+                .get::<VoiceRoom>()
+                .unwrap()
+                .reconnects,
+            1
+        );
+        assert!(app.world().resource::<VoiceChat>().state.is_in_call());
+        wait(&mut app, RECONNECTION_DELAY_SECS);
+        assert_eq!(app.world().resource::<Dials>().0, 2);
+
+        app.world_mut()
+            .entity_mut(room)
+            .insert(VoiceRoomDisconnected::new(&DisconnectReason::RoomDeleted));
+        app.update();
+        let voice = app.world().resource::<VoiceChat>();
+        assert_eq!(voice.state.status, state::Status::Disconnected);
+        assert_eq!(voice.state.error.as_deref(), Some("The stream ended."));
+        assert!(voice.state.error_is_notice);
+        assert_eq!(voice.connection, VoiceChatConnection::None);
     }
 }

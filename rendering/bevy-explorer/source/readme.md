@@ -177,7 +177,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
-  `micEnabled`, `localSpeaker`, `localRole`, `error`), `/entity_screen_position <entity>
+  `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -186,12 +186,13 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
   <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
   the HUD sets from the user's communities (the engine drops community messages on any other).
-- Voice chat, as the HUD's buttons do it: `/voice_call <address>` rings a user, `/voice_accept`
-  and `/voice_reject` answer a ringing call, `/voice_end` hangs up or leaves a stream,
-  `/voice_community start|join|end|leave [<community id>]`, `/voice_hand up|down`,
-  `/voice_mic on|off` (the call microphone; the nearby one is the `Microphone` key) and
-  `/voice_moderate promote|demote|kick|reject <address>`. Each only queues the request; read
-  `/voice_state` `call` for the outcome.
+- Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
+  rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
+  or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
+  ends it for everyone, `/voice hand up|down`, `/voice mic on|off` (the call microphone; the
+  nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
+  queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
+  section shows the call and binds these actions.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
