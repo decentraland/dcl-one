@@ -16,7 +16,7 @@ import IndexNotice from "../components/IndexNotice";
 import { useCollectionName, useCreatorNames } from "../components/PickerFilters";
 import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
-import { indexUnavailable, type IndexFreshness } from "../freshness";
+import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { shopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";

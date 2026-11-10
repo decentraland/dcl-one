@@ -3,7 +3,7 @@ import type { Hex } from "viem";
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { LAND_NETWORKS } from "../land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "../land/evm";
 import { NET, nameResult } from "../land/fixtures";
 import { fakeWallet, stubClient, type Answer } from "../land/testkit";

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router";
 
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
-import { fetchCollectionItems, type CollectionSummary } from "../api";
+import { fetchCollectionItems, type CollectionSummary } from "@shop/discovery/api";
 import { useCreatorProfile } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";

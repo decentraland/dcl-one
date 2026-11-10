@@ -6,7 +6,7 @@ import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
 import { shortAddress } from "@shop/model/address";
-import { readMirrorFreshness, type IndexFreshness } from "./freshness";
+import { readMirrorFreshness, type IndexFreshness } from "@shop/discovery/freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
 import { isSaleActive, saleTimeLeft, type SaleInfo } from "@shop/discovery/lib/sale";

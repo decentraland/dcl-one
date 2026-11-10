@@ -2,8 +2,8 @@
 // Shop's client and fetchers (shop/api, shop/discovery/api) behind TanStack key and options factories.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { isShopApiError } from '../../../shop/api/client'
-import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '../../../shop/discovery/api'
+import { isShopApiError } from '@shop/api/client'
+import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '@shop/discovery/api'
 import { listingTypeFor } from '@shop/market/access-rule'
 import { shopClient } from '../../../shop/api/host'
 import { shopReads } from '../../../shop/discovery/reads'

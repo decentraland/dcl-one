@@ -3,15 +3,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
-import { createShopApi, creditsDisabled, insufficientCredits, ShopApiError, tooManyLiveCredits } from "./client";
+import { createShopApi, creditsDisabled, insufficientCredits, ShopApiError, tooManyLiveCredits } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { setupServer } from "msw/node";
 
 import { FIXTURE_BUYER, fixtureTransport, wireHandlers } from "./fixtures";
 import { build, OUTPUT } from "./fixtures/generate.mjs";
-import { createShopClient } from "./shop";
+import { createShopClient } from "@shop/api/shop";
 import { hostApiOptions, identitySigner } from "./host";
-import type { ShopSigner, TransportRequest } from "./signer";
+import type { ShopSigner, TransportRequest } from "@shop/api/signer";
 
 const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["DELETE /shop-api/v1/cart/items/{}/{}", ["DELETE /credits/cart/items/{}/{}"]],

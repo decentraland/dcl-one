@@ -2,7 +2,7 @@
 // creator-sales switch as this page holds it. The fetchers take them as arguments and read neither themselves.
 
 import { shopClient } from "../api/host";
-import type { Opts } from "./api";
+import type { Opts } from "@shop/discovery/api";
 import { shopFlags } from "./flags";
 
 export function shopReads(signal?: AbortSignal): Opts {

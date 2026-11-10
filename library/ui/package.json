@@ -11,7 +11,7 @@
     "figma-key-guard": "./figma/key-guard.mjs"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json && tsc -p figma/tsconfig.json && tsc -p figma/review/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p figma/tsconfig.json && tsc -p figma/review/tsconfig.json && pnpm typecheck:apps-ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -22,7 +22,8 @@
     "key-guard": "node figma/key-guard.mjs",
     "review": "vite --config figma/review/review.vite.config.ts --port 6019 --strictPort",
     "review:build": "vite build --config figma/review/review.vite.config.ts",
-    "review:check-build": "node figma/review/scripts/check-build.mjs figma/review/review-dist"
+    "review:check-build": "node figma/review/scripts/check-build.mjs figma/review/review-dist",
+    "typecheck:apps-ts": "node node_modules/typescript-7/bin/tsc -p tsconfig.runtime.json"
   },
   "engines": {
     "node": ">=24"
@@ -50,6 +51,8 @@
     "eslint": "10.13.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "jsdom": "30.1.3",
+    "postcss": "8.5.32",
+    "postcss-modules": "6.0.1",
     "prettier": "3.9.10",
     "react": "19.3.1",
     "react-dom": "19.3.1",

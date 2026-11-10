@@ -1,27 +1,19 @@
-// The Shop's read modules take their host as arguments: the client, its base, transport and signer, the peers, and
-// the creator-sales switch. This holds them to that: none reaches the browser host's wiring (api/host.ts, or the api
-// barrel that re-exports it), the page's switches (discovery/flags, lib/remoteFlags, discovery/reads), ui3's catalyst
-// or auth modules, or the page itself; nor a component or the purchase's encoding. It checks each module's own
-// imports, not its whole closure.
-import { readFileSync } from "node:fs";
+// The Shop's read modules take their host as arguments: the client, its base, transport and signer, the peers, the
+// creator-sales switch, and the Ethereum network with its reader. This holds them to that: none reaches the browser
+// host's wiring (api/host.ts, or the api barrel that re-exports it), the page's switches (discovery/flags,
+// lib/remoteFlags, discovery/reads), the host's network and readers (land/chain, land/evm, checkout/chain, wallet),
+// the NAME registration or its host reads (names/names, names/offer, names/reads), ui3's catalyst or auth modules, or
+// the page itself; nor a component, the purchase's encoding or the wallet's MANA. It follows what each module names
+// through ui3, so a module that only passes one of those on is caught too.
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "..", "..");
-const SEAM = [
-  "shop/api/client.ts",
-  "shop/api/shop.ts",
-  "shop/api/signer.ts",
-  "shop/checkout/lib/api.ts",
-  "shop/credits/credits.ts",
-  "shop/detail/api.ts",
-  "shop/detail/lib/urn.ts",
-  "shop/discovery/api.ts",
-  "shop/discovery/lib/categories.ts",
-  "shop/discovery/lib/iconName.ts",
-  "shop/discovery/lib/rolloutFlags.ts",
-  "shop/checkout/lib/trade.ts",
-];
+// The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file,
+// the LAND and NAME contracts, the NAME reads) are held by library/shop/boundary.test.ts, which compiles them without
+// a host at all.
+const SEAM = ["shop/checkout/lib/api.ts", "shop/checkout/lib/trade.ts"];
 
 /**
  * Every module a file names, read from its raw source as library/shop/boundary.test.ts reads it, so that a mistake
@@ -124,43 +116,107 @@ function target(file: string, specifier: string): string | null {
 }
 
 const FORBIDDEN =
-  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/purchase\/.*|data\/(auth|catalyst)(\/.*)?)$/;
+  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/(purchase|chain)\/.*|shop\/land\/(chain|evm)|shop\/names\/(names|offer|reads)|shop\/market\/lib\/mana|shop\/wallet\/.*|data\/(auth|catalyst)(\/.*)?)$/;
 
 function hostImports(file: string, source: string): string[] {
   const { named, opaque } = specifiers(source);
   return [...named.filter((s) => FORBIDDEN.test(target(file, s) ?? "")), ...opaque];
 }
 
+/** A module's raw source by its path from src/, or undefined where there is none. */
+type Sources = (path: string) => string | undefined;
+const onDisk: Sources = (path) => (existsSync(join(SRC, path)) ? readFileSync(join(SRC, path), "utf8") : undefined);
+
+/**
+ * Every module a file reaches through what it names, each read from its raw source as `specifiers` reads it: paths
+ * from src/ without their extension, the file itself first. A module named but not found is still reached, so a
+ * forbidden name counts whether or not it exists.
+ */
+function reach(file: string, sources: Sources = onDisk): string[] {
+  const reached = new Set([file.replace(/\.(ts|tsx)$/, "")]);
+  const queue = [file];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    for (const specifier of specifiers(sources(next) ?? "").named) {
+      const to = target(next, specifier);
+      if (to === null || reached.has(to)) continue;
+      reached.add(to);
+      const path = [".ts", ".tsx", "/index.ts", "/index.tsx"].map((ext) => to + ext).find((p) => sources(p) !== undefined);
+      if (path) queue.push(path);
+    }
+  }
+  return [...reached];
+}
+
+/** The page and the host's globals, as a module would reach for them. */
+const PAGE = /\b(window|document|localStorage|sessionStorage|location|globalThis|self|navigator)\b|import\.meta|\bfetch\(/;
+
 describe("the host seam of the Shop's read modules", () => {
   it.each(SEAM)("%s imports no host wiring, component or purchase encoding, and reads no page", (file) => {
     const raw = readFileSync(join(SRC, file), "utf8");
     expect(hostImports(file, raw)).toEqual([]);
+    expect(reach(file).filter((m) => FORBIDDEN.test(m))).toEqual([]);
     const source = withoutComments(raw);
-    expect(source).not.toMatch(/\b(window|document|localStorage|sessionStorage|location)\b|import\.meta|\bfetch\(/);
+    expect(source).not.toMatch(PAGE);
     expect(source).not.toMatch(/\bshopClient\(\)/);
   });
 
-  it("finds the host however a module names it", () => {
-    const file = "shop/api/client.ts";
+  it("follows what each module names, so a module that only passes a forbidden one on is caught", () => {
+    const tree: Record<string, string> = {
+      "shop/checkout/lib/api.ts": 'import { requireChain } from "./network";\nimport { ASSET_TYPE } from "./trade";',
+      "shop/checkout/lib/network.ts": 'export { requireChain } from "../../wallet/chain";',
+      "shop/checkout/lib/trade.ts": 'import type { SaleRecord } from "./api";',
+    };
+    const reached = reach("shop/checkout/lib/api.ts", (p) => tree[p]);
+    expect(reached).toEqual(["shop/checkout/lib/api", "shop/checkout/lib/network", "shop/checkout/lib/trade", "shop/wallet/chain"]);
+    expect(reached.filter((m) => FORBIDDEN.test(m))).toEqual(["shop/wallet/chain"]);
+    expect(reach("shop/checkout/lib/api.ts", (p) => (p === "shop/checkout/lib/api.ts" ? 'import "../../api";' : undefined))).toEqual([
+      "shop/checkout/lib/api",
+      "shop/api/index",
+    ]);
+  });
+
+  it("sees the page however a module reaches for it", () => {
     for (const line of [
-      'import { hostApiOptions } from "./host";',
-      'import { hostApiOptions } from "./index";',
-      'import { hostApiOptions } from ".";',
-      'export { shopClient } from "./host.ts";',
-      'const host = await import("./host");',
-      'import "../../data/auth/identity";',
-      'import type { QueryParams } from "../../data/catalyst/client";',
+      "const id = (globalThis as { __SHOP_ETHEREUM_CHAIN_ID__?: number }).__SHOP_ETHEREUM_CHAIN_ID__;",
+      "const flags = self.__SHOP_FLAGS__;",
+      "const online = navigator.onLine;",
+      "const where = window.location.href;",
+      "const mode = import.meta.env.MODE;",
+      'const res = await fetch("/shop-api");',
+    ]) {
+      expect(withoutComments(line), line).toMatch(PAGE);
+    }
+    expect(withoutComments("const selfSigned = true; // reads window")).not.toMatch(PAGE);
+  });
+
+  it("finds the host however a module names it", () => {
+    const file = "shop/checkout/lib/api.ts";
+    for (const line of [
+      'import { hostApiOptions } from "../../api/host";',
+      'import { hostApiOptions } from "../../api/index";',
+      'import { hostApiOptions } from "../../api";',
+      'export { shopClient } from "../../api/host.ts";',
+      'const host = await import("../../api/host");',
+      'import "../../../data/auth/identity";',
+      'import type { QueryParams } from "../../../data/catalyst/client";',
     ]) {
       expect(hostImports(file, line), line).toHaveLength(1);
     }
-    expect(hostImports("shop/discovery/api.ts", 'import { shopClient } from "../api";')).toHaveLength(1);
-    expect(hostImports("shop/discovery/api.ts", 'import { shopFlags } from "./flags";')).toHaveLength(1);
-    expect(hostImports("shop/discovery/lib/categories.ts", 'import type { IconName } from "../components/Icon";')).toHaveLength(1);
-    expect(hostImports("shop/checkout/lib/api.ts", 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
-    expect(hostImports(file, 'import { SHOP_API_PREFIX } from "./endpoints";')).toEqual([]);
-    expect(hostImports(file, 'const host = require("./host");')).toHaveLength(1);
-    expect(hostImports(file, 'import { hostApiOptions } from "./host.js";')).toHaveLength(1);
-    expect(hostImports(file, '// import { shopClient } from "./host";')).toHaveLength(1);
+    expect(hostImports(file, 'import { shopFlags } from "../../discovery/flags";')).toHaveLength(1);
+    expect(hostImports("shop/checkout/lib/trade.ts", 'import type { IconName } from "../../discovery/components/Icon";')).toHaveLength(1);
+    expect(hostImports(file, 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
+    expect(hostImports(file, 'import { ethereumChainId } from "../chain/config";')).toHaveLength(1);
+    expect(hostImports(file, 'import { landChainId } from "../../land/chain";')).toHaveLength(1);
+    expect(hostImports(file, 'import { rpcReader } from "../../land/evm";')).toHaveLength(1);
+    expect(hostImports(file, 'import { parseManaInput } from "../../market/lib/mana";')).toHaveLength(1);
+    expect(hostImports(file, 'import { readBannedNames } from "../../names/reads";')).toHaveLength(1);
+    expect(hostImports(file, 'import { requireChain } from "../../wallet/chain";')).toHaveLength(1);
+    expect(hostImports(file, 'import { ASSET_TYPE } from "./trade";')).toEqual([]);
+    expect(hostImports(file, 'import type { SaleRecord } from "../../history/activity";')).toEqual([]);
+    expect(hostImports(file, 'import { isShopApiError } from "@shop/api/client";')).toEqual([]);
+    expect(hostImports(file, 'const host = require("../../api/host");')).toHaveLength(1);
+    expect(hostImports(file, 'import { hostApiOptions } from "../../api/host.js";')).toHaveLength(1);
+    expect(hostImports(file, '// import { shopClient } from "../../api/host";')).toHaveLength(1);
     expect(hostImports(file, "const host = await import(where);")).toEqual(["import(where)"]);
   });
 

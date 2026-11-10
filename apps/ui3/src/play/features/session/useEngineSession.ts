@@ -35,7 +35,7 @@ import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
 import { applyProfileEdit } from '../../engine/profileEdit'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setProfileRequester, updateProfile } from './profileStore'
+import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -1346,7 +1346,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const settleProfileSave = (ok: boolean, error?: string): void => {
       profileInFlightRef.current = false
       // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-      // pre-save profile goes back — see saveProfile.
+      // pre-save profile goes back — see saveProfile. When the failed edit is the one the engine
+      // shows, it puts the profile from before it back too and announces it; the store re-reads
+      // that, and drops a read of the edit still on its way instead of showing the edit again.
       const revert = profileRevertRef.current
       profileRevertRef.current = null
       if (!ok) {
@@ -1690,6 +1692,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'profile':
           setProfile(msg.profile)
+          setOwnProfile(msg.profile?.address ?? null)
           // The passport reads the store, so an authoritative own profile has to reach it too or a
           // just-saved name would keep its stale claimed-name seal until reopened.
           if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
@@ -3386,6 +3389,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     profileRevertRef.current = null
     profileInFlightRef.current = false
     queuedProfileEditRef.current = null
+    setOwnProfile(null)
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
