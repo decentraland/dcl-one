@@ -286,9 +286,9 @@ fn refused_in_another_world(run: impl FnOnce()) {
     );
 }
 
-/// Two worlds, an instance of a three-node tree part-written in the first, and as many entities in
-/// the second, which its entity ids would hit there.
-fn part_written_in_first(parent: bool) -> (App, App, InstanceId, Vec<Entity>) {
+/// Two worlds, an instance of a three-node tree part-written in the first as a hidden child, and
+/// as many entities in the second, which its entity ids would hit there.
+fn part_written_in_first() -> (App, App, InstanceId, Vec<Entity>) {
     let mut first = app();
     let mut second = app();
     let scene = add_scene(&mut first, tree(0, 3));
@@ -296,15 +296,21 @@ fn part_written_in_first(parent: bool) -> (App, App, InstanceId, Vec<Entity>) {
         .map(|_| second.world_mut().spawn_empty().id())
         .collect();
     one_entity_per_run(&mut first);
-    let instance = if parent {
-        let parent = first.world_mut().spawn_empty().id();
-        spawner(&mut first).spawn_as_child(scene, parent)
-    } else {
-        spawner(&mut first).spawn(scene)
-    };
+    let parent = first.world_mut().spawn_empty().id();
+    let instance = spawner(&mut first).spawn_as_child_hidden(scene, parent);
     first.update();
     assert_eq!(nodes(&mut first), [0]);
     (first, second, instance, bystanders)
+}
+
+/// Whether the spawner still records all it did about `instance`, a hidden child being written.
+fn still_recorded(spawner: &SceneSpawner, instance: InstanceId) -> bool {
+    spawner.instance_parents.contains_key(&instance)
+        && spawner.keep_hidden.contains(&instance)
+        && spawner
+            .scene_in_progress
+            .as_ref()
+            .is_some_and(|progress| progress.instance_id == instance)
 }
 
 fn all_alive(app: &App, entities: &[Entity]) -> bool {
@@ -315,7 +321,7 @@ fn all_alive(app: &App, entities: &[Entity]) -> bool {
 
 #[test]
 fn a_spawner_will_not_finish_an_instance_in_another_world() {
-    let (mut first, mut second, instance, bystanders) = part_written_in_first(false);
+    let (mut first, mut second, instance, bystanders) = part_written_in_first();
     let mut spawner = first.world_mut().remove_resource::<SceneSpawner>().unwrap();
     // a dynamic scene queued for the second world waits as well
     let mut source = World::new();
@@ -335,6 +341,7 @@ fn a_spawner_will_not_finish_an_instance_in_another_world() {
 
     assert_eq!(second.world().entities().len(), entities_before);
     assert_eq!(spawner.dynamic_scenes_to_spawn.len(), 1);
+    assert!(still_recorded(&spawner, instance));
     assert!(all_alive(&second, &bystanders));
     spawner.set_spawn_deadline(None);
     spawner.spawn_queued_scenes(first.world_mut()).unwrap();
@@ -344,12 +351,13 @@ fn a_spawner_will_not_finish_an_instance_in_another_world() {
 
 #[test]
 fn a_spawner_will_not_despawn_an_instance_part_written_in_another_world() {
-    let (mut first, mut second, instance, bystanders) = part_written_in_first(false);
+    let (mut first, mut second, instance, bystanders) = part_written_in_first();
 
     refused_in_another_world(|| {
         spawner(&mut first).despawn_instance_sync(second.world_mut(), &instance);
     });
 
+    assert!(still_recorded(first.world().resource(), instance));
     assert!(all_alive(&second, &bystanders));
     first
         .world_mut()
@@ -361,13 +369,16 @@ fn a_spawner_will_not_despawn_an_instance_part_written_in_another_world() {
 
 #[test]
 fn an_unregistered_instance_is_despawned_only_in_its_world() {
-    let (mut first, mut second, instance, bystanders) = part_written_in_first(true);
+    let (mut first, mut second, instance, bystanders) = part_written_in_first();
     spawner(&mut first).unregister_instance(instance);
 
     refused_in_another_world(|| {
         spawner(&mut first).despawn_queued_instances(second.world_mut());
     });
 
+    let spawner = first.world().resource::<SceneSpawner>();
+    assert_eq!(spawner.instances_to_despawn, [instance]);
+    assert!(spawner.spawn_progress().writing.is_some());
     assert!(all_alive(&second, &bystanders));
     first.update();
     assert!(nodes(&mut first).is_empty());
@@ -375,7 +386,7 @@ fn an_unregistered_instance_is_despawned_only_in_its_world() {
 
 #[test]
 fn the_spawner_system_will_not_run_on_another_world_mid_spawn() {
-    let (mut first, mut second, instance, bystanders) = part_written_in_first(true);
+    let (mut first, mut second, instance, bystanders) = part_written_in_first();
     let spawner = first.world_mut().remove_resource::<SceneSpawner>().unwrap();
     // the instance's parent is not in the second world: it would look despawned
     let parent = spawner.instance_parents[&instance];
@@ -385,6 +396,7 @@ fn the_spawner_system_will_not_run_on_another_world_mid_spawn() {
 
     refused_in_another_world(|| super::scene_spawner_system(second.world_mut()));
 
+    assert!(still_recorded(second.world().resource(), instance));
     assert!(all_alive(&second, &bystanders));
     let spawner = second
         .world_mut()
