@@ -45,13 +45,6 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
-    "name": "assetBundleRegistry",
-    "value": "http",
-    "scheme": "https",
-    "sub": "asset-bundle-registry",
-    "path": ""
-  },
-  {
     "name": "storage",
     "value": "http",
     "scheme": "https",
