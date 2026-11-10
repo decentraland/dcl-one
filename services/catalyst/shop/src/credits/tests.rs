@@ -4929,7 +4929,7 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
         )
         .await
         .unwrap();
-    let MarkPaidOutcome::Granted { address, credits } = outcome else {
+    let MarkPaidOutcome::Granted(purchase) = outcome else {
         panic!("{outcome:?}");
     };
     state
@@ -4937,8 +4937,8 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
         .admin_grant_credits_in_tx(
             &mut grant_tx,
             GrantRequest {
-                address: &address,
-                amount: &credits,
+                address: &purchase.address,
+                amount: &purchase.credits,
                 kind: "purchase",
                 reason: Some("stripe checkout purchase"),
                 actor: Some("stripe"),
@@ -7340,6 +7340,16 @@ async fn a_blocked_wallet_refuses_a_spend_but_its_settlement_debit_lands() {
 /// operation id tests build two over one database, the second with the
 /// catalogue or the feed gone, to show an operation is recovered without them.
 async fn opid_lane(pool: &PgPool, contract: &str, market: FakeMarket) -> Router {
+    opid_lane_with(pool, contract, market, None).await
+}
+
+/// [`opid_lane`] under a trial (`CREDITS_TRIAL_MODE`) whose buyers are `trial`.
+async fn opid_lane_with(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -7360,6 +7370,7 @@ async fn opid_lane(pool: &PgPool, contract: &str, market: FakeMarket) -> Router 
         contract: Some(contract.to_string()),
         ..super::usage::Settings::default()
     };
+    settings.trial = trial;
     let state: SharedState = Arc::new(
         State::with_sources(
             pool.clone(),
@@ -7954,4 +7965,810 @@ async fn a_delayed_payment_failure_closes_an_abandoned_order_for_good() {
     assert_purchases_match_grants(&pool, &addr).await;
     cleanup(&pool, &addr).await;
     delete_events(&pool, "evt_closed").await;
+}
+
+/// The audited detail of each purchase grant to `addr`, oldest first (its
+/// `reason` included).
+async fn purchase_grant_details(pool: &PgPool, addr: &str) -> Vec<Value> {
+    sqlx::query_scalar(
+        "SELECT a.detail FROM credits.ledger l JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
+         WHERE l.address = $1 AND l.kind = 'purchase' ORDER BY l.id",
+    )
+    .bind(addr)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn payment_intent_succeeded(event_id: &str, payment_intent: &str, amount: i64) -> String {
+    json!({
+        "id": event_id,
+        "type": "payment_intent.succeeded",
+        "data": { "object": { "id": payment_intent, "amount": amount, "currency": "usd" } },
+    })
+    .to_string()
+}
+
+async fn order_of_session(pool: &PgPool, session: &str) -> String {
+    sqlx::query_scalar("SELECT order_id FROM credits.purchases WHERE stripe_checkout_session = $1")
+        .bind(session)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_delayed_payment_credited_by_its_payment_intent_records_the_checkout_purchase() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let charge = Charge {
+        cents: 500,
+        currency: "usd",
+    };
+
+    // The debit clears, and `payment_intent.succeeded` lands before the
+    // session's own settled event.
+    let session = processing_order(&app, &state, &addr, "evt_pi_first").await;
+    let order_id = order_of_session(&pool, &session).await;
+    let pi = format!("pi_{session}");
+    let (status, out) = deliver(
+        &app,
+        &payment_intent_succeeded(&unique("evt_pi_first"), &pi, 500),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(balance_is(&pool, &addr, "50").await);
+    let details = purchase_grant_details(&pool, &addr).await;
+    assert_eq!(details.len(), 1, "{details:?}");
+    let detail = &details[0];
+    assert_eq!(detail["reason"], "stripe checkout purchase", "{detail}");
+    assert_eq!(detail["checkoutSession"], session.as_str(), "{detail}");
+    assert_eq!(detail["orderId"], order_id.as_str(), "{detail}");
+    assert_eq!(detail["paymentIntent"], pi.as_str(), "{detail}");
+    assert_eq!(detail["sku"], "settle-pack", "{detail}");
+
+    // The session's settled event then finds the order credited.
+    let (status, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_pi_first"),
+            "checkout.session.async_payment_succeeded",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(balance_is(&pool, &addr, "50").await);
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+
+    // The flip tells a purchase an earlier event credited from a key no
+    // purchase has.
+    let mut tx = pool.begin().await.unwrap();
+    let outcome = state
+        .credits
+        .mark_purchase_paid_in_tx(&mut tx, &pi, "evt_pi_first-again", charge)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&outcome, MarkPaidOutcome::NotSettleable { status } if status == "paid"),
+        "{outcome:?}"
+    );
+    let outcome = state
+        .credits
+        .mark_purchase_paid_in_tx(&mut tx, &unique("pi_unknown"), "evt_pi_first-none", charge)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, MarkPaidOutcome::NoPurchase),
+        "{outcome:?}"
+    );
+    tx.rollback().await.unwrap();
+
+    // A payment-intent purchase keeps its own reason, with no session or order.
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let direct = unique("pi_direct");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &direct)
+        .await
+        .unwrap();
+    let (status, out) = deliver(
+        &app,
+        &payment_intent_succeeded(&unique("evt_pi_first"), &direct, 500),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let details = purchase_grant_details(&pool, &addr).await;
+    assert_eq!(details.len(), 2, "{details:?}");
+    let detail = &details[1];
+    assert_eq!(detail["reason"], "stripe purchase", "{detail}");
+    assert_eq!(detail["paymentIntent"], direct.as_str(), "{detail}");
+    assert_eq!(detail["sku"], "settle-pack", "{detail}");
+    assert!(
+        detail.get("checkoutSession").is_none() && detail.get("orderId").is_none(),
+        "{detail}"
+    );
+    assert!(balance_is(&pool, &addr, "100").await);
+    assert_reconciles(&pool, &addr, "after both settlement paths").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_pi_first").await;
+}
+
+/// Until a backend of `pool` waits on a lock `holder` (a backend pid) holds.
+async fn wait_until_blocked_by(pool: &PgPool, holder: i32) {
+    for _ in 0..500 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if blocked {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on backend {holder}");
+}
+
+#[tokio::test]
+async fn a_settled_session_naming_no_payment_intent_applies_the_reversals_of_the_one_its_order_holds()
+ {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let mut reversed = Vec::new();
+
+    // A full refund lands while the order is processing; the session's
+    // settled event then names no payment intent.
+    let refunded = scratch_wallet().address;
+    let session = processing_order(&app, &state, &refunded, "evt_stored_pi").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let (_, out) = deliver(&app, &refund_event(&unique("evt_stored_pi"), &pi, 500)).await;
+    assert_eq!(out["detail"], "processed");
+    let mut settled: Value = serde_json::from_str(&session_event(
+        &unique("evt_stored_pi"),
+        "checkout.session.async_payment_succeeded",
+        &session,
+        Some("paid"),
+        500,
+        "usd",
+    ))
+    .unwrap();
+    settled["data"]["object"]["payment_intent"] = Value::Null;
+    let (status, out) = deliver(&app, &settled.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &refunded, "0").await,
+        "{} credited for refunded money",
+        available(&pool, &refunded).await
+    );
+    assert_eq!(session_order_row(&pool, &session).await.0, "refunded");
+    assert_stripe_ledger(
+        &pool,
+        &refunded,
+        "50",
+        "50",
+        "refund before a settlement naming no intent",
+    )
+    .await;
+
+    // A refund arriving while such a grant holds the order row: its own
+    // apply waits on that row, and finds the purchase paid once it commits.
+    let in_flight = scratch_wallet().address;
+    let session = processing_order(&app, &state, &in_flight, "evt_stored_pi").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let mut grant_tx = pool.begin().await.unwrap();
+    let grant_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *grant_tx)
+        .await
+        .unwrap();
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(
+            &mut grant_tx,
+            &session,
+            "evt_stored_pi-grant",
+            Charge {
+                cents: 500,
+                currency: "usd",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let MarkPaidOutcome::Granted(purchase) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(purchase.payment_intent.as_deref(), Some(pi.as_str()));
+    state
+        .credits
+        .admin_grant_credits_in_tx(
+            &mut grant_tx,
+            GrantRequest {
+                address: &purchase.address,
+                amount: &purchase.credits,
+                kind: "purchase",
+                reason: Some("stripe checkout purchase"),
+                actor: Some("stripe"),
+                idempotency_key: Some("evt_stored_pi-grant"),
+                detail: &json!({}),
+            },
+        )
+        .await
+        .unwrap();
+    let refund = {
+        let (app, body) = (
+            app.clone(),
+            refund_event(&unique("evt_stored_pi"), &pi, 500),
+        );
+        tokio::spawn(async move { deliver(&app, &body).await })
+    };
+    wait_until_blocked_by(&pool, grant_pid).await;
+    assert!(
+        state
+            .credits
+            .apply_recorded_reversals_in_tx(&mut grant_tx, &pi, "evt_stored_pi-grant")
+            .await
+            .unwrap()
+            .is_none(),
+        "the waiting refund is not committed yet"
+    );
+    grant_tx.commit().await.unwrap();
+    let (status, out) = refund.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &in_flight, "0").await,
+        "{} credited for refunded money",
+        available(&pool, &in_flight).await
+    );
+    assert_eq!(session_order_row(&pool, &session).await.0, "refunded");
+    assert_stripe_ledger(&pool, &in_flight, "50", "50", "refund waiting on the grant").await;
+
+    cleanup(&pool, &refunded).await;
+    cleanup(&pool, &in_flight).await;
+    delete_reversals(&pool, &reversed).await;
+    delete_events(&pool, "evt_stored_pi").await;
+    sqlx::query("DELETE FROM credits.stripe_events WHERE event_id = 'evt_stored_pi-grant'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() {
+    // The report counts every order, so this runs on a database of its own.
+    let Some(own) = OwnDatabase::create("stale_processing").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let settled = |session: &str, amount: i64| {
+        session_event(
+            &unique("evt_stale"),
+            "checkout.session.async_payment_succeeded",
+            session,
+            Some("paid"),
+            amount,
+            "usd",
+        )
+    };
+
+    // Processing, and its settled payment did not match its amount.
+    let mismatched = processing_order(&app, &state, &addr, "evt_stale").await;
+    let (_, out) = deliver(&app, &settled(&mismatched, 400)).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(session_order_row(&pool, &mismatched).await.0, "pending");
+    // Processing, its outcome never delivered.
+    let lost = processing_order(&app, &state, &addr, "evt_stale").await;
+    // Processing, but recent: its debit may still be on its way.
+    let recent = processing_order(&app, &state, &addr, "evt_stale").await;
+    // Not processing: no payment intent yet, and credited.
+    let (_, unseen) = session_order_fixture(&state, &addr).await;
+    let credited = processing_order(&app, &state, &addr, "evt_stale").await;
+    deliver(&app, &settled(&credited, 500)).await;
+    assert_eq!(session_order_row(&pool, &credited).await.0, "paid");
+
+    let aged = vec![
+        mismatched.clone(),
+        lost.clone(),
+        unseen.clone(),
+        credited.clone(),
+    ];
+    sqlx::query(
+        "UPDATE credits.purchases SET created_at = created_at - interval '31 days' WHERE stripe_checkout_session = ANY($1)",
+    )
+    .bind(&aged)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let stale = state
+        .credits
+        .stale_processing_orders(super::orders::REPORT_PROCESSING_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(
+        stale,
+        super::orders::StaleProcessing {
+            count: 2,
+            oldest_order: Some(order_of_session(&pool, &mismatched).await),
+        }
+    );
+
+    // The job reports once, then not again within a day.
+    let report = super::settlement::StaleProcessingReport::default();
+    let every = super::settlement::REPORT_STALE_PROCESSING_EVERY;
+    assert_eq!(report.run(&state.credits, every).await, Some(stale.clone()));
+    assert_eq!(report.run(&state.credits, every).await, None);
+    assert_eq!(
+        report.run(&state.credits, std::time::Duration::ZERO).await,
+        Some(stale)
+    );
+
+    // Reporting moves nothing, and the sweep still leaves them processing.
+    let retired = state
+        .credits
+        .abandon_stale_pack_orders(super::orders::ABANDON_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(retired, 1, "only the order with no payment in flight");
+    for session in [&mismatched, &lost, &recent] {
+        assert_eq!(session_order_row(&pool, session).await.0, "pending");
+    }
+    assert_eq!(session_order_row(&pool, &unseen).await.0, "abandoned");
+
+    own.drop().await;
+}
+
+/// The daily report only reads: a settlement pass that fails still runs it,
+/// and one the restore stamps hold skips it, as it skips every write.
+#[tokio::test]
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+    use super::settlement::{
+        REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
+    };
+    use crate::shared::writes::PassGate;
+    use crate::shared::writes::restore::{lab::StampLab, scoped};
+    let Some(own) = OwnDatabase::create("stale_report_pass").await else {
+        return;
+    };
+    let wallet = scratch_wallet();
+    sqlx::query(
+        "INSERT INTO credits.purchases (order_id, address, sku, credits, amount_cents, currency, stripe_checkout_session, stripe_payment_intent, method, status, created_at) \
+         VALUES ('ord-stuck', $1, 'test-pack', 10, 100, 'usd', 'cs_stuck', 'pi_stuck', 'card', 'pending', timezone('UTC', now()) - interval '31 days')",
+    )
+    .bind(&wallet.address)
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let credits = Credits::new(own.pool.clone());
+    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let every = REPORT_STALE_PROCESSING_EVERY;
+
+    // Held by the restore stamps: no pass, and no report yet.
+    let held = StampLab::new();
+    let report = StaleProcessingReport::default();
+    let ran = scoped(
+        held.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await
+    .unwrap();
+    assert!(!ran);
+    assert!(
+        report.run(&credits, every).await.is_some(),
+        "the held pass reported"
+    );
+
+    // A pass whose sweep fails has still reported.
+    sqlx::raw_sql(
+        "CREATE FUNCTION credits.refuse_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$; \
+         CREATE TRIGGER refuse_update BEFORE UPDATE ON credits.purchases FOR EACH STATEMENT EXECUTE FUNCTION credits.refuse_update();",
+    )
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let fresh = StampLab::fresh();
+    let report = StaleProcessingReport::default();
+    let failed = scoped(
+        fresh.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await;
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        report.run(&credits, every).await,
+        None,
+        "the failed pass already reported today"
+    );
+    own.drop().await;
+}
+
+/// `w`'s request as the explorer signs it after a login: `w` (the root) signs a fresh
+/// ephemeral key, and that key signs the request.
+async fn signed_through_ephemeral(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    let ephemeral = PrivateKeySigner::random();
+    let login = format!(
+        "Decentraland Login\nEphemeral address: {:#x}\nExpiration: 2099-01-01T00:00:00.000Z",
+        ephemeral.address()
+    );
+    let login_signature = w
+        .signer
+        .sign_message(login.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let chain = [
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: w.address.clone(),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaEphemeral,
+            payload: login,
+            signature: Some(login_signature),
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature),
+        },
+    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTH_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&timestamp).unwrap(),
+    );
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    for (i, link) in chain.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                .unwrap(),
+            HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+        );
+    }
+    headers
+}
+
+/// A trial authorizes new credits only for its buyers, judged on the root signer of the auth
+/// chain: a buyer on the list gets one (through a fresh ephemeral key too); taken off the list,
+/// the same buyer still recovers the operation it already has (same credit, nothing pledged) and
+/// the same id with other lines is still 409, but a new operation, a request with no id or a
+/// batch is refused with nothing pledged or signed. An empty list admits no one.
+#[tokio::test]
+async fn a_trial_authorizes_new_credits_only_for_its_buyers_and_keeps_their_recovery() {
+    let Some((db, _open_lane, wallet)) = opid_setup("trial_buyers").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let market = || {
+        FakeMarket::default()
+            .with_item(COLLECTION, "200", "4000000000000000000", true)
+            .with_item(COLLECTION, "95", "1900000000000000000", true)
+            .with_mana_usd("0.5")
+    };
+    let listed =
+        super::trial::TrialBuyers::parse(Some(&wallet.address.to_uppercase().replace("0X", "0x")))
+            .unwrap();
+    let on_list = opid_lane_with(&pool, OPID_MANAGER, market(), Some(listed)).await;
+    let off_list = opid_lane_with(
+        &pool,
+        OPID_MANAGER,
+        market(),
+        Some(
+            super::trial::TrialBuyers::parse(Some("0x00000000000000000000000000000000000000aa"))
+                .unwrap(),
+        ),
+    )
+    .await;
+    let nobody = opid_lane_with(
+        &pool,
+        OPID_MANAGER,
+        market(),
+        Some(super::trial::TrialBuyers::default()),
+    )
+    .await;
+    let path = "/credits/credits/authorize";
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+
+    // On the list, through a fresh ephemeral key: the root signer is the buyer.
+    let headers = signed_through_ephemeral(&wallet, "post", path).await;
+    let (status, _, first) = send(
+        &on_list,
+        "POST",
+        path,
+        headers,
+        Some(opid_item(200, "200", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+
+    // Taken off the list: the operation it has is recovered, the same credit, nothing new.
+    let (status, again) = call(
+        &off_list,
+        &wallet,
+        "post",
+        path,
+        &[],
+        Some(opid_item(200, "200", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "the operation's own credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+    // The same id with other lines is still a reused operation, not a trial refusal.
+    let (status, other) = call(
+        &off_list,
+        &wallet,
+        "post",
+        path,
+        &[],
+        Some(opid_item(95, "95", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+
+    // Anything new is refused before a pledge or a signature.
+    let fresh = "3b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    for (lane, body, at) in [
+        (&off_list, opid_item(200, "200", Some(fresh)), path),
+        (&off_list, opid_item(200, "200", None), path),
+        (
+            &off_list,
+            json!({ "operationId": fresh, "items": [opid_item(200, "200", None)] }),
+            "/credits/credits/authorize/batch",
+        ),
+        (&nobody, opid_item(200, "200", Some(fresh)), path),
+    ] {
+        let (status, refused) = call(lane, &wallet, "post", at, &[], Some(body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{at}: {refused}");
+        assert_eq!(refused["code"], "not_a_trial_buyer", "{refused}");
+        assert!(refused.get("credit").is_none(), "{refused}");
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        1,
+        "no refused request pledged anything"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 1);
+}
+
+/// CREDITS_TRIAL_MODE starts only closed and able to write: OPS_WRITES_ENABLED, no card rail, no
+/// mock card, a revoker, and buyers that are all addresses. An empty list is a trial that issues nothing; outside a trial the list is
+/// ignored. The refusals name variables, never values.
+#[test]
+fn a_trial_starts_only_closed() {
+    const A: &str = "0x00000000000000000000000000000000000000aa";
+    let trial = || RawSettings {
+        trial_mode: true,
+        writes_enabled: true,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some("0xe21289022b9324f9b9145a91ee59297ceb040c06".into()),
+        usage_index_enabled: true,
+        usage_rpc_url: Some("https://polygon-rpc.example.org".into()),
+        credits_revoker_key: Some(
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".into(),
+        ),
+        trial_buyers: Some(A.into()),
+        ..RawSettings::default()
+    };
+    let started = Settings::parse(trial()).unwrap();
+    assert!(started.trial.as_ref().is_some_and(|t| t.admits(A)));
+
+    for (needs, open) in [
+        (
+            "OPS_WRITES_ENABLED",
+            RawSettings {
+                writes_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "STRIPE_SECRET_KEY",
+            RawSettings {
+                stripe_secret_key: Some("sk_test_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "STRIPE_WEBHOOK_SECRET",
+            RawSettings {
+                stripe_webhook_secret: Some("whsec_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_ONCHAIN_AUTHORIZE_ENABLED",
+            RawSettings {
+                credits_onchain_authorize_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_SIGNER_KEY_FILE",
+            RawSettings {
+                credits_signer_key: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_MANAGER_CONTRACT",
+            RawSettings {
+                credits_manager_contract: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_USAGE_INDEX_ENABLED",
+            RawSettings {
+                usage_index_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_MOCK_CARD",
+            RawSettings {
+                mock_card: true,
+                usage_chain_id: super::usage::CHAIN_AMOY,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: None,
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some("0xnot-a-key-LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some(format!("0x{}", "0".repeat(64))),
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some(
+                    "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141".into(),
+                ),
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_TRIAL_BUYERS",
+            RawSettings {
+                trial_buyers: Some(format!("{A},0xnot-LEAKED")),
+                ..trial()
+            },
+        ),
+    ] {
+        let why = Settings::parse(open)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            why.contains(needs) && !why.contains("LEAKED"),
+            "{needs}: {why}"
+        );
+    }
+
+    let empty = Settings::parse(RawSettings {
+        trial_buyers: None,
+        ..trial()
+    })
+    .unwrap();
+    assert!(
+        empty
+            .trial
+            .as_ref()
+            .is_some_and(|t| t.is_empty() && !t.admits(A))
+    );
+    let off = Settings::parse(RawSettings {
+        trial_mode: false,
+        ..trial()
+    })
+    .unwrap();
+    assert!(off.trial.is_none(), "outside a trial the list is ignored");
+}
+
+/// Under a trial the MANA top-up, its quote and the cart's broker checkout refuse before any work:
+/// an unsigned POST gets the trial's 403, not the signed-fetch refusal. Outside a trial the quote
+/// answers as before.
+#[tokio::test]
+async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() {
+    let Some((db, open_lane, _wallet)) = opid_setup("trial_topup").await else {
+        return;
+    };
+    let market = FakeMarket::default().with_mana_usd("0.5");
+    let trial_lane = opid_lane_with(
+        &db.pool,
+        OPID_MANAGER,
+        market,
+        Some(super::trial::TrialBuyers::default()),
+    )
+    .await;
+    let (status, _, body) = send(
+        &trial_lane,
+        "GET",
+        "/credits/topup/mana/quote?credits=10",
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, _, body) = send(
+        &trial_lane,
+        "POST",
+        "/credits/topup/mana",
+        HeaderMap::new(),
+        Some(json!({ "txHash": format!("0x{}", "ab".repeat(32)) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    // The cart's broker checkout spends ledger credits off chain: refused before any work too.
+    let (status, _, body) = send(
+        &trial_lane,
+        "POST",
+        "/credits/checkout",
+        HeaderMap::new(),
+        Some(json!({ "items": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.to_string().contains("cart checkout"), "{body}");
+
+    let (status, _, body) = send(
+        &open_lane,
+        "GET",
+        "/credits/topup/mana/quote?credits=10",
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
 }
