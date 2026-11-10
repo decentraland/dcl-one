@@ -8,7 +8,7 @@ import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, statusOf, type CatalogueFilters } from '../features/shop/catalogueQuery'
 import { PopupHost, resetPopups } from '@hud/design'
 import type { Wearable } from '@hud/engine/protocol'
-import { fakeProfileState } from './harness'
+import { fakeProfileState } from '@hud/test/harness'
 
 const CONTRACT = '0x1111111111111111111111111111111111111111'
 const CREATOR = '0x2222222222222222222222222222222222222222'

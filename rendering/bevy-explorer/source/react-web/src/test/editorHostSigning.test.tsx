@@ -12,7 +12,7 @@ import { useEditorHost } from '@hud/features/editorHost/EditorHost'
 import type { DclEditorHostV1 } from '@hud/features/editorHost/host/host'
 import { localSigner, signDeployment, signFetch } from '@hud/features/editorHost/host/sign'
 import type { Signer } from '@hud/features/editorHost/host/signer'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1

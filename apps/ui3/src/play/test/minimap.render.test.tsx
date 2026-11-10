@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Minimap } from '@hud/features/minimap/Minimap'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 // The minimap header: the scene name comes from the sceneInfo stream (see world.test.tsx for
 // the wiring); this covers what the header actually renders, including the empty-parcel case.

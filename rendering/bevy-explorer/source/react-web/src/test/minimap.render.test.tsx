@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen } from '@testing-library/react'
 import { Minimap } from '@hud/features/minimap/Minimap'
-import { fakeSession, renderSettled } from './harness'
+import { fakeSession, renderSettled } from '@hud/test/harness'
 
 vi.mock('@hud/features/minimap/minimapPlaces', async (original) => ({
   ...await original<typeof import('@hud/features/minimap/minimapPlaces')>(),

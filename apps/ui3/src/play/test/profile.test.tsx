@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { Profile } from '@hud/engine/protocol'
-import { renderSession, enterAsGuest } from './harness'
+import { renderSession, enterAsGuest } from '@hud/test/harness'
 import { peekProfile, requestPassport, subscribeProfile } from '@hud/features/session/profileStore'
 
 // DOMAIN: profile — the local player's passport, fetched on world entry.

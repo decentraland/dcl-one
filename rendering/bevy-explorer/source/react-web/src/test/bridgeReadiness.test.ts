@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { BridgeChannel } from '../engine/bridgeChannel'
 import type { Envelope, PageToScene, SceneToPage } from '@hud/engine/protocol'
-import { renderSession, enterAsGuest } from './harness'
+import { renderSession, enterAsGuest } from '@hud/test/harness'
 
 // TRANSPORT: the page↔scene handshake. A BroadcastChannel drops anything posted before the other
 // end subscribes, so the page holds its messages until the scene answers `hello` (issue #1233).

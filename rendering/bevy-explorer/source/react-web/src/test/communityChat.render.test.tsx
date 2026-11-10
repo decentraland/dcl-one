@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Chat } from '@hud/features/chat/Chat'
 import type { ChatState, CommunityConversation } from '@hud/features/session/useEngineSession'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '@hud/features/chat/ping'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 vi.mock('@hud/features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
 import { openCommunityModal } from '@hud/features/communities/CommunityModal'

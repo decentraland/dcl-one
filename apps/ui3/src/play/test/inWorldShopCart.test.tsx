@@ -26,7 +26,7 @@ import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { dispatchCancelLayer } from '@hud/lib/cancelLayers'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Wearable } from '@hud/engine/protocol'
-import { fakeProfileState } from './harness'
+import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups, ToastHost } from '@hud/design'
 
 const CONTRACT = '0x1111111111111111111111111111111111111111'

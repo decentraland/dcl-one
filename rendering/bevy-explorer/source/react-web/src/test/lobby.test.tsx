@@ -8,7 +8,7 @@ import { fetchHomePlace, fetchRecents } from '@hud/features/lobby/lobbyApi'
 import type { DiscoverPlace } from '@hud/features/places/placesApi'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '@hud/features/session/profileStore'
 import { SessionProvider } from '@hud/features/session/SessionContext'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 vi.mock('@hud/features/lobby/lobbyApi', () => ({
   fetchHomePlace: vi.fn(async () => null),

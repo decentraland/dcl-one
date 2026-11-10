@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { ToastHost } from '@hud/design'
 import type { Community } from '@hud/engine/protocol'
-import { renderSession, enterAsGuest } from './harness'
+import { renderSession, enterAsGuest } from '@hud/test/harness'
 import { peekProfile } from '@hud/features/session/profileStore'
 
 // DOMAIN: communities — browse list, join/leave, per-community detail.

@@ -16,7 +16,7 @@ import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { bridgeChannelName, type Envelope } from '@hud/engine/protocol'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { pending, sessionId } from '@hud/lib/analytics'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1

@@ -1,7 +1,7 @@
 import { expectConsoleOutput } from './console'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { renderSession, enterAsGuest, FakeDriver } from './harness'
+import { renderSession, enterAsGuest, FakeDriver } from '@hud/test/harness'
 import { openProfileCard } from '@hud/features/profileCard/ProfileCard'
 import { resetPopups } from '@hud/design'
 import { DEFAULT_REALM } from '../lib/baseDomain'

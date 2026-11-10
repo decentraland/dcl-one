@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import type { Wearable } from '@hud/engine/protocol'
 import { SAVE_FAILED_MESSAGE } from '@hud/features/session/useEngineSession'
-import { enterAsGuest, renderSession } from './harness'
+import { enterAsGuest, renderSession } from '@hud/test/harness'
 
 const wearable = (urn: string, category = 'hat'): Wearable => ({ urn, name: urn, rarity: 'common', category, equipped: true })
 

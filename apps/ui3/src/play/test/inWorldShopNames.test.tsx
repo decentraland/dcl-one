@@ -15,7 +15,7 @@ import { NAME_CHECK_DEBOUNCE_MS } from '@shop/names/name'
 import { CHAIN } from '@shop/model/chain'
 import { PopupHost, resetPopups } from '@hud/design'
 import type { Profile } from '@hud/engine/protocol'
-import { fakeProfileState } from './harness'
+import { fakeProfileState } from '@hud/test/harness'
 
 const ADDRESS = '0x00000000000000000000000000000000000ab47f'
 const ME: Profile = { address: ADDRESS, name: 'Mojito', hasClaimedName: true, isGuest: false }

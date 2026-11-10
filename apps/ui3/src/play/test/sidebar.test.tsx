@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 // Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).
 describe('sidebar parity', () => {

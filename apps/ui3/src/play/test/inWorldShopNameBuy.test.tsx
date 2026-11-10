@@ -28,7 +28,7 @@ import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Profile } from '@hud/engine/protocol'
 import { PopupHost, resetPopups, ToastHost } from '@hud/design'
-import { fakeProfileState } from './harness'
+import { fakeProfileState } from '@hud/test/harness'
 
 const BUYER = '0x00000000000000000000000000000000000ab47f'
 const CONTRACT = '0x1111111111111111111111111111111111111111'

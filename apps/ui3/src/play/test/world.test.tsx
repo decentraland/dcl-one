@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import { renderSession, enterAsGuest } from './harness'
+import { renderSession, enterAsGuest } from '@hud/test/harness'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 import { GENESIS_SATELLITE_VIEW } from '@hud/features/map/atlas'
 

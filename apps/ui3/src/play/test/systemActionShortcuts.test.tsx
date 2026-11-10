@@ -3,7 +3,7 @@
 // plus the bindings slice (table state, whole-table set, press-a-key capture id round-trip).
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { renderSession, enterAsGuest, type Harness } from './harness'
+import { renderSession, enterAsGuest, type Harness } from '@hud/test/harness'
 import { openPopup, resetPopups, PopupHost } from '@hud/design'
 import { setBindingsSnapshot } from '@hud/lib/bindingLabels'
 import { registerCancelLayer } from '@hud/lib/cancelLayers'

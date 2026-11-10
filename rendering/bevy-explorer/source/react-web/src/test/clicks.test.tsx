@@ -6,7 +6,7 @@ import { Chat } from '@hud/features/chat/Chat'
 import { FriendsPanel } from '@hud/features/friends/FriendsPanel'
 import { EmotesWheel } from '@hud/features/emotes/EmotesWheel'
 import type { EngineSession, FriendsState } from '@hud/features/session/useEngineSession'
-import { renderSettled, fakeSession } from './harness'
+import { renderSettled, fakeSession } from '@hud/test/harness'
 import { openFriendRequest } from '@hud/features/friends/FriendRequestPopup'
 
 vi.mock('@hud/features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))

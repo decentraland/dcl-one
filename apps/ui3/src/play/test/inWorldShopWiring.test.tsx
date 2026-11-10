@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useQueryClient } from '@tanstack/react-query'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 import type { EngineSession } from '@hud/features/session/useEngineSession'
 
 vi.mock('@hud/features/session/useEngineSession', async (original) => ({ ...await original<typeof import('@hud/features/session/useEngineSession')>(), useEngineSession: vi.fn() }))

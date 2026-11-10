@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { PopupHost, resetPopups } from '@hud/design/popups'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { requestDebugPanel } from '@hud/features/debug/useDebugPanel'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {
   const session = fakeSession()

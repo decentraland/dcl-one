@@ -6,7 +6,7 @@ import { GuestStartPage } from '@hud/features/login/GuestStartPage'
 import { LoadingAndLogin } from '@hud/features/login/LoadingAndLogin'
 import { SessionProvider } from '@hud/features/session/SessionContext'
 import type { EngineSession, LoginFlow } from '@hud/features/session/useEngineSession'
-import { renderSettled, fakeSession } from './harness'
+import { renderSettled, fakeSession } from '@hud/test/harness'
 
 function flow(over: Partial<LoginFlow>): LoginFlow {
   return { ...fakeSession().login, ...over }

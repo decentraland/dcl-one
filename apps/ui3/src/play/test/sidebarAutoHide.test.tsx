@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 
 const nav = (): HTMLElement => screen.getByRole('navigation', { name: 'Main navigation' })
 

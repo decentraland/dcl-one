@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { renderSession, enterAsGuest } from './harness'
+import { renderSession, enterAsGuest } from '@hud/test/harness'
 import { PermissionDialog } from '@hud/features/permissions/PermissionDialog'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { PopupHost, resetPopups } from '@hud/design'
-import { fakeSession } from './harness'
+import { fakeSession } from '@hud/test/harness'
 import type { PermissionRequestMessage, PermissionUsedMessage } from '@hud/engine/protocol'
 import type { PermissionSubject } from '@hud/features/session/useEngineSession'
 
