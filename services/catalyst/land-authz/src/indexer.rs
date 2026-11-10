@@ -932,6 +932,21 @@ pub async fn begin_replay(
     settings: &Settings,
     from: u64,
 ) -> Result<ReplayStart, sqlx::Error> {
+    // A lock timeout anywhere in the replay's transaction (the admission,
+    // the cursor row, or a write behind another writer) defers it: nothing
+    // was committed, and the next pass tries again without the error backoff.
+    match rewind_for_replay(pool, settings, from).await {
+        Err(e) if lock_not_available(&e) => Ok(ReplayStart::Deferred),
+        started => started,
+    }
+}
+
+/// [`begin_replay`]'s transaction; a lock timeout comes back as the error.
+async fn rewind_for_replay(
+    pool: &PgPool,
+    settings: &Settings,
+    from: u64,
+) -> Result<ReplayStart, sqlx::Error> {
     let before = from as i64 - 1;
     let full = from <= settings.start_block;
     let mut tx = pool.begin().await?;
@@ -948,25 +963,24 @@ pub async fn begin_replay(
         return Ok(ReplayStart::Refused);
     }
     let admitting = previous.is_none() || switch;
-    if admitting {
-        match admit_network(&mut tx, &settings.network).await {
-            Ok(None) => {}
-            Ok(Some(other)) => return Ok(ReplayStart::SharedDatabase { other }),
-            Err(e) if lock_not_available(&e) => return Ok(ReplayStart::Deferred),
-            Err(e) => return Err(e),
-        }
+    if admitting && let Some(other) = admit_network(&mut tx, &settings.network).await? {
+        return Ok(ReplayStart::SharedDatabase { other });
     }
     if switch {
-        let locked =
-            sqlx::query("SELECT 1 FROM land_authz.index_cursor WHERE network = $1 FOR UPDATE")
-                .bind(&settings.network)
-                .execute(&mut *tx)
-                .await;
-        match locked {
-            Err(e) if lock_not_available(&e) => return Ok(ReplayStart::Deferred),
-            locked => {
-                locked?;
-            }
+        let locked: Option<(String, String)> = sqlx::query_as(
+            "SELECT land_registry, estate_registry FROM land_authz.index_cursor WHERE network = $1 FOR UPDATE",
+        )
+        .bind(&settings.network)
+        .fetch_optional(&mut *tx)
+        .await?;
+        // Another pass made this same switch while this one waited (two
+        // nodes overlapping after a lost lease): the cursor is already of
+        // these registries, rewound to their start, and its links are theirs,
+        // so the replay is begun and this one writes nothing.
+        if locked.is_some_and(|(land, estate)| {
+            land == settings.land_registry && estate == settings.estate_registry
+        }) {
+            return Ok(ReplayStart::Begun);
         }
     }
     // Unadmitted, the row was read without a lock: the rewind writes it only
@@ -1026,10 +1040,11 @@ pub enum ReplayStart {
     /// A partial rewind over a cursor indexed from other registries: nothing
     /// was written.
     Refused,
-    /// Nothing was written, and the next pass tries again: another pass held
-    /// [`admit_network`]'s lock, or a fold of the old registries held their
-    /// cursor row, past [`REBIND_LOCK_TIMEOUT`]; or the row was switched to
-    /// other registries under an unadmitted rewind.
+    /// Nothing was written, and the next pass tries again: a lock was not
+    /// granted within [`REBIND_LOCK_TIMEOUT`] (another pass held
+    /// [`admit_network`]'s lock, a fold of the old registries held their
+    /// cursor row, or another writer held the row being written), or the row
+    /// was switched to other registries under an unadmitted rewind.
     Deferred,
     /// The database also holds `other`'s cursor, so a switch would delete
     /// that network's estate links too: nothing was written.
@@ -1504,7 +1519,9 @@ fn replay_begun(state: &LandAuthzState, started: ReplayStart) -> anyhow::Result<
             Ok(true)
         }
         ReplayStart::Deferred => {
-            tracing::info!(network = %settings.network, "land-authz: the replay waits on another pass admitting a cursor, or on a fold of the old registries still holding theirs; retrying next pass");
+            // Warned, not just noted: a fold left open (a connection idle in
+            // its transaction) defers the switch on every pass until it ends.
+            tracing::warn!(network = %settings.network, "land-authz: the replay was deferred: a lock was not granted in time (another pass admitting a cursor, a fold of the old registries holding theirs, or another writer of the cursor row), or the cursor was switched under the rewind; retrying next pass");
             Ok(false)
         }
         ReplayStart::Refused => {
@@ -1549,7 +1566,7 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
             if e.downcast_ref::<sqlx::Error>()
                 .is_some_and(lock_not_available) =>
         {
-            tracing::info!(network = %settings.network, "land-authz: the cursor waits on another pass admitting one; retrying next pass");
+            tracing::warn!(network = %settings.network, "land-authz: the cursor waits on another pass admitting one; retrying next pass");
             return Ok(PassOutcome::default());
         }
         row => row?,

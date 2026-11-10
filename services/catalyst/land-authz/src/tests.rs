@@ -4119,10 +4119,12 @@ async fn a_switch_defers_behind_a_fold_left_running_and_a_same_registries_rewind
         begin_replay(pool, &configured, START).await.unwrap(),
         ReplayStart::Deferred
     );
+    // It waited out the lock timeout (no other branch deferred it at once),
+    // and no longer than that.
+    let waited = asked.elapsed();
     assert!(
-        asked.elapsed() < std::time::Duration::from_secs(30),
-        "{:?}",
-        asked.elapsed()
+        waited >= std::time::Duration::from_secs(5) && waited < std::time::Duration::from_secs(30),
+        "{waited:?}"
     );
     assert_eq!(registries().await, old_registries);
 
@@ -4435,5 +4437,115 @@ async fn a_pass_whose_new_cursor_waits_on_the_admission_ends_without_an_error() 
     admitting.rollback().await.unwrap();
     let row = indexer::ensure_cursor(pool, &configured).await.unwrap();
     assert_eq!(row.land_registry, configured.land_registry);
+    db.drop().await;
+}
+
+/// Two nodes overlapping after a lost lease both ask for the same switch.
+/// The second, admitted after the first committed, finds the cursor already
+/// of its registries under the row lock: it begins the replay without a
+/// second rewind, and keeps the links the first one's replay rebuilt.
+#[tokio::test]
+async fn a_switch_another_pass_already_made_is_begun_without_a_second_rewind() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    let progressed = (START + 50) as i64;
+
+    // The first node is admitted and switches: the cursor of the configured
+    // registries, its replay already past its start, and a link of theirs.
+    let mut first = pool.begin().await.unwrap();
+    let first_pid = backend_pid(&mut first).await;
+    assert_eq!(
+        indexer::admit_network(&mut first, NETWORK_MAINNET)
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = $2, estate_registry = $3, last_block = $4, \
+         folded_block = NULL, folded_at = NULL, full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(progressed)
+    .execute(&mut *first)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(&mut *first)
+    .await
+    .unwrap();
+
+    // The second node read the old registries and waits for the admission.
+    let second = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    wait_until_blocked_by(pool, first_pid).await;
+    first.commit().await.unwrap();
+    assert_eq!(second.await.unwrap().unwrap(), ReplayStart::Begun);
+
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.last_block),
+        (configured.land_registry.as_str(), progressed),
+        "no second rewind"
+    );
+    let links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(links, 1, "the first replay's link is kept");
+    db.drop().await;
+}
+
+/// A lock timeout on the replay's write, not only on its admission or the
+/// cursor row, defers it: here the cursor it creates waits behind another
+/// writer's uncommitted row of the same network.
+#[tokio::test]
+async fn a_replay_whose_write_waits_past_the_lock_timeout_defers() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let mut writer = pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, $4, true)",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(START as i64 - 1)
+    .execute(&mut *writer)
+    .await
+    .unwrap();
+
+    let asked = std::time::Instant::now();
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Deferred
+    );
+    assert!(
+        asked.elapsed() >= std::time::Duration::from_secs(5),
+        "{:?}",
+        asked.elapsed()
+    );
+    writer.rollback().await.unwrap();
+    assert!(cursor(pool, NETWORK_MAINNET).await.unwrap().is_none());
     db.drop().await;
 }
