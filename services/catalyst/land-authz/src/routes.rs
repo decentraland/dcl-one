@@ -140,7 +140,7 @@ async fn parcel_operators(
         Ok(c) => c,
         Err(resp) => return *resp,
     };
-    if state.ready().await.is_none() {
+    let Some(mut snapshot) = state.ready_snapshot().await else {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
         };
@@ -159,8 +159,12 @@ async fn parcel_operators(
                 upstream_internal_error()
             }
         };
-    }
-    match state.store().rights(xi as i32, yi as i32).await {
+    };
+    match state
+        .store()
+        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
+        .await
+    {
         Ok(Some(rights)) => Json(json!({
             "owner": rights.subject.owner,
             "operator": rights.subject.operator,
@@ -193,7 +197,7 @@ async fn user_lands_permissions(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    if state.ready().await.is_none() {
+    let Some(mut snapshot) = state.ready_snapshot().await else {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
         };
@@ -208,13 +212,13 @@ async fn user_lands_permissions(
                 fetcher_error(&addr)
             }
         };
-    }
+    };
     let store = state.store();
     // A negative bound counts from the end of the list: its length first.
     let window = match p.sql_window() {
         Some(window) => Ok(window),
         None => store
-            .parcels_with_update_operator_page(&update_operator, 0, 0)
+            .parcels_with_update_operator_page_on(&mut snapshot.tx, &update_operator, 0, 0)
             .await
             .map(|(_, total)| {
                 let r = p.range(total.max(0) as usize);
@@ -224,7 +228,12 @@ async fn user_lands_permissions(
     let page = match window {
         Ok((offset, limit)) => {
             store
-                .parcels_with_update_operator_page(&update_operator, limit, offset)
+                .parcels_with_update_operator_page_on(
+                    &mut snapshot.tx,
+                    &update_operator,
+                    limit,
+                    offset,
+                )
                 .await
         }
         Err(e) => Err(e),
@@ -300,7 +309,7 @@ async fn parcel_permissions(
         return bad_request("Address must be a valid Ethereum address");
     }
     let addr = address.to_lowercase();
-    if state.ready().await.is_none() {
+    let Some(mut snapshot) = state.ready_snapshot().await else {
         let Some(market) = land_graph_reader(&state) else {
             tracing::warn!(
                 "land-authz: parcel permissions have no source (index not ready, no LAND_SUBGRAPH_URL)"
@@ -328,8 +337,12 @@ async fn parcel_permissions(
                 upstream_internal_error()
             }
         };
-    }
-    match state.store().rights(xi as i32, yi as i32).await {
+    };
+    match state
+        .store()
+        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
+        .await
+    {
         Ok(Some(rights)) => with_source(
             Json(rights.flags_for(&addr)).into_response(),
             "land-authz-index",

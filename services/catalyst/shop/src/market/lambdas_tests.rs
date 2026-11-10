@@ -1740,6 +1740,82 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
     }
 }
 
+/// A LAND read that checked the land index before its cursor was rebound,
+/// then stalled while the new registries folded their links, reads its
+/// estates' parcels from its snapshot when it resumes: an estate keeps its
+/// own parcels, never the ones another registry's estate of the same id
+/// links. A new request after the rebind answers the index envelope.
+#[tokio::test]
+async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let estate_5 = || vec!["5".to_string()];
+    let coordinates =
+        |parcels: std::collections::HashMap<String, Vec<super::nfts::EstateParcel>>| {
+            parcels
+                .get("5")
+                .map(|ps| ps.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+
+    // The read checks the seeded index (estate 5 holds LAND 2) and stalls.
+    let mut held = super::nft_reads::land_snapshot(&db.pool)
+        .await
+        .expect("the seeded land index is published");
+
+    // Another node rebinds the mainnet cursor to other registries, and their
+    // fold links LAND 9 into their own estate 5.
+    let other = crate::land_authz::Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..crate::land_authz::Settings::for_tests()
+    };
+    assert!(
+        crate::land_authz::indexer::begin_replay(&db.pool, &other, other.start_block)
+            .await
+            .unwrap()
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, estate_id) \
+         VALUES (20, 0, 1600000020, $1, 'add_land', 9, 5)",
+    )
+    .bind(&other.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    crate::land_authz::indexer::fold(&db.pool, &other, None)
+        .await
+        .unwrap();
+
+    // Control: outside a snapshot, the shop's estate 5 now lists the other
+    // registry's LAND 9.
+    let mut conn = db.pool.acquire().await.unwrap();
+    let outside = super::nft_reads::estate_parcels(&mut conn, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(outside), vec![(0, 9)]);
+    drop(conn);
+
+    // The stalled read resumes on its snapshot: estate 5 still holds LAND 2.
+    let resumed = super::nft_reads::estate_parcels(&mut held.tx, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(resumed), vec![(0, 2)]);
+    drop(held);
+
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/genesis-parcels")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    db.drop().await;
+}
+
 /// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
 /// for lamb2's 120 s and `/users/{a}/lands` for as long as the outage lasts,
 /// while `graph::owned_names`, the read worlds' NAME owner and comms

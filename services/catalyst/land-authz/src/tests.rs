@@ -2578,6 +2578,126 @@ async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dr
     db.drop().await;
 }
 
+/// A request of a node still configured with the old registries that
+/// checked readiness before a rebind, then stalled while the new registries
+/// were rebound, folded and published, answers from the old registries'
+/// coherent state when it resumes, never from their rights joined to the
+/// new registries' estate links.
+#[tokio::test]
+async fn a_reader_that_checked_before_a_rebind_answers_from_its_registries_alone() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // The old registries' published index: CARL holds LAND (2, 2) directly,
+    // and BOB holds their estate 500, which holds no LAND.
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    let old_block = (START + 10) as i64;
+    insert(
+        pool,
+        &[
+            AuthzEvent {
+                token_address: old.land_registry.clone(),
+                ..ev(
+                    old_block - 2,
+                    0,
+                    KIND_TRANSFER,
+                    Some(&land_token(2, 2)),
+                    Some(CARL),
+                    None,
+                    None,
+                )
+            },
+            AuthzEvent {
+                token_address: old.estate_registry.clone(),
+                ..ev(
+                    old_block - 1,
+                    0,
+                    KIND_TRANSFER,
+                    Some("500"),
+                    Some(BOB),
+                    None,
+                    None,
+                )
+            },
+        ],
+    )
+    .await;
+    fold(pool, &old, None).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()) WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_block)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // The old node's request passes readiness and stalls there.
+    let stale = state_over(pool.clone(), old.clone(), None);
+    let mut held = stale
+        .ready_snapshot()
+        .await
+        .expect("the old registries' index is published");
+
+    // Meanwhile the configured node rebinds, folds its registries (its
+    // estate 500 holds LAND (2, 2)) and publishes.
+    let full = state_over(pool.clone(), configured, None);
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+
+    // The stalled request resumes on its snapshot: CARL holds the LAND
+    // directly, as the old registries say, and BOB holds nothing on it.
+    let rights = stale
+        .store()
+        .deploy_rights_batch_on(&mut held.tx, &[(2, 2)])
+        .await
+        .unwrap()
+        .pop()
+        .flatten()
+        .expect("the old registries' LAND (2, 2)");
+    assert_eq!(
+        (
+            rights.subject.belongs_to_estate,
+            rights.subject.owner.as_str()
+        ),
+        (false, CARL)
+    );
+    assert_eq!(
+        rights.deploy_flags_for(CARL).granting_leg(),
+        Some(LandRightLeg::Owner)
+    );
+    assert_eq!(rights.deploy_flags_for(BOB).granting_leg(), None);
+    drop(held);
+
+    // A new request of the old node is not ready, and the configured node
+    // answers from its own registries.
+    let answer = can_deploy(&stale, (2, 2), BOB).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    assert_eq!(
+        can_deploy(&full, (2, 2), ALICE).await.unwrap().verdict,
+        Verdict::Granted(LandRightLeg::Owner)
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_never_crosses_one()
 {

@@ -773,13 +773,54 @@ pub struct CursorObservation {
     pub observed_at: NaiveDateTime,
 }
 
-pub async fn cursor_observed(
-    pool: &PgPool,
+pub async fn cursor_observed<'e, E>(
+    executor: E,
     network: &str,
-) -> Result<Option<CursorObservation>, sqlx::Error> {
+) -> Result<Option<CursorObservation>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at FROM land_authz.index_cursor WHERE network = $1"
-    ))).bind(network).fetch_optional(pool).await
+    ))).bind(network).fetch_optional(executor).await
+}
+
+/// A read of the local index at one snapshot: a `REPEATABLE READ, READ
+/// ONLY` transaction whose first statement found the cursor ready for the
+/// reader's registries ([`observation_ready`]). Every read run on `tx` sees
+/// the database exactly as that check did. A full replay that rebinds the
+/// cursor meanwhile, and the links its fold writes afterwards, stay
+/// invisible to it, so a reader that checked before the rebind answers from
+/// its registries' coherent state and never joins its rights to another
+/// registry's estate links. It takes no lock: neither the rebind nor the
+/// indexer waits on a reader.
+pub struct ReadySnapshot {
+    pub cursor: Cursor,
+    pub tx: sqlx::Transaction<'static, sqlx::Postgres>,
+}
+
+/// `Some` when the local index of these registries may answer, with the
+/// snapshot every dependent read must run on ([`ReadySnapshot`]); `None`
+/// when it may not (the transaction is rolled back).
+pub async fn ready_snapshot(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    Ok(match cursor_observed(&mut *tx, network).await? {
+        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+            Some(ReadySnapshot {
+                cursor: observation.cursor,
+                tx,
+            })
+        }
+        _ => None,
+    })
 }
 
 /// The row a fresh database starts from: `last_block = start - 1` so the

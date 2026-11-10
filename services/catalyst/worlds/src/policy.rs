@@ -412,11 +412,11 @@ impl Policy {
         parcel: Parcel,
     ) -> Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished> {
         if let Some(land) = self.land_authz.as_ref()
-            && land.ready().await.is_some()
+            && let Some(mut snapshot) = land.ready_snapshot().await
         {
             let rights = land
                 .store()
-                .rights(parcel.x, parcel.y)
+                .rights_on(&mut snapshot.tx, parcel.x, parcel.y)
                 .await
                 .map_err(|e| store_unavailable("land-authz index", &e))?;
             // The deploy column: a parcel's cleared update-operator leg (the
