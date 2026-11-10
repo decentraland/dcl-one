@@ -1,12 +1,12 @@
 // DOMAIN: the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) — the dialog a Windows
-// player on an Intel adapter gets once signed in, with both ways to move the browser to the
+// player on an Intel adapter gets once signed in, with the browser flag that moves it to the
 // dedicated GPU, and the two ways out of it (lib/integratedGpu.ts decides when it opens).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PopupHost, closeTopPopup, resetPopups } from '../design'
-import { openIntegratedGpuGuide, WINDOWS_GRAPHICS_SETTINGS } from '../features/gate/IntegratedGpuGuide'
+import { openIntegratedGpuGuide } from '../features/gate/IntegratedGpuGuide'
 import { isInputLocked } from '../lib/inputLock'
 
 // One host per test: a second `render(<PopupHost />)` would show every popup twice.
@@ -25,14 +25,13 @@ function open(onDontShowAgain = vi.fn()): ReturnType<typeof vi.fn> {
 }
 
 describe('openIntegratedGpuGuide', () => {
-  it('names the adapter and gives both fixes as copyable targets, never links', () => {
+  it('names the adapter and gives the flag as a copyable target, never a link', () => {
     open()
     expect(screen.getByRole('dialog', { name: /dedicated graphics card/i })).toBeInTheDocument()
     expect(screen.getByText('Intel(R) Iris(R) Xe Graphics')).toBeInTheDocument()
-    expect(screen.getByText(WINDOWS_GRAPHICS_SETTINGS)).toBeInTheDocument()
     expect(screen.getByText('chrome://flags/#force-high-performance-gpu')).toBeInTheDocument()
     expect(screen.queryAllByRole('link')).toEqual([])
-    expect(screen.getAllByRole('button', { name: /^Copy$/ })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /^Copy$/ })).toHaveLength(1)
   })
 
   it('"Don\'t show again" tells the owner once and closes; "Later" only closes', async () => {

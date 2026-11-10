@@ -1,4 +1,4 @@
-// One "paste this into a new tab" step: an instruction + a `chrome://` (or Windows settings) target
+// One "paste this into a new tab" step: an instruction + a `chrome://` target
 // with a Copy button. It's shown as copyable text, NOT a link — Chromium blocks web pages from
 // navigating to chrome:// (a click or window.open is a no-op), so the user must paste it into the
 // address bar themselves. Rendered inside the gate's and the GPU guide's <ol>.
