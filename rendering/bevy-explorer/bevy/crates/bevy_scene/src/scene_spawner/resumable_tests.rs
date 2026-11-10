@@ -480,6 +480,37 @@ fn unlisted_children_scene(app: &mut App) -> Handle<Scene> {
 }
 
 #[test]
+fn entities_whose_parent_is_outside_the_scene_are_all_written() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    // siblings extracted without the parent they name
+    let registry = app.world().resource::<AppTypeRegistry>().clone();
+    let mut world = World::new();
+    world.insert_resource(registry.clone());
+    let outside = world.spawn(Node(0)).id();
+    let siblings = [
+        world.spawn((Node(1), ChildOf(outside))).id(),
+        world.spawn((Node(2), ChildOf(outside))).id(),
+    ];
+    let dynamic = DynamicSceneBuilder::from_world(&world)
+        .extract_entities(siblings.into_iter())
+        .build();
+    let scene = Scene::from_dynamic_scene(&dynamic, &registry).unwrap();
+    let scene = app.world_mut().resource_mut::<Assets<Scene>>().add(scene);
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+    for _ in 0..5 {
+        app.update();
+    }
+
+    // as a whole spawn writes them: the entity mapper's placeholder for that parent is no
+    // despawned parent
+    assert!(is_ready(&app, instance));
+    assert_eq!(nodes(&mut app), [1, 2]);
+}
+
+#[test]
 fn a_ready_entity_whose_parent_is_despawned_before_it_is_written_goes_too() {
     let mut app = app();
     one_entity_per_run(&mut app);

@@ -246,10 +246,8 @@ impl SceneInProgress {
                 world.despawn(entity);
                 return Ok(true);
             }
-            let parent_gone = scene
-                .world
-                .get::<ChildOf>(unwritten.source)
-                .and_then(|child_of| self.entity_map.get(&child_of.parent()))
+            let parent_gone = scene_parent(scene, unwritten.source)
+                .and_then(|parent| self.entity_map.get(&parent))
                 .is_some_and(|parent| world.get_entity(*parent).is_err());
             if parent_gone {
                 // its parent was despawned by others since it was made ready: it goes too, as
@@ -301,12 +299,8 @@ impl SceneInProgress {
                 {
                     continue;
                 }
-                let parent = scene
-                    .world
-                    .get_entity(*source)
-                    .ok()
-                    .and_then(|source| source.get::<ChildOf>())
-                    .and_then(|child_of| self.entity_map.get(&child_of.parent()));
+                let parent =
+                    scene_parent(scene, *source).and_then(|parent| self.entity_map.get(&parent));
                 let decision = match parent.map(|parent| world.get_entity(*parent)) {
                     None => Unstick::Ready,
                     Some(Err(_)) => Unstick::Despawn,
@@ -375,6 +369,18 @@ impl SceneInProgress {
         self.despawn(world);
         request
     }
+}
+
+/// The parent a scene entity names, if that parent is in the scene too. A parent outside it maps
+/// to a placeholder the entity mapper adds, never alive, which is no despawned parent.
+fn scene_parent(scene: &Scene, source: Entity) -> Option<Entity> {
+    scene
+        .world
+        .get_entity(source)
+        .ok()?
+        .get::<ChildOf>()
+        .map(ChildOf::parent)
+        .filter(|parent| scene.world.get_entity(*parent).is_ok())
 }
 
 /// A scene's top-level entities and their entities in an instance, in the order
