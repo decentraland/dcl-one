@@ -682,6 +682,14 @@ fn the_reuse_split_counts_files_and_bytes_by_server_hash() {
     let none = split_reuse(&files, &hashes, &HashSet::new());
     assert_eq!(none.reused_files, 0);
     assert_eq!(none.upload_files, 4);
+
+    // A byte-identical copy travels with its original, once.
+    let mut copied = files.clone();
+    copied.push(("copy/b.glb".to_string(), Some(300)));
+    let mut hashes = hashes;
+    hashes.insert("copy/b.glb".to_string(), "bafkb".to_string());
+    let r = split_reuse(&copied, &hashes, &on_server);
+    assert_eq!((r.upload_files, r.upload_bytes), (2, 300));
 }
 
 /// ...and only when there is a split to say.

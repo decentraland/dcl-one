@@ -2,7 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createShopClient } from "../../api/shop";
+import { createShopClient } from "@shop/api/shop";
 import { resetShopQueries } from "../query";
 import { catalogTransport, ShopHarness, type CatalogAnswers, type SessionKind } from "../fixtures";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";

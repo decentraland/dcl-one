@@ -16,7 +16,7 @@ import IndexNotice from "../components/IndexNotice";
 import { useCollectionName, useCreatorNames } from "../components/PickerFilters";
 import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
-import { indexUnavailable, type IndexFreshness } from "../freshness";
+import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { shopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
@@ -30,6 +30,7 @@ import { useInfiniteShopQuery } from "../query";
 import searchEmpty from "./assets/search-empty.svg?url";
 import "../components/browselayout.css";
 import "./items.css";
+import { shopReads } from "../reads";
 
 const SEO_TITLE = "Browse Collectibles";
 const seoSearchTitle = (query: string) => `Search results for “${query}”`;
@@ -62,7 +63,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const creatorNames = useCreatorNames(creators);
   const collectionName = useCollectionName(collection);
 
-  const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, { signal }));
+  const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, shopReads(signal)));
 
   const listingsFreshness = useListingsFreshness(isUnified && category !== "names");
 

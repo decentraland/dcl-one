@@ -1583,15 +1583,17 @@ fn parse_available(body: &str) -> Vec<String> {
 /// holds is left out of the request, and each remaining hash travels once —
 /// the server refuses a form that names a part twice, and byte-identical
 /// paths share one hash. The entity still lists every path; the tally counts
-/// paths. Borrowed when nothing is left out, so the common case copies no
-/// bytes.
+/// hashes, so its upload side is what travels. Borrowed when nothing is left
+/// out, so the common case copies no bytes.
 pub(crate) fn split_stored<'a>(
     files: &'a Files,
     have: &HashSet<String>,
 ) -> (Cow<'a, Files>, Reuse) {
+    let mut tallied = HashSet::new();
     let reuse = Reuse::tally(
         files
             .iter()
+            .filter(|(_, h, _)| tallied.insert(h.as_str()))
             .map(|(_, h, b)| (have.contains(h), b.len() as u64)),
     );
     let mut seen = HashSet::new();
@@ -2453,7 +2455,11 @@ mod tests {
             ("b.bin".into(), other_hash.clone(), other.clone()),
         ];
         for have in [HashSet::new(), HashSet::from([other_hash.clone()])] {
-            let (send, _) = split_stored(&files, &have);
+            let (send, reuse) = split_stored(&files, &have);
+            // The tally counts what travels, one per hash.
+            assert_eq!(reuse.upload_files, send.len(), "{have:?}");
+            assert_eq!(reuse.upload_bytes, payload_len(0, &send), "{have:?}");
+            assert_eq!(reuse.reused_files + reuse.upload_files, 2, "{have:?}");
             let sent: Vec<&str> = send.iter().map(|(_, h, _)| h.as_str()).collect();
             let mut unique = sent.clone();
             unique.sort_unstable();

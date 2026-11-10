@@ -893,25 +893,28 @@ pub async fn op_read_block_update_stream(
 #[op2]
 pub async fn op_deploy_outfits(
     state: Rc<RefCell<OpState>>,
+    #[string] address: String,
     #[scoped] outfits: Plain<OutfitsData>,
 ) -> Result<(), OpError> {
-    Ok(dcl_js::system_api::op_deploy_outfits(state, outfits.0).await?)
+    Ok(dcl_js::system_api::op_deploy_outfits(state, address, outfits.0).await?)
 }
 
 #[op2]
 pub async fn op_get_outfit_thumbnails(
     state: Rc<RefCell<OpState>>,
+    #[string] address: String,
 ) -> Result<JsPlain<Vec<OutfitThumbnailData>>, OpError> {
     Ok(JsPlain(
-        dcl_js::system_api::op_get_outfit_thumbnails(state).await?,
+        dcl_js::system_api::op_get_outfit_thumbnails(state, address).await?,
     ))
 }
 
 #[op2]
 pub fn op_set_outfit_thumbnail(
     state: Rc<RefCell<OpState>>,
+    #[string] address: String,
     #[smi] slot: u32,
     #[string] thumbnail: Option<String>,
 ) {
-    dcl_js::system_api::op_set_outfit_thumbnail(state, slot, thumbnail)
+    dcl_js::system_api::op_set_outfit_thumbnail(state, address, slot, thumbnail)
 }

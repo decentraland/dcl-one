@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setShopClient } from "../../api/shop";
 import { invalidateShopQueries } from "../../discovery/query";
 import { BOOK } from "@shop/payment/fixtures";
 import { StoryShell } from "../testHarness";
@@ -10,6 +9,7 @@ import { fakeShop } from "../testing";
 import { marketplaceOn } from "../testing-flags";
 import { shopFavorites } from "../store/favorites";
 import FavoriteButton from "./FavoriteButton";
+import { setShopClient } from "../../api/host";
 
 beforeEach(() => { localStorage.clear(); shopFavorites.reloadFor(null); });
 afterEach(() => setShopClient(null));

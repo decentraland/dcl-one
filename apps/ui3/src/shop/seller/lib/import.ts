@@ -6,8 +6,8 @@
 // USD-pegged resale order keeps settling in MANA at a current quote. The refusal comes BEFORE the old
 // listing is cancelled, so a refused import never leaves an item unlisted.
 
-import { isShopApiError } from "../../api/client";
-import { shopClient, type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { ImportableListing } from "@catalyst-api/market/ImportableListing";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import type { ChainId } from "@shop/model/chain";
@@ -25,6 +25,7 @@ import {
   type TradeCreation,
 } from "../../market/lib/trades";
 import type { WaitOptions } from "../../market/lib/tx";
+import { shopClient } from "../../api/host";
 
 const SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 182;
 

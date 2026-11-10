@@ -238,3 +238,64 @@
   flex-direction: column;
   gap: 10px;
 }
+
+/* The form while its places load (unity-explorer's loading panel). */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+
+/* Linked places: one tag per place, its label over its owner's name, and a remove box. */
+.placeTags {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.placeTag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--white-10);
+}
+.placeText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.placeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.placeOwner {
+  font-size: var(--fs-xs);
+  color: var(--ink-7);
+}
+.placeRemove {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--white-10);
+}
+.placeRemove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

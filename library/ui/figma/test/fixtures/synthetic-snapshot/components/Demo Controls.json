@@ -1,0 +1,613 @@
+{
+ "page": {"id":"10:1","name":"Demo Controls"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "20:1",
+   "name": "Synthetic Button",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {
+    "Property 1": {"type":"VARIANT","default":"Primary","options":["Primary","Secondary","Quaternary","Terciary"]},
+    "Hover": {"type":"VARIANT","default":"No","options":["No","Yes"]},
+    "Blocked": {"type":"VARIANT","default":"No","options":["No","Yes"]}
+   },
+   "base": {
+    "id": "20:2",
+    "name": "Property 1=Primary, Hover=No, Blocked=No",
+    "props": {"Property 1":"Primary","Hover":"No","Blocked":"No"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=Primary, Hover=No, Blocked=No",
+     "w": 120,
+     "h": 46,
+     "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":8,"main":"CENTER","cross":"CENTER"},
+     "sizing": ["HUG","HUG"],
+     "radius": 8,
+     "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 72,
+       "h": 22,
+       "sizing": ["HUG","HUG"],
+       "text": "Label",
+       "textStyle": "label/md-caps",
+       "font": "Inter Semi Bold",
+       "fontSize": 14,
+       "textCase": "UPPER",
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "20:3",
+     "name": "Property 1=Primary, Hover=Yes, Blocked=No",
+     "props": {"Property 1":"Primary","Hover":"Yes","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Primary, Hover=Yes, Blocked=No","fills":[{"type":"SOLID","hex":"#ff5c7c","token":"Primitives/Brand/Primary Light"}]}}]
+    },
+    {
+     "id": "20:4",
+     "name": "Property 1=Primary, Hover=No, Blocked=Yes",
+     "props": {"Property 1":"Primary","Hover":"No","Blocked":"Yes"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Primary, Hover=No, Blocked=Yes","fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}}]
+    },
+    {
+     "id": "20:5",
+     "name": "Property 1=Secondary, Hover=No, Blocked=No",
+     "props": {"Property 1":"Secondary","Hover":"No","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Secondary, Hover=No, Blocked=No","fills":[{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]}}]
+    },
+    {
+     "id": "20:6",
+     "name": "Property 1=Secondary, Hover=Yes, Blocked=No",
+     "props": {"Property 1":"Secondary","Hover":"Yes","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Secondary, Hover=Yes, Blocked=No","fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]}}]
+    },
+    {
+     "id": "20:7",
+     "name": "Property 1=Terciary, Hover=No, Blocked=No",
+     "props": {"Property 1":"Terciary","Hover":"No","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Terciary, Hover=No, Blocked=No","fills":[{"type":"SOLID","hex":"#ffffff","token":"Primitives/Alpha/White 10"}]}}]
+    },
+    {
+     "id": "20:8",
+     "name": "Property 1=Terciary, Hover=Yes, Blocked=No",
+     "props": {"Property 1":"Terciary","Hover":"Yes","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Terciary, Hover=Yes, Blocked=No","fills":[{"type":"SOLID","hex":"#000000","token":"Primitives/Alpha/Black 50"}]}}]
+    },
+    {
+     "id": "20:9",
+     "name": "Property 1=Quaternary, Hover=No, Blocked=No",
+     "props": {"Property 1":"Quaternary","Hover":"No","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Quaternary, Hover=No, Blocked=No","fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]}}]
+    },
+    {
+     "id": "20:10",
+     "name": "Property 1=Quaternary, Hover=Yes, Blocked=No",
+     "props": {"Property 1":"Quaternary","Hover":"Yes","Blocked":"No"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Quaternary, Hover=Yes, Blocked=No","fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}}]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:20",
+   "name": "Switch",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Switch":{"type":"VARIANT","default":"On","options":["On","Off"]},"State":{"type":"VARIANT","default":"Default","options":["Default","Loading"]}},
+   "base": {
+    "id": "20:21",
+    "name": "Switch=On, State=Default",
+    "props": {"Switch":"On","State":"Default"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Switch=On, State=Default",
+     "w": 40,
+     "h": 24,
+     "layout": {"mode":"HORIZONTAL","pad":[2,2,2,2],"gap":0,"main":"MAX","cross":"CENTER"},
+     "radius": 12,
+     "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+     "children": [{"type":"ELLIPSE","name":"Knob","w":20,"h":20,"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]}]
+    }
+   },
+   "others": [
+    {
+     "id": "20:22",
+     "name": "Switch=Off, State=Default",
+     "props": {"Switch":"Off","State":"Default"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Switch=Off, State=Default",
+        "w": 40,
+        "h": 24,
+        "layout": {"mode":"HORIZONTAL","pad":[2,2,2,2],"gap":0,"main":"MIN","cross":"CENTER"},
+        "radius": 12,
+        "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+        "children": [{"type":"ELLIPSE","name":"Knob","w":20,"h":20,"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]}]
+       }
+      }
+     ]
+    },
+    {
+     "id": "20:23",
+     "name": "Switch=On, State=Loading",
+     "props": {"Switch":"On","State":"Loading"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Switch=On, State=Loading",
+        "w": 40,
+        "h": 24,
+        "layout": {"mode":"HORIZONTAL","pad":[2,2,2,2],"gap":0,"main":"MAX","cross":"CENTER"},
+        "radius": 12,
+        "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+        "children": [{"type":"ELLIPSE","name":"Knob","w":20,"h":20,"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]}]
+       }
+      }
+     ]
+    },
+    {
+     "id": "20:24",
+     "name": "Switch=Off, State=Loading",
+     "props": {"Switch":"Off","State":"Loading"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Switch=Off, State=Loading",
+        "w": 40,
+        "h": 24,
+        "layout": {"mode":"HORIZONTAL","pad":[2,2,2,2],"gap":0,"main":"MIN","cross":"CENTER"},
+        "radius": 12,
+        "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+        "children": [{"type":"ELLIPSE","name":"Knob","w":20,"h":20,"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]}]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:30",
+   "name": "HideItem",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"HideItem":{"type":"VARIANT","default":"Off","options":["Off","On"]}},
+   "base": {
+    "id": "20:31",
+    "name": "HideItem=Off",
+    "props": {"HideItem":"Off"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "HideItem=Off",
+     "w": 24,
+     "h": 24,
+     "radius": 4,
+     "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+     "children": []
+    }
+   },
+   "others": [
+    {
+     "id": "20:32",
+     "name": "HideItem=On",
+     "props": {"HideItem":"On"},
+     "patches": [{"at":[],"set":{"name":"HideItem=On","fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}}]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:40",
+   "name": "FriendCTA",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {
+    "Property 1": {
+     "type": "VARIANT",
+     "default": "Add",
+     "options": ["Add","AddFriendHover","AddFriendLoading","Reject","RejectHover","RejectHoverPress","Blocked","BlockedHover","BlockedPres"]
+    }
+   },
+   "base": {
+    "id": "20:41",
+    "name": "Property 1=Add",
+    "props": {"Property 1":"Add"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=Add",
+     "w": 96,
+     "h": 32,
+     "layout": {"mode":"HORIZONTAL","pad":[8,8,8,8],"gap":4,"main":"CENTER","cross":"CENTER"},
+     "radius": 4,
+     "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+     "children": [
+      {"type":"INSTANCE","name":"Menu glyph","component":"MenuGlyphs","variant":"Stat=Other","w":16,"h":16},
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 40,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Add",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "20:42",
+     "name": "Property 1=AddFriendHover",
+     "props": {"Property 1":"AddFriendHover"},
+     "patches": [{"at":[],"set":{"name":"Property 1=AddFriendHover","fills":[{"type":"SOLID","hex":"#d80029","token":"Primitives/Brand/Primary Dark"}]}}]
+    },
+    {
+     "id": "20:43",
+     "name": "Property 1=AddFriendLoading",
+     "props": {"Property 1":"AddFriendLoading"},
+     "patches": [{"at":[],"set":{"name":"Property 1=AddFriendLoading","fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]}}]
+    },
+    {
+     "id": "20:44",
+     "name": "Property 1=Reject",
+     "props": {"Property 1":"Reject"},
+     "patches": [
+      {"at":[],"set":{"name":"Property 1=Reject","fills":[{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]}},
+      {"at":[0],"set":{"variant":"Stat=Info"}}
+     ]
+    },
+    {
+     "id": "20:45",
+     "name": "Property 1=RejectHover",
+     "props": {"Property 1":"RejectHover"},
+     "patches": [
+      {"at":[],"set":{"name":"Property 1=RejectHover","fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]}},
+      {"at":[0],"set":{"variant":"Stat=Info"}}
+     ]
+    },
+    {
+     "id": "20:46",
+     "name": "Property 1=RejectHoverPress",
+     "props": {"Property 1":"RejectHoverPress"},
+     "patches": [
+      {"at":[],"set":{"name":"Property 1=RejectHoverPress","fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}},
+      {"at":[0],"set":{"variant":"Stat=Info"}}
+     ]
+    },
+    {
+     "id": "20:47",
+     "name": "Property 1=Blocked",
+     "props": {"Property 1":"Blocked"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Blocked","fills":[{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]}}]
+    },
+    {
+     "id": "20:48",
+     "name": "Property 1=BlockedHover",
+     "props": {"Property 1":"BlockedHover"},
+     "patches": [{"at":[],"set":{"name":"Property 1=BlockedHover","fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]}}]
+    },
+    {
+     "id": "20:49",
+     "name": "Property 1=BlockedPres",
+     "props": {"Property 1":"BlockedPres"},
+     "patches": [{"at":[],"set":{"name":"Property 1=BlockedPres","fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}}]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:50",
+   "name": "Split Button",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Property 1":{"type":"VARIANT","default":"Default","options":["Default","HoverLeft","HoverRight"]}},
+   "base": {
+    "id": "20:51",
+    "name": "Property 1=Default",
+    "props": {"Property 1":"Default"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=Default",
+     "w": 120,
+     "h": 40,
+     "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":1,"main":"MIN","cross":"CENTER"},
+     "radius": 8,
+     "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+     "children": [
+      {
+       "type": "FRAME",
+       "name": "Left",
+       "w": 88,
+       "h": 40,
+       "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+       "children": [
+        {
+         "type": "TEXT",
+         "name": "Label",
+         "w": 56,
+         "h": 22,
+         "sizing": ["HUG","HUG"],
+         "text": "Label",
+         "textStyle": "label/md-caps",
+         "font": "Inter Semi Bold",
+         "fontSize": 14,
+         "textCase": "UPPER",
+         "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+        }
+       ]
+      },
+      {"type":"FRAME","name":"Right","w":31,"h":40,"fills":[{"type":"SOLID","hex":"#d80029","token":"Primitives/Brand/Primary Dark"}]}
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "20:52",
+     "name": "Property 1=HoverLeft",
+     "props": {"Property 1":"HoverLeft"},
+     "patches": [{"at":[],"set":{"name":"Property 1=HoverLeft"}},{"at":[0],"set":{"fills":[{"type":"SOLID","hex":"#ff5c7c","token":"Primitives/Brand/Primary Light"}]}}]
+    },
+    {
+     "id": "20:53",
+     "name": "Property 1=HoverRight",
+     "props": {"Property 1":"HoverRight"},
+     "patches": [{"at":[],"set":{"name":"Property 1=HoverRight"}},{"at":[1],"set":{"fills":[{"type":"SOLID","hex":"#ff5c7c","token":"Primitives/Brand/Primary Light"}]}}]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:60",
+   "name": "Notify",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Property 1":{"type":"VARIANT","default":"Off","options":["Off","On"]}},
+   "base": {
+    "id": "20:61",
+    "name": "Property 1=Off",
+    "props": {"Property 1":"Off"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=Off",
+     "w": 24,
+     "h": 24,
+     "children": [
+      {
+       "type": "VECTOR",
+       "name": "Bell",
+       "w": 20,
+       "h": 20,
+       "x": 2,
+       "y": 2,
+       "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\"><path d=\"M4 14h12l-2-3V8a4 4 0 0 0-8 0v3z\" fill=\"#FCFCFC\"/></svg>",
+       "sum": "jfvtgg"
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "20:62",
+     "name": "Property 1=On",
+     "props": {"Property 1":"On"},
+     "patches": [
+      {"at":[],"set":{"name":"Property 1=On"}},
+      {
+       "at": [0],
+       "set": {
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\"><path d=\"M4 14h12l-2-3V8a4 4 0 0 0-8 0v3z\" fill=\"#FF2D55\"/></svg>",
+        "sum": "j6yfuh"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "set",
+   "id": "20:70",
+   "name": "SquaredButton",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Status":{"type":"VARIANT","default":"Default","options":["Default","Hover"]}},
+   "base": {
+    "id": "20:71",
+    "name": "Status=Default",
+    "props": {"Status":"Default"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Status=Default",
+     "w": 40,
+     "h": 40,
+     "layout": {"mode":"HORIZONTAL","pad":[8,8,8,8],"gap":0,"main":"CENTER","cross":"CENTER"},
+     "radius": 4,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "children": [{"type":"FRAME","name":"Glyph","w":24,"h":24,"sizing":["FIXED","FIXED"],"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]}]
+    }
+   },
+   "others": [
+    {
+     "id": "20:72",
+     "name": "Status=Hover",
+     "props": {"Status":"Hover"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Status=Hover",
+        "w": 40,
+        "h": 40,
+        "layout": {"mode":"HORIZONTAL","pad":[8,8,8,8],"gap":0,"main":"CENTER","cross":"CENTER"},
+        "radius": 4,
+        "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+        "children": [
+         {"type":"FRAME","name":"Glyph","w":24,"h":24,"sizing":["FIXED","FIXED"],"fills":[{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]},
+         {
+          "type": "FRAME",
+          "name": "Tooltip",
+          "w": 64,
+          "h": 24,
+          "absolute": true,
+          "x": 44,
+          "y": 8,
+          "radius": 4,
+          "fills": [{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "component",
+   "id": "20:80",
+   "name": "InterestedCTA",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "20:80",
+    "name": "InterestedCTA",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "InterestedCTA",
+     "w": 120,
+     "h": 36,
+     "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":8,"main":"CENTER","cross":"CENTER"},
+     "radius": 18,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "children": [
+      {"type":"INSTANCE","name":"Star","component":"sample/star","w":20,"h":20,"tint":{"fill":{"hex":"#ffbc5b","token":"Primitives/Brand/Accent"}}},
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 72,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Interested",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "20:90",
+   "name": "Txt / Sort",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "20:90",
+    "name": "Txt / Sort",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Txt / Sort",
+     "w": 96,
+     "h": 32,
+     "layout": {"mode":"HORIZONTAL","pad":[6,8,6,8],"gap":4,"main":"CENTER","cross":"CENTER"},
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 56,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Sort by",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      },
+      {"type":"INSTANCE","name":"Arrow","component":"LegacyArrow","w":16,"h":16}
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "20:100",
+   "name": "Caret Input",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "20:100",
+    "name": "Caret Input",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Caret Input",
+     "w": 240,
+     "h": 40,
+     "layout": {"mode":"HORIZONTAL","pad":[10,12,10,12],"gap":2,"main":"MIN","cross":"CENTER"},
+     "radius": 8,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "strokes": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+     "strokeWeight": 1,
+     "strokeAlign": "INSIDE",
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Value",
+       "w": 48,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Typing",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      },
+      {
+       "type": "FRAME",
+       "name": "Cursor",
+       "w": 2,
+       "h": 20,
+       "sizing": ["FIXED","FIXED"],
+       "children": [{"type":"LINE","name":"Cursor line","w":20,"h":0,"strokeWeight":2,"strokes":[{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]}]
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}

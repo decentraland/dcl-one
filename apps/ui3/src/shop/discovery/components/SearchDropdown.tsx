@@ -11,7 +11,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { SHOP_BASE } from "../../routes";
-import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "../api";
+import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "@shop/discovery/api";
 import { t } from "@shop/discovery/intl";
 import { highlightMatches } from "../lib/highlight";
 import { popularSearchesFor } from "../lib/popularSearches";
@@ -27,6 +27,7 @@ import { CollectionThumb } from "./CollectionCard";
 import { subCategoryLabel } from "./Filters";
 import Icon from "./Icon";
 import "./search.css";
+import { shopReads } from "../reads";
 
 const DEBOUNCE_MS = 200;
 
@@ -94,7 +95,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
     const controller = new AbortController();
     setState((s) => ({ ...s, loading: true, error: false }));
     const timer = setTimeout(() => {
-      fetchSuggestions(query, {}, { signal: controller.signal }).then(
+      fetchSuggestions(query, {}, shopReads(controller.signal)).then(
         (data) => !controller.signal.aborted && setState({ query, data, loading: false, error: false }),
         (e) => !controller.signal.aborted && (e as { name?: string })?.name !== "AbortError" && setState({ query, data: EMPTY_SUGGESTIONS, loading: false, error: true }),
       );

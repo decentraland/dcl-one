@@ -61,6 +61,7 @@ import type {
   Community,
   DmUserState,
   CommunityAction,
+  CommunityMemberAction,
   CommunityDetailMessage,
   CommunityChannel,
   CommunityMember,
@@ -89,6 +90,7 @@ import type {
   Profile,
   ProfileEdit,
   CommunitySaveResultMessage,
+  CommunityPlaceOptionsMessage,
   UpdateCommunityRequest,
   SceneLoadingState,
   Setting,
@@ -108,6 +110,13 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
   leave: 'There was an error leaving the community. Please try again.',
   delete: 'There was an error deleting the community. Please try again.',
+  removePlace: 'There was an error deleting the community place. Please try again.',
+  // the member menu's (MembersListController *_ERROR_TEXT)
+  promote: 'There was an error adding moderator to user. Please try again.',
+  demote: 'There was an error removing moderator from user. Please try again.',
+  transfer: 'There was an error transfering ownership. Please try again.',
+  kick: 'There was an error kicking the user. Please try again.',
+  ban: 'There was an error banning the user. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -125,6 +134,11 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
+
+export const OUTFIT_FAILED_MESSAGE = {
+  save: "Couldn't save this outfit. Try again.",
+  delete: "Couldn't delete this outfit. Try again."
+} as const
 
 /** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
 export interface CatalogQuery {
@@ -187,6 +201,9 @@ export interface BackpackState {
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
   deleteOutfit: (slot: number) => void
+  /** Why the last outfit save or delete was refused, or null (until the outfits next arrive). */
+  outfitError: string | null
+  dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
   /** The randomize bar's state for this Backpack session. */
@@ -216,6 +233,8 @@ export interface CreateCommunityInput {
   discoverable: boolean
   /** The picture as a data URL, when one was chosen. */
   thumbnail?: string
+  /** The linked places, lands first, then worlds. */
+  placeIds: string[]
 }
 
 /** What the edit form sends: the community and only the fields that changed. */
@@ -241,6 +260,18 @@ export interface CommunitiesState {
   save: CommunitySave | null
   /** Forget the last outcome (the form closed or is being edited again). */
   clearSave: () => void
+  /** The form's places: the user's own (the picker) and, when editing, the community's linked
+   *  ones. Null until they arrive. */
+  placeOptions: CommunityPlaceOptionsMessage | null
+  /** Read the form's places; `communityId` when editing. */
+  loadPlaceOptions: (communityId?: string) => void
+  /** Forget them (the form closed). */
+  clearPlaceOptions: () => void
+  /** Unlink a place from a community (the card's delete). A failure arrives in `error`. */
+  removePlace: (id: string, placeId: string) => void
+  /** An owner's or moderator's action on a member, from the card's member menu. The card's
+   *  members are read again after it; a failure arrives in `error`. */
+  memberAction: (id: string, address: string, action: CommunityMemberAction) => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -1173,6 +1204,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
+  const [outfitError, setOutfitError] = useState<string | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -1182,6 +1214,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
   const [deletedCommunity, setDeletedCommunity] = useState<string | null>(null)
+  const [communityPlaceOptions, setCommunityPlaceOptions] = useState<CommunityPlaceOptionsMessage | null>(null)
+  // Whose places the open form asked for ('' on create), or null with no form open: a late answer
+  // for another form is dropped.
+  const placeOptionsWanted = useRef<string | null>(null)
+  // The community whose card asked for its detail last: details for any other are dropped.
+  const detailWanted = useRef<string | null>(null)
   // A create or update is waiting for its answer. Cleared when the form closes, so an answer that
   // comes after that is dropped instead of driving the next form.
   const communitySaveInFlight = useRef(false)
@@ -1705,6 +1743,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
+          setOutfitError(null)
+          break
+        case 'outfitSaveFailed':
+          setOutfitError(OUTFIT_FAILED_MESSAGE[msg.action])
+          console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
@@ -1718,6 +1761,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+          break
+        case 'communityPlaceOptions':
+          if (placeOptionsWanted.current !== (msg.communityId ?? '')) break
+          setCommunityPlaceOptions(msg)
           break
         case 'communitySaveResult': {
           if (!communitySaveInFlight.current) break
@@ -1736,6 +1783,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         case 'communityDetail':
+          // only the card open now: a re-read for a card already closed must not replace its detail
+          if (msg.id !== detailWanted.current) break
+          // the members' names and faces, for the member menu and the passport they open; an unclaimed
+          // name with its #tag, as every explorer shows it (the card reads a bare name as claimed)
+          seedProfiles(
+            msg.members.map((m) => ({
+              address: m.address,
+              name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`,
+              picture: m.picture,
+              claimed: m.hasClaimedName
+            }))
+          )
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -3027,6 +3086,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const deleteOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
+  const dismissOutfitError = useCallback(() => setOutfitError(null), [])
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -3060,9 +3120,26 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     pendingCommunityPicture.current = null
     setCommunitySave(null)
   }, [])
+  const loadCommunityPlaceOptions = useCallback((communityId?: string) => {
+    placeOptionsWanted.current = communityId ?? ''
+    setCommunityPlaceOptions(null)
+    driverRef.current?.send({ kind: 'getCommunityPlaceOptions', ...(communityId != null ? { communityId } : {}) })
+  }, [])
+  const clearCommunityPlaceOptions = useCallback(() => {
+    placeOptionsWanted.current = null
+    setCommunityPlaceOptions(null)
+  }, [])
   const deleteCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'deleteCommunity', id })
+  }, [])
+  const removeCommunityPlace = useCallback((id: string, placeId: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'removeCommunityPlace', id, placeId })
+  }, [])
+  const communityMemberAction = useCallback((id: string, address: string, action: CommunityMemberAction) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'communityMemberAction', id, address, action })
   }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
@@ -3081,6 +3158,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'leaveCommunity', id })
   }, [])
   const loadCommunityDetail = useCallback((id: string) => {
+    detailWanted.current = id
     setCommunityDetail(null) // clear stale detail while the new one loads
     driverRef.current?.send({ kind: 'getCommunityDetail', id })
   }, [])
@@ -3256,6 +3334,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunities([])
     setCommunityCards({})
     clearCommunitySave()
+    clearCommunityPlaceOptions()
     setDeletedCommunity(null)
     savedCommunityPictures.current = {}
     setFriendPending(new Set())
@@ -4050,10 +4129,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
-      saveOutfit, deleteOutfit, equipOutfit,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

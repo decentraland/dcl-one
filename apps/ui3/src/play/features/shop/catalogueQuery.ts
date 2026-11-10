@@ -5,8 +5,8 @@
 // catalogue; the card prices each row by the Shop's own rule (library/shop discovery/cardPrice).
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { fetchCatalogItems, fetchShopItems, type ShopSort } from '../../../shop/discovery/api'
-import { SUBCAT_MAP } from '../../../shop/discovery/lib/categories'
+import { fetchCatalogItems, fetchShopItems, type ShopSort } from '@shop/discovery/api'
+import { SUBCAT_MAP } from '@shop/discovery/lib/categories'
 // The design's ALL pill: the icon library's 3×3 `apps` grid (16px of 4px squares in the 26px slot).
 import allIcon from '../../assets/shop/all.svg'
 import hairIcon from '../../assets/category-icons/hair.png'
@@ -17,6 +17,7 @@ import feetIcon from '../../assets/category-icons/feet.png'
 import accessoriesIcon from '../../assets/category-icons/earring.png'
 import skinIcon from '../../assets/category-icons/skin.png'
 import { listingTypeFor } from '@shop/market/access-rule'
+import { shopReads } from '../../../shop/discovery/reads'
 
 export const SHOP_PAGE_SIZE = 48
 
@@ -135,7 +136,7 @@ export const shopQueries = {
               maxPriceCredits: filters.maxCredits ?? undefined,
               ...paging
             },
-            { signal }
+            shopReads(signal)
           )
         // Nothing not for sale has a price, so the range applies to the other statuses only.
         const status = statusOf(filters)
@@ -153,7 +154,7 @@ export const shopQueries = {
             maxPriceCredits: priced ? (filters.maxCredits ?? undefined) : undefined,
             ...paging
           },
-          { signal }
+          shopReads(signal)
         )
       },
       staleTime: 30_000

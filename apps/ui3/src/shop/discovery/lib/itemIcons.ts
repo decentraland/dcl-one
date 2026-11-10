@@ -1,5 +1,5 @@
 // from: shop@94584a5c:app/src/lib/itemIcons.ts
-import type { IconName } from "../components/Icon";
+import type { IconName } from "@shop/discovery/lib/iconName";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 const CATEGORY_ICON: Record<string, IconName> = {

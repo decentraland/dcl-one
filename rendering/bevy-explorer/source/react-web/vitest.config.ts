@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
-import { SHARED_DEDUPE, SHARED_SOURCES } from './vite.shared'
+import { SHARED_ALIASES, SHARED_DEDUPE } from './vite.shared'
 
 // Deterministic integration tests (tier 1): render the real session/components with a
 // fake bridge driver, assert every domain's wire API calls + response handling. No engine.
@@ -11,7 +11,7 @@ export default defineConfig({
     // The scene runtime supplies this virtual module. Tests provide its methods with vi.mock.
     resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
   }],
-  resolve: { alias: SHARED_SOURCES, dedupe: SHARED_DEDUPE },
+  resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   test: {
     environment: 'jsdom',
     globals: true,

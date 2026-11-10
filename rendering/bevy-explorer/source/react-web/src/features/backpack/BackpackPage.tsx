@@ -524,6 +524,12 @@ export function BackpackPage({
     }
   }, [backpack.open, backpack.preview])
 
+  // A refused outfit save or delete is told in the Outfits tab until the player leaves it.
+  const showingOutfits = backpack.open && tab === 'wearables' && section === 'outfits'
+  useEffect(() => {
+    if (!showingOutfits) backpack.dismissOutfitError()
+  }, [showingOutfits, backpack.dismissOutfitError])
+
   if (!backpack.open) return null
 
   // The full equipped set = the decoupled equipped list (NOT the current page — the rest of the
@@ -679,6 +685,9 @@ export function BackpackPage({
                       </div>
                     )
                   ))}
+                  {backpack.outfitError != null && (
+                    <p className={styles.outfitError} role="alert">{backpack.outfitError}</p>
+                  )}
                 </div>
               ) : (
               <div key="categories" className={`${styles.catalog} ${styles.slideFromLeft}`}>

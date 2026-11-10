@@ -322,8 +322,9 @@ let ownedNames: string[] | undefined
 identity.onChange(() => {
   ownedNames = undefined
 })
-async function fetchOwnedNames(address: string): Promise<string[]> {
-  if (ownedNames != null) return ownedNames
+/** `fresh` skips this session's list, for a deploy that the catalyst checks against the chain. */
+export async function fetchOwnedNames(address: string, fresh = false): Promise<string[]> {
+  if (ownedNames != null && !fresh) return ownedNames
   const base = await catalystBase()
   const r = await getJson<NamesResponse>(`${base}/lambdas/users/${address}/names`).catch(() => undefined)
   // Cached only on success: a failed lookup must not pin an empty picker for the whole session.
