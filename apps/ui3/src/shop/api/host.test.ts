@@ -1,10 +1,10 @@
 // The browser host's wiring: what it reads from the page and passes to the client, which reads nothing itself.
 import { afterEach, describe, expect, it } from "vitest";
 import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
-import { createShopApi } from "./client";
+import { createShopApi } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { hostApiOptions, identitySigner, shopApiMode, shopPeers } from "./host";
-import type { TransportRequest } from "./signer";
+import type { TransportRequest } from "@shop/api/signer";
 
 type HostWindow = { __SHOP_PEERS__?: Record<string, string>; __CATALYST_BASE__?: string; __SHOP_API_MODE__?: string };
 const w = window as unknown as HostWindow;
@@ -42,6 +42,18 @@ function identity(expiresAt: number): AuthIdentity {
     authChain: [{ type: "SIGNER", payload: signer.address, signature: "" }],
   };
 }
+
+describe("the browser host's transport", () => {
+  it("sends through the fetch it is given, and a transport given wins over it", async () => {
+    const asked: string[] = [];
+    const fetchImpl = (async (url: string) => (asked.push(url), new Response("{}", { status: 200 }))) as unknown as typeof fetch;
+    const viaFetch = hostApiOptions({ base: "https://node.test", mode: "canonical", fetchImpl });
+    await createShopApi(viaFetch).request(ENDPOINTS.catalogShop);
+    expect(asked).toEqual(["https://node.test/shop-api/v3/catalog/shop"]);
+    const transport = async () => ({ status: 200, body: "{}" });
+    expect(hostApiOptions({ base: "https://node.test", mode: "canonical", fetchImpl, transport }).transport).toBe(transport);
+  });
+});
 
 describe("the browser host's identity signer", () => {
   it("gives no signer for an identity that has already expired", () => {

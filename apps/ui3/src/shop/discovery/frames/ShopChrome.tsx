@@ -17,7 +17,7 @@ import { useCart } from "../../cart/store";
 import CartDrawer from "../../checkout/components/CartDrawer";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
-import { LAND_NETWORKS } from "../../land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import SearchDropdown from "../components/SearchDropdown";
 import Icon from "../components/Icon";
 import { isIapMode } from "../flags";

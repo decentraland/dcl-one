@@ -5,7 +5,7 @@
 // item id: a listing and a trade name `blockchainItemId`.
 
 import { catalystBase } from "../../../data/catalyst/client";
-import type { ShopSigner } from "../../api/signer";
+import type { ShopSigner } from "@shop/api/signer";
 
 type RawCollection = {
   id: string;

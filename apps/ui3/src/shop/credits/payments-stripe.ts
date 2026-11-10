@@ -6,8 +6,8 @@
 // is read-replica lag, not a failure: the poll keeps waiting, and a paid order that never shows up in the
 // window reads as 'pending' ("on the way"), never as an error.
 
-import { isShopApiError } from "../api/client";
-import type { ShopClient } from "../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import type { ShopClient } from "@shop/api/shop";
 import type { CheckoutSession, OrderStatus } from "./payments";
 
 function buyerTimezone(): string | undefined {

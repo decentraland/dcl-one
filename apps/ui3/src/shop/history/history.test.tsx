@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { createDemo, DemoShell, type DemoScenario } from "../checkout/demo";
-import type { PurchaseRecord } from "../credits/credits";
+import type { PurchaseRecord } from "@shop/credits/credits";
 import { BOOK } from "@shop/payment/fixtures";
 import { buildActivityFeed, filterActivity, type SaleRecord } from "./activity";
 import ActivityPage from "./ActivityPage";

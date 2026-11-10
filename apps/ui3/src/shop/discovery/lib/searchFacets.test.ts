@@ -9,7 +9,7 @@ import {
   facetsFor,
   normalizeAlias
 } from './searchFacets'
-import { CATEGORIES } from './categories'
+import { CATEGORIES } from '@shop/discovery/lib/categories'
 import { RARITIES } from '@shop/discovery/lib/rarity'
 import { t } from '@shop/discovery/intl'
 

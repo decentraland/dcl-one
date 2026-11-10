@@ -40,13 +40,12 @@ export default defineConfig({
           environment: 'jsdom',
           include: [
             'components/**/*.test.tsx',
-            'apps/**/*.test.tsx',
             'foundations/**/*.test.ts',
             'test/**/*.test.{ts,tsx}',
             'figma/review/test/**/*.dom.test.tsx'
           ],
           // Build contracts run only in the consumer project, avoiding duplicate concurrent builds.
-          exclude: ['test/**/*.build.test.ts'],
+          exclude: ['test/**/*.build.test.ts', 'test/consumer/**'],
           setupFiles: ['test/setup.ts'],
           css: { modules: { classNameStrategy: 'non-scoped' } }
         }

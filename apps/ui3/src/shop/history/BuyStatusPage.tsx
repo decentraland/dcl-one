@@ -13,7 +13,7 @@ import { fetchAssetDisplay } from "../checkout/lib/api";
 import { showsWalletConfirmations } from "../checkout/lib/wallet-kind";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { myItemsRouteFor } from "../discovery/lib/routes";
-import { fetchUserPurchases } from "../credits/credits";
+import { fetchUserPurchases } from "@shop/credits/credits";
 import { useSettlement } from "./useSettlement";
 import "./buystatus.css";
 

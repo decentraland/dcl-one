@@ -4,8 +4,8 @@
 // AND FORGET: bookkeeping must never fail a purchase already on its way. Every giving-up path is named
 // (to `onGaveUp`, console by default) rather than swallowed, since a silent zero looks like success.
 
-import { type ShopClient } from "../../api/shop";
-import { reportIntentSubmission } from "../../credits/credits";
+import { type ShopClient } from "@shop/api/shop";
+import { reportIntentSubmission } from "@shop/credits/credits";
 import { shopClient } from "../../api/host";
 
 export type ReportOptions = { txHash: string; salts: string[]; client?: ShopClient; onGaveUp?: (reason: string, detail?: unknown) => void };
