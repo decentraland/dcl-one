@@ -88,7 +88,8 @@ next frame, and a model stays hidden until both steps are done.
   counter, the animation flag and the named nodes). Models already in progress go first; at least
   one node is processed a frame, and containers with nothing to process finish whatever the
   deadline. Resetting or removing the container drops the progress and despawns a model not
-  processed yet; a container put again with the value its model was loaded for keeps the model.
+  processed yet. A container put again with the value last acted on keeps its model, or, if
+  that value could not load, is not tried again; only a different value starts over.
 - **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation 4 ms a frame
   from when it runs (`SpawnScene`, before `scene_spawner_system`). The spawner stops 1 ms before
   the end and processing at the end, so processing always has time, even while spawns are queued.

@@ -399,8 +399,8 @@ fn update_gltf(
     };
 
     for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed, source) in new_gltfs.iter() {
-        // the value its model is loading or loaded for, put again (some scenes do it every
-        // tick): the model stays, rather than starting over each time
+        // the value last acted on, put again (some scenes do it every tick): the model it loaded
+        // stays, and one that could not load is not tried again; a different value is
         if source.is_some_and(|source| source.0 == gltf.0) {
             continue;
         }
@@ -408,7 +408,7 @@ fn update_gltf(
 
         commands
             .entity(ent)
-            .remove::<GltfSource>()
+            .try_insert(GltfSource(gltf.0.clone()))
             .remove::<GltfLoaded>()
             .remove::<GltfProcessed>()
             .remove::<GltfProcessing>()
@@ -424,13 +424,17 @@ fn update_gltf(
             }
         }
 
+        // a value that cannot load leaves no handle behind: the previous model's would spawn it
+        // again
         let Ok(h_scene_def) = scene_def_handles.get(scene_ent.root) else {
             warn!("no scene definition found, can't process file request");
+            commands.entity(ent).try_remove::<GltfHandle>();
             continue;
         };
 
         let Some(scene_def) = scene_defs.get(h_scene_def.0.id()) else {
             warn!("scene definition not loaded, can't process file request");
+            commands.entity(ent).try_remove::<GltfHandle>();
             continue;
         };
 
@@ -450,17 +454,17 @@ fn update_gltf(
             Err(e) => {
                 warn!("gltf content file not found: {e}");
                 set_state(scene_ent, LoadingState::NotFound);
-                commands.entity(ent).try_remove::<(GltfLoaded, GltfReady)>();
+                commands
+                    .entity(ent)
+                    .try_remove::<(GltfLoaded, GltfReady, GltfHandle)>();
                 continue;
             }
         };
 
         set_state(scene_ent, LoadingState::Loading);
-        // recorded only once loading is under way: a value that could not start loading is
-        // tried again when put again
         commands
             .entity(ent)
-            .try_insert((GltfHandle(h_gltf), GltfSource(gltf.0.clone())))
+            .try_insert(GltfHandle(h_gltf))
             .remove::<GltfLoaded>();
     }
 
