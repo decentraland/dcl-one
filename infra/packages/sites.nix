@@ -60,40 +60,67 @@ let
       (root + /library/catalyst-api) (root + /library/shop)
     ];
   };
-in stdenv.mkDerivation {
-  pname = "foundation-sites";
-  inherit version src pnpmDeps;
-  sourceRoot = "${src.name}/apps/sites";
-  nativeBuildInputs = [ nodejs pnpmConfigHook pnpm' makeWrapper ];
-  env.NODE_OPTIONS = "--max-old-space-size=4096";
-  buildPhase = ''
-    runHook preBuild
-    chmod -R u+w ..
-    ln -s "$PWD/node_modules" ../node_modules
-    pnpm run build
-    runHook postBuild
-  '';
-  installPhase = ''
-    runHook preInstall
-    mkdir -p "$out/bin" "$out/content" "$out/src/data" "$out/src/features"
-    cp -r build "$out/build"
-    # /play/engine, /play/bridge-scene and /play/service_worker.js are static files of the client
-    # build; the /play documents are React Router routes.
-    mkdir -p "$out/build/client/play"
-    cp -a ${playWeb}/. "$out/build/client/play/"
-    cp package.json "$out/package.json"
-    ln -s ${runtimeDeps}/node_modules "$out/node_modules"
-    ln -s ${docsContent} "$out/content/docs"
-    cp -r src/data/fixtures "$out/src/data/fixtures"
-    makeWrapper ${nodejs-slim_26}/bin/node "$out/bin/sites-server" \
-      --add-flags "$out/node_modules/@react-router/serve/bin.cjs $out/build/server/index.js" \
-      --set-default SITES_STATE_DIR /data \
-      --set PLAY_WEB_DIR "$out/build/client/play" \
-      --chdir "$out"
-    test -s "$out/build/server/index.js"
-    test -s "$out/content/docs/manifest.json"
-    runHook postInstall
-  '';
-  passthru = { inherit pnpmDeps runtimeDeps docsContent playWeb toolchain; };
+  # The compiled server and client alone: neither the Explorer build nor the docs media
+  # is an input, so a new Bevy artifact or docs sync leaves this derivation, its cache
+  # identity and its image layer unchanged.
+  app = stdenv.mkDerivation {
+    pname = "foundation-sites-app";
+    inherit version src pnpmDeps;
+    sourceRoot = "${src.name}/apps/sites";
+    nativeBuildInputs = [ nodejs pnpmConfigHook pnpm' ];
+    env.NODE_OPTIONS = "--max-old-space-size=4096";
+    buildPhase = ''
+      runHook preBuild
+      chmod -R u+w ..
+      ln -s "$PWD/node_modules" ../node_modules
+      pnpm run build
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/src/data"
+      cp -r build "$out/build"
+      cp package.json "$out/package.json"
+      ln -s ${runtimeDeps}/node_modules "$out/node_modules"
+      cp -r src/data/fixtures "$out/src/data/fixtures"
+      test -s "$out/build/server/index.js"
+      runHook postInstall
+    '';
+  };
+in runCommand "foundation-sites-${version}" {
+  nativeBuildInputs = [ makeWrapper ];
+  passthru = { inherit app pnpmDeps runtimeDeps docsContent playWeb toolchain; };
   meta.mainProgram = "sites-server";
-}
+} ''
+  # Assemble the server from its stable parts. Each stays its own store path, so the
+  # image keeps one layer per part and only the changed one is rebuilt and transferred.
+  shopt -s dotglob nullglob
+  mkdir -p "$out/bin" "$out/build/client/play" "$out/content"
+  for entry in ${app}/*; do
+    [ "''${entry##*/}" = build ] || ln -s "$entry" "$out/"
+  done
+  ln -s ${app}/build/server "$out/build/server"
+  for entry in ${app}/build/client/*; do
+    [ "''${entry##*/}" = play ] || ln -s "$entry" "$out/build/client/"
+  done
+  # /play/ holds the client's own static files (play/assets, play/favicon) next to
+  # /play/engine, /play/bridge-scene and /play/service_worker.js from our Bevy build.
+  for entry in ${app}/build/client/play/* ${playWeb}/*; do
+    if [ -e "$out/build/client/play/''${entry##*/}" ]; then
+      echo "/play/''${entry##*/} exists in both the Sites client and the Explorer build" >&2
+      exit 1
+    fi
+    ln -s "$entry" "$out/build/client/play/"
+  done
+  ln -s ${docsContent} "$out/content/docs"
+  # react-router-serve resolves the client directory beside the server path it is given,
+  # without following symlinks, so the assembled tree serves the Explorer files.
+  makeWrapper ${nodejs-slim_26}/bin/node "$out/bin/sites-server" \
+    --add-flags "$out/node_modules/@react-router/serve/bin.cjs $out/build/server/index.js" \
+    --set-default SITES_STATE_DIR /data \
+    --set PLAY_WEB_DIR "$out/build/client/play" \
+    --chdir "$out"
+  test -s "$out/build/server/index.js"
+  test -s "$out/build/client/play/sites-play.json"
+  test -s "$out/content/docs/manifest.json"
+''
