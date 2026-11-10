@@ -144,13 +144,14 @@ describe('BlogIndexPage', () => {
     expect(submit).toHaveBeenCalledTimes(1)
   })
 
-  it('omits the date line when a post has no parseable date', () => {
+  it('omits the date but keeps the read time when a post has no parseable date', () => {
     renderIndex({
       posts: [
         card({ slug: 'a', publishedAt: '' }),
-        card({ slug: 'b', title: 'B', publishedAt: '' })
+        card({ slug: 'b', title: 'B', publishedAt: '', readMinutes: 7 })
       ]
     })
     expect(document.querySelector('time')).toBeNull()
+    expect(screen.getByText('7 min')).toBeTruthy()
   })
 })

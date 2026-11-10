@@ -23,13 +23,14 @@ export type BlogIndexData = {
 };
 
 export function BlogIndexView({ sid, posts, postCount, category, query, sort, categories }: BlogIndexData) {
-  // Once per mounted route: searching, sorting and switching tabs navigate on the client and keep it mounted.
-  const viewed = useRef(false);
+  // Once per category view, as on main where each tab was a page load; searching and sorting
+  // keep the same view (main filtered those in the page without a new event).
+  const viewedCategory = useRef<string | null>(null);
   useEffect(() => {
-    if (viewed.current) return;
-    viewed.current = true;
+    if (viewedCategory.current === category) return;
+    viewedCategory.current = category;
     track("lp_blog_viewed", { post_count: postCount }, { sid, story: STORY });
-  }, [sid, postCount]);
+  }, [sid, category, postCount]);
 
   function onPostClick(e: React.MouseEvent<HTMLDivElement>) {
     const slug = clickedPostSlug(e);

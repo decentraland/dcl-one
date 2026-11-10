@@ -22,10 +22,11 @@ export function BlogPostCard(props: BlogPostCardProps) {
         aria-hidden="true"
       />
       <div className={styles.body}>
-        {date ? (
+        {date || grid ? (
           <p className={styles.meta}>
-            <time dateTime={post.publishedAt}>{date}</time>
-            {props.variant !== 'related' ? ` · ${props.post.readMinutes} min` : null}
+            {date ? <time dateTime={post.publishedAt}>{date}</time> : null}
+            {date && grid ? ' · ' : null}
+            {props.variant !== 'related' ? `${props.post.readMinutes} min` : null}
           </p>
         ) : null}
         <h3 className={styles.title}>

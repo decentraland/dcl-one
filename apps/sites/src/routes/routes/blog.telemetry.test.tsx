@@ -58,7 +58,7 @@ describe("blog index telemetry", () => {
     expect(calls("lp_blog_viewed")).toEqual([{ post_count: 3 }]);
   });
 
-  it("does not fire lp_blog_viewed again on a search, a sort or a tab change", async () => {
+  it("does not fire lp_blog_viewed again on a search or a sort, and fires it for each category view", async () => {
     const user = userEvent.setup();
     renderAt("/blog");
     await screen.findByRole("heading", { level: 1, name: "The Decentraland Blog" });
@@ -69,11 +69,14 @@ describe("blog index telemetry", () => {
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Sort:" }), "oldest");
     await screen.findByRole("combobox", { name: "Sort:" });
+    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 3 }]);
+
     const nav = screen.getByRole("navigation", { name: "Blog categories" });
     await user.click(within(nav).getByRole("link", { name: "Announcements" }));
     await screen.findByRole("heading", { level: 2, name: "Marketplace Credits Season One Is Live" });
 
-    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 3 }]);
+    // Main loaded a new page per tab; the category's own count is reported, once.
+    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 3 }, { post_count: 1 }]);
   });
 
   it("fires lp_blog_post_clicked with the slug from the featured card and a grid card, and not from a tab", async () => {
