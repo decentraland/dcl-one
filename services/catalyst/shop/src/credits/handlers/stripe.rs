@@ -5,10 +5,15 @@
 //! only for a settled payment in the purchase's currency and amount. A
 //! reversal REVOKES the granted Credits, bounded by the purchase.
 //!
-//! The Stripe endpoint must deliver every event handled below. A delayed
-//! payment method completes its session unpaid and is credited only on
-//! `checkout.session.async_payment_succeeded`, so an endpoint without that
-//! event never credits those orders.
+//! The Stripe endpoint must deliver every event handled below, among them
+//! `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+//! `checkout.session.async_payment_failed` and `payment_intent.succeeded`. A
+//! delayed payment method completes its session unpaid, which records the
+//! session's payment intent on the order. When the payment clears, whichever
+//! of `async_payment_succeeded` and `payment_intent.succeeded` lands first
+//! credits it, and the other adds nothing. Both are needed: a
+//! `payment_intent.succeeded` that arrives before the completion recorded
+//! the intent finds no order, and only the session's event credits it then.
 
 use axum::Json;
 use axum::body::Bytes;
