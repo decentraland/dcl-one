@@ -15,7 +15,7 @@ system_bridge = { workspace = true }
 platform = { workspace = true }
 
 bevy = { workspace = true }
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["process", "time"] }
 futures-util = { workspace = true }
 once_cell = { workspace = true }
 reqwest = { workspace = true }

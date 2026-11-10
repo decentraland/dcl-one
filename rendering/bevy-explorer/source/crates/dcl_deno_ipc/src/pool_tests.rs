@@ -393,7 +393,7 @@ async fn spawn_failures(receiver: &mut SceneResponseReceiver, count: usize) -> H
 }
 
 #[tokio::test]
-async fn three_failed_spawns_report_the_pool_as_unavailable() {
+async fn three_failed_spawns_with_no_host_running_report_the_pool_as_unavailable() {
     let (pool, mut launched, launcher) = pool(Placement::PerScene);
     let (responses, mut receiver) = scene_response_channel();
     // two failures, then a host that starts
@@ -401,7 +401,7 @@ async fn three_failed_spawns_report_the_pool_as_unavailable() {
     let _failed = place(&pool, &responses, [1, 2]);
     assert_eq!(spawn_failures(&mut receiver, 2).await.len(), 2);
     let _started = place(&pool, &responses, [3]);
-    let _host = next_host(&mut launched).await;
+    let host = next_host(&mut launched).await;
     eventually(|| {
         pool.hosts()
             .iter()
@@ -410,17 +410,33 @@ async fn three_failed_spawns_report_the_pool_as_unavailable() {
     .await;
     assert!(!pool.unavailable());
 
-    // three in a row
+    // three in a row while a host runs
     launcher.failures.store(3, Ordering::SeqCst);
     let _failed = place(&pool, &responses, [4, 5, 6]);
     assert_eq!(
         spawn_failures(&mut receiver, 3).await,
         [4, 5, 6].map(scene_id).into()
     );
+    assert!(!pool.unavailable());
+
+    // the running host is lost, and the next start fails too
+    drop(host);
+    let (lost, _) = delivered(&mut receiver).await;
+    assert_eq!(lost, scene_id(3));
+    launcher.failures.store(1, Ordering::SeqCst);
+    let _failed = place(&pool, &responses, [7]);
+    assert_eq!(
+        spawn_failures(&mut receiver, 1).await,
+        [7].map(scene_id).into()
+    );
     eventually(|| pool.unavailable()).await;
     let exits = pool.drain_exits();
-    assert_eq!(exits.len(), 5);
-    assert!(exits
-        .iter()
-        .all(|exit| exit.reason == HostExitReason::Spawn && exit.scenes.len() == 1));
+    assert_eq!(exits.len(), 7);
+    assert_eq!(
+        exits
+            .iter()
+            .filter(|exit| exit.reason == HostExitReason::Spawn && exit.scenes.len() == 1)
+            .count(),
+        6
+    );
 }

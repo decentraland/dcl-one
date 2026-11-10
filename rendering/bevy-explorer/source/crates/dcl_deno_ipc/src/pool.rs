@@ -27,8 +27,10 @@ use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
 };
 
-/// Host spawns that fail in a row before the pool counts as unavailable.
+/// Host spawns that fail in a row, with no host running, before the pool counts as unavailable.
 const SPAWN_FAILURES_UNAVAILABLE: u32 = 3;
+// a host that neither connects nor exits by then has failed to start
+const HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 // how often a host whose scenes were all removed checks whether its grace period is over
 const RETIRE_POLL: Duration = Duration::from_millis(250);
 
@@ -155,8 +157,8 @@ pub(crate) struct HostCommand {
 }
 
 impl HostCommand {
-    fn scene_host(endpoint: &str) -> Self {
-        let mut program = std::env::current_exe().unwrap();
+    fn scene_host(endpoint: &str) -> anyhow::Result<Self> {
+        let mut program = std::env::current_exe().context("locate the scene host binary")?;
         program.pop();
 
         // pop an extra folder when running tests
@@ -168,10 +170,10 @@ impl HostCommand {
         if cfg!(windows) {
             program.set_extension("exe");
         }
-        Self {
+        Ok(Self {
             program,
             args: vec![endpoint.into()],
-        }
+        })
     }
 }
 
@@ -233,6 +235,9 @@ impl Launch for ProcessLauncher {
                 status = child.wait() => {
                     return Err(anyhow!("scene host exited before connecting: {}", status?));
                 }
+                () = tokio::time::sleep(HOST_CONNECT_TIMEOUT) => {
+                    return Err(anyhow!("scene host did not connect within {HOST_CONNECT_TIMEOUT:?}"));
+                }
             };
             let (inbound, outbound) = stream.split();
             Ok(HostLink {
@@ -280,6 +285,16 @@ struct HostEntry {
 struct PoolEvents {
     exits: Mutex<Vec<HostExit>>,
     failed_spawns: AtomicU32,
+    ready_hosts: AtomicU32,
+}
+
+impl PoolEvents {
+    // Starts keep failing and no host runs, so no scene can run. Starts run concurrently, so a
+    // run of failures while another host serves scenes is not enough.
+    fn unavailable(&self) -> bool {
+        self.failed_spawns.load(Ordering::SeqCst) >= SPAWN_FAILURES_UNAVAILABLE
+            && self.ready_hosts.load(Ordering::SeqCst) == 0
+    }
 }
 
 /// The engine's scene hosts.
@@ -309,7 +324,7 @@ impl HostPool {
         match self.options.placement {
             Placement::Shared => {
                 let (ready_sx, ready_rx) = tokio::sync::oneshot::channel();
-                let entry = self.start_host(Some(ready_sx), None);
+                let entry = self.start_host(Some(ready_sx), None)?;
                 self.hosts.lock().unwrap().push(entry);
                 ready_rx.blocking_recv()?
             }
@@ -333,7 +348,7 @@ impl HostPool {
             }
             Placement::PerScene => {
                 hosts.retain(|entry| entry.host.state() != HostState::Lost);
-                let entry = self.start_host(None, Some(command));
+                let entry = self.start_host(None, Some(command))?;
                 hosts.push(entry);
                 Ok(())
             }
@@ -344,7 +359,7 @@ impl HostPool {
         &self,
         ready: Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
         scene: Option<NewSceneCommand>,
-    ) -> HostEntry {
+    ) -> anyhow::Result<HostEntry> {
         let host = Arc::new(Host::new());
         let (new_scene, new_scene_rx) = unbounded_channel();
         if let Some(scene) = scene {
@@ -358,8 +373,20 @@ impl HostPool {
             placement: self.options.placement,
             retire_after: self.retire_after,
         };
-        std::thread::spawn(move || thread.run(new_scene_rx, ready));
-        HostEntry { host, new_scene }
+        let spawned = std::thread::Builder::new()
+            .name("scene-host-ipc".to_owned())
+            .spawn(move || thread.run(new_scene_rx, ready));
+        if let Err(e) = spawned {
+            // on the caller's thread, which drains the scenes' responses: never wait on them
+            host.set_state(HostState::Lost);
+            self.events.failed_spawns.fetch_add(1, Ordering::SeqCst);
+            for (id, responses) in host.scenes.lock().unwrap().close() {
+                let error = SceneResponse::Error(format!("scene host failed to start: {e}"));
+                let _ = responses.try_send((SceneId(Entity::from_bits(id)), error));
+            }
+            return Err(e).context("start a scene host thread");
+        }
+        Ok(HostEntry { host, new_scene })
     }
 
     /// Lost hosts not yet drained, oldest first.
@@ -367,10 +394,10 @@ impl HostPool {
         std::mem::take(&mut *self.events.exits.lock().unwrap())
     }
 
-    /// Whether the last host spawns all failed, so no scene can run.
+    /// Whether the last host spawns all failed and no host runs, so no scene can run.
     #[cfg(test)]
     pub(crate) fn unavailable(&self) -> bool {
-        self.events.failed_spawns.load(Ordering::SeqCst) >= SPAWN_FAILURES_UNAVAILABLE
+        self.events.unavailable()
     }
 
     pub(crate) fn hosts(&self) -> Vec<SceneHostInfo> {
@@ -402,12 +429,15 @@ impl HostThread {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .unwrap();
-
+            .context("build the scene host's runtime");
         let endpoint = ipc_socket_name();
-        let command = HostCommand::scene_host(&endpoint);
-        let mut link = match rt.block_on(self.launcher.launch(endpoint, command)) {
-            Ok(link) => link,
+        let launched = rt.and_then(|rt| {
+            let command = HostCommand::scene_host(&endpoint)?;
+            let link = rt.block_on(self.launcher.launch(endpoint, command))?;
+            Ok((rt, link))
+        });
+        let (rt, mut link) = match launched {
+            Ok(launched) => launched,
             Err(e) => {
                 error!("runtime initialization failed: {e:#}");
                 self.host.set_state(HostState::Lost);
@@ -416,21 +446,20 @@ impl HostThread {
                     return;
                 }
                 let failed = self.events.failed_spawns.fetch_add(1, Ordering::SeqCst) + 1;
-                rt.block_on(self.report_loss(
+                self.report_loss(
                     HostStatus::default(),
                     HostExitReason::Spawn,
                     "scene host failed to start".to_owned(),
-                ));
-                if failed >= SPAWN_FAILURES_UNAVAILABLE
-                    && EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst)
-                {
-                    error!("{failed} scene hosts in a row failed to start; exiting process");
+                );
+                if self.events.unavailable() && EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
+                    error!("{failed} scene hosts in a row failed to start and none runs; exiting process");
                     std::process::exit(1);
                 }
                 return;
             }
         };
         self.events.failed_spawns.store(0, Ordering::SeqCst);
+        self.events.ready_hosts.fetch_add(1, Ordering::SeqCst);
         *self.host.pid.lock().unwrap() = link.process.id();
         self.host.set_state(HostState::Ready);
         if let Some(ready) = ready {
@@ -453,6 +482,7 @@ impl HostThread {
         link.process.start_kill();
         let status = rt.block_on(link.process.wait()).unwrap_or_default();
         self.host.set_state(HostState::Lost);
+        self.events.ready_hosts.fetch_sub(1, Ordering::SeqCst);
 
         match self.placement {
             Placement::Shared => {
@@ -474,19 +504,15 @@ impl HostThread {
                         ConnectionEnd::Closed => HostExitReason::Exit,
                         ConnectionEnd::Rejected => HostExitReason::Protocol,
                     };
-                    rt.block_on(self.report_loss(
-                        status,
-                        reason,
-                        format!("scene host exited: {status}"),
-                    ));
+                    self.report_loss(status, reason, format!("scene host exited: {status}"));
                 }
             }
         }
     }
 
     // Reports the host's live scenes as lost: the record first, so it is there by the time a
-    // scene is seen broken, then an error to each scene.
-    async fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) {
+    // scene is seen broken, then an error to each scene. Outside the runtime: it may wait.
+    fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) {
         let lost = self.host.scenes.lock().unwrap().close();
         if lost.is_empty() {
             return;
@@ -503,9 +529,7 @@ impl HostThread {
         });
         for (scene, (_, responses)) in scenes.into_iter().zip(lost) {
             // the channel is bounded; this message must not be shed
-            let _ = responses
-                .send((scene, SceneResponse::Error(message.clone())))
-                .await;
+            let _ = responses.blocking_send((scene, SceneResponse::Error(message.clone())));
         }
     }
 }

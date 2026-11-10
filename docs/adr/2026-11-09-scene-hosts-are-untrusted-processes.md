@@ -25,8 +25,9 @@ it is lost, so that its orchestrator restarts the engine and re-adds every scene
 - **A lost host ends only its scenes.** With `per-scene`, each scene of a lost host is sent an
   error, so it becomes broken, and the headless server reports the loss on its control channel
   (`scene-host-exited`) and keeps running. A later `add-scene` starts the scene in a new host.
-  The engine exits only after three host starts in a row fail. A removed scene's host is ended
-  after the scene's kill grace period.
+  The engine exits only after three host starts in a row fail while no other host is running:
+  starts run concurrently, so the run alone says nothing about the hosts that work. A removed
+  scene's host is ended after the scene's kill grace period.
 
 ## Rejected options
 

@@ -43,8 +43,9 @@ the engine ended it over a message it could not accept) ends only its scenes. Th
 before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene`
 for the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
 connection, `protocol` when the engine ended it over a message, and `spawn` when it could not be
-started. The engine exits with status 1 only after three host starts in a row fail. A removed
-scene's host process is ended within seven seconds and reported to nobody. With the default
+started. The engine exits with status 1 only after three host starts in a row fail while no
+other host is running. A removed scene's host process is ended once the scene's 5-second kill
+grace period is over, and reported to nobody. With the default
 `shared`, losing the one host process exits the engine with status 1, as before. The `starting`
 event names the mode in `sceneHosts`.
 

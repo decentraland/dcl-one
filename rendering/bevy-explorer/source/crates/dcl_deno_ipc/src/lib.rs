@@ -341,9 +341,10 @@ async fn run_host_connection(
         Ok(Ok(())) => ConnectionEnd::Closed,
         Ok(Err(e)) => {
             warn!("scene host connection ended: {e:#}");
-            match e.is::<Rejected>() {
-                true => ConnectionEnd::Rejected,
-                false => ConnectionEnd::Closed,
+            if e.is::<Rejected>() {
+                ConnectionEnd::Rejected
+            } else {
+                ConnectionEnd::Closed
             }
         }
         Err(e) => {
