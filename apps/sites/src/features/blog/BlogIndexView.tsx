@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
-import { BlogIndexPage, BlogRoutingProvider } from "@dcl/one-ui/apps/sites/blog";
+import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogUnavailable } from "@dcl/one-ui/apps/sites/blog";
 
-import type { BlogPostCard, BlogSort } from "@/core/lib/content/blog";
+import type { BlogListPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
@@ -11,26 +11,20 @@ import { blogRouting, clickedPostSlug } from "./routing";
 
 const STORY: StoryId = "misc/blog";
 
-export type BlogIndexData = {
-  sid: string;
-  posts: BlogPostCard[];
-  /** The category's post count, whatever the search: what lp_blog_viewed reports. */
-  postCount: number;
-  category: string;
-  query: string;
-  sort: BlogSort;
-  categories: { slug: string; title: string }[];
-};
+export type BlogIndexData = { sid: string } & BlogListPayload;
 
-export function BlogIndexView({ sid, posts, postCount, category, query, sort, categories }: BlogIndexData) {
-  // Once per category view, as on main where each tab was a page load; searching and sorting
-  // keep the same view (main filtered those in the page without a new event).
-  const viewedCategory = useRef<string | null>(null);
+export function BlogIndexView(data: BlogIndexData) {
+  const { sid } = data;
+  const viewKey = data.state === "ok" ? data.viewKey : null;
+  const total = data.state === "ok" ? data.total : 0;
+  // Once per list view (the home, a category, an author), as on main where each was a page load.
+  // "Load more" and a search keep the view; a search page reports none of its own.
+  const viewed = useRef<string | null>(null);
   useEffect(() => {
-    if (viewedCategory.current === category) return;
-    viewedCategory.current = category;
-    track("lp_blog_viewed", { post_count: postCount }, { sid, story: STORY });
-  }, [sid, category, postCount]);
+    if (!viewKey || viewed.current === viewKey) return;
+    viewed.current = viewKey;
+    track("lp_blog_viewed", { post_count: total }, { sid, story: STORY });
+  }, [sid, viewKey, total]);
 
   function onPostClick(e: React.MouseEvent<HTMLDivElement>) {
     const slug = clickedPostSlug(e);
@@ -40,9 +34,26 @@ export function BlogIndexView({ sid, posts, postCount, category, query, sort, ca
   return (
     <SitesChrome active="learn">
       <BlogRoutingProvider routing={blogRouting}>
-        <div onClickCapture={onPostClick}>
-          <BlogIndexPage categories={categories} category={category} query={query} sort={sort} posts={posts} />
-        </div>
+        {data.state === "ok" ? (
+          <div onClickCapture={onPostClick}>
+            <BlogIndexPage
+              categories={data.categories}
+              activeCategory={data.activeCategory}
+              title={data.title}
+              subtitle={data.subtitle}
+              query={data.query}
+              searched={data.kind === "search"}
+              posts={data.posts}
+              total={data.total}
+              nextHref={data.nextHref}
+              emptyText={data.emptyText}
+            />
+          </div>
+        ) : data.state === "not-found" ? (
+          <BlogNotFound kind={data.kind} />
+        ) : (
+          <BlogUnavailable />
+        )}
       </BlogRoutingProvider>
     </SitesChrome>
   );

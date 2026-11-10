@@ -1,10 +1,9 @@
 import { BlogIndexView } from "@/features/blog/BlogIndexView";
-import { blogIndexData } from "@/features/blog/data";
+import { loadBlogHome } from "@/data/lib/blog/pages";
 import "@dcl/one-ui/foundations/foundations.css";
 
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
-import { pageLoader } from "@/core/lib/telemetry/page-loader";
+import { blogHeaders, blogResponse } from "../lib/blog";
 
 import type { Route } from "./+types/blog._index";
 
@@ -14,13 +13,10 @@ export function meta() {
 
 export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHandle;
 
-const FALLBACK: PageDefaults = {
-  variant: "index_grid",
-};
+export const headers = blogHeaders;
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = await pageLoader(request, FALLBACK);
-  return wrap({ sid, ...blogIndexData(new URL(request.url)) });
+export function loader({ request }: Route.LoaderArgs) {
+  return blogResponse(request, loadBlogHome(request));
 }
 
 export default function BlogIndexRoute({ loaderData }: Route.ComponentProps) {

@@ -1,30 +1,20 @@
 // TODO(figma-ds): replace with the generated Tabs component when the DCL UI library lands
 import { BlogLink } from './BlogRouting'
 import { BlogSearchForm } from './BlogSearchForm'
-import { blogCategoryHref, type BlogCategory, type BlogSort } from './blogModel'
+import { blogCategoryHref, type BlogCategory } from './blogModel'
 import styles from './BlogTabsMenu.module.css'
 
 export type BlogTabsMenuProps = {
   categories: readonly BlogCategory[]
   /** The highlighted tab's slug ("" is All articles); null highlights none. */
   activeCategory: string | null
-  /** `page` on the index, where the tab is the page shown; `true` on a post in that category. */
+  /** `page` on a list, where the tab is the page shown; `true` on a post in that category. */
   current: 'page' | 'true'
   query: string
-  sort: BlogSort
-  /** The category a search from this bar stays in. */
-  searchCategory: string
 }
 
-/** Category tabs, then search and sort (search and sort are hidden on small screens). */
-export function BlogTabsMenu({
-  categories,
-  activeCategory,
-  current,
-  query,
-  sort,
-  searchCategory
-}: BlogTabsMenuProps) {
+/** Category tabs, then search (hidden on small screens, where the page shows its own field). */
+export function BlogTabsMenu({ categories, activeCategory, current, query }: BlogTabsMenuProps) {
   const tabs = [{ slug: '', title: 'All articles' }, ...categories]
   return (
     <div className={styles.bar}>
@@ -47,13 +37,7 @@ export function BlogTabsMenu({
         </ul>
       </nav>
       <div className={styles.search}>
-        <BlogSearchForm
-          variant="bar"
-          query={query}
-          sort={sort}
-          category={searchCategory}
-          showSort
-        />
+        <BlogSearchForm variant="bar" query={query} />
       </div>
     </div>
   )

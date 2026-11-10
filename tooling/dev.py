@@ -316,6 +316,8 @@ def runtime_env(config):
             'WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS': 'true',
             'EVENTS_MIRROR_UPSTREAM': 'true', 'EVENTS_UPSTREAM_URL': 'https://events.decentraland.org',
             'EVENTS_POSTER_UPSTREAM_URL': 'https://events-assets-099ac00.decentraland.org',
+            # Sites' blog reads decentraland.org's cms-server (TODO(cms-migration): the in-tree area once migrated).
+            'BLOG_CMS_URL': 'https://cms-api.decentraland.org/spaces/ea2ybdmmn1kv/environments/master',
             'EXPLORER_MIRRORS_ENABLED': 'true',
             'EXPLORER_LISTS_SOURCE_URL': 'https://dcl-lists.decentraland.org',
             'EXPLORER_DENYLIST_SOURCE_URL': 'https://config.decentraland.org/denylist.json',

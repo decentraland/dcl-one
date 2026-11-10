@@ -6,56 +6,71 @@ import { BlogLink } from './BlogRouting'
 import { BlogSearchForm } from './BlogSearchForm'
 import { BlogShell } from './BlogShell'
 import { BlogTabsMenu } from './BlogTabsMenu'
-import { BLOG_HOME, type BlogCard, type BlogCategory, type BlogSort } from './blogModel'
+import { BLOG_HOME, type BlogCard, type BlogCategory } from './blogModel'
 import styles from './BlogIndexPage.module.css'
 
 export type BlogIndexPageProps = {
+  /** The categories the tabs show. */
   categories: readonly BlogCategory[]
-  /** The `?category=` slug; "" for all posts. */
-  category: string
+  /** The highlighted tab ("" is All articles); null highlights none (an author or a search). */
+  activeCategory: string | null
+  title: string
+  subtitle: string
+  /** The search shown in the field; with `searched`, the page is its results. */
   query: string
-  sort: BlogSort
-  /** The posts that match, already in `sort` order. */
+  searched?: boolean
+  /** The posts loaded so far, newest first (search: best match first). */
   posts: readonly BlogCard[]
+  /** Every post the list has, loaded or not. */
+  total: number
+  /** The link that loads the next page, or null at the end. */
+  nextHref: string | null
+  /** Shown when there are no posts. */
+  emptyText: string
 }
 
-/** The blog index: hero, the first matching post (in `sort` order) featured, then the rest in a grid. */
-export function BlogIndexPage({ categories, category, query, sort, posts }: BlogIndexPageProps) {
+/** A list of posts (the home, a category, an author or a search): hero, a featured post, the grid, "Load more". */
+export function BlogIndexPage({
+  categories,
+  activeCategory,
+  title,
+  subtitle,
+  query,
+  searched,
+  posts,
+  total,
+  nextHref,
+  emptyText
+}: BlogIndexPageProps) {
   const latestId = useId()
-  const [featured, ...rest] = posts
-  const known = !category || categories.some((c) => c.slug === category)
+  const featured = searched ? undefined : posts[0]
+  const rest = searched ? posts : posts.slice(1)
+  // A category outside the tabs (one the CMS hides from the menu) highlights none.
+  const active =
+    activeCategory && !categories.some((c) => c.slug === activeCategory) ? null : activeCategory
   return (
     <BlogShell>
-      <BlogTabsMenu
-        categories={categories}
-        activeCategory={known ? category : null}
-        current="page"
-        query={query}
-        sort={sort}
-        searchCategory={category}
-      />
+      <BlogTabsMenu categories={categories} activeCategory={active} current="page" query={query} />
       <div className={styles.inner}>
         <header className={styles.hero}>
-          <h1 className={styles.title}>The Decentraland Blog</h1>
-          <p className={styles.subtitle}>
-            Stories, guides and things to do in a world built by you.
-          </p>
+          <h1 className={styles.title}>{title}</h1>
+          {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
         </header>
         <div className={styles.mobileSearch}>
-          <BlogSearchForm variant="outline" query={query} sort={sort} category={category} />
+          <BlogSearchForm variant="outline" query={query} />
         </div>
-        {query ? (
+        {searched && posts.length ? (
           <p className={styles.summary}>
-            {posts.length === 1 ? '1 article' : `${posts.length} articles`} for “{query}”
+            {total === 1 ? '1 article' : `${total} articles`} for “{query}”
           </p>
         ) : null}
-        {featured ? (
+        {posts.length ? (
           <>
-            <BlogFeaturedCard post={featured} />
+            {featured ? <BlogFeaturedCard post={featured} /> : null}
             {rest.length ? (
-              <section className={styles.latest} aria-labelledby={latestId}>
-                <h2 className={styles.heading} id={latestId}>
-                  Latest stories
+              <section className={featured ? styles.latest : undefined} aria-labelledby={latestId}>
+                <h2 className={featured ? styles.heading : styles.srOnly} id={latestId}>
+                  {featured ? 'Latest stories' : 'Results'}
                 </h2>
                 <ul className={styles.grid}>
                   {rest.map((post) => (
@@ -66,16 +81,19 @@ export function BlogIndexPage({ categories, category, query, sort, posts }: Blog
                 </ul>
               </section>
             ) : null}
+            {nextHref ? (
+              <div className={styles.more}>
+                <BlogLink className={styles.action} href={nextHref} preventScrollReset>
+                  Load more
+                </BlogLink>
+              </div>
+            ) : null}
           </>
         ) : (
           <div className={styles.empty}>
             <h2 className={styles.heading}>No articles found</h2>
-            <p className={styles.emptyText}>
-              {query
-                ? `Nothing matches “${query}”. Try another word or browse every article.`
-                : 'There are no articles in this category yet.'}
-            </p>
-            <BlogLink className={styles.emptyLink} href={BLOG_HOME}>
+            <p className={styles.emptyText}>{emptyText}</p>
+            <BlogLink className={styles.action} href={BLOG_HOME}>
               View all articles
             </BlogLink>
           </div>

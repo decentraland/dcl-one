@@ -66,6 +66,65 @@
   margin: 0;
 }
 
+.link {
+  color: var(--dcl-text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--dcl-brand-ruby);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.code {
+  padding: 0 var(--dcl-space-4);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-bg-surface);
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--dcl-radius-lg);
+}
+
+.rule {
+  width: 100%;
+  margin: var(--dcl-space-16) 0;
+  border: 0;
+  border-top: 1px solid var(--dcl-border-default);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border: 1px solid var(--dcl-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table p,
+.list p {
+  margin: 0;
+}
+
 .list {
   display: flex;
   flex-direction: column;

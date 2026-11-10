@@ -1,6 +1,6 @@
 // TODO(figma-ds): replace with the generated FeaturedPost component when the DCL UI library lands
-import type { CSSProperties } from 'react'
 import { BlogBadge } from './BlogBadge'
+import { BlogCover } from './BlogCover'
 import { BlogLink } from './BlogRouting'
 import { blogPostHref, formatBlogDate, type BlogCard } from './blogModel'
 import styles from './BlogFeaturedCard.module.css'
@@ -25,7 +25,11 @@ export function BlogFeaturedCard({ post }: BlogFeaturedCardProps) {
           </span>
         </p>
         <h2 className={styles.title}>
-          <BlogLink className={styles.link} href={blogPostHref(post.slug)}>
+          <BlogLink
+            className={styles.link}
+            href={blogPostHref(post.category.slug, post.slug)}
+            data-blog-card=""
+          >
             {post.title}
           </BlogLink>
         </h2>
@@ -36,11 +40,7 @@ export function BlogFeaturedCard({ post }: BlogFeaturedCardProps) {
           Read article
         </span>
       </div>
-      <div
-        className={styles.image}
-        style={{ '--blog-hue': post.hue } as CSSProperties}
-        aria-hidden="true"
-      />
+      <BlogCover className={styles.image} image={post.image} hue={post.hue} priority decorative />
     </article>
   )
 }

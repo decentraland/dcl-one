@@ -8,7 +8,11 @@ import {
 } from 'react'
 
 /** An in-site link: always an `<a href>`, so it works before hydration and without JavaScript. */
-export type BlogLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
+export type BlogLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  href: string
+  /** Keeps the scroll position on a client-side navigation ("Load more"). */
+  preventScrollReset?: boolean
+}
 
 /** The search form: a GET form to `action`, so it works before hydration and without JavaScript. */
 export type BlogFormProps = Omit<
@@ -28,7 +32,10 @@ export type BlogRouting = {
   Form: ComponentType<BlogFormProps>
 }
 
-const PlainLink = (props: BlogLinkProps) => <a {...props} />
+function PlainLink({ preventScrollReset, ...props }: BlogLinkProps) {
+  void preventScrollReset
+  return <a {...props} />
+}
 const PlainForm = (props: BlogFormProps) => <form {...props} />
 
 const RoutingContext = createContext<BlogRouting>({ Link: PlainLink, Form: PlainForm })

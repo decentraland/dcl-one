@@ -1,8 +1,9 @@
 // TODO(figma-ds): replace with the generated BlogArticle template when the DCL UI library lands
-import { useId, type CSSProperties } from 'react'
+import { useId } from 'react'
 import { GeneralLeftArrow } from '../../../foundations/icons/general'
 import { BlogAvatar } from './BlogAvatar'
 import { BlogBadge } from './BlogBadge'
+import { BlogCover } from './BlogCover'
 import { BlogPostCard } from './BlogPostCard'
 import { BlogRichText } from './BlogRichText'
 import { BlogLink } from './BlogRouting'
@@ -11,6 +12,7 @@ import { BlogShell } from './BlogShell'
 import { BlogTabsMenu } from './BlogTabsMenu'
 import {
   BLOG_HOME,
+  blogAuthorHref,
   formatBlogDate,
   type BlogArticle,
   type BlogCategory,
@@ -38,8 +40,6 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
         activeCategory={post.category.slug}
         current="true"
         query=""
-        sort="newest"
-        searchCategory=""
       />
       <article className={styles.article}>
         <BlogLink className={styles.back} href={BLOG_HOME}>
@@ -59,23 +59,25 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
         </p>
         <h1 className={styles.title}>{post.title}</h1>
         <div className={styles.byline}>
-          {post.author ? (
+          {post.author.name ? (
             <p className={styles.author}>
-              <BlogAvatar name={post.author} size="md" />
-              <span className={styles.authorName}>{post.author}</span>
+              <BlogAvatar name={post.author.name} image={post.author.image} size="md" />
+              {post.author.slug ? (
+                <BlogLink className={styles.authorName} href={blogAuthorHref(post.author.slug)}>
+                  {post.author.name}
+                </BlogLink>
+              ) : (
+                <span className={styles.authorName}>{post.author.name}</span>
+              )}
             </p>
           ) : null}
           <div className={styles.share}>
             <BlogShare title={post.title} url={shareUrl} />
           </div>
         </div>
-        <div
-          className={styles.hero}
-          style={{ '--blog-hue': post.hue } as CSSProperties}
-          aria-hidden="true"
-        />
+        <BlogCover className={styles.hero} image={post.image} hue={post.hue} priority />
         <p className={styles.lead}>{post.description}</p>
-        <BlogRichText blocks={post.body} />
+        <BlogRichText body={post.body} assets={post.assets} />
       </article>
       {related.length ? (
         <section className={styles.related} aria-labelledby={relatedId}>

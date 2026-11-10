@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blogAuthorHref,
   blogBadgeTone,
   blogCategoryHref,
   blogInitials,
@@ -22,10 +23,12 @@ describe('formatBlogDate', () => {
 })
 
 describe('links', () => {
-  it('encodes slugs and categories', () => {
-    expect(blogPostHref('a b')).toBe('/blog/a%20b')
+  it('builds decentraland.org-shaped paths and encodes each segment', () => {
+    expect(blogPostHref('platform', 'a b')).toBe('/blog/platform/a%20b')
+    expect(blogPostHref('x/y', 'p?q')).toBe('/blog/x%2Fy/p%3Fq')
     expect(blogCategoryHref('')).toBe('/blog')
-    expect(blogCategoryHref('platform')).toBe('/blog?category=platform')
+    expect(blogCategoryHref('platform')).toBe('/blog/platform')
+    expect(blogAuthorHref('jane doe')).toBe('/blog/author/jane%20doe')
   })
 
   it('builds encoded X and LinkedIn share URLs', () => {

@@ -1,7 +1,7 @@
 // TODO(figma-ds): replace with the generated PostCard component when the DCL UI library lands
-import type { CSSProperties } from 'react'
 import { BlogAvatar } from './BlogAvatar'
 import { BlogBadge } from './BlogBadge'
+import { BlogCover } from './BlogCover'
 import { BlogLink } from './BlogRouting'
 import { blogPostHref, formatBlogDate, type BlogCard, type BlogRelatedCard } from './blogModel'
 import styles from './BlogPostCard.module.css'
@@ -16,11 +16,7 @@ export function BlogPostCard(props: BlogPostCardProps) {
   const date = formatBlogDate(post.publishedAt)
   return (
     <article className={`${styles.card} ${grid ? styles.grid : styles.related}`}>
-      <div
-        className={styles.image}
-        style={{ '--blog-hue': post.hue } as CSSProperties}
-        aria-hidden="true"
-      />
+      <BlogCover className={styles.image} image={post.image} hue={post.hue} decorative />
       <div className={styles.body}>
         {date || grid ? (
           <p className={styles.meta}>
@@ -30,17 +26,21 @@ export function BlogPostCard(props: BlogPostCardProps) {
           </p>
         ) : null}
         <h3 className={styles.title}>
-          <BlogLink className={styles.link} href={blogPostHref(post.slug)}>
+          <BlogLink
+            className={styles.link}
+            href={blogPostHref(post.category.slug, post.slug)}
+            data-blog-card=""
+          >
             {post.title}
           </BlogLink>
         </h3>
         <BlogBadge category={post.category} />
-        {props.variant !== 'related' && props.post.author ? (
+        {props.variant !== 'related' && props.post.author.name ? (
           <>
             <hr className={styles.divider} />
             <p className={styles.author}>
-              <BlogAvatar name={props.post.author} />
-              {props.post.author}
+              <BlogAvatar name={props.post.author.name} image={props.post.author.image} />
+              {props.post.author.name}
             </p>
           </>
         ) : null}

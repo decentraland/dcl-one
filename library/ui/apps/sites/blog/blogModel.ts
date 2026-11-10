@@ -1,8 +1,16 @@
 // The blog's view contract and the pure helpers its components share.
 
-export type BlogSort = 'newest' | 'oldest'
-
 export type BlogCategory = { slug: string; title: string }
+
+/** A picture from the CMS; `alt` is "" when the CMS gives no title for it. */
+export type BlogImage = { url: string; width: number; height: number; alt: string }
+
+export type BlogAuthor = {
+  slug: string
+  name: string
+  /** The author's picture URL, or "" for none (initials are shown instead). */
+  image: string
+}
 
 export type BlogCard = {
   slug: string
@@ -12,32 +20,47 @@ export type BlogCard = {
   publishedAt: string
   readMinutes: number
   category: BlogCategory
-  author: string
+  author: BlogAuthor
+  image: BlogImage | null
   /** Placeholder hue (0-360) shown where the post has no image. */
   hue: number
 }
 
-export type BlogRelatedCard = Pick<BlogCard, 'slug' | 'title' | 'publishedAt' | 'category' | 'hue'>
+export type BlogRelatedCard = Pick<
+  BlogCard,
+  'slug' | 'title' | 'publishedAt' | 'category' | 'image' | 'hue'
+>
 
-export type BlogBlock =
-  | { type: 'p'; content: string }
-  | { type: 'h2'; content: string }
-  | { type: 'h3'; content: string }
-  | { type: 'h4'; content: string }
-  | { type: 'quote'; content: string }
-  | { type: 'ul'; items: string[] }
+/** A Contentful rich-text node, as the CMS returns it (document, block, inline or text). */
+export type BlogRichTextNode = {
+  nodeType: string
+  data?: Record<string, unknown>
+  content?: BlogRichTextNode[]
+  value?: string
+  marks?: { type: string }[]
+}
 
-export type BlogArticle = BlogCard & { body: readonly BlogBlock[] }
+export type BlogArticle = BlogCard & {
+  body: BlogRichTextNode | null
+  /** The pictures the body embeds, by CMS asset id. */
+  assets: Readonly<Record<string, BlogImage>>
+}
 
 export const BLOG_HOME = '/blog'
+export const BLOG_SEARCH = '/blog/search'
 
-/** The longest search the index reads; the input's maxLength and the loader's trim both use it. */
+/** The longest search the blog reads; the input's maxLength and the loader's trim both use it. */
 export const BLOG_QUERY_MAX = 200
 
-export const blogPostHref = (slug: string) => `${BLOG_HOME}/${encodeURIComponent(slug)}`
+const segment = encodeURIComponent
+
+export const blogPostHref = (categorySlug: string, slug: string) =>
+  `${BLOG_HOME}/${segment(categorySlug)}/${segment(slug)}`
 
 export const blogCategoryHref = (slug: string) =>
-  slug ? `${BLOG_HOME}?category=${encodeURIComponent(slug)}` : BLOG_HOME
+  slug ? `${BLOG_HOME}/${segment(slug)}` : BLOG_HOME
+
+export const blogAuthorHref = (slug: string) => `${BLOG_HOME}/author/${segment(slug)}`
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -61,7 +84,8 @@ export type BlogBadgeTone = 'ruby' | 'violet' | 'orange'
 const TONES: Record<string, BlogBadgeTone> = {
   announcements: 'ruby',
   platform: 'violet',
-  community: 'orange'
+  community: 'orange',
+  'community-highlights': 'orange'
 }
 
 export const blogBadgeTone = (slug: string): BlogBadgeTone => TONES[slug] ?? 'ruby'

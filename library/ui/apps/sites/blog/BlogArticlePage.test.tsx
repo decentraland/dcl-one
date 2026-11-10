@@ -2,8 +2,8 @@ import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BlogArticlePage, type BlogArticlePageProps } from './BlogArticlePage'
-import { BlogNotFound } from './BlogNotFound'
-import { article } from './fixtures.test-utils'
+import { BlogNotFound, BlogUnavailable } from './BlogNotFound'
+import { article, image } from './fixtures.test-utils'
 
 const categories = [{ slug: 'platform', title: 'Platform' }]
 const URL_ = 'https://sites.test/blog/post'
@@ -33,7 +33,10 @@ describe('BlogArticlePage', () => {
     expect(screen.getByRole('link', { name: 'Back to blog' })).toHaveAttribute('href', '/blog')
     expect(screen.getByText('Jul 01, 2026')).toHaveAttribute('datetime', '2026-07-01')
     expect(screen.getByText(/2 min read/)).toBeInTheDocument()
-    expect(screen.getByText('Jane Doe')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Jane Doe' })).toHaveAttribute(
+      'href',
+      '/blog/author/jane-doe'
+    )
     expect(screen.getByText('About the post')).toBeInTheDocument()
     expect(screen.getByText('Body text')).toBeInTheDocument()
   })
@@ -86,17 +89,34 @@ describe('BlogArticlePage', () => {
   it('names the related section after the category when every post shares it', () => {
     renderArticle({
       related: [
-        { slug: 'b', title: 'B', publishedAt: '2026-06-01', category: categories[0]!, hue: 1 }
+        {
+          slug: 'b',
+          title: 'B',
+          publishedAt: '2026-06-01',
+          category: categories[0]!,
+          image: null,
+          hue: 1
+        }
       ]
     })
     const section = screen.getByRole('region', { name: 'More on Platform' })
-    expect(within(section).getByRole('link', { name: 'B' })).toHaveAttribute('href', '/blog/b')
+    expect(within(section).getByRole('link', { name: 'B' })).toHaveAttribute(
+      'href',
+      '/blog/platform/b'
+    )
   })
 
   it('uses a neutral related heading for mixed categories and none without related posts', () => {
     const { unmount } = renderArticle({
       related: [
-        { slug: 'b', title: 'B', publishedAt: '', category: { slug: 'x', title: 'X' }, hue: 1 }
+        {
+          slug: 'b',
+          title: 'B',
+          publishedAt: '',
+          category: { slug: 'x', title: 'X' },
+          image: null,
+          hue: 1
+        }
       ]
     })
     expect(screen.getByRole('region', { name: 'More from the blog' })).toBeInTheDocument()
@@ -105,17 +125,61 @@ describe('BlogArticlePage', () => {
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
   })
 
-  it('omits the author when the post has none', () => {
-    renderArticle({ post: article({ author: '' }) })
+  it('omits the author when the post has none, and names one without a page without a link', () => {
+    const { unmount } = renderArticle({
+      post: article({ author: { slug: '', name: '', image: '' } })
+    })
     expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument()
+    unmount()
+    renderArticle({ post: article({ author: { slug: '', name: 'Decentraland', image: '' } }) })
+    expect(screen.getByText('Decentraland')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Decentraland' })).not.toBeInTheDocument()
+  })
+
+  it("shows the author's picture when the CMS has one", () => {
+    const { container } = renderArticle({
+      post: article({
+        author: { slug: 'j', name: 'Jane Doe', image: 'https://images.example/j.png' }
+      })
+    })
+    const avatar = container.querySelector('img[src="https://images.example/j.png"]')
+    expect(avatar).toHaveAttribute('alt', '')
+  })
+
+  it('renders the post picture with alt and size, eagerly, above the fold', () => {
+    renderArticle({ post: article({ image: image('A plaza at night') }) })
+    const hero = screen.getByRole('img', { name: 'A plaza at night' })
+    expect(hero).toHaveAttribute('src', 'https://images.example/hero.png')
+    expect(hero).toHaveAttribute('width', '1200')
+    expect(hero).toHaveAttribute('height', '600')
+    expect(hero).toHaveAttribute('loading', 'eager')
+  })
+
+  it('falls back to the hue gradient, hidden from assistive tech, without a picture', () => {
+    const { container } = renderArticle({ post: article({ image: null, hue: 42 }) })
+    expect(container.querySelector('article img')).toBeNull()
+    const cover = container.querySelector('[style*="--blog-hue"]')
+    expect(cover).toHaveAttribute('aria-hidden', 'true')
+    expect((cover as HTMLElement).style.getPropertyValue('--blog-hue')).toBe('42')
   })
 })
 
-describe('BlogNotFound', () => {
-  it('names the slug and links back to the blog', () => {
-    render(<BlogNotFound slug="nope" />)
-    expect(screen.getByRole('heading', { level: 1, name: 'Post not found' })).toBeInTheDocument()
-    expect(screen.getByText('We couldn’t find a blog post at “nope”.')).toBeInTheDocument()
+describe('BlogNotFound and BlogUnavailable', () => {
+  it.each([
+    ['post', 'Post not found'],
+    ['category', 'Category not found'],
+    ['author', 'Author not found']
+  ] as const)('names a missing %s and links back to the blog', (kind, title) => {
+    render(<BlogNotFound kind={kind} />)
+    expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to the Blog' })).toHaveAttribute('href', '/blog')
+  })
+
+  it('says the blog is unavailable, without any detail of why', () => {
+    const { container } = render(<BlogUnavailable />)
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'The blog is temporarily unavailable' })
+    ).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/https?:|cms/i)
   })
 })
