@@ -93,8 +93,7 @@ impl Model {
             .iter()
             .rposition(|b| !matches!(b, b' ' | 0 | b'\t' | b'\n' | b'\r'))
             .map_or(0, |i| i + 1);
-        let json: Value = serde_json::from_slice(&json[..trimmed_len])
-            .context("GLB JSON chunk")?;
+        let json: Value = serde_json::from_slice(&json[..trimmed_len]).context("GLB JSON chunk")?;
         if !json.is_object() {
             bail!("glTF JSON is not an object");
         }
@@ -107,8 +106,7 @@ impl Model {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         if !self.glb {
-            let mut out =
-                serde_json::to_vec_pretty(&self.json).expect("JSON values serialize");
+            let mut out = serde_json::to_vec_pretty(&self.json).expect("JSON values serialize");
             out.push(b'\n');
             return out;
         }
@@ -276,15 +274,13 @@ pub fn image_source(
             .map(ImageSource::External)
             .ok_or_else(|| format!("URI {uri} is not a file of the scene"));
     }
-    let view_index =
-        index(image, "bufferView").ok_or("image has neither uri nor bufferView")?;
+    let view_index = index(image, "bufferView").ok_or("image has neither uri nor bufferView")?;
     let view = model
         .array("bufferViews")
         .get(view_index)
         .ok_or("bufferView out of range")?;
     let buffer = index(view, "buffer").ok_or("bufferView without a buffer")?;
-    let bytes =
-        buffer_bytes(model, model_rel, buffer, read).ok_or("unreadable buffer")?;
+    let bytes = buffer_bytes(model, model_rel, buffer, read).ok_or("unreadable buffer")?;
     let start = index(view, "byteOffset").unwrap_or(0);
     let len = index(view, "byteLength").ok_or("bufferView without byteLength")?;
     start
@@ -298,8 +294,12 @@ pub fn image_source(
 /// normal maps, everything else is data.
 fn slot_mode(key: &str) -> ColorMode {
     match key {
-        "baseColorTexture" | "emissiveTexture" | "diffuseTexture" | "sheenColorTexture"
-        | "specularColorTexture" | "specularGlossinessTexture" => ColorMode::Srgb,
+        "baseColorTexture"
+        | "emissiveTexture"
+        | "diffuseTexture"
+        | "sheenColorTexture"
+        | "specularColorTexture"
+        | "specularGlossinessTexture" => ColorMode::Srgb,
         "normalTexture" | "clearcoatNormalTexture" => ColorMode::Normal,
         _ => ColorMode::Linear,
     }
@@ -729,7 +729,11 @@ mod tests {
         assert_eq!(model.json["bufferViews"].as_array().unwrap().len(), 3);
         assert_eq!(
             model.json["extensionsUsed"],
-            json!(["KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_texture_basisu"])
+            json!([
+                "KHR_draco_mesh_compression",
+                "EXT_meshopt_compression",
+                "KHR_texture_basisu"
+            ])
         );
     }
 
@@ -789,8 +793,14 @@ mod tests {
 
     #[test]
     fn uris_resolve_and_relativize() {
-        assert_eq!(resolve_uri("a/b/m.glb", "../t.png").as_deref(), Some("a/t.png"));
-        assert_eq!(resolve_uri("m.glb", "./x/%41.png").as_deref(), Some("x/A.png"));
+        assert_eq!(
+            resolve_uri("a/b/m.glb", "../t.png").as_deref(),
+            Some("a/t.png")
+        );
+        assert_eq!(
+            resolve_uri("m.glb", "./x/%41.png").as_deref(),
+            Some("x/A.png")
+        );
         assert_eq!(resolve_uri("m.glb", "../escape.png"), None);
         assert_eq!(resolve_uri("m.glb", "https://example.org/t.png"), None);
         assert_eq!(resolve_uri("m.glb", "/abs.png"), None);
@@ -841,10 +851,34 @@ mod tests {
             glb: false,
         };
         let plans = plan_images(&model);
-        assert_eq!(plans[0], ImagePlan::Encode { mode: Srgb, mixed: true });
-        assert_eq!(plans[1], ImagePlan::Encode { mode: Normal, mixed: false });
-        assert_eq!(plans[2], ImagePlan::Encode { mode: Linear, mixed: false });
-        assert_eq!(plans[3], ImagePlan::Encode { mode: Linear, mixed: false });
+        assert_eq!(
+            plans[0],
+            ImagePlan::Encode {
+                mode: Srgb,
+                mixed: true
+            }
+        );
+        assert_eq!(
+            plans[1],
+            ImagePlan::Encode {
+                mode: Normal,
+                mixed: false
+            }
+        );
+        assert_eq!(
+            plans[2],
+            ImagePlan::Encode {
+                mode: Linear,
+                mixed: false
+            }
+        );
+        assert_eq!(
+            plans[3],
+            ImagePlan::Encode {
+                mode: Linear,
+                mixed: false
+            }
+        );
         assert_eq!(plans[4], ImagePlan::Keep("already KTX2".into()));
         assert!(matches!(plans[5], ImagePlan::Keep(_)));
         assert!(matches!(plans[6], ImagePlan::Keep(_)));

@@ -52,7 +52,7 @@ fn scene(tag: &str) -> (TempTree, PathBuf, Vec<u8>) {
     let root = dunce::canonicalize(&t.0).unwrap();
     t.write(
         "scene.json",
-        "{\"main\":\"bin/index.js\",\"scene\":{\"parcels\":[\"0,0\"],\"base\":\"0,0\"}}",
+        "{\"main\":\"bin/index.js\",\"runtimeVersion\":\"7\",\"scene\":{\"parcels\":[\"0,0\"],\"base\":\"0,0\"}}",
     );
     t.write(
         "bin/index.js",
@@ -125,7 +125,11 @@ fn models_are_rewritten_staged_and_originals_ignored_unless_named() {
 
     // three distinct textures, one KTX2 each, published beside the model
     assert_eq!(o.added.len(), 3);
-    assert!(o.added.iter().all(|a| a.starts_with("models/") && a.ends_with(".ktx2")));
+    assert!(
+        o.added
+            .iter()
+            .all(|a| a.starts_with("models/") && a.ends_with(".ktx2"))
+    );
     let staged_model = o.source("models/a.glb").unwrap();
     assert!(staged_model.starts_with(root.join(STAGE)));
     for added in &o.added {
@@ -157,10 +161,7 @@ fn models_are_rewritten_staged_and_originals_ignored_unless_named() {
 
     // wall.png only feeds the model; ui.png is named by the bundle; logo.png
     // is named by a model that keeps it
-    assert_eq!(
-        o.removed,
-        BTreeSet::from(["images/wall.png".to_string()])
-    );
+    assert_eq!(o.removed, BTreeSet::from(["images/wall.png".to_string()]));
     assert_eq!(out.summary.kept_originals.len(), 1);
     assert_eq!(out.summary.kept_originals[0].0, "images/ui.png");
     assert!(out.summary.kept_originals[0].1.contains("bin/index.js"));
@@ -211,7 +212,12 @@ fn a_ktx2_no_smaller_than_its_source_keeps_the_image() {
     assert!(out.overlay.added.is_empty());
     assert!(out.overlay.removed.is_empty());
     assert_eq!(out.summary.kept.len(), 3);
-    assert!(out.summary.kept.iter().all(|(_, why)| why.contains("not smaller")));
+    assert!(
+        out.summary
+            .kept
+            .iter()
+            .all(|(_, why)| why.contains("not smaller"))
+    );
 }
 
 #[test]
@@ -219,12 +225,19 @@ fn the_overlay_edits_the_list_and_nothing_else() {
     let overlay = Overlay {
         sources: BTreeMap::from([
             ("m.glb".to_string(), PathBuf::from("/stage/m.glb")),
-            ("optimized-textures/a.ktx2".to_string(), PathBuf::from("/stage/a.ktx2")),
+            (
+                "optimized-textures/a.ktx2".to_string(),
+                PathBuf::from("/stage/a.ktx2"),
+            ),
         ]),
         added: BTreeSet::from(["optimized-textures/a.ktx2".to_string()]),
         removed: BTreeSet::from(["t.png".to_string()]),
     };
-    let rels = vec!["scene.json".to_string(), "m.glb".to_string(), "t.png".to_string()];
+    let rels = vec![
+        "scene.json".to_string(),
+        "m.glb".to_string(),
+        "t.png".to_string(),
+    ];
     assert_eq!(
         overlay.apply(rels),
         ["scene.json", "m.glb", "optimized-textures/a.ktx2"]
@@ -256,12 +269,21 @@ fn a_disabled_overlay_is_not_applied() {
         stamps: None,
     };
     let rels = vec!["a.glb".to_string(), "t.png".to_string()];
-    assert!(swap(root, entry(false)), "a new overlay is a change, applied or not");
+    assert!(
+        swap(root, entry(false)),
+        "a new overlay is a change, applied or not"
+    );
     assert_eq!(publishable(root, rels.clone()), rels);
     assert_eq!(staged_source(root, "a.glb"), None);
-    assert!(swap(root, entry(true)), "turning it on changes what is served");
+    assert!(
+        swap(root, entry(true)),
+        "turning it on changes what is served"
+    );
     assert_eq!(publishable(root, rels.clone()), ["a.glb"]);
-    assert!(!swap(root, entry(true)), "the same overlay again changes nothing");
+    assert!(
+        !swap(root, entry(true)),
+        "the same overlay again changes nothing"
+    );
     registry().remove(root);
 }
 
@@ -310,11 +332,17 @@ fn the_ignore_difference_names_both_directions() {
         warning.contains("left out in the preview: images/a.png;"),
         "{warning}"
     );
-    assert!(warning.contains("served in the preview: images/c.png"), "{warning}");
+    assert!(
+        warning.contains("served in the preview: images/c.png"),
+        "{warning}"
+    );
 
     let none = BTreeSet::new();
     let warning = ignore_difference_warning(&preview, &none).unwrap();
-    assert!(warning.ends_with("served in the preview: none"), "{warning}");
+    assert!(
+        warning.ends_with("served in the preview: none"),
+        "{warning}"
+    );
     // a manifest without the list (or none at all) compares as empty
     assert_eq!(ignore_difference_warning(&json!({}), &none), None);
     assert!(ignored_warning(3).starts_with("3 original image(s) left out of the upload"));
@@ -332,7 +360,15 @@ fn progress_is_reported_only_while_encoding() {
         progress: &progress,
     };
     let encoder = FakeEncoder { bloat: false };
-    optimize(&root, &rels, Settings::default(), &encoder, &|r| root.join(r), &run).unwrap();
+    optimize(
+        &root,
+        &rels,
+        Settings::default(),
+        &encoder,
+        &|r| root.join(r),
+        &run,
+    )
+    .unwrap();
     let first = std::mem::take(&mut *seen.lock().unwrap());
     assert_eq!(first.first().map(|p| p.done), Some(0));
     assert_eq!(first.iter().map(|p| p.done).max(), Some(3));
@@ -340,7 +376,15 @@ fn progress_is_reported_only_while_encoding() {
     assert_eq!(first.len(), 4, "one at the start, one per encode");
 
     // everything cached: nothing to report
-    optimize(&root, &rels, Settings::default(), &encoder, &|r| root.join(r), &run).unwrap();
+    optimize(
+        &root,
+        &rels,
+        Settings::default(),
+        &encoder,
+        &|r| root.join(r),
+        &run,
+    )
+    .unwrap();
     assert!(seen.lock().unwrap().is_empty());
 }
 
@@ -421,7 +465,10 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
     let check = || {
         checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let current = overlay(&root).unwrap();
-        assert!(Arc::ptr_eq(&current, &before), "no part of the new run is applied");
+        assert!(
+            Arc::ptr_eq(&current, &before),
+            "no part of the new run is applied"
+        );
         let served = staged_source(&root, "models/a.glb").unwrap();
         assert_eq!(served, old_model);
         let model = gltf::Model::parse(&std::fs::read(&served).unwrap()).unwrap();
@@ -434,12 +481,19 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
     let probe = Probe(&check);
     let encoder = || Ok::<&dyn Encoder, anyhow::Error>(&probe);
     assert!(import::import_once(&root, &encoder, 2, &send, false));
-    assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 1, "one texture changed");
+    assert_eq!(
+        checks.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "one texture changed"
+    );
 
     let after = overlay(&root).unwrap();
     assert_ne!(*after, *before);
     let new_model = staged_source(&root, "models/a.glb").unwrap();
-    assert_ne!(new_model, old_model, "a new run never rewrites the served file");
+    assert_ne!(
+        new_model, old_model,
+        "a new run never rewrites the served file"
+    );
     assert!(new_model.is_file());
     assert!(!old_model.exists(), "pruned after the swap");
     let sent = sent.lock().unwrap();
@@ -506,10 +560,18 @@ fn deploy_payload_follows_the_overlay() {
     let off_files: Vec<&str> = off.files.iter().map(|(f, _, _)| f.as_str()).collect();
     assert!(off_files.contains(&"images/wall.png"));
     assert!(!off_files.iter().any(|f| f.ends_with(".ktx2")));
-    let model_off = off.files.iter().find(|(f, _, _)| f == "models/a.glb").unwrap();
+    let model_off = off
+        .files
+        .iter()
+        .find(|(f, _, _)| f == "models/a.glb")
+        .unwrap();
     assert_eq!(model_off.2, glb);
 
-    let out = run(&project.root, Settings::default(), &FakeEncoder { bloat: false });
+    let out = run(
+        &project.root,
+        Settings::default(),
+        &FakeEncoder { bloat: false },
+    );
     swap(
         &project.root,
         Entry {
@@ -527,7 +589,11 @@ fn deploy_payload_follows_the_overlay() {
     for added in &out.overlay.added {
         assert!(on_files.contains(added.as_str()));
     }
-    let model_on = on.files.iter().find(|(f, _, _)| f == "models/a.glb").unwrap();
+    let model_on = on
+        .files
+        .iter()
+        .find(|(f, _, _)| f == "models/a.glb")
+        .unwrap();
     assert_eq!(
         model_on.2,
         std::fs::read(out.overlay.source("models/a.glb").unwrap()).unwrap()
@@ -539,7 +605,11 @@ fn deploy_payload_follows_the_overlay() {
     registry().remove(&project.root);
     let again = crate::deploy::prepare(&project).unwrap();
     assert_eq!(
-        again.files.iter().map(|(f, h, _)| (f, h)).collect::<Vec<_>>(),
+        again
+            .files
+            .iter()
+            .map(|(f, h, _)| (f, h))
+            .collect::<Vec<_>>(),
         off.files.iter().map(|(f, h, _)| (f, h)).collect::<Vec<_>>(),
         "with the project unregistered the payload is the tree's again"
     );

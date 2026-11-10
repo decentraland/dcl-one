@@ -114,7 +114,9 @@ impl WasmBasisu {
             },
         };
         if code != 0 {
-            let said = String::from_utf8_lossy(&stderr.contents()).trim().to_string();
+            let said = String::from_utf8_lossy(&stderr.contents())
+                .trim()
+                .to_string();
             bail!("basisu exited with {code}: {said}");
         }
         Ok(())
@@ -138,14 +140,15 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Result<Scratch> {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let dir = std::env::temp_dir().join("dcl-scene-cli-basisu").join(format!(
-            "{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let dir = std::env::temp_dir()
+            .join("dcl-scene-cli-basisu")
+            .join(format!(
+                "{}-{}",
+                std::process::id(),
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         Ok(Scratch(dir))
     }
 }
@@ -163,8 +166,7 @@ impl Encoder for WasmBasisu {
 
     fn encode(&self, png: &[u8], mode: ColorMode) -> Result<Vec<u8>> {
         let scratch = Scratch::new()?;
-        std::fs::write(scratch.0.join("in.png"), png)
-            .context("writing the encoder input")?;
+        std::fs::write(scratch.0.join("in.png"), png).context("writing the encoder input")?;
         let mut args: Vec<String> = vec!["basisu".into()];
         args.extend(ARGS.iter().map(|a| a.to_string()));
         args.extend(mode_args(mode).iter().map(|a| a.to_string()));
@@ -175,8 +177,7 @@ impl Encoder for WasmBasisu {
             format!("{GUEST_DIR}/out.ktx2"),
         ]);
         self.run(&scratch.0, &args)?;
-        let out = std::fs::read(scratch.0.join("out.ktx2"))
-            .context("basisu wrote no KTX2 file")?;
+        let out = std::fs::read(scratch.0.join("out.ktx2")).context("basisu wrote no KTX2 file")?;
         if !out.starts_with(b"\xABKTX 20\xBB\r\n\x1A\n") {
             bail!("basisu wrote something that is not a KTX2 file");
         }

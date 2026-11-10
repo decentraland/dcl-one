@@ -1669,7 +1669,9 @@ fn authority_of(origin: &str) -> Option<String> {
 /// plus the `--talk` origin.
 fn allowed_editor_origins() -> Vec<String> {
     editor_origins(
-        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS").ok().as_deref(),
+        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
+            .ok()
+            .as_deref(),
         TALK_ORIGIN.get().map(String::as_str),
     )
 }
@@ -1679,7 +1681,9 @@ fn allowed_editor_origins() -> Vec<String> {
 /// `/api/project/*` and nothing wider.
 fn data_layer_origins() -> Vec<String> {
     editor_origins(
-        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS").ok().as_deref(),
+        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
+            .ok()
+            .as_deref(),
         None,
     )
 }

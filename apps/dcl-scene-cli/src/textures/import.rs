@@ -200,7 +200,9 @@ pub fn start(
                 import_once(&root, &encoder, workers, &send, first)
             }));
             if ran.is_err() {
-                ux::note_absent("the texture import stopped unexpectedly; the preview keeps the last optimized files");
+                ux::note_absent(
+                    "the texture import stopped unexpectedly; the preview keeps the last optimized files",
+                );
                 send(ImportStatus {
                     state: ImportState::Failed,
                     done: 0,

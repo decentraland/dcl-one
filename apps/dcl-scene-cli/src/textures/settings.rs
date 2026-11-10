@@ -114,8 +114,14 @@ mod tests {
     fn missing_file_means_off() {
         let t = TempTree::new("texture-settings-missing");
         assert_eq!(load(&t.0), ProjectSettings::default());
-        assert_eq!(apply(&t.0, Overrides::default()).unwrap(), ProjectSettings::default());
-        assert!(!t.0.join(SETTINGS_FILE).exists(), "no flag, nothing written");
+        assert_eq!(
+            apply(&t.0, Overrides::default()).unwrap(),
+            ProjectSettings::default()
+        );
+        assert!(
+            !t.0.join(SETTINGS_FILE).exists(),
+            "no flag, nothing written"
+        );
     }
 
     #[test]

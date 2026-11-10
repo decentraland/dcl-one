@@ -675,8 +675,7 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     };
     let tag = root_tag(root, machine);
     let content: Vec<Value> = crate::scene::parallel_map(&rels, |rel| {
-        let source =
-            crate::textures::staged_source(root, rel).unwrap_or_else(|| root.join(rel));
+        let source = crate::textures::staged_source(root, rel).unwrap_or_else(|| root.join(rel));
         json!({
             "file": rel,
             "hash": b64_content_hash_in_root(&tag, rel, &source),

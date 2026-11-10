@@ -49,8 +49,7 @@ pub fn target_size(width: u32, height: u32, max: u32) -> (u32, u32) {
 /// sniffed from the bytes, not the name (a JPEG named `.png` is common).
 /// Images too small to gain anything keep their bytes, as in the explorer.
 pub fn prepare(source: &[u8], max_size: u32) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(source)
-        .map_err(|e| format!("cannot decode: {e}"))?;
+    let img = image::load_from_memory(source).map_err(|e| format!("cannot decode: {e}"))?;
     let (w, h) = (img.width(), img.height());
     if w <= 2 || h <= 2 || (w as usize) * (h as usize) * 4 <= 1024 {
         return Err(format!("{w}x{h} is too small to gain from compression"));
@@ -164,7 +163,11 @@ mod tests {
         assert_eq!(target_size(4096, 300, 1024), (1024, 76));
         assert_eq!(target_size(1023, 511, 1024), (1024, 512));
         assert_eq!(target_size(30, 18, 1024), (32, 20));
-        assert_eq!(target_size(8192, 2, 1024), (1024, 4), "never rounds to zero");
+        assert_eq!(
+            target_size(8192, 2, 1024),
+            (1024, 4),
+            "never rounds to zero"
+        );
         for (w, h) in [(3000, 2001), (1025, 7), (999, 1001), (5, 4097)] {
             let (tw, th) = target_size(w, h, 1024);
             assert!(tw <= 1024 && th <= 1024, "{w}x{h} -> {tw}x{th}");
@@ -210,6 +213,9 @@ mod tests {
         );
         assert!(run_pool(&Vec::<u32>::new(), 4, |n| *n).is_empty());
         let caller = std::thread::current().id();
-        assert_ne!(run_pool(&[1], 1, |_| std::thread::current().id())[0], caller);
+        assert_ne!(
+            run_pool(&[1], 1, |_| std::thread::current().id())[0],
+            caller
+        );
     }
 }

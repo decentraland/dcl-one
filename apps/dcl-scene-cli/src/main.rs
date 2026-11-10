@@ -10,7 +10,8 @@ use std::path::PathBuf;
 /// own default, leaving the scene-log poller waiting on a port nobody opened.
 const MIN_MCP_PORT: u16 = 1024;
 
-const NO_INSTALL_NOTE: &str = "--skip-install has no effect (dcl-scene-cli never installs packages)";
+const NO_INSTALL_NOTE: &str =
+    "--skip-install has no effect (dcl-scene-cli never installs packages)";
 
 fn resolved_mcp_port(mcp_port: Option<u16>) -> u16 {
     mcp_port.unwrap_or(joinblock::DEFAULT_EXPLORER_MCP_PORT)
@@ -898,7 +899,8 @@ async fn run(command: Command) -> Result<()> {
             .await
         }
         Command::Host { dir, preview, room } => {
-            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room }).await
+            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room })
+                .await
         }
         Command::Deploy {
             dir,

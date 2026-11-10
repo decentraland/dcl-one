@@ -291,7 +291,10 @@ mod tests {
     #[test]
     fn texture_optimization_round_trips_every_state() {
         for (state, wire) in [
-            (ImportState::Running, texture_optimization::State::TosRunning),
+            (
+                ImportState::Running,
+                texture_optimization::State::TosRunning,
+            ),
             (ImportState::Ready, texture_optimization::State::TosReady),
             (ImportState::Failed, texture_optimization::State::TosFailed),
         ] {

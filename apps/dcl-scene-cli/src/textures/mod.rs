@@ -246,7 +246,11 @@ impl Drop for DeployStage {
 /// with a progress line. A run that fails stops the deploy rather than
 /// publishing a half-optimized scene; a texture that fails alone keeps its
 /// original.
-pub async fn stage_for_deploy(root: &Path, overrides: Overrides, quiet: bool) -> Result<DeployStage> {
+pub async fn stage_for_deploy(
+    root: &Path,
+    overrides: Overrides,
+    quiet: bool,
+) -> Result<DeployStage> {
     let project = settings::apply(root, overrides)?;
     let turn = match RUN_LOCK.try_lock() {
         Ok(turn) => turn,
@@ -265,24 +269,30 @@ pub async fn stage_for_deploy(root: &Path, overrides: Overrides, quiet: bool) ->
     };
     let settings = Settings::for_project(project);
     if !project.optimize_textures {
-        swap(root, Entry {
-            enabled: false,
-            settings,
-            overlay: None,
-            stamps: None,
-        });
+        swap(
+            root,
+            Entry {
+                enabled: false,
+                settings,
+                overlay: None,
+                stamps: None,
+            },
+        );
         return Ok(stage);
     }
     let owned = root.to_path_buf();
     let overlay = tokio::task::spawn_blocking(move || deploy_run(&owned, settings, quiet))
         .await
         .context("the texture optimizer stopped")??;
-    swap(root, Entry {
-        enabled: true,
-        settings,
-        overlay: Some(Arc::new(overlay)),
-        stamps: None,
-    });
+    swap(
+        root,
+        Entry {
+            enabled: true,
+            settings,
+            overlay: Some(Arc::new(overlay)),
+            stamps: None,
+        },
+    );
     Ok(stage)
 }
 
@@ -344,7 +354,10 @@ pub fn ignored_warning(count: usize) -> String {
 /// the reverse; `None` when they agree. The preview searches the dev bundle,
 /// a deploy the release bundle, so a name only one of them carries moves an
 /// image across.
-pub fn ignore_difference_warning(preview_manifest: &Value, deployed: &BTreeSet<String>) -> Option<String> {
+pub fn ignore_difference_warning(
+    preview_manifest: &Value,
+    deployed: &BTreeSet<String>,
+) -> Option<String> {
     let previewed: BTreeSet<String> = preview_manifest["ignoredOriginals"]
         .as_array()
         .into_iter()
@@ -648,7 +661,9 @@ fn names_image(text: &str, rel: &str) -> bool {
     if text.contains(&name) {
         return true;
     }
-    let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem);
+    let stem = name
+        .rsplit_once('.')
+        .map_or(name.as_str(), |(stem, _)| stem);
     !stem.is_empty()
         && ['\'', '"', '`']
             .iter()
@@ -673,9 +688,7 @@ pub(crate) fn optimize(
     let stage = root.join(STAGE);
     let by_lower: HashMap<String, &String> = rels.iter().map(|r| (r.to_lowercase(), r)).collect();
     let published = |path: &str| by_lower.get(&path.to_lowercase()).map(|r| r.to_string());
-    let read = |path: &str| -> Option<Vec<u8>> {
-        std::fs::read(root.join(published(path)?)).ok()
-    };
+    let read = |path: &str| -> Option<Vec<u8>> { std::fs::read(root.join(published(path)?)).ok() };
 
     let mut jobs: Vec<Job> = Vec::new();
     let mut job_of: HashMap<(String, ColorMode), usize> = HashMap::new();
@@ -715,7 +728,7 @@ pub(crate) fn optimize(
                         Ok(gltf::ImageSource::Embedded(b)) => Ok(b),
                         Ok(gltf::ImageSource::External(path)) => external
                             .as_deref()
-                            .and_then(&read)
+                            .and_then(read)
                             .ok_or_else(|| format!("{path} is not a published file of the scene")),
                         Err(why) => Err(why),
                     };
