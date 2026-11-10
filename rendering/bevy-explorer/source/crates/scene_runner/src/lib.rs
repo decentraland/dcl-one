@@ -442,6 +442,7 @@ impl Plugin for SceneRunnerPlugin {
         }
         app.add_plugins(AssetPreloadPlugin);
         app.init_resource::<scene_spawn_slice::ProcessingDeadline>()
+            .init_resource::<scene_spawn_slice::InstantiationCharges>()
             .add_systems(
                 SpawnScene,
                 scene_spawn_slice::slice_scene_spawning.before(scene_spawner_system),
