@@ -659,10 +659,16 @@ pub async fn op_read_bridge_stream(
 /// same cache and fetch cascade as nametags and `getPlayerData` — but unlike the latter, not
 /// squeezed into the SDK's `UserData`, so `extra_fields`, `name_color` and emotes survive.
 /// Rejects once the cascade has concluded with nothing.
+/// Only the system scene may call it (the web worker exposes every op to every scene): other
+/// scenes read players through `getPlayerData`.
 pub async fn op_get_user_profile(
     state: Rc<RefCell<impl State>>,
     address: String,
 ) -> Result<SerializedProfile, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getUserProfile is only available to the system scene");
+    }
+
     let (sx, rx) = RpcResultSender::channel();
 
     let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
@@ -1471,6 +1477,53 @@ mod kernel_fetch_tests {
 
         let result = catch_unwind(AssertUnwindSafe(|| block_on(poll_once(fetch(&state)))));
         assert!(result.is_err());
+        assert!(state.borrow().borrow::<RpcCalls>().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod profile_read_tests {
+    use super::*;
+    use crate::test_state::TestState;
+    use futures_lite::future::{block_on, poll_once};
+
+    fn scene(system: bool) -> Rc<RefCell<TestState>> {
+        let mut state = TestState::default();
+        state.put(RpcCalls::default());
+        state.put(CrdtContext::new(
+            dcl_types::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            false,
+        ));
+        if system {
+            state.put(SuperUserScene(tokio::sync::mpsc::unbounded_channel().0));
+        }
+        Rc::new(RefCell::new(state))
+    }
+
+    #[test]
+    fn the_system_scene_reads_profiles() {
+        let state = scene(true);
+        let full = op_get_user_profile(state.clone(), "0x1".to_owned());
+        assert!(block_on(poll_once(full)).is_none());
+        let compact = op_get_compact_profiles(state.clone(), vec!["0x1".to_owned()]);
+        assert!(block_on(poll_once(compact)).is_none());
+
+        let state = state.borrow();
+        let calls = state.borrow::<RpcCalls>();
+        assert!(matches!(calls[0], RpcCall::GetUserData { .. }));
+        assert!(matches!(calls[1], RpcCall::GetCompactProfiles { .. }));
+    }
+
+    #[test]
+    fn an_ordinary_scene_reads_no_profiles() {
+        let state = scene(false);
+        let address = || "0x1".to_owned();
+        assert!(block_on(op_get_user_profile(state.clone(), address())).is_err());
+        assert!(block_on(op_get_compact_profiles(state.clone(), vec![address()])).is_err());
         assert!(state.borrow().borrow::<RpcCalls>().is_empty());
     }
 }
