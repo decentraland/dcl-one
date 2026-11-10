@@ -24,13 +24,17 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
+import { requestSession, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
 import type { Route } from "./+types/root";
 
-export async function loader({ request }: Route.LoaderArgs) {
+/** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
+export const middleware = [sessionMiddleware];
+
+export async function loader({ request, context }: Route.LoaderArgs) {
   const thirdwebClientId =
     (typeof process !== "undefined" && process.env.THIRDWEB_CLIENT_ID) || "";
   const walletConnectProjectId = process.env.WALLETCONNECT_PROJECT_ID || "";
@@ -57,6 +61,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     shopApiMode,
     wallet,
     committee,
+    /** The session id, also on a first visit, for pages whose own loader does not run on a client navigation. */
+    sid: requestSession(request, context).sid,
   };
 }
 

@@ -34,11 +34,10 @@ const FALLBACK: PageDefaults = {
   variant: "read-only-detail",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { id } = params;
 
-  const { sid, wrap, data: { item, fallback } } = await pageLoaderWith(
-    request,
+  const { sid, wrap, data: { item, fallback } } = await pageLoaderWith(request, context,
     
     FALLBACK,
     () => loadCreatorItem(id, { signal: request.signal }),

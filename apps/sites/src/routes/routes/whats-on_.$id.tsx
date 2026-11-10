@@ -32,10 +32,9 @@ const FALLBACK: PageDefaults = {
   variant: "detail_cta",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { id } = params;
-  const { sid, wrap, data } = await pageLoaderWith(
-    request,
+  const { sid, wrap, data } = await pageLoaderWith(request, context,
     
     FALLBACK,
     async () => {

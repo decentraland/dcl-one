@@ -80,14 +80,13 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const template = url.searchParams.get("template")?.trim() || null;
   const from = url.searchParams.get("from")?.trim() || null;
 
-  const { sid, assignment, wrap } = await pageLoader(
-    request,
+  const { sid, assignment, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

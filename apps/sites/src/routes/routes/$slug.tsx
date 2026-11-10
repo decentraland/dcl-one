@@ -44,7 +44,7 @@ const FALLBACK: PageDefaults = {
   variant: "config_driven",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   if ((params.slug ?? "") === "seasons") {
     throw redirect("/shop/credits");
   }
@@ -53,8 +53,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw new Response(null, { status: 404, statusText: "Not Found" });
   }
 
-  const { sid, wrap } = await pageLoader(
-    request,
+  const { sid, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

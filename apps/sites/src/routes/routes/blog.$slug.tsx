@@ -21,11 +21,10 @@ const FALLBACK: PageDefaults = {
   variant: "index_grid",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const slug = params.slug ?? "";
 
-  const { sid, wrap } = await pageLoader(
-    request,
+  const { sid, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

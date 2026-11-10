@@ -45,13 +45,12 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("mode") === "edit" ? "edit" : "create";
   const editId = url.searchParams.get("id");
 
-  const { sid, assignment, wrap } = await pageLoader(
-    request,
+  const { sid, assignment, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

@@ -97,7 +97,7 @@ const FALLBACK: PageDefaults = {
   variant: "default",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const url = new URL(request.url);
 
   const pathAddress = (params as Record<string, string | undefined>).address;
@@ -123,7 +123,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const [{ sid, wrap }, liveProfile, creationsRes, rawPlaces, assets, photosRes] =
     await Promise.all([
-      pageLoader(request,  FALLBACK),
+      pageLoader(request, context,  FALLBACK),
       (async (): Promise<ProfileVM | null> => {
         if (!ethAddr) return null;
         try {

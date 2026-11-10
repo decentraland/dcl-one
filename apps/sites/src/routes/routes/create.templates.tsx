@@ -23,9 +23,8 @@ const FALLBACK: PageDefaults = {
   variant: "gallery",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = await pageLoader(
-    request,
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

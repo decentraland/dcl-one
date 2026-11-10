@@ -25,9 +25,9 @@ const FALLBACK: PageDefaults = {
   variant: "index_grid",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  const { sid, wrap } = await pageLoader(request,  FALLBACK);
+  const { sid, wrap } = await pageLoader(request, context,  FALLBACK);
 
   const category = url.searchParams.get("category") ?? "";
   const posts = blogPostCards(category);

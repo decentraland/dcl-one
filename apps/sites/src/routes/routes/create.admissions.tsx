@@ -49,14 +49,13 @@ const FALLBACK: PageDefaults = {
 
 type PickableWorld = { name: string; role: string; deployedScenes: number };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const worldName = url.searchParams.get("world")?.trim() || "";
   const noWorld = worldName === "";
 
-  const { sid, assignment, wrap, data: access } = await pageLoaderWith(
-    request,
+  const { sid, assignment, wrap, data: access } = await pageLoaderWith(request, context,
     
     FALLBACK,
     () => noWorld ? Promise.resolve(null) : Promise.all([

@@ -10,6 +10,7 @@ vi.mock("@/core/lib/telemetry/page-loader", () => ({
   pageLoaderWith: vi.fn(
     async (
       _request: Request,
+      _context: unknown,
       _defaults: unknown,
       load: (base: { sid: string }) => Promise<unknown>,
     ) => ({

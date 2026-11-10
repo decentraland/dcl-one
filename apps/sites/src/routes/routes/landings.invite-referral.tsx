@@ -32,13 +32,12 @@ const FALLBACK: PageDefaults = {
   variant: "personalized_referrer",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const referrerParam = url.searchParams.get("referrer")?.trim() ?? "";
   const step = parseStep(url.searchParams.get("step"));
 
-  const { sid, wrap } = await pageLoader(
-    request,
+  const { sid, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );

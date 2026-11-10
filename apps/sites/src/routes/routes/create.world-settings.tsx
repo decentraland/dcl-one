@@ -98,7 +98,7 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const tabParam = url.searchParams.get("tab")?.trim() || "";
   const step =
@@ -114,8 +114,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     ""
   ).toLowerCase();
 
-  const { sid, assignment, wrap, data } = await pageLoaderWith(
-    request,
+  const { sid, assignment, wrap, data } = await pageLoaderWith(request, context,
     
     FALLBACK,
     async () => {

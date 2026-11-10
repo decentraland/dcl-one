@@ -32,8 +32,8 @@ export function meta() {
   return [{ title: "Decentraland" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = sidLoader(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = sidLoader(request, context);
   const [{ content }, downloads] = await Promise.all([
     loadHomeEvents(),
     loadDownloadsLabel(),

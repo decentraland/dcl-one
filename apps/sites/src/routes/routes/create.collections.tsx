@@ -1,6 +1,6 @@
 import { redirect } from "react-router";
 
-import { ensureSid, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { requestSession, serializeSidCookie } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/create.collections";
@@ -8,8 +8,11 @@ import type { Route } from "./+types/create.collections";
 const FROM = "/create/collections";
 const TO = "/create/wearables";
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, created } = ensureSid(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const session = requestSession(request, context);
+  const { sid } = session;
+  // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
+  const created = session.ownsCookie && session.created;
 
   track("creator_builder_redirect", { from: FROM, to: TO }, { sid });
 

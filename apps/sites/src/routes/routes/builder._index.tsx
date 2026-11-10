@@ -1,6 +1,6 @@
 import { redirect } from "react-router";
 
-import { ensureSid, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { requestSession, sidCookieHeaders } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/builder._index";
@@ -9,8 +9,9 @@ const STORY = "creator-integration-redirect-home";
 const FROM = "/builder";
 const TO = "/create";
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, created } = ensureSid(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const session = requestSession(request, context);
+  const { sid } = session;
 
   const query = new URL(request.url).searchParams.toString();
   const location = query ? `${TO}?${query}` : TO;
@@ -21,8 +22,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     { sid, story: STORY },
   );
 
+  // Behind the root middleware the cookie is set once on the response; on its own this sets it.
+  const cookies = session.ownsCookie ? sidCookieHeaders(request, session) : [];
   return redirect(
     location,
-    created ? { headers: { "Set-Cookie": serializeSidCookie(sid) } } : undefined,
+    cookies.length > 0 ? { headers: cookies.map((cookie) => ["Set-Cookie", cookie]) } : undefined,
   );
 }

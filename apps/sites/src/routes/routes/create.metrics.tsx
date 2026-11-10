@@ -35,13 +35,12 @@ const FALLBACK: PageDefaults = {
   variant: "dashboard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const address =
     url.searchParams.get("address")?.trim() || readWallet(request) || "";
 
-  const { sid, wrap, data: metrics } = await pageLoaderWith(
-    request,
+  const { sid, wrap, data: metrics } = await pageLoaderWith(request, context,
     
     FALLBACK,
     () => address ? loadCreatorMetrics(address, request.signal).catch(() => null) : Promise.resolve(null),

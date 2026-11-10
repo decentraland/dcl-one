@@ -8,18 +8,17 @@ type PageSession = ReturnType<typeof sidLoader>;
 
 export { sidLoader };
 
-export async function pageLoader(
-  request: Request,
-  defaults: PageDefaults,
-) {
-  return { ...sidLoader(request), assignment: defaults };
+/** `context` is the loader's router context, where the root middleware left the request's session. */
+export async function pageLoader(request: Request, context: unknown, defaults: PageDefaults) {
+  return { ...sidLoader(request, context), assignment: defaults };
 }
 
 export async function pageLoaderWith<T>(
   request: Request,
+  context: unknown,
   defaults: PageDefaults,
   load: (session: PageSession) => Promise<T>,
 ) {
-  const session = sidLoader(request);
+  const session = sidLoader(request, context);
   return { ...session, assignment: defaults, data: await load(session) };
 }

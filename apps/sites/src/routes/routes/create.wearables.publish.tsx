@@ -40,12 +40,11 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const collectionId = url.searchParams.get("collection")?.trim() || null;
 
-  const { sid, assignment, wrap } = await pageLoader(
-    request,
+  const { sid, assignment, wrap } = await pageLoader(request, context,
     
     FALLBACK,
   );
