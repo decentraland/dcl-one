@@ -45,13 +45,17 @@ function formatDuration(seconds: number): string {
 function VibeCard({
   item,
   labels,
-  as: Root = 'li'
+  as: Root = 'li',
+  enabled = true
 }: {
   item: VibeItem
   labels: VibeLabels
   as?: 'li' | 'div'
+  enabled?: boolean
 }) {
   const video = useRef<HTMLVideoElement | null>(null)
+  const playIntent = useRef(0)
+  const wanted = useRef(false)
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(true)
   const [duration, setDuration] = useState<string | null>(null)
@@ -70,6 +74,8 @@ function VibeCard({
   }, [])
 
   const stop = useCallback(() => {
+    ++playIntent.current
+    wanted.current = false
     const element = video.current
     if (element) {
       element.pause()
@@ -80,18 +86,52 @@ function VibeCard({
     setMuted(true)
   }, [])
 
-  const play = useCallback((withSound: boolean) => {
+  const play = useCallback(
+    (withSound: boolean) => {
+      const element = video.current
+      if (!element || !enabled) return
+      const intent = ++playIntent.current
+      wanted.current = true
+      const current = () => wanted.current && playIntent.current === intent
+      element.muted = !withSound
+      setMuted(!withSound)
+      setPlaying(true)
+      element.play()?.catch((error: unknown) => {
+        if (!current()) return
+        if (
+          !withSound ||
+          typeof error !== 'object' ||
+          error === null ||
+          !('name' in error) ||
+          error.name !== 'NotAllowedError'
+        ) {
+          wanted.current = false
+          setPlaying(false)
+          return
+        }
+        element.muted = true
+        setMuted(true)
+        element.play()?.catch(() => {
+          if (current()) {
+            wanted.current = false
+            setPlaying(false)
+          }
+        })
+      })
+    },
+    [enabled]
+  )
+
+  useEffect(() => {
+    if (!enabled) stop()
+  }, [enabled, stop])
+  useEffect(() => {
     const element = video.current
-    if (!element) return
-    element.muted = !withSound
-    setMuted(!withSound)
-    setPlaying(true)
-    // Browsers may refuse sound without a gesture they trust; retry muted.
-    element.play()?.catch(() => {
-      element.muted = true
-      setMuted(true)
-      element.play()?.catch(() => setPlaying(false))
-    })
+    return () => {
+      ++playIntent.current
+      wanted.current = false
+      element?.pause()
+    }
   }, [])
 
   // A clip that scrolls away stops, so nothing plays off screen.
@@ -100,7 +140,7 @@ function VibeCard({
     if (!element || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry && !entry.isIntersecting && !element.paused) stop()
+        if (entry && !entry.isIntersecting && wanted.current) stop()
       },
       { threshold: 0.3 }
     )
@@ -129,7 +169,7 @@ function VibeCard({
     <Root
       className={styles.card}
       onMouseEnter={() => {
-        if (!hoverPreview() || playing) return
+        if (!enabled || !hoverPreview() || playing) return
         hoverStarted.current = true
         play(false)
       }}
@@ -143,12 +183,12 @@ function VibeCard({
         <video
           ref={video}
           className={styles.video}
-          src={item.video}
+          src={enabled ? item.video : undefined}
           poster={item.image}
           loop
           muted
           playsInline
-          preload="metadata"
+          preload={enabled ? 'metadata' : 'none'}
           aria-hidden="true"
         />
         <div className={styles.controls}>
@@ -216,6 +256,14 @@ function VibeCard({
  */
 function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTheVibeProps) {
   const titleId = useId()
+  const [layout, setLayout] = useState<'wide' | 'narrow' | null>(null)
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)')
+    const update = () => setLayout(media.matches ? 'wide' : 'narrow')
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   return (
     <section className={styles.root} aria-labelledby={titleId}>
       <img className={styles.glow} src={glow} alt="" loading="lazy" />
@@ -224,7 +272,7 @@ function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTh
       </h2>
       <ul className={styles.cards}>
         {items.map((item) => (
-          <VibeCard key={item.id} item={item} labels={labels} />
+          <VibeCard key={item.id} item={item} labels={labels} enabled={layout === 'wide'} />
         ))}
       </ul>
       {/* Below breakpoints.desktop the clips are source's carousel instead of a row. */}
@@ -234,7 +282,15 @@ function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTh
         getKey={(item) => item.id}
         labelledBy={titleId}
         labels={carouselLabels}
-        renderSlide={(item) => <VibeCard key={item.id} item={item} labels={labels} as="div" />}
+        renderSlide={(item, peek) => (
+          <VibeCard
+            key={item.id}
+            item={item}
+            labels={labels}
+            as="div"
+            enabled={layout === 'narrow' && !peek}
+          />
+        )}
       />
       {hangOut ? (
         <Button onClick={hangOut.onClick}>

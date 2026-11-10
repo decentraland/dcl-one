@@ -19,15 +19,15 @@ type AlternativeIcon = DesktopOs | 'ios' | 'android'
 type DownloadAlternative = {
   icon: AlternativeIcon
   label: string
-  onClick: Click
+  onClick?: Click
 } & ({ href: string; external?: boolean } | { href?: undefined; external?: undefined })
 
 type DownloadActionsProps = {
   /** Opt into the measured landing CTA geometry without changing other download contexts. */
   appearance?: DownloadAppearance
   /** The installer for the visitor's OS; absent when none can run there. */
-  primary?: { label: ReactNode; os: DesktopOs; osName: string; href: string; onClick: Click }
-  epic?: { label: ReactNode; iconLabel: string; href: string; onClick: Click }
+  primary?: { label: ReactNode; os: DesktopOs; osName: string; href: string; onClick?: Click }
+  epic?: { label: ReactNode; iconLabel: string; href: string; onClick?: Click }
   /** The download counter line, e.g. "Total Downloads: +400K". */
   downloads?: ReactNode
   /** Other platforms as icon-only controls, each named by `label`. */
@@ -155,7 +155,7 @@ type StoreBadgeProps = {
   badge: 'app_store' | 'google_play'
   label: string
   href: string
-  onClick: Click
+  onClick?: Click
 }
 
 /** The official store badge on the primary action, as a new-tab link; the image is decorative, the

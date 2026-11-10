@@ -145,6 +145,12 @@ function Carousel<T>({
     ;(control ?? slide).focus()
   }, [current, position])
 
+  const cancelDrag = () => {
+    drag.current = null
+    dragged.current = false
+    setDragging(false)
+    setDragOffset(0)
+  }
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (
       event.button !== 0 ||
@@ -162,6 +168,10 @@ function Carousel<T>({
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current
     if (!start) return
+    if (event.pointerType === 'mouse' && event.buttons === 0) {
+      cancelDrag()
+      return
+    }
     const dx = event.clientX - start.x
     if (Math.abs(dx) <= Math.abs(event.clientY - start.y)) return
     setDragOffset(dx)
@@ -211,18 +221,20 @@ function Carousel<T>({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={() => {
-        drag.current = null
-        dragged.current = false
-        setDragging(false)
-        setDragOffset(0)
+      onPointerCancel={cancelDrag}
+      onLostPointerCapture={() => {
+        if (drag.current) cancelDrag()
       }}
+      onDragStart={(event) => event.preventDefault()}
       onClickCapture={onClickCapture}
       onKeyDown={onKeyDown}
       onPointerEnter={(event) => {
         if (event.pointerType !== 'touch') setHovered(true)
       }}
-      onPointerLeave={() => setHovered(false)}
+      onPointerLeave={(event) => {
+        setHovered(false)
+        if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) cancelDrag()
+      }}
       onFocusCapture={() => setFocused(true)}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false)

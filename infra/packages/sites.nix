@@ -91,6 +91,16 @@ in stdenv.mkDerivation ({
     runHook preBuild
     chmod -R u+w ..
     ln -s "$PWD/node_modules" ../node_modules
+    if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts; then
+      echo "Sites media or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
+      exit 1
+    else
+      status=$?
+      if [ "$status" -ne 1 ]; then
+        echo "Unable to inspect Sites media and shared fonts." >&2
+        exit "$status"
+      fi
+    fi
     pnpm run build
     runHook postBuild
   '';

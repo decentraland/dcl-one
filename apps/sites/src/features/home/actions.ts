@@ -16,7 +16,6 @@ const STORES = {
   google_play:
     "https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer",
 } as const;
-const followLink = () => {};
 
 /** Direct installers retain the pinned native artifact contract without a success-page dependency. */
 export function homeActions(
@@ -34,14 +33,12 @@ export function homeActions(
             os: wide.primary.os,
             osName: name(wide.primary.os),
             href: INSTALLERS[wide.primary.os],
-            onClick: followLink,
           }
         : undefined,
       epic: {
         label: "Get it on",
         iconLabel: "Epic Games",
         href: "https://store.epicgames.com/en-US/p/decentraland-b692fb",
-        onClick: followLink,
       },
       downloads: `Total Downloads: ${downloads}`,
       alternatives: wide.secondary
@@ -50,7 +47,6 @@ export function homeActions(
               icon: wide.secondary.os,
               label: `Download for ${name(wide.secondary.os)}`,
               href: INSTALLERS[wide.secondary.os],
-              onClick: followLink,
             },
           ]
         : [],
@@ -62,7 +58,6 @@ export function homeActions(
           ? "Download on the App Store"
           : "Get it on Google Play",
       href: STORES[narrowStore],
-      onClick: followLink,
     },
   };
 }

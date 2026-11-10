@@ -10,15 +10,12 @@ import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
 import { homeActions } from "@/features/home/actions";
-import { detectPlatform, type DetectedPlatform } from "@/features/home/options";
+import { detectPlatform } from "@/features/home/options";
 import { VIBE_CLIPS, WEEKLY_RITUALS } from "@/features/home/content";
 
-import {
-  heroEventCards,
-  type HomeContent,
-} from "@/data/lib/catalyst/landings/home";
+import { heroEventCards } from "@/data/lib/catalyst/landings/home";
 import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
-import { loadHome } from "@/data/lib/catalyst/landings/home.server";
+import { loadHomeEvents } from "@/data/lib/catalyst/landings/home.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -37,30 +34,21 @@ export function meta() {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request);
-  const [{ content, live }, downloads] = await Promise.all([
-    loadHome(),
+  const [{ content }, downloads] = await Promise.all([
+    loadHomeEvents(),
     loadDownloadsLabel(),
   ]);
   const payload = {
     sid,
     content,
-    live,
     downloads,
     platform: detectPlatform(request.headers.get("user-agent")),
   };
   return wrap(payload);
 }
 
-type LoaderData = {
-  sid: string;
-  content: HomeContent;
-  live: boolean;
-  downloads: string;
-  platform: DetectedPlatform;
-};
-
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { sid, content, platform, downloads } = loaderData as LoaderData;
+  const { sid, content, platform, downloads } = loaderData;
 
   const viewed = useRef(false);
   useEffect(() => {
@@ -93,14 +81,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           title="Jump Into What's Happening"
           labels={{ live: "LIVE", by: "by" }}
           viewAll={{ label: "View all", href: "/whats-on" }}
-          cards={(heroEventCards(content) ?? [])
-            .filter((card) => card.live)
-            .map((card) => ({
-              id: card.id,
-              title: card.title,
-              image: card.image,
-              href: homeEventHref(card.id),
-            }))}
+          cards={(heroEventCards(content) ?? []).map((card) => ({
+            id: card.id,
+            title: card.title,
+            image: card.image,
+            href: homeEventHref(card.id),
+          }))}
         />
         <CatchTheVibe
           title="Catch the Vibe"

@@ -1,5 +1,3 @@
-import { ttlMemo } from "../../ttl-memo";
-
 // The public aggregate used by Sites, pinned in its production configuration at 5aabce35423428332c81a4a78a7a9c2b486446b5.
 const COUNTS_URL =
   "https://cdn-data.decentraland.org/public/current/explorer-alpha-downloads.json";
@@ -49,12 +47,29 @@ export async function fetchDownloadTotal(
   }
 }
 
-const counts = ttlMemo({
-  ttlMs: 600000,
-  keep: (total: number | null) => total !== null,
-  load: () => fetchDownloadTotal(),
-});
-export async function loadDownloadsLabel(): Promise<string> {
-  const total = await counts();
-  return total === null ? DOWNLOADS_FALLBACK_LABEL : formatDownloads(total);
+export function createDownloadsLabelLoader(
+  readTotal: () => Promise<number | null> = fetchDownloadTotal,
+  now: () => number = Date.now,
+): () => Promise<string> {
+  let lastGood: string | undefined;
+  let refreshAfter = 0;
+  let pending: Promise<string> | undefined;
+  return () => {
+    if (now() < refreshAfter)
+      return Promise.resolve(lastGood ?? DOWNLOADS_FALLBACK_LABEL);
+    if (pending) return pending;
+    pending = readTotal()
+      .catch(() => null)
+      .then((total) => {
+        if (total !== null) lastGood = formatDownloads(total);
+        refreshAfter = now() + (total === null ? 30000 : 600000);
+        return lastGood ?? DOWNLOADS_FALLBACK_LABEL;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
+    return pending;
+  };
 }
+
+export const loadDownloadsLabel = createDownloadsLabelLoader();

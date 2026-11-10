@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchDownloadTotal, formatDownloads } from "./download-counts.server";
+import {
+  createDownloadsLabelLoader,
+  fetchDownloadTotal,
+  formatDownloads,
+} from "./download-counts.server";
 
 describe("public Explorer download aggregate", () => {
   it("sums the published platform counts without hardcoding the displayed total", async () => {
@@ -64,4 +68,37 @@ describe("public Explorer download aggregate", () => {
   ])("formats the boundary %s", (total, label) =>
     expect(formatDownloads(total)).toBe(label),
   );
+});
+
+describe("download aggregate refresh policy", () => {
+  it("shares a cold refresh and caches failure briefly before retrying", async () => {
+    let now = 1000;
+    const read = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(438770);
+    const load = createDownloadsLabelLoader(read, () => now);
+    expect(await Promise.all([load(), load()])).toEqual(["+400K", "+400K"]);
+    expect(read).toHaveBeenCalledOnce();
+    now += 29999;
+    expect(await load()).toBe("+400K");
+    expect(read).toHaveBeenCalledOnce();
+    now += 1;
+    expect(await load()).toBe("+438K");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+  it("retains the last good total when an expired refresh rejects", async () => {
+    let now = 1000;
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(438770)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(439000);
+    const load = createDownloadsLabelLoader(read, () => now);
+    expect(await load()).toBe("+438K");
+    now += 600000;
+    expect(await load()).toBe("+438K");
+    now += 29999;
+    expect(await load()).toBe("+438K");
+    expect(read).toHaveBeenCalledTimes(2);
+    now += 1;
+    expect(await load()).toBe("+439K");
+  });
 });
