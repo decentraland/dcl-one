@@ -28,11 +28,11 @@ def main():
     logs = Path(__file__).parent / 'dist' / f'image-smoke-{args.product}.log'
     logs.parent.mkdir(parents=True, exist_ok=True)
     hardened = ['--network', 'none', '--read-only', '--cap-drop', 'ALL',
-                '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,size=512m']
+                '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=512m']
     common = ['--name', name, *hardened]
     try:
         if args.product == 'headless':
-            data = ['--tmpfs', '/data:rw,nosuid,uid=1000,gid=1000']
+            data = ['--tmpfs', '/data:rw,nosuid,nodev,noexec,size=1g,uid=1000,gid=1000']
             # the scene host's own check; --init keeps it off PID 1, which a PID 1 check would see
             test = docker('run', '--rm', '--init', *hardened, *data, '--entrypoint', '/usr/local/bin/dcl_deno_ipc',
                           image, '--sandbox-self-test', '--require', check=False)
