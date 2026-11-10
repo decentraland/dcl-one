@@ -1816,6 +1816,48 @@ async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry(
     db.drop().await;
 }
 
+/// `/lambdas/users/{a}/lands` holds one connection, its land snapshot, and
+/// checks the nft index on it: with a pool of one connection and both
+/// indexes published, it answers the page at once, instead of waiting on a
+/// second connection and reading the timeout as an unpublished index.
+#[tokio::test]
+async fn user_lands_answer_on_a_pool_of_one_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let one = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(MarketplaceState::new(
+        one.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let (status, body) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        get(&state, &format!("/lambdas/users/{OWNER}/lands")),
+    )
+    .await
+    .expect("the route answers well within the pool's acquire timeout");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tokens: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["tokenId"].as_str())
+        .collect();
+    assert_eq!(
+        (body["totalAmount"].as_i64(), tokens),
+        (Some(2), vec!["5", "1"])
+    );
+    one.close().await;
+    db.drop().await;
+}
+
 /// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
 /// for lamb2's 120 s and `/users/{a}/lands` for as long as the outage lasts,
 /// while `graph::owned_names`, the read worlds' NAME owner and comms

@@ -26,7 +26,7 @@ use crate::shared::query_params::{
     parse_pagination_with, parse_query_string,
 };
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, ready_cursor};
+use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, is_ready, ready_cursor};
 use super::graph::{self, OwnedLand};
 use super::nft_index::DCL_REGISTRAR;
 use super::nft_reads::land_snapshot;
@@ -67,6 +67,16 @@ async fn nft_index_ready(pool: &sqlx::PgPool) -> bool {
     ready_cursor(pool, INDEXER_NFT, ChainNet::Ethereum, Utc::now())
         .await
         .is_some()
+}
+
+/// [`nft_index_ready`] on the caller's connection: the land snapshot a
+/// LAND read already holds, so the check takes no second connection from the
+/// pool and sees the state the read does. A database error is an error, not
+/// an index that is not ready.
+async fn nft_index_ready_on(conn: &mut PgConnection) -> Result<bool, sqlx::Error> {
+    Ok(cursor(conn, INDEXER_NFT, ChainNet::Ethereum)
+        .await?
+        .is_some_and(|c| is_ready(&c, Utc::now())))
 }
 
 /// The owner's parcels and estates, newest transfer first (the old
@@ -192,11 +202,22 @@ pub async fn user_lands(
         Err(msg) => return bad_request(&msg),
     };
     let owner = addr.to_lowercase();
-    // The count and the page read the snapshot the gate checked.
-    let land = land_snapshot(&state.pool).await;
+    // The nft index check, the count and the page all read the land
+    // snapshot: one connection, one state.
+    let mut land = land_snapshot(&state.pool).await;
     let land_ready = land.is_some();
-    let nft_ready = land_ready && nft_index_ready(&state.pool).await;
-    let (Some(mut land), true) = (land, nft_ready) else {
+    let nft_ready = match land.as_mut() {
+        Some(snapshot) => match nft_index_ready_on(&mut snapshot.tx).await {
+            Ok(ready) => ready,
+            Err(e) => {
+                tracing::error!(error = %e, "user lands: cannot read the nft index cursor");
+                return lambdas_internal_error();
+            }
+        },
+        None => false,
+    };
+    // A snapshot that will not be read is released before any fallback.
+    let Some(mut land) = land.filter(|_| nft_ready) else {
         if state.settings.marketplace_subgraph_url.is_some() {
             return user_lands_from_reader(&state, &addr, &owner, page).await;
         }
