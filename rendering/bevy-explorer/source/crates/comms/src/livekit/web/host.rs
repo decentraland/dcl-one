@@ -462,6 +462,7 @@ async fn connect(
     .map_err(js_error)?;
 
     let connected = ConnectedRoom {
+        room,
         name: room_name(&js_room),
         metadata: room_metadata(&js_room),
         local_participant: local_participant(&room_local_participant(&js_room), room),
