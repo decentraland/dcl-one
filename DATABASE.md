@@ -514,15 +514,27 @@ preparation.
 
 The Social voice release accepts shipped main version 2 without historical step
 `0020_social_voice_notifications` or its retired objects, and genuinely prepared
-version 2 with that step's matching real receipt and complete legacy layout:
+version 2 with that step's matching real receipt and complete legacy layout.
+`catalyst schema status` exits 5 on such a database. With every writer stopped,
+the version-3 binary applies the release and the additive steps in one transaction:
+
+```sh
+catalyst schema migrate --release
+catalyst schema status
+```
+
+`--release` refuses while any other client session is connected to the database
+and changes nothing then; a database already at version 3 takes the plain migrate.
+The binary embeds `schemas/releases/v3-private-voice-pending.sql` with its includes
+(`db::RELEASE_SQL`). The same file still runs through psql, followed by
+`catalyst schema migrate`:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
 catalyst schema migrate
-catalyst schema status
 ```
 
-Keep every writer stopped through that sequence. The release refuses mixed
+Keep every writer stopped through either sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
 The explore parity layout (step `0029_explore_parity`) moves event moderation notices

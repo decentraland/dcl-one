@@ -66,6 +66,7 @@ struct Database {
     pool: PgPool,
     admin: PgPool,
     name: String,
+    options: PgConnectOptions,
 }
 impl Database {
     async fn new() -> Option<Self> {
@@ -87,13 +88,12 @@ impl Database {
             .execute(&admin)
             .await
             .unwrap();
+        let options = options
+            .database(&name)
+            .options([("TimeZone", "UTC"), ("search_path", "content,meta")]);
         let pool = PgPoolOptions::new()
             .max_connections(2)
-            .connect_with(
-                options
-                    .database(&name)
-                    .options([("TimeZone", "UTC"), ("search_path", "content,meta")]),
-            )
+            .connect_with(options.clone())
             .await
             .unwrap();
         // Captured from c1fab3991's real v2 release and additive executor; the
@@ -114,7 +114,12 @@ impl Database {
                 .await
                 .unwrap();
         }
-        Some(Self { pool, admin, name })
+        Some(Self {
+            pool,
+            admin,
+            name,
+            options,
+        })
     }
     async fn close(self) {
         self.pool.close().await;
@@ -522,4 +527,101 @@ async fn v3_retired_step_still_verifies_genuine_receipt_hash_in_all_entry_points
     ));
     assert!(catalyst_db::bootstrap(pool).await.is_err());
     db.close().await;
+}
+
+/// `schema migrate --release` takes both genuine version-2 origins to the
+/// version-3 layout in one transaction. It refuses while another session is
+/// connected, and a release that fails leaves version 2 as it was.
+#[tokio::test]
+async fn migrate_with_release_takes_both_v2_origins_to_v3_once_every_other_session_is_gone() {
+    for schema in [MAIN_V2, PREPARED_V2] {
+        let Some(db) = Database::with_schema(schema).await else {
+            return;
+        };
+        let version = "SELECT version FROM meta.schema WHERE id = 1";
+        let status = schema_migrate::status(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        assert_eq!(status.exit_code(), 5, "{:?}", status.lines());
+        assert!(matches!(
+            schema_migrate::migrate(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+            Err(schema_migrate::MigrateError::Incompatible { version: 2, .. })
+        ));
+
+        let solo = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(db.options.clone())
+            .await
+            .unwrap();
+        let writer = db.pool.acquire().await.unwrap();
+        match schema_migrate::migrate_with_release(
+            &solo,
+            SCHEMA_SQL,
+            MIGRATIONS_SQL,
+            catalyst_db::RELEASE_SQL,
+        )
+        .await
+        {
+            Err(schema_migrate::MigrateError::SessionsConnected(sessions)) => {
+                assert!(!sessions.is_empty())
+            }
+            other => panic!("{other:?}"),
+        }
+        drop(writer);
+        db.pool.close().await;
+
+        // The release refuses an existing destination; nothing it did survives.
+        sqlx::query("CREATE TABLE social.community_voice_notifications(id int)")
+            .execute(&solo)
+            .await
+            .unwrap();
+        assert!(
+            schema_migrate::migrate_with_release(
+                &solo,
+                SCHEMA_SQL,
+                MIGRATIONS_SQL,
+                catalyst_db::RELEASE_SQL,
+            )
+            .await
+            .is_err()
+        );
+        let after: i32 = sqlx::query_scalar(version).fetch_one(&solo).await.unwrap();
+        assert_eq!(after, 2);
+        sqlx::query("DROP TABLE social.community_voice_notifications")
+            .execute(&solo)
+            .await
+            .unwrap();
+
+        let done = schema_migrate::migrate_with_release(
+            &solo,
+            SCHEMA_SQL,
+            MIGRATIONS_SQL,
+            catalyst_db::RELEASE_SQL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(done.released, Some(3));
+        assert!(!done.steps.is_empty());
+        let after: i32 = sqlx::query_scalar(version).fetch_one(&solo).await.unwrap();
+        assert_eq!(after, 3);
+        assert_release_indexes(&solo).await;
+        let status = schema_migrate::status(&solo, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        assert_eq!(status.exit_code(), 0, "{:?}", status.lines());
+        catalyst_db::bootstrap(&solo).await.unwrap();
+        assert!(
+            schema_migrate::migrate_with_release(
+                &solo,
+                SCHEMA_SQL,
+                MIGRATIONS_SQL,
+                catalyst_db::RELEASE_SQL,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        solo.close().await;
+        db.close().await;
+    }
 }

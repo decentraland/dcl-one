@@ -17,6 +17,11 @@ pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"
 /// steps `catalyst schema migrate` applies to a database stamped before them
 /// (`schema_migrate`); `catalyst schema print --migrations` writes the same text.
 pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"));
+/// The reviewed release that takes a database stamped `SCHEMA_VERSION - 1` to
+/// `SCHEMA_VERSION` (`schemas/releases/v3-private-voice-pending.sql`, rendered
+/// by build.rs without its psql commands, transaction lines and includes).
+/// `catalyst schema migrate --release` runs it in its own transaction.
+pub const RELEASE_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/release.sql"));
 
 /// Every connection runs with this path and clock; application SQL is
 /// schema-qualified anyway, and no request ever changes either.
