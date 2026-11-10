@@ -25,8 +25,8 @@ import {
   type Setting,
   type Wearable
 } from '@hud/engine/protocol'
-import { applyProfileEdit } from './profileEdit'
-import { mentionName } from './mention'
+import { applyProfileEdit } from '@hud/engine/profileEdit'
+import { mentionName } from '@hud/engine/mention'
 import type { Color3 } from '@hud/engine/generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'

@@ -3,7 +3,7 @@
 // useEngineSession); because <PopupHost/> is mounted inside Hud's <SessionProvider>, the popup can
 // read the session with useSession() even though it renders through a portal.
 import { openPopup } from '@hud/design'
-import { relationshipOf } from '../../lib/relationship'
+import { relationshipOf } from '@hud/lib/relationship'
 import { useSession } from '../session/SessionContext'
 import { useProfile } from '../session/profileStore'
 import { openPassport } from '../profile/Passport'

@@ -7,7 +7,7 @@ import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 import type { HoverAction, ProximityTip } from '@hud/engine/protocol'
 import { projectToScreen, createFovTracker, type Quat } from './project'
-import { proximityKey } from '../../../src/engine/pointerKeys'
+import { proximityKey } from '@hud/engine/pointerKeys'
 
 function toActions(entries: HoverEntry[]): HoverAction[] {
   return entries

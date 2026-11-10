@@ -6,7 +6,7 @@ import type { ChatState, CommunityConversation, Conversation } from '../session/
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '@hud/design'
 import { splitName, usePartner } from './chatIdentity'
 import closeIcon from '@hud/assets/chat/close-thin.png'
-import styles from './Chat.module.css'
+import styles from '@hud/features/chat/Chat.module.css'
 
 function badge(count: number): React.JSX.Element | null {
   return count > 0 ? <span className={styles.railBadge}>{count > 9 ? '9+' : count}</span> : null

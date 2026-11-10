@@ -13,7 +13,7 @@ import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } fr
 import closeIcon from '@hud/assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
-import styles from './CommunityCreateModal.module.css'
+import styles from '@hud/features/communities/CommunityCreateModal.module.css'
 
 const MEMBERSHIP = [
   { value: 'public', label: 'Public', note: 'Anyone can become a member, view Community details, and join your Voice Streams' },

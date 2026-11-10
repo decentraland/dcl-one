@@ -6,7 +6,7 @@
 // boundary), which is every 40 parcels for satellite and every 16 for parcel.
 
 import { PARCELS_PER_TILE, PARCEL_METERS, atlasPx, tileUrl, type Chunk, type ParcelTile } from '../map/atlas'
-import styles from './Minimap.module.css'
+import styles from '@hud/features/minimap/Minimap.module.css'
 
 /**
  * Px per parcel the layer is laid out at. Chosen so the widest zoom only ever downscales and

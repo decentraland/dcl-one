@@ -8,7 +8,7 @@ import { openCommunityModal } from '../communities/CommunityModal'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
 import playersIcon from '@hud/assets/chat/players.png'
-import styles from './Chat.module.css'
+import styles from '@hud/features/chat/Chat.module.css'
 
 export function CommunityHeader({
   community,

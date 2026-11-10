@@ -32,7 +32,7 @@ import { isSpeaking } from './voice'
 import { fetchProfile } from './profile'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
-import { userNameColor } from '../../../src/engine/nameColor'
+import { userNameColor } from '@hud/engine/nameColor'
 
 // unity-explorer colours (CommonStyles.uss): solid pill + border, white-40% wallet id.
 const PILL_BG = Color4.create(22 / 255, 21 / 255, 24 / 255, 1) // --dcl-color-shadow #161518

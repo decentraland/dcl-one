@@ -10,7 +10,7 @@ import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
 import { attachEngine, launchAnalytics } from '../lib/analytics'
 import { inShell, shellRequest } from '../lib/shell'
 import { autopilotFailCommand, newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
-import type { EngineRpc, LaunchHostOptions } from './engineRpc'
+import type { EngineRpc, LaunchHostOptions } from '@hud/engine/engineRpc'
 import { BridgeChannel } from './bridgeChannel'
 import { bridgeChannelName, type PageToScene, type SceneToPage } from '@hud/engine/protocol'
 

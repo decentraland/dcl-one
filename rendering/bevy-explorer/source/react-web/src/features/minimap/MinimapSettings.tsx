@@ -7,7 +7,7 @@
 import { Check } from '@hud/design'
 import { ALL_MARKER_CATEGORIES } from './minimapPrefs'
 import type { MinimapRotation, MinimapStyle } from '@hud/engine/protocol'
-import styles from './MinimapSettings.module.css'
+import styles from '@hud/features/minimap/MinimapSettings.module.css'
 
 const ROTATION_LABELS: Array<{ value: MinimapRotation; label: string }> = [
   { value: 'camera', label: 'Rotate with camera' },

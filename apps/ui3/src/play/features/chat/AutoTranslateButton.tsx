@@ -2,7 +2,7 @@
 
 import { ControlButton, Tooltip, Translate } from '@hud/design'
 import { autoTranslates, setAutoTranslate, useTranslationPrefs } from './translation'
-import styles from './Chat.module.css'
+import styles from '@hud/features/chat/Chat.module.css'
 
 export function AutoTranslateButton({ channel }: { channel: string }): React.JSX.Element {
   const on = autoTranslates(useTranslationPrefs(), channel)

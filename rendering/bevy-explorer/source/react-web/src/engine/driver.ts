@@ -1,5 +1,5 @@
 import type { AuthIdentity } from '../features/auth/sso'
-import type { LaunchHostOptions } from './engineRpc'
+import type { LaunchHostOptions } from '@hud/engine/engineRpc'
 import type { PageToScene, SceneToPage } from '@hud/engine/protocol'
 
 // The session surface the UI depends on. Two implementations:

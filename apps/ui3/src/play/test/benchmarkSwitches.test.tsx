@@ -6,7 +6,7 @@
 
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { EngineRpc } from '../engine/engineRpc'
+import { EngineRpc } from '@hud/engine/engineRpc'
 import { EngineHost } from '../features/engine/EngineHost'
 import { bootMode } from '../lib/bootMode'
 import { untrustedLaunchParams } from '../lib/launchGate'

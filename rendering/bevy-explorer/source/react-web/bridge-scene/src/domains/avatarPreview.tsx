@@ -16,7 +16,7 @@ import type { Ctx } from '../bridge'
 import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@hud/engine/protocol'
 import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@hud/engine/avatarEquip'
-import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '../../../src/engine/lobbyStage'
+import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@hud/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }

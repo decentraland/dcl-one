@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import { serviceUrl } from '../lib/baseDomain'
 import { openPopup } from '@hud/design'
-import styles from './WorldVisitModal.module.css'
+import styles from '@hud/components/WorldVisitModal.module.css'
 
 const WORLDS_API = `${serviceUrl('places')}/api/worlds`
 

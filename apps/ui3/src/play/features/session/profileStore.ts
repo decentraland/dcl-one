@@ -9,7 +9,7 @@
 // it is mounted, so a chat line on screen keeps its sender resolved however long ago they left; an
 // entry nobody has shown for a while is swept. The engine announces profile changes (the
 // `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
-import { looksClaimed } from '../../engine/mention'
+import { looksClaimed } from '@hud/engine/mention'
 import { useCallback, useSyncExternalStore } from 'react'
 import type { Profile } from '@hud/engine/protocol'
 import { userColor } from '../../lib/identity'

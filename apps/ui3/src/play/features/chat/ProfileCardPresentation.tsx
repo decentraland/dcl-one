@@ -9,12 +9,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '@hud/design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
-import { looksClaimed, mentionName } from '../../engine/mention'
+import { looksClaimed, mentionName } from '@hud/engine/mention'
 import { peekProfile } from '../session/profileStore'
-import type { Relationship } from '../../lib/relationship'
-import styles from './ProfileCard.module.css'
+import type { Relationship } from '@hud/lib/relationship'
+import styles from '@hud/features/chat/ProfileCard.module.css'
 
-export type { Relationship } from '../../lib/relationship'
+export type { Relationship } from '@hud/lib/relationship'
 
 export interface ChatUser {
   address: string

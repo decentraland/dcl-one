@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import type { LoginFlow } from '../session/useEngineSession'
-import styles from './BootProgress.module.css'
+import styles from '@hud/features/engine/BootProgress.module.css'
 
 // Engine boot steps surfaced from the engine loader.
 const STEP_LABEL: Record<string, string> = {

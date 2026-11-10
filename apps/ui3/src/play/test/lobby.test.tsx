@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BackpackModal } from '../features/backpack/BackpackModal'
-import modalStyles from '../features/backpack/BackpackModal.module.css'
+import modalStyles from '@hud/features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../features/lobby/LobbyHome'
 import { fetchHomePlace, fetchRecents } from '../features/lobby/lobbyApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
@@ -78,7 +78,7 @@ describe('lobby controls', () => {
 
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
     const sheet = document.createElement('style')
-    const css = readFileSync('src/play/features/backpack/BackpackModal.module.css', 'utf8')
+    const css = readFileSync('../../library/ui/apps/hud/features/backpack/BackpackModal.module.css', 'utf8')
     sheet.textContent = css.replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => modalStyles[name] ? `.${modalStyles[name]}` : selector)
     document.head.append(sheet)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 1600, 850))

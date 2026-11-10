@@ -45,8 +45,8 @@ transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with
   client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
   keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
-  in `apps/ui3` under `tsconfig.play.json`. Tests of the shared HUD UI that need no host run once,
-  in `library/ui` (`pnpm exec vitest run --project hud`). `?native=1` is not built.
+  in `apps/ui3` under `tsconfig.play.json`. Tests of the shared HUD UI live in
+  `library/ui/apps/hud`, and `react-web`'s `npm test` runs them. `?native=1` is not built.
 - The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and
   its sign-in in `features/session/useEngineSession.ts`, the shell's local guest
   (`shell/localGuest.ts`) and the stream params (`perfStream`, `perfCsv`). `/play` never runs the

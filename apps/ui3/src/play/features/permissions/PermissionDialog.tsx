@@ -12,7 +12,7 @@ import { useState } from 'react'
 import { Button, openPopup } from '@hud/design'
 import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '@hud/engine/protocol'
 import type { PermissionSubject } from '../session/useEngineSession'
-import styles from './PermissionDialog.module.css'
+import styles from '@hud/features/permissions/PermissionDialog.module.css'
 
 // PermissionType (serde enum name) → the "wants permission to {…}" clause. Mirrors the engine's
 // PermissionStrings::passive in crates/common/src/structs.rs. Unknown types get a generic fallback.

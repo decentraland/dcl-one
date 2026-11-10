@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from './harness'
-import { WorldPasswordDialog, openWorldPasswordDialog } from '../features/worldAccess/WorldPasswordDialog'
+import { WorldPasswordDialog, openWorldPasswordDialog } from '@hud/features/worldAccess/WorldPasswordDialog'
 import { closeTopPopup, resetPopups } from '@hud/design'
 import type { WorldPasswordRequestMessage } from '@hud/engine/protocol'
 

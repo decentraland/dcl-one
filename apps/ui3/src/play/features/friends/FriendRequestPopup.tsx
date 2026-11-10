@@ -6,8 +6,8 @@ import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '@hud/d
 import { splitName, userColor } from '../../lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'
-import { onFriendEvent } from './friendEvents'
-import styles from './FriendRequestPopup.module.css'
+import { onFriendEvent } from '@hud/features/friends/friendEvents'
+import styles from '@hud/features/friends/FriendRequestPopup.module.css'
 
 export type RequestMode = 'send' | 'received' | 'sent' | 'accept'
 

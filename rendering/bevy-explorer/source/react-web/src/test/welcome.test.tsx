@@ -1,7 +1,7 @@
 import { expectConsoleOutput } from './console'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { LaunchHostOptions } from '../engine/engineRpc'
+import type { LaunchHostOptions } from '@hud/engine/engineRpc'
 import { SessionProvider } from '../features/session/SessionContext'
 import { WelcomePage } from '../features/welcome/WelcomePage'
 import { FakeDriver, fakeProfileState, fakeSession, renderSession, type Harness } from './harness'

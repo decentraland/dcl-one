@@ -10,7 +10,7 @@
 import { attributionParams, sessionId } from '../../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../../lib/entryParams'
 import { inShell, postToShell, shellRequest } from '../../lib/shell'
-import { GUEST_SESSION_KEY } from './thirdweb'
+import { GUEST_SESSION_KEY } from '@hud/features/auth/thirdweb'
 
 // The standard Decentraland AuthIdentity, as serialized by @dcl/crypto / @dcl/single-sign-on
 // -client. It is the SAME shape no matter how the user signed in (wallet/MetaMask, social,

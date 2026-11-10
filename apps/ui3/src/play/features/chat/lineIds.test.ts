@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { risingIds, rowKeys } from './lineIds'
+import { risingIds, rowKeys } from '@hud/features/chat/lineIds'
 
 describe('risingIds', () => {
   const counter = (start: number) => {

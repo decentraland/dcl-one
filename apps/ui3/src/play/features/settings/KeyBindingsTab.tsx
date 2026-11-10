@@ -17,10 +17,10 @@ import {
   labelForInput,
   sameAction,
   useBindingsSnapshot
-} from '../../lib/bindingLabels'
-import { isForwarded, markForwarded } from '../../lib/canvasForward'
+} from '@hud/lib/bindingLabels'
+import { isForwarded, markForwarded } from '@hud/lib/canvasForward'
 import type { BindingsState } from '../session/useEngineSession'
-import styles from './KeyBindingsTab.module.css'
+import styles from '@hud/features/settings/KeyBindingsTab.module.css'
 
 // [wire action, friendly label]
 const GAMEPLAY_ACTIONS: [ActionWire, string][] = [

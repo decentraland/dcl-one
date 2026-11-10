@@ -13,7 +13,7 @@ import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
 import type { Community } from '@hud/engine/protocol'
 import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
-import styles from './CommunitiesPage.module.css'
+import styles from '@hud/features/communities/CommunitiesPage.module.css'
 
 /** The wait after the last keystroke before searching, so typing sends one read. */
 export const SEARCH_DELAY_MS = 1000

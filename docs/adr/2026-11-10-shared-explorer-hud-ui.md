@@ -26,9 +26,10 @@ import it as `@hud/*`.
   resolves React and the other packages to its own copy (`paths`, `resolve.dedupe`), at the versions
   the hosts already pin; `library/ui`'s own tests use the packages `library/ui` already pins.
 - **The HUD's conventions.** The code keeps the compiler profile and style of `react-web`, which
-  type-checks it, tests included. `library/ui`'s lint and formatting skip `apps/hud`. Its tests that
-  need no host run in `library/ui`'s `hud` Vitest project against a web host; tests that drive a
-  host's session stay in that host.
+  type-checks it, tests included. `library/ui`'s lint and formatting skip `apps/hud`. Its tests live
+  beside it. `react-web`'s Vitest runs them all, with its own packages; `library/ui`'s `hud` project
+  runs those that need no package only the hosts install. Tests of a host's own files stay in that
+  host.
 - **One copy of the bindings.** The TypeScript generated from the Explorer's Rust structs is tracked
   once, in `library/ui/apps/hud/engine/generated`, beside the wire protocol that uses it.
   `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh` writes it, and the Sites import checks
@@ -39,10 +40,10 @@ import it as `@hud/*`.
 
 ## Consequences
 
-Changing shared HUD code changes both hosts. `react-web` type-checks it, `library/ui` runs its
-tests that need no host, each host's own tests exercise it through that host, and the HUD
+Changing shared HUD code changes both hosts. `react-web` type-checks it and runs its tests,
+`library/ui` runs the tests that need only its packages, and the HUD
 artifact's inputs and CI selection include `library/ui/apps/hud/` (`HUD_SHARED` in
 `tooling/play-artifact.py`). The Explorer client team owns `library/ui/apps/hud/`. Moving the rest
-of the HUD needs the packages it imports (for example `@noble/*` for identity and
-`@tanstack/react-query` for the Shop) to resolve in `library/ui`'s own tests, and the in-world
-Shop's UI, which imports `apps/ui3/src/shop`, cannot move until those imports are in `library/`.
+of the HUD keeps its tests that need other packages (for example `@noble/*` for identity) in
+`apps/hud/test/hosted/`, which only `react-web` runs. The in-world Shop's UI imports
+`apps/ui3/src/shop`, so it cannot move until those imports are in `library/`.

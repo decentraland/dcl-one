@@ -4,7 +4,7 @@
 import { Avatar, ControlButton } from '@hud/design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import type { ProfileState } from '../session/useEngineSession'
-import styles from './ProfilePanel.module.css'
+import styles from '@hud/features/profile/ProfilePanel.module.css'
 
 export function ProfilePanel({ profile }: { profile: ProfileState }): React.JSX.Element | null {
   if (!profile.open) return null

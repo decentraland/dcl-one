@@ -18,9 +18,7 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
 npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
-npm test                   # tier 1 — the unit tests present at this revision
-(cd ../../../../library/ui && pnpm install --frozen-lockfile && pnpm exec vitest run --project hud)
-                           # tier 1 — the shared HUD UI's own tests
+npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
 npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
 (cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
@@ -82,7 +80,7 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 
 Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
 lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
-it). Its contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.
+it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.tsx`, `library/ui/apps/hud/lib/integratedGpu.test.ts`.
 
 **Updating baselines** (only when the change is intentional):
 ```bash

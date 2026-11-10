@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EngineDriver } from '../engine/EngineDriver'
-import { EngineRpc } from '../engine/engineRpc'
+import { EngineRpc } from '@hud/engine/engineRpc'
 import { sessionId } from '../lib/analytics'
 
 describe('EngineDriver', () => {

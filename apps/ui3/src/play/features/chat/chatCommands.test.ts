@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatConsoleReply, HUD_HIDDEN_COMMANDS, parseChatCommand, splitArgs, HELP_TEXT } from './chatCommands'
+import { formatConsoleReply, HUD_HIDDEN_COMMANDS, parseChatCommand, splitArgs, HELP_TEXT } from '@hud/features/chat/chatCommands'
 
 describe('parseChatCommand', () => {
   it('passes a normal message through as send (trimmed)', () => {

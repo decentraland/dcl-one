@@ -2,7 +2,7 @@
 // plain Unicode inserted into the message string — no engine API involved. We use
 // it for the grid picker and for ":shortcode:" autocomplete in the chat input.
 
-import data from './emojis_complete.json'
+import data from '@hud/features/chat/emojis_complete.json'
 import { getPref, PREF, setPref } from '../../lib/prefs'
 
 export interface Emoji {

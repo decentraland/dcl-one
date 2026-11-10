@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { probeGpu } from './gpu'
+import { probeGpu } from '@hud/lib/gpu'
 
 // jsdom's navigator has no `gpu`; define/override it per case, restore after.
 const original = (navigator as unknown as { gpu?: unknown }).gpu

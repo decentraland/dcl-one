@@ -4,16 +4,16 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { SceneLoadingState } from '@hud/engine/protocol'
-import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
+import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '@hud/lib/bindingLabels'
 import { launchCount } from '../../lib/launchCount'
-import { bugReportUrl } from '../../lib/bugReport'
+import { bugReportUrl } from '@hud/lib/bugReport'
 import { Icon } from '@hud/design'
 import logoIcon from '@hud/assets/loading/logo-icon.webp'
 import wordmark from '@hud/assets/loading/wordmark.webp'
-import { TIP_ROTATE_MS, tipsFor, type LoadingTip } from './loadingTips'
+import { TIP_ROTATE_MS, tipsFor, type LoadingTip } from '@hud/features/session/loadingTips'
 import prevTip from '@hud/assets/loading/prev-tip.webp'
 import nextTip from '@hud/assets/loading/next-tip.webp'
-import styles from './SceneLoadingOverlay.module.css'
+import styles from '@hud/features/session/SceneLoadingOverlay.module.css'
 import { getPref, PREF, setPref } from '../../lib/prefs'
 
 const FADE_MS = 300

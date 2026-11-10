@@ -11,7 +11,7 @@ import { resolveShopUrls } from './marketplace'
 import { itemUrn, tokenUrnOf } from './urns'
 import type { Ctx } from '../bridge'
 import type { Emote } from '@hud/engine/protocol'
-import { readAllPages, type Page } from '../../../src/engine/paging'
+import { readAllPages, type Page } from '@hud/engine/paging'
 import { currentLook, editLook } from './avatarDraft'
 import { identity } from '../identity'
 

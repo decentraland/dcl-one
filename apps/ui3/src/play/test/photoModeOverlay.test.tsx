@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import type { PhotoModeSnapshot } from '@hud/engine/protocol'
 import type { PhotoModeState } from '../features/session/useEngineSession'
 import { PhotoModeOverlay } from '../features/photoMode/PhotoModeOverlay'
-import { setBindingsSnapshot } from '../lib/bindingLabels'
+import { setBindingsSnapshot } from '@hud/lib/bindingLabels'
 
 afterEach(() => setBindingsSnapshot([])) // module store leaks across tests
 

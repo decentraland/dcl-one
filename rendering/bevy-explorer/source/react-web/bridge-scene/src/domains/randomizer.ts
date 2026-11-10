@@ -9,7 +9,7 @@
 import { getPlayer } from '@dcl/sdk/players'
 import type { Ctx } from '../bridge'
 import type { AvatarLook } from '@hud/engine/avatarEquip'
-import { OutfitRandomizer, isCoreCategory, rollCategories, type RollItem } from '../../../src/engine/outfitRandomizer'
+import { OutfitRandomizer, isCoreCategory, rollCategories, type RollItem } from '@hud/engine/outfitRandomizer'
 import { currentLook, editLook } from './avatarDraft'
 import { deployableUrn, fetchWearablesPage, sendEquipped } from './wearables'
 import { identity } from '../identity'

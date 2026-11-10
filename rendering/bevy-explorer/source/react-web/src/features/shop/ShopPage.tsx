@@ -6,7 +6,7 @@ import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Dropd
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
 import { fetchShop, marketplaceUrl, shopItemPrice, type ShopCategory, type ShopItem, type ShopSort } from './shopApi'
-import styles from './ShopPage.module.css'
+import styles from '@hud/features/shop/ShopPage.module.css'
 
 const SECTIONS: TabItem<ShopCategory>[] = [
   { id: 'wearable', label: 'Wearables' },

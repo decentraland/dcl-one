@@ -7,7 +7,7 @@
 
 import { createGuestIdentity } from '../features/auth/guest'
 import { encodeIdentity, type AuthIdentity } from '../features/auth/sso'
-import type { GuestWallet } from '../features/auth/thirdweb'
+import type { GuestWallet } from '@hud/features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
 import { autopilotFailCommand, newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
 import {

@@ -4,10 +4,10 @@
 import { useEffect, useRef } from 'react'
 import { showToast, Spinner } from '@hud/design'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { EditorOffered } from './config'
+import { EditorOffered } from '@hud/features/editorHost/config'
 import type { EngineSession, ProfileState } from '../session/useEngineSession'
 import type { EditorEntry } from './EditorHost'
-import styles from './CreatePage.module.css'
+import styles from '@hud/features/editorHost/CreatePage.module.css'
 
 function Home({ entry, close }: { entry: EditorEntry; close: () => void }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)

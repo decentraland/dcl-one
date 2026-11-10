@@ -12,8 +12,8 @@ import placesIcon from '@hud/assets/chat/emoji-categories/places.png'
 import objectsIcon from '@hud/assets/chat/emoji-categories/objects.png'
 import symbolsIcon from '@hud/assets/chat/emoji-categories/symbols.png'
 import flagIcon from '@hud/assets/chat/emoji-categories/flag.png'
-import { isCancelKey } from '../../lib/bindingLabels'
-import styles from './EmojiPicker.module.css'
+import { isCancelKey } from '@hud/lib/bindingLabels'
+import styles from '@hud/features/chat/EmojiPicker.module.css'
 
 // Toggle order differs from the scroll order: smileys + people share one, activities comes before places.
 const TOGGLES: { icon: string; label: string; section: string }[] = [

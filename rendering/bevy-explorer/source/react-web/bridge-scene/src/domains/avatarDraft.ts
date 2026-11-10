@@ -12,7 +12,7 @@ import { catalystBase } from '../http'
 import { resolveDefsByUrn } from './collections'
 import { itemUrn } from './urns'
 import { lookDeploy, sameLook, type AvatarLook } from '@hud/engine/avatarEquip'
-import { bodyShapesOf, isCompatible } from '../../../src/engine/bodyShape'
+import { bodyShapesOf, isCompatible } from '@hud/engine/bodyShape'
 import { identity } from '../identity'
 
 let draft: AvatarLook | null = null

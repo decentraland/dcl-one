@@ -307,22 +307,17 @@ The Explorer HUD has two hosts:
   own compiler profile (`apps/ui3/tsconfig.play.json`).
 
 The HUD UI both hosts share lives once, in `library/ui/apps/hud`, and both
-import it as `@hud/*`:
+import it as `@hud/*`. It keeps the hosts' folder layout (`design/`,
+`styles/tokens.css`, `assets/`, `engine/`, `features/`, `lib/`). It includes the
+page-engine wire protocol (`engine/protocol.ts`) and the tracked bindings
+generated from the Explorer's Rust structs (`engine/generated`, written by
+`rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`).
 
-- the `design/` primitives (except `design/Showcase.tsx`, which renders host
-  features), `styles/tokens.css` and `assets/` (except the in-world Shop's
-  `assets/shop`, which stays in `/play`);
-- the page-engine wire protocol (`engine/protocol.ts`, `engine/avatarEquip.ts`)
-  and the tracked bindings generated from the Explorer's Rust structs
-  (`engine/generated`, written by
-  `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`);
-- the reward popup (`features/rewards`), the category icons and the small
-  libraries they use (`lib/cancelLayers.ts`, `lib/color.ts`, `lib/inputLock.ts`,
-  `lib/useFocusTrap.ts`).
-
-The rest of the HUD is still two copies, one in each host, and moves to
-`library/ui/apps/hud` feature by feature. A move preserves HUD behavior in
-both hosts.
+Each host keeps its entry points, its page shell (`shell/`), its global
+stylesheet (`styles/global.css`), `design/Showcase.tsx` (it renders host
+features) and the in-world Shop that only `/play` has. HUD code not yet in
+`library/ui/apps/hud` is still copied in both hosts and moves there feature
+by feature. A move preserves HUD behavior in both hosts.
 
 Shared HUD code imports nothing from a host. Where the hosts behave
 differently, it imports the behavior from `@hud-host`, which each host maps
@@ -333,9 +328,10 @@ build-time alias, so code one host leaves out stays out of its bundle.
 The shared HUD keeps the conventions of `react-web`, under
 `rendering/bevy-explorer/source/react-web/AGENTS.md`: `react-web` type-checks
 it, tests included, under its compiler profile, and `library/ui`'s lint and
-formatting skip it. Its tests that need no host run in `library/ui`'s `hud`
-Vitest project against a web host (`apps/hud/test/host.ts`); tests that drive
-a host's session stay in that host. The Sites host does not load the shared
+formatting skip it. Its tests live beside it: `react-web`'s Vitest runs all
+of them, and `library/ui`'s `hud` project runs those that need no package only
+the hosts install (all but `apps/hud/test/hosted/`) against a web host
+(`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
 foundations yet.
 
 ### Integration

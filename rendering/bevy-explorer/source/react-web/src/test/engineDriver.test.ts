@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EngineDriver, NO_SHELL_FOR_LOCAL_GUEST } from '../engine/EngineDriver'
-import { EngineRpc } from '../engine/engineRpc'
+import { EngineRpc } from '@hud/engine/engineRpc'
 import { sessionId } from '../lib/analytics'
 
 describe('EngineDriver', () => {
@@ -26,7 +26,7 @@ describe('EngineDriver', () => {
       const actual = await vi.importActual<typeof import('../lib/shell')>('../lib/shell')
       vi.doMock('../lib/shell', () => ({ ...actual, inShell: true, shellRequest }))
       const { EngineDriver: InShell } = await import('../engine/EngineDriver')
-      const { EngineRpc: Rpc } = await import('../engine/engineRpc')
+      const { EngineRpc: Rpc } = await import('@hud/engine/engineRpc')
       const rpc = new Rpc()
       const command = vi.spyOn(rpc, 'command').mockResolvedValue('logged in with identity')
       const driver = new InShell(rpc)

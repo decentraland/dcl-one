@@ -7,12 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { serviceUrl } from '../../lib/baseDomain'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { CAT_ICONS, CAT_PINS, WORLD_ICON } from './mapArt'
+import { CAT_ICONS, CAT_PINS, WORLD_ICON } from '@hud/features/map/mapArt'
 import { GRID, ORIGIN_X, ORIGIN_Y, PARCELS_PER_TILE, SIZE, SPAN, tileUrl } from './atlas'
 import type { MapState, ProfileState } from '../session/useEngineSession'
 import { openWorldVisit } from '../../components/WorldVisitModal'
-import { isCancelKey } from '../../lib/bindingLabels'
-import styles from './MapPage.module.css'
+import { isCancelKey } from '@hud/lib/bindingLabels'
+import styles from '@hud/features/map/MapPage.module.css'
 
 const PLACES_API = `${serviceUrl('places')}/api/places`
 const WORLDS_API = `${serviceUrl('places')}/api/worlds`

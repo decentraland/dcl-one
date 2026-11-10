@@ -61,7 +61,9 @@ export default defineConfig({
         test: {
           name: 'hud',
           environment: 'jsdom',
-          include: ['apps/hud/test/**/*.test.{ts,tsx}'],
+          include: ['apps/hud/**/*.test.{ts,tsx}'],
+          // Tests that need packages only the HUD hosts install; react-web's Vitest runs them.
+          exclude: ['apps/hud/test/hosted/**'],
           setupFiles: ['apps/hud/test/setup.ts'],
           // jsdom's localStorage, not Node's own (on by default from Node 25).
           execArgv: ['--no-experimental-webstorage'],

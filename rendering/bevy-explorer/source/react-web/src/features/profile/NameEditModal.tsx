@@ -9,9 +9,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '@hud/design'
 import { useSession } from '../session/SessionContext'
 import { splitName } from '../../lib/identity'
-import { NAME_MAX, isValidName } from './profileFields'
-import { addressSuffix } from '../../engine/profileEdit'
-import styles from './NameEditModal.module.css'
+import { NAME_MAX, isValidName } from '@hud/features/profile/profileFields'
+import { addressSuffix } from '@hud/engine/profileEdit'
+import styles from '@hud/features/profile/NameEditModal.module.css'
 
 /** Where a NAME is bought. Same destination as the communities modal's "Get a NAME". */
 const NAMES_URL = 'https://decentraland.org/marketplace/names/claim'

@@ -8,10 +8,10 @@ import { getLogin, rootAddress } from '../auth/sso'
 import type { EngineSession } from '../session/useEngineSession'
 import { CreatePage } from './CreatePage'
 import { confirmDeployment, confirmUndeploy } from './DeployConfirm'
-import { bridgeScene, bridgeTravel } from './host/bridge'
+import { bridgeScene, bridgeTravel } from '@hud/features/editorHost/host/bridge'
 import { guardUrlSync, loadEditor, type EditorPackage } from './host/host'
-import { editorFeatures } from './config'
-import { editorEntry, editorSource, hasEditor, type EditorSource } from './source'
+import { editorFeatures } from '@hud/features/editorHost/config'
+import { editorEntry, editorSource, hasEditor, type EditorSource } from '@hud/features/editorHost/source'
 
 type HostWindow = Window & {
   engine_console_command?: (line: string) => Promise<string>

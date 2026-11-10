@@ -1,7 +1,7 @@
 // The editor package's super-user scene (features/editorHost/host/editorScene.ts): with a pinned
 // entity id the page spawns only bytes that hash to it, and serves them itself.
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { contentCid } from '../features/editorHost/host/cid'
+import { contentCid } from '@hud/features/editorHost/host/cid'
 import { loadEditor, type DclEditorHostV1, type EditorHostDeps } from '../features/editorHost/host/host'
 import { PAGE_DIR } from '../lib/publicUrl'
 

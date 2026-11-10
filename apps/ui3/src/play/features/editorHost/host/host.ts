@@ -2,11 +2,11 @@
 // window.__dclEditorHost, the element it mounts into, and the script tag that loads it.
 
 import type { AuthChainLink, AuthIdentity } from '../../auth/sso'
-import type { EditorHudMode } from '../hudMode'
-import type { EditorFeatures } from '../config'
-import { PROJECT_ID, type EditorServices, type EditorSource, type SignedServices } from '../source'
-import { CID_PATTERN } from './cid'
-import { sceneIdFromAbout, stageEditorScene } from './editorScene'
+import type { EditorHudMode } from '@hud/features/editorHost/hudMode'
+import type { EditorFeatures } from '@hud/features/editorHost/config'
+import { PROJECT_ID, type EditorServices, type EditorSource, type SignedServices } from '@hud/features/editorHost/source'
+import { CID_PATTERN } from '@hud/features/editorHost/host/cid'
+import { sceneIdFromAbout, stageEditorScene } from '@hud/features/editorHost/host/editorScene'
 import type { Signer } from './signer'
 import type { SignMessage } from './sign'
 import { inShell, shellRequest } from '../../../lib/shell'

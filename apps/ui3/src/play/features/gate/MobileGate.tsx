@@ -4,11 +4,11 @@
 // KEEP IN SYNC with deploy/web/index.html: the store/Chrome URLs and the Apple/Google/Chrome SVGs are
 // duplicated there (the engine loader gates before react-web mounts, so it can't import from here).
 
-import { mobilePlatform } from '../../lib/isMobile'
+import { mobilePlatform } from '@hud/lib/isMobile'
 import { publicUrl } from '../../lib/publicUrl'
 import { Button, Spinner } from '@hud/design'
-import { FlagStep } from './FlagStep'
-import styles from './MobileGate.module.css'
+import { FlagStep } from '@hud/features/gate/FlagStep'
+import styles from '@hud/features/gate/MobileGate.module.css'
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/decentraland/id6478403840'
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer'

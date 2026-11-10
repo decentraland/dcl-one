@@ -14,9 +14,9 @@ import { openPassport } from '../profile/Passport'
 import { confirmUnblock } from './friendDialogs'
 import { openFriendRequest } from './FriendRequestPopup'
 import { useProfile } from '../session/profileStore'
-import { hudInsetRef } from '../../lib/hudInset'
-import { looksClaimed } from '../../engine/mention'
-import styles from './FriendsPanel.module.css'
+import { hudInsetRef } from '@hud/lib/hudInset'
+import { looksClaimed } from '@hud/engine/mention'
+import styles from '@hud/features/friends/FriendsPanel.module.css'
 
 type Tab = 'friends' | 'requests' | 'blocked'
 /** Open the user menu for `address` above the element that was clicked. */

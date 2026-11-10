@@ -7,7 +7,7 @@ import { Button } from '@hud/design'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from './placesApi'
 import type { Destination } from '../session/useEngineSession'
-import styles from './PlacesPicker.module.css'
+import styles from '@hud/features/places/PlacesPicker.module.css'
 
 export function PlacesPicker({ onPick, account }: { onPick: (dest: Destination) => void; account?: string | null }): React.JSX.Element {
   return (

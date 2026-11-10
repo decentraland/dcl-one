@@ -5,15 +5,15 @@
 // and sends it the buttons. Sizes are reference pixels (1080p canvas) scaled by --ui-scale.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Close, ControlButton, MaskIcon, MouseIcon, ScrollIcon } from '@hud/design'
-import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
+import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '@hud/lib/bindingLabels'
 import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import type { ActionWire } from '@hud/engine/protocol'
 import type { PhotoModeState } from '../session/useEngineSession'
-import { normalizedFrameSize } from './frame'
+import { normalizedFrameSize } from '@hud/features/photoMode/frame'
 import shootArt from '@hud/assets/photo-mode/shoot.png'
 import keyboardArt from '@hud/assets/photo-mode/keyboard.png'
 import galleryArt from '@hud/assets/photo-mode/gallery.png'
-import styles from './PhotoModeOverlay.module.css'
+import styles from '@hud/features/photoMode/PhotoModeOverlay.module.css'
 
 const NO_STORAGE_TEXT =
   "You can't take more photos because you have reached the Camera Reel storage limit. To make room we recommend you to download and then delete some items."

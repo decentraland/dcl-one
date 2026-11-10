@@ -7,7 +7,7 @@ import { SERVICES, type ServiceDef } from '@hud/engine/generated'
 import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
-import { webParam } from './webParams'
+import { webParam } from '@hud/lib/webParams'
 
 export interface UntrustedParam {
   name: string

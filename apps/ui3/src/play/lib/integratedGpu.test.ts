@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chromiumBrowser, integratedGpuOnWindows } from './integratedGpu'
-import type { GpuAdapterInfo } from './gpu'
+import { chromiumBrowser, integratedGpuOnWindows } from '@hud/lib/integratedGpu'
+import type { GpuAdapterInfo } from '@hud/lib/gpu'
 
 const WINDOWS_CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 const WINDOWS_EDGE = WINDOWS_CHROME + ' Edg/142.0.0.0'

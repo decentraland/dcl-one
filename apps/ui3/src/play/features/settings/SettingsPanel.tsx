@@ -11,7 +11,7 @@ import type { BindingsState, ProfileState, SettingsState } from '../session/useE
 import { KeyBindingsTab } from './KeyBindingsTab'
 import { clearAutoTranslate, setAutoTranslateDefault, useTranslationPrefs } from '../chat/translation'
 import { PING_MODES, clearPingMode, setPingDefault, usePingPrefs, type PingMode } from '../chat/ping'
-import styles from './SettingsPanel.module.css'
+import styles from '@hud/features/settings/SettingsPanel.module.css'
 
 // Appended after the engine-derived categories: bindings are (action, keys[]) rows from the
 // bindings relay, not numeric engine settings, so they get their own tab + body.

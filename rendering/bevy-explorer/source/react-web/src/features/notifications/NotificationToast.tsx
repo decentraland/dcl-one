@@ -7,7 +7,7 @@ import { useSyncExternalStore } from 'react'
 import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
 import { friendshipTarget, summarize } from './summary'
-import styles from './NotificationToast.module.css'
+import styles from '@hud/features/notifications/NotificationToast.module.css'
 
 export const TOAST_MS = 5000
 

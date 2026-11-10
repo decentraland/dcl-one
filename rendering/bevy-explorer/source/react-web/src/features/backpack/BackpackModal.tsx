@@ -4,8 +4,8 @@
 import { useRef } from 'react'
 import { Close, HeaderButton } from '@hud/design'
 import { useSession } from '../session/SessionContext'
-import { holeClip } from '../../lib/holeClip'
-import styles from './BackpackModal.module.css'
+import { holeClip } from '@hud/lib/holeClip'
+import styles from '@hud/features/backpack/BackpackModal.module.css'
 
 export function BackpackModal({ onClose, children }: { onClose: () => void; children: React.ReactNode }): React.JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)

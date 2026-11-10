@@ -6,7 +6,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import type { AuthIdentity } from './sso'
-import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from '@hud/features/auth/thirdweb'
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 

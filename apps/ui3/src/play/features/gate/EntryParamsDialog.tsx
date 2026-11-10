@@ -4,7 +4,7 @@
 
 import { openPopup, ModalShell, Button } from '@hud/design'
 import { acceptedEntryParams } from '../../lib/entryParams'
-import styles from './EntryParamsDialog.module.css'
+import styles from '@hud/features/gate/EntryParamsDialog.module.css'
 
 /** Open the dialog; the returned handle closes it (App's effect cleanup). */
 export function openEntryParamsDialog(unrecognised: string[]): () => void {

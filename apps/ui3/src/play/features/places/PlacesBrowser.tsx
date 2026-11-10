@@ -13,7 +13,7 @@ import { PlaceCard } from './PlaceCard'
 import { FeaturedCarousel } from './FeaturedCarousel'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'
 import { isHiddenPlace, placePlayers, type DiscoverPlace } from './placesApi'
-import styles from './PlacesPage.module.css'
+import styles from '@hud/features/places/PlacesPage.module.css'
 
 const SECTIONS: TabItem<PlacesSection>[] = [
   { id: 'all', label: 'Explore all', icon: <CompassGlyph /> },

@@ -6,7 +6,7 @@ import { ControlButton } from '@hud/design'
 import type { AppNotification } from '@hud/engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
 import { ago, friendshipTarget, summarize } from './summary'
-import styles from './NotificationsPanel.module.css'
+import styles from '@hud/features/notifications/NotificationsPanel.module.css'
 
 function NotificationRow({ n, friends }: { n: AppNotification; friends?: FriendsState }): React.JSX.Element {
   const { title, body, image } = summarize(n)

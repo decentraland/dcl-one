@@ -9,11 +9,11 @@ import { Button, TextInput } from '@hud/design'
 import { splitName } from '../../lib/identity'
 import { EngineViewport } from '../engine/EngineViewport'
 import { StandInStage } from '../lobby/LobbyHome'
-import lobbyStyles from '../lobby/LobbyHome.module.css'
+import lobbyStyles from '@hud/features/lobby/LobbyHome.module.css'
 import { useStoredProfile } from '../login/useStoredProfile'
-import { NAME_MAX, isValidName } from '../profile/profileFields'
+import { NAME_MAX, isValidName } from '@hud/features/profile/profileFields'
 import { useSession } from '../session/SessionContext'
-import styles from './WelcomePage.module.css'
+import styles from '@hud/features/welcome/WelcomePage.module.css'
 
 type Rect = { x: number; y: number; width: number; height: number }
 

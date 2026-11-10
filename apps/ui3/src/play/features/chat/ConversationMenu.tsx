@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ContextMenu, ControlButton, Kebab, type ContextMenuItem } from '@hud/design'
 import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
-import styles from './Chat.module.css'
+import styles from '@hud/features/chat/Chat.module.css'
 
 export const PING_LABEL = 'Notification Ping'
 

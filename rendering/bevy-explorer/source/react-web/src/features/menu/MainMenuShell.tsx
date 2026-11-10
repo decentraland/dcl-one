@@ -4,10 +4,10 @@
 
 import { useContext, useEffect, useState } from 'react'
 import { Button, DclLogo, Icon, type IconName } from '@hud/design'
-import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
-import { EDITOR_BUILD, EditorOffered } from '../editorHost/config'
+import { keyHintFor, useBindingsSnapshot } from '@hud/lib/bindingLabels'
+import { EDITOR_BUILD, EditorOffered } from '@hud/features/editorHost/config'
 import { ProfileChip } from './ProfileChip'
-import styles from './MainMenuShell.module.css'
+import styles from '@hud/features/menu/MainMenuShell.module.css'
 import onBackpack from '@hud/assets/menu-on/backpack.webp'
 import onEvents from '@hud/assets/menu-on/events.webp'
 import onPlaces from '@hud/assets/menu-on/places.webp'

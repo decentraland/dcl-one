@@ -33,7 +33,7 @@ import { showConfirm, showDialog, PopupHost } from '@hud/design/popups'
 import { Icon, type IconName } from '@hud/design/icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
-import { EmoteSlot } from '../features/emotes/EmoteSlot'
+import { EmoteSlot } from '@hud/features/emotes/EmoteSlot'
 import { catalystThumbUrl } from '../lib/identity'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.

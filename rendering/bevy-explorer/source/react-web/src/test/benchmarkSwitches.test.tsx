@@ -5,7 +5,7 @@
 
 import { render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { EngineRpc } from '../engine/engineRpc'
+import { EngineRpc } from '@hud/engine/engineRpc'
 import { EngineHost, entryEngineOptions } from '../features/engine/EngineHost'
 import { benchmarkSwitchesHonoured, bootMode } from '../lib/bootMode'
 import { untrustedLaunchParams } from '../lib/launchGate'

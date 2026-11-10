@@ -7,7 +7,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
 import type { AuthIdentity } from './sso'
-import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from '@hud/features/auth/thirdweb'
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 

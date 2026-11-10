@@ -10,7 +10,7 @@ import { PhotoDetail } from './PhotoDetail'
 import { photoTime, type GalleryState, type ProfileState } from '../session/useEngineSession'
 import type { GalleryPhoto } from '@hud/engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
-import styles from './GalleryPage.module.css'
+import styles from '@hud/features/gallery/GalleryPage.module.css'
 
 function monthLabel(ms: number): string {
   return new Date(ms).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })

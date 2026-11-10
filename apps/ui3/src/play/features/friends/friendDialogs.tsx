@@ -3,7 +3,7 @@
 import { Avatar, showConfirm } from '@hud/design'
 import { siteUrl } from '../../lib/baseDomain'
 import { knownUserColor } from '../session/profileStore'
-import styles from './FriendRequestPopup.module.css'
+import styles from '@hud/features/friends/FriendRequestPopup.module.css'
 
 export interface DialogUser {
   address: string

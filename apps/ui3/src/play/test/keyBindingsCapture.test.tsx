@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import { PopupHost, resetPopups } from '@hud/design'
-import { setBindingsSnapshot } from '../lib/bindingLabels'
+import { setBindingsSnapshot } from '@hud/lib/bindingLabels'
 import { KeyBindingsTab } from '../features/settings/KeyBindingsTab'
 import type { BindingEntry } from '@hud/engine/protocol'
 import type { BindingsState } from '../features/session/useEngineSession'

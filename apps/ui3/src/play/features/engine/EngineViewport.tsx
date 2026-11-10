@@ -4,8 +4,8 @@
 // the React DOM, showing through this transparent hole. Clears the rect on unmount.
 
 import { useLayoutEffect, useRef } from 'react'
-import { subscribeHudScale } from '../../lib/hudScale'
-import styles from './EngineViewport.module.css'
+import { subscribeHudScale } from '@hud/lib/hudScale'
+import styles from '@hud/features/engine/EngineViewport.module.css'
 
 type Rect = { x: number; y: number; width: number; height: number }
 

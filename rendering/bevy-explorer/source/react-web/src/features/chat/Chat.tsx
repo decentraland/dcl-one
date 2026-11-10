@@ -14,10 +14,10 @@ import { ConversationMenu } from './ConversationMenu'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
-import { roleLabel } from '../communities/roles'
+import { roleLabel } from '@hud/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
-import { MessageText, mentionsMe } from './chatText'
+import { MessageText, mentionsMe } from '@hud/features/chat/chatText'
 import {
   autoTranslates,
   clearAutoTranslate,
@@ -33,14 +33,14 @@ import {
 import { type ChatUser } from './ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { peekProfile, useProfile } from '../session/profileStore'
-import { isCancelKey } from '../../lib/bindingLabels'
-import { hudInsetRef } from '../../lib/hudInset'
-import { displayName, mentionName } from '../../engine/mention'
+import { isCancelKey } from '@hud/lib/bindingLabels'
+import { hudInsetRef } from '@hud/lib/hudInset'
+import { displayName, mentionName } from '@hud/engine/mention'
 import playersIcon from '@hud/assets/chat/players.png'
 import closeIcon from '@hud/assets/chat/close-thin.png'
 import newTag from '@hud/assets/chat/new-tag.png'
 import arrowLeftIcon from '@hud/assets/chat/arrow-left.png'
-import styles from './Chat.module.css'
+import styles from '@hud/features/chat/Chat.module.css'
 
 const MAX_LEN = 500
 

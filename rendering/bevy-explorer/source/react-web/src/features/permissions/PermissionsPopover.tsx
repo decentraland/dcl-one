@@ -12,7 +12,7 @@ import { registerCancelLayer } from '@hud/lib/cancelLayers'
 import type { PermissionRuleItem, PermissionRuleLevel } from '@hud/engine/protocol'
 import type { PermissionRules, PermissionSubject, TriggeredPermission, VisitAnswer } from '../session/useEngineSession'
 import { describePermission, openPermissionReview } from './PermissionDialog'
-import styles from './PermissionsPopover.module.css'
+import styles from '@hud/features/permissions/PermissionsPopover.module.css'
 
 const VALUE_LABEL = { Allow: 'always', Deny: 'never', Ask: 'ask' } as const
 

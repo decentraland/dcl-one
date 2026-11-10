@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installLocalNetworkFetch, targetAddressSpaceOf, type LnaRequestInit } from './localNetworkFetch'
+import { installLocalNetworkFetch, targetAddressSpaceOf, type LnaRequestInit } from '@hud/lib/localNetworkFetch'
 
 afterEach(() => {
   vi.unstubAllGlobals()

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { SERVICES, WEB_PARAMS } from '@hud/engine/generated'
-import { launchOptionsFromUrl, webParam } from '../lib/webParams'
+import { launchOptionsFromUrl, webParam } from '@hud/lib/webParams'
 import { untrustedLaunchParams } from '../lib/launchGate'
 import { normaliseServiceUrl } from '../lib/baseDomain'
 import { leave, visit } from './entryUrl'

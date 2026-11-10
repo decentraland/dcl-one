@@ -6,9 +6,9 @@
 import { useEffect, useState } from 'react'
 import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '@hud/design'
 import { nameColor, splitName } from '../../lib/identity'
-import { relationshipOf, type Relationship } from '../../lib/relationship'
+import { relationshipOf, type Relationship } from '@hud/lib/relationship'
 import { knownUserColor } from '../session/profileStore'
-import { isMemberRole, memberActions, roleLabel } from './roles'
+import { isMemberRole, memberActions, roleLabel } from '@hud/features/communities/roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { openPassport } from '../profile/Passport'
@@ -26,7 +26,7 @@ import type {
   CommunityPlace,
   CommunityPost
 } from '@hud/engine/protocol'
-import styles from './CommunityModal.module.css'
+import styles from '@hud/features/communities/CommunityModal.module.css'
 import { siteUrl } from '../../lib/baseDomain'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'

@@ -15,7 +15,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '@hud/design'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '../map/atlas'
-import { pinForCategories } from '../map/mapArt'
+import { pinForCategories } from '@hud/features/map/mapArt'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
 import { loadMinimapPlaces, placesNear, type MinimapPlace } from './minimapPlaces'
 import {
@@ -36,8 +36,8 @@ import {
 import { MinimapSettings } from './MinimapSettings'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { MinimapStyle } from '@hud/engine/protocol'
-import { hudInsetRef } from '../../lib/hudInset'
-import styles from './Minimap.module.css'
+import { hudInsetRef } from '@hud/lib/hudInset'
+import styles from '@hud/features/minimap/Minimap.module.css'
 
 /** Diameter of the circle, before --ui-scale. Roughly the 0.25×viewport-height the SDK7 HUD used. */
 const MAP_SIZE = 220

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Avatar, HeaderButton } from '@hud/design'
 import { shortAddr } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
-import styles from './ProfileChip.module.css'
+import styles from '@hud/features/menu/ProfileChip.module.css'
 import { siteUrl } from '../../lib/baseDomain'
 
 function Verified(): React.JSX.Element {

@@ -4,7 +4,7 @@
 import { useEffect } from 'react'
 import { Panel, Slider, Toggle, hasOpenPopup } from '@hud/design'
 import type { SkyboxState } from '../session/useEngineSession'
-import styles from './SkyboxMenu.module.css'
+import styles from '@hud/features/skybox/SkyboxMenu.module.css'
 
 export function formatHours(hours: number): string {
   const total = Math.round(hours * 60) % (24 * 60)

@@ -4,10 +4,10 @@
 
 import { useState } from 'react'
 import { catalystThumbUrl } from '../../lib/identity'
-import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
-import { EmoteSlot } from './EmoteSlot'
+import { useWindowKeyDown } from '@hud/lib/useWindowKeyDown'
+import { EmoteSlot } from '@hud/features/emotes/EmoteSlot'
 import type { EmotesState } from '../session/useEngineSession'
-import styles from './EmotesWheel.module.css'
+import styles from '@hud/features/emotes/EmotesWheel.module.css'
 
 const CENTER = 215 // wheel viewport is 430×430 (then HUD-scaled)
 const RADIUS = 152 // centre → slot centre

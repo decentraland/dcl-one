@@ -1,9 +1,9 @@
 // Shared player-identity helpers (name color, #tag split, short address). Used by
 // the chat, members, and friends UIs so the rarity-colored naming is consistent.
 
-import { looksClaimed } from '../engine/mention'
+import { looksClaimed } from '@hud/engine/mention'
 import { serviceUrl } from './baseDomain'
-import { resolveNameColor, userNameColor, type Rgb } from '../engine/nameColor'
+import { resolveNameColor, userNameColor, type Rgb } from '@hud/engine/nameColor'
 
 export { userNameColor }
 

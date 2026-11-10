@@ -14,10 +14,10 @@ import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } fro
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
 import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@hud/engine/protocol'
-import { PROFILE_FIELDS } from './profileFields'
-import { ProfileEditForm } from './ProfileEditForm'
+import { PROFILE_FIELDS } from '@hud/features/profile/profileFields'
+import { ProfileEditForm } from '@hud/features/profile/ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
-import styles from './ProfilePassport.module.css'
+import styles from '@hud/features/profile/ProfilePassport.module.css'
 
 type Tab = 'overview' | 'badges' | 'photos' | 'creations'
 const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))

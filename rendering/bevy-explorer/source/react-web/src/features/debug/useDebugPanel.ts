@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { bugReportUrl } from '../../lib/bugReport'
+import { bugReportUrl } from '@hud/lib/bugReport'
 import { isNativeHud } from '../../lib/bootMode'
 import type { EngineSession } from '../session/useEngineSession'
-import { openDebugPanel, useCommandResult, type DebugSection } from './DebugPanel'
+import { openDebugPanel, useCommandResult, type DebugSection } from '@hud/features/debug/DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],

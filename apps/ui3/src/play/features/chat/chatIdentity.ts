@@ -1,7 +1,7 @@
 // Who a chat line, tab or member row is: names, colours and the system sender, shared by the
 // chat panel's pieces.
 
-import { displayName } from '../../engine/mention'
+import { displayName } from '@hud/engine/mention'
 import type { NearbyMember } from '@hud/engine/protocol'
 import { knownUserColor, useProfile } from '../session/profileStore'
 

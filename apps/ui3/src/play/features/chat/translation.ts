@@ -9,7 +9,7 @@ import { LANGUAGES } from '@hud/engine/generated'
 import type { Setting } from '@hud/engine/protocol'
 import { serviceUrl } from '../../lib/baseDomain'
 import { PREF, getPref, setPref } from '../../lib/prefs'
-import { parseMessage } from './chatText'
+import { parseMessage } from '@hud/features/chat/chatText'
 
 /** The server language for a BCP 47 tag ("pt-BR", "zh-TW", "de-AT"), or null if it has none. */
 export function matchLanguage(tag: string): string | null {

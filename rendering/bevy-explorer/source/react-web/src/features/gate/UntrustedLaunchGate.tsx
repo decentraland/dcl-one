@@ -16,7 +16,7 @@ import { useState } from 'react'
 import { Button, DclLogo, ModalShell } from '@hud/design'
 import type { UntrustedParam } from '../../lib/launchGate'
 import { inShell, postToShell } from '../../lib/shell'
-import styles from './UntrustedLaunchGate.module.css'
+import styles from '@hud/features/gate/UntrustedLaunchGate.module.css'
 
 // A tab the user opened themselves can't be closed by script, so send them somewhere safe instead.
 // Inside the shell, the shell does it: from here it would only navigate the app's iframe.

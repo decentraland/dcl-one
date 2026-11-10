@@ -3,7 +3,7 @@
 
 import { showDialog } from '@hud/design'
 import type { DeploymentRequest, UndeployRequest } from './host/host'
-import styles from './DeployConfirm.module.css'
+import styles from '@hud/features/editorHost/DeployConfirm.module.css'
 
 function size(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`

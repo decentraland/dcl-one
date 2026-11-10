@@ -6,7 +6,7 @@ import { Avatar, Button, MaskIcon, VerifiedBadge } from '@hud/design'
 import type { DclEvent } from '../events/eventsApi'
 import { useCreatorName } from '../places/useCreatorName'
 import type { Friend } from '@hud/engine/protocol'
-import styles from './LobbyCards.module.css'
+import styles from '@hud/features/lobby/LobbyCards.module.css'
 
 function OnlineCounter({ count }: { count: number }): React.JSX.Element {
   return (

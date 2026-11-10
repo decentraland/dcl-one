@@ -2,12 +2,12 @@
 //   from: BevyApi (login + getSceneLoadingUIStream), @dcl/sdk getPlayer (player-ready).
 import { getPlayer } from '@dcl/sdk/players'
 import { openExternalUrl } from '~system/RestrictedActions'
-import { bugReportUrl } from '../../../src/lib/bugReport'
+import { bugReportUrl } from '@hud/lib/bugReport'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
-import { GUEST_SESSION_KEY, guestLogin, guestSign } from '../../../src/features/auth/thirdweb'
+import { GUEST_SESSION_KEY, guestLogin, guestSign } from '@hud/features/auth/thirdweb'
 
 // The Bevy engine injects a persistent localStorage into system scenes.
 declare const localStorage: {

@@ -10,18 +10,18 @@
 import { useEffect, useState } from 'react'
 import logo from '@hud/assets/lobby/logo.png'
 import { Button, ControlButton, Icon, TextInput } from '@hud/design'
-import { randomDefaultLook, randomGuestName } from '../../lib/guestName'
+import { randomDefaultLook, randomGuestName } from '@hud/lib/guestName'
 import { EngineViewport } from '../engine/EngineViewport'
 import { StandInStage } from '../lobby/LobbyHome'
 import { prefetchPlaces } from '../places/placesApi'
-import lobbyStyles from '../lobby/LobbyHome.module.css'
-import { NAME_MAX, isValidName } from '../profile/profileFields'
+import lobbyStyles from '@hud/features/lobby/LobbyHome.module.css'
+import { NAME_MAX, isValidName } from '@hud/features/profile/profileFields'
 import { useSession } from '../session/SessionContext'
 import type { LoginFlow } from '../session/useEngineSession'
-import welcomeStyles from '../welcome/WelcomePage.module.css'
+import welcomeStyles from '@hud/features/welcome/WelcomePage.module.css'
 import { pendingLabel } from './LoadingAndLogin'
 import { useStoredProfile } from './useStoredProfile'
-import styles from './GuestStartPage.module.css'
+import styles from '@hud/features/login/GuestStartPage.module.css'
 
 const LEGAL = { terms: 'https://decentraland.org/terms/', privacy: 'https://decentraland.org/privacy/' }
 // the two dice, big: the page is all about them
