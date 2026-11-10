@@ -7727,3 +7727,87 @@ async fn a_reservation_under_one_operation_key_takes_one_set_of_lines() {
 
     db.drop().await;
 }
+
+/// Retires a session order as the stale-order sweep or the buyer's cancel
+/// does, before Stripe has said anything about its payment.
+async fn abandon_order(pool: &PgPool, session: &str) {
+    assert!(
+        Credits::mark_order_status_by_session_on(pool, session, "abandoned", None)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_delayed_payment_failure_closes_an_abandoned_order_for_good() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+
+    // The sweep retired the order; the unpaid completion's first delivery
+    // failed (Stripe retries it), so the payment's failure lands first.
+    let (_, session) = session_order_fixture(&state, &addr).await;
+    abandon_order(&pool, &session).await;
+    let failure = session_event(
+        &unique("evt_closed"),
+        "checkout.session.async_payment_failed",
+        &session,
+        Some("unpaid"),
+        500,
+        "usd",
+    );
+    let (status, out) = deliver(&app, &failure).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(session_order_row(&pool, &session).await.0, "failed");
+
+    // The retried completion cannot mark it processing again: no outcome is
+    // left that could ever settle it.
+    let retried = session_event(
+        &unique("evt_closed"),
+        "checkout.session.completed",
+        &session,
+        Some("unpaid"),
+        500,
+        "usd",
+    );
+    let (status, out) = deliver(&app, &retried).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let (status, _, payment_intent) = session_order_row(&pool, &session).await;
+    assert_eq!((status.as_str(), payment_intent), ("failed", None));
+    assert_eq!(purchase_grants(&pool, &addr).await, 0);
+
+    // A failure never degrades a credited order.
+    let (_, paid) = session_order_fixture(&state, &addr).await;
+    let (status, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_closed"),
+            "checkout.session.completed",
+            &paid,
+            Some("paid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let (status, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_closed"),
+            "checkout.session.async_payment_failed",
+            &paid,
+            Some("unpaid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(session_order_row(&pool, &paid).await.0, "paid");
+    assert!(balance_is(&pool, &addr, "50").await);
+    assert_purchases_match_grants(&pool, &addr).await;
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_closed").await;
+}

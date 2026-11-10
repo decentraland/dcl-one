@@ -372,7 +372,12 @@ impl Credits {
     /// Retires a pending order. One whose payment is processing (see
     /// [`Self::mark_order_processing_by_session_in_tx`]) is only ever retired
     /// as `failed`, by its own payment's outcome; a cancel, an expiry or a
-    /// resume leaves it pending.
+    /// resume leaves it pending. The payment's failure also closes an order
+    /// already retired as `abandoned`: otherwise an unpaid completion
+    /// retried after the failure would mark it processing again, with no
+    /// outcome left to settle it. A `failed` order is not settleable
+    /// ([`SETTLEABLE_STATUSES`]), so nothing revives it, and a credited one
+    /// (`paid`, `refunded`, `disputed`) is never moved here.
     pub(crate) async fn mark_order_status_by_session_on<'e, E>(
         executor: E,
         session_id: &str,
@@ -385,7 +390,8 @@ impl Credits {
         let res = sqlx::query(
             "UPDATE credits.purchases \
              SET status = $2, failure_reason = COALESCE($3, failure_reason), updated_at = timezone('UTC', now()) \
-             WHERE stripe_checkout_session = $1 AND status = 'pending' \
+             WHERE stripe_checkout_session = $1 \
+               AND (status = 'pending' OR ($2 = 'failed' AND status = 'abandoned')) \
                AND (stripe_payment_intent IS NULL OR $2 = 'failed')",
         )
         .bind(session_id)
