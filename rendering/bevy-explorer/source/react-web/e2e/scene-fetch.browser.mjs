@@ -230,30 +230,40 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
       const opened = await new Promise(resolve => { socket.onopen = () => resolve(true); socket.onerror = () => resolve(false) })
       socket.close()
       const blob = URL.createObjectURL(new Blob(['blob body']))
+      const blobModule = URL.createObjectURL(new Blob(['export default 1'], { type: 'text/javascript' }))
+      const owners = (start, name) => {
+        let n = 0
+        for (let o = start; o != null; o = Object.getPrototypeOf(o)) if (Object.prototype.hasOwnProperty.call(o, name)) n++
+        return n
+      }
       return {
         imported: await scene(url),
         sameOrigin: await scene('/engine/sandbox_host.js'),
+        dataModule: await scene('data:text/javascript,export default 1'),
+        blobModule: await scene(blobModule),
+        wasm: await WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])).then(() => 'compiled', e => e.name),
         fetched: await (await fetch('/echo', { referrer: location.origin + '/chosen' })).text(),
         data: await (await fetch('data:text/plain,data body')).text(),
         blob: await (await fetch(blob)).text(),
         opened,
         sent: sends.length,
-        nativeFetch: typeof WorkerGlobalScope.prototype.fetch,
-        WebTransport: typeof self.WebTransport,
+        // the scene fetch is the global's own property; nothing up the chain holds another
+        nativeFetch: owners(Object.getPrototypeOf(self), 'fetch'),
+        WebTransport: owners(self, 'WebTransport'),
         url: location.pathname + location.search,
       }
     }, { url, otherOrigin })
 
     const open = await probe(await spawn('client'), `${otherOrigin}/open.js?scene=data`)
-    assert.equal(open.imported, 'loaded')
+    assert.deepEqual([open.imported, open.dataModule, open.blobModule], ['loaded', 'loaded', 'loaded'])
     assert.deepEqual(imports, ['/open.js?scene=data'])
 
     for (const role of ['client', 'server']) {
       const result = await probe(await spawn(role, controlled), `${otherOrigin}/blocked.js?scene=data`)
       assert.deepEqual(result, {
-        imported: 'blocked', sameOrigin: 'blocked',
+        imported: 'blocked', sameOrigin: 'blocked', dataModule: 'blocked', blobModule: 'blocked', wasm: 'compiled',
         fetched: new URL('/chosen', origin).href, data: 'data body', blob: 'blob body', opened: true,
-        sent: 3, nativeFetch: 'undefined', WebTransport: 'undefined',
+        sent: 3, nativeFetch: 0, WebTransport: 0,
         url: `/engine/pkg/sandbox_worker.bundle.js${role === 'server' ? '?server' : ''}`,
       })
     }

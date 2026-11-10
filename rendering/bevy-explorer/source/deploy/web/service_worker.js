@@ -133,6 +133,8 @@ const SANDBOX_POLICY = "default-src 'none'; script-src 'unsafe-eval' 'wasm-unsaf
 
 async function addSandboxPolicy(request) {
     const response = await fetch(request);
+    // A copy takes the request's url, not the redirect target's, so a redirected bundle passes as is.
+    if (response.redirected) return response;
     const headers = new Headers(response.headers);
     // appended: a host's own policy still applies
     headers.append('Content-Security-Policy', SANDBOX_POLICY);
