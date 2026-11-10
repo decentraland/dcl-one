@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const signer = vi.hoisted(() => ({ fetch: vi.fn() }));
@@ -147,6 +148,28 @@ describe("credits status", () => {
     expect(lastCall().url.pathname).toBe(`/shop-api/v1/users/${SIGNER.toLowerCase()}/status`);
   });
 
+  it("reads the legacy credits route when the node runs the Shop API in legacy mode", async () => {
+    signer.fetch.mockResolvedValue(json({ data: { status: "enrolled", optedOutAt: null } }));
+
+    await expect(fetchCreditsStatus(identity, { mode: "legacy" })).resolves.toEqual({
+      status: "enrolled",
+      optedOutAt: null,
+    });
+    expect(lastCall().url.pathname).toBe(`/credits/users/${SIGNER.toLowerCase()}/status`);
+  });
+
+  it("takes the mode the page was served with when none is given", async () => {
+    signer.fetch.mockResolvedValue(json({ data: { status: "enrolled", optedOutAt: null } }));
+    (window as { __SHOP_API_MODE__?: string }).__SHOP_API_MODE__ = "legacy";
+    try {
+      await fetchCreditsStatus(identity);
+    } finally {
+      delete (window as { __SHOP_API_MODE__?: string }).__SHOP_API_MODE__;
+    }
+
+    expect(lastCall().url.pathname).toBe(`/credits/users/${SIGNER.toLowerCase()}/status`);
+  });
+
   it("reads a wallet the program has never seen as not registered", async () => {
     signer.fetch.mockResolvedValue(json({ error: "not found" }, 404));
 
@@ -178,6 +201,15 @@ describe("optOutOfCredits", () => {
     expect(lastCall().url.pathname).toBe(`/shop-api/v1/users/${SIGNER.toLowerCase()}`);
     expect(lastCall().init.method).toBe("DELETE");
     expect(lastCall().init.body).toBeUndefined();
+  });
+
+  it("DELETEs the legacy credits user in legacy mode", async () => {
+    signer.fetch.mockResolvedValue(new Response(null, { status: 204 }));
+
+    await optOutOfCredits(identity, { mode: "legacy" });
+
+    expect(lastCall().url.pathname).toBe(`/credits/users/${SIGNER.toLowerCase()}`);
+    expect(lastCall().init.method).toBe("DELETE");
   });
 
   it("succeeds for a wallet that was never registered", async () => {

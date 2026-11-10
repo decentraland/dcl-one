@@ -88,11 +88,11 @@ describe("account keys", () => {
 
 describe("read hooks", () => {
   it("read with the factory's freshness, signed in or not", () => {
+    api.fetchSubscription.mockReturnValue(new Promise(() => {}));
+    api.fetchCreditsStatus.mockReturnValue(new Promise(() => {}));
     renderHook(() => useSubscription(identity), { wrapper });
     renderHook(() => useCreditsStatus(identity), { wrapper });
     renderHook(() => useSubscription(null), { wrapper });
-    api.fetchSubscription.mockReturnValue(new Promise(() => {}));
-    api.fetchCreditsStatus.mockReturnValue(new Promise(() => {}));
 
     const staleTimes = client
       .getQueryCache()
@@ -124,7 +124,6 @@ const OTHER = "0x1111111111111111111111111111111111111111";
 const other: AuthIdentity = { ...identity, signer: OTHER };
 const otherSubscription: SubscriptionResponse = { address: OTHER, email: "john.doe@example.com", details };
 const otherSubscriptionKey = accountKeys.subscription(OTHER);
-const otherCreditsKey = accountKeys.creditsStatus(OTHER);
 
 function deferred() {
   let resolve!: () => void;
@@ -137,46 +136,55 @@ function deferred() {
 }
 
 describe("useUpdateSubscription", () => {
+  const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
+
+  /** The member's view of the subscription and two independent writers, as two toggles would use them. */
+  async function mountWriters(who: AuthIdentity = identity) {
+    const view = renderHook(() => useSubscription(who), { wrapper });
+    await waitFor(() => expect(view.result.current.data).toBeDefined());
+    const one = renderHook(() => useUpdateSubscription(), { wrapper });
+    const two = renderHook(() => useUpdateSubscription(), { wrapper });
+    return { view, one, two };
+  }
+  const shownDetails = (view: { result: { current: { data?: SubscriptionResponse } } }) =>
+    view.result.current.data?.details;
+
   it("shows the new details at once and reads the subscription again once the write settles", async () => {
     api.fetchSubscription.mockResolvedValue(subscription);
-    renderHook(() => useSubscription(identity), { wrapper });
-    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
+    const { view, one } = await mountWriters();
     const write = deferred();
     api.putSubscription.mockReturnValue(write.promise);
     api.fetchSubscription.mockResolvedValue({ ...subscription, details: muted });
 
-    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
-    act(() => result.current.mutate({ identity, details: muted }));
+    act(() => one.result.current.mutate({ identity, details: muted }));
 
-    await waitFor(() =>
-      expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted),
-    );
+    await waitFor(() => expect(shownDetails(view)).toEqual(muted));
     expect(api.fetchSubscription).toHaveBeenCalledTimes(1);
     await act(async () => write.resolve());
     await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
-    expect(api.putSubscription).toHaveBeenCalledWith(identity, muted);
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted);
+    expect(api.putSubscription).toHaveBeenCalledWith(identity, muted, { signal: expect.any(AbortSignal) });
+    expect(shownDetails(view)).toEqual(muted);
   });
 
-  it("rolls back to the details before the write when it fails", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+  it("shows the server's details again when the write fails, without writing them into the cache", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { view, one } = await mountWriters();
     api.putSubscription.mockRejectedValue(new Error("500"));
+    api.fetchSubscription.mockRejectedValue(new Error("offline"));
 
-    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
-    act(() => result.current.mutate({ identity, details: muted }));
+    act(() => one.result.current.mutate({ identity, details: muted }));
 
-    await waitFor(() => expect(result.current.isError).toBe(true));
+    await waitFor(() => expect(one.result.current.isError).toBe(true));
+    expect(shownDetails(view)).toEqual(details);
     expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
   });
 
   it("sends the second write only after the first one settles", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { one, two } = await mountWriters();
     const first = deferred();
     api.putSubscription.mockReturnValueOnce(first.promise).mockResolvedValueOnce(undefined);
-    const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
 
-    const one = renderHook(() => useUpdateSubscription(), { wrapper });
-    const two = renderHook(() => useUpdateSubscription(), { wrapper });
     act(() => one.result.current.mutate({ identity, details: muted }));
     act(() => two.result.current.mutate({ identity, details: both }));
 
@@ -191,14 +199,11 @@ describe("useUpdateSubscription", () => {
 
   it("reads the subscription again only once the last pending write settles", async () => {
     api.fetchSubscription.mockResolvedValue(subscription);
-    renderHook(() => useSubscription(identity), { wrapper });
-    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(1));
+    const { one, two } = await mountWriters();
     const first = deferred();
     const second = deferred();
     api.putSubscription.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
-    const one = renderHook(() => useUpdateSubscription(), { wrapper });
-    const two = renderHook(() => useUpdateSubscription(), { wrapper });
     act(() => one.result.current.mutate({ identity, details: muted }));
     act(() => two.result.current.mutate({ identity, details }));
     await act(async () => first.reject(new Error("500")));
@@ -209,34 +214,29 @@ describe("useUpdateSubscription", () => {
     await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
   });
 
-  it("keeps a queued write's details while it is pending, when the write before it fails", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+  it("keeps showing a queued write's details when the write before it fails", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { view, one, two } = await mountWriters();
     const first = deferred();
     const second = deferred();
     api.putSubscription.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
 
-    const one = renderHook(() => useUpdateSubscription(), { wrapper });
-    const two = renderHook(() => useUpdateSubscription(), { wrapper });
     act(() => one.result.current.mutate({ identity, details: muted }));
     act(() => two.result.current.mutate({ identity, details: both }));
     await act(async () => first.reject(new Error("500")));
 
     await waitFor(() => expect(one.result.current.isError).toBe(true));
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(both);
+    expect(shownDetails(view)).toEqual(both);
   });
 
-  it("returns to the details the server accepted when every queued write and the re-read fail", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+  it("shows the server's details when every queued write and the re-read fail", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { view, one, two } = await mountWriters();
     const first = deferred();
     const second = deferred();
     api.putSubscription.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     api.fetchSubscription.mockRejectedValue(new Error("offline"));
-    const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
-    renderHook(() => useSubscription(identity), { wrapper });
 
-    const one = renderHook(() => useUpdateSubscription(), { wrapper });
-    const two = renderHook(() => useUpdateSubscription(), { wrapper });
     act(() => one.result.current.mutate({ identity, details: muted }));
     act(() => two.result.current.mutate({ identity, details: both }));
     await act(async () => first.reject(new Error("500")));
@@ -244,20 +244,18 @@ describe("useUpdateSubscription", () => {
     await act(async () => second.reject(new Error("500")));
 
     await waitFor(() => expect(two.result.current.isError).toBe(true));
-    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalled());
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
+    expect(shownDetails(view)).toEqual(details);
   });
 
-  it("returns to the earlier accepted write when only the later one fails", async () => {
-    client.setQueryData(subscriptionKey, subscription);
+  it("shows the earlier accepted write when only the later one fails and the re-read fails", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { view, one, two } = await mountWriters();
     const first = deferred();
     const second = deferred();
     api.putSubscription.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     api.fetchSubscription.mockRejectedValue(new Error("offline"));
-    const both: SubscriptionDetails = { ...muted, ignore_all_in_app: true };
 
-    const one = renderHook(() => useUpdateSubscription(), { wrapper });
-    const two = renderHook(() => useUpdateSubscription(), { wrapper });
     act(() => one.result.current.mutate({ identity, details: muted }));
     act(() => two.result.current.mutate({ identity, details: both }));
     await act(async () => first.resolve());
@@ -265,51 +263,87 @@ describe("useUpdateSubscription", () => {
     await act(async () => second.reject(new Error("500")));
 
     await waitFor(() => expect(two.result.current.isError).toBe(true));
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(muted);
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
+    expect(shownDetails(view)).toEqual(muted);
   });
 
-  it("re-reads and rolls back one account without waiting on another account's pending write", async () => {
-    client.setQueryData(subscriptionKey, subscription);
-    client.setQueryData(otherSubscriptionKey, otherSubscription);
-    const mine = deferred();
-    const theirs = deferred();
-    api.putSubscription.mockReturnValueOnce(theirs.promise).mockReturnValueOnce(mine.promise);
+  it("keeps showing the pending details when a re-read lands during the write", async () => {
     api.fetchSubscription.mockResolvedValue(subscription);
-    renderHook(() => useSubscription(identity), { wrapper });
-    renderHook(() => useSubscription(other), { wrapper });
+    const { view, one } = await mountWriters();
+    const write = deferred();
+    api.putSubscription.mockReturnValue(write.promise);
 
+    act(() => one.result.current.mutate({ identity, details: muted }));
+    await waitFor(() => expect(shownDetails(view)).toEqual(muted));
+    await act(async () => {
+      await view.result.current.refetch();
+    });
+
+    expect(api.fetchSubscription).toHaveBeenCalledTimes(2);
+    expect(shownDetails(view)).toEqual(muted);
+  });
+
+  it("re-reads an account once its own writes settle, while another account's write is still pending", async () => {
+    api.fetchSubscription.mockImplementation(async (who: AuthIdentity) =>
+      who.signer === OTHER ? otherSubscription : subscription,
+    );
+    const mineView = renderHook(() => useSubscription(identity), { wrapper });
+    const theirView = renderHook(() => useSubscription(other), { wrapper });
+    await waitFor(() => expect(api.fetchSubscription).toHaveBeenCalledTimes(2));
+    const theirs = deferred();
+    const mine = deferred();
+    api.putSubscription.mockReturnValueOnce(theirs.promise).mockReturnValueOnce(mine.promise);
     const one = renderHook(() => useUpdateSubscription(), { wrapper });
     const two = renderHook(() => useUpdateSubscription(), { wrapper });
+
+    const readsOf = (signer: string) =>
+      api.fetchSubscription.mock.calls.filter(([who]) => (who as AuthIdentity).signer === signer).length;
+    const before = { mine: readsOf(SIGNER), theirs: readsOf(OTHER) };
+
     act(() => one.result.current.mutate({ identity: other, details: muted }));
     act(() => two.result.current.mutate({ identity, details: muted }));
     await act(async () => theirs.resolve());
     await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => expect(readsOf(OTHER)).toBe(before.theirs + 1));
+    expect(mineView.result.current.data?.details).toEqual(muted);
     await act(async () => mine.reject(new Error("500")));
 
     await waitFor(() => expect(two.result.current.isError).toBe(true));
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
-    await waitFor(() =>
-      expect(api.fetchSubscription.mock.calls.map(([who]) => (who as AuthIdentity).signer)).toEqual([
-        OTHER,
-        SIGNER,
-      ]),
-    );
+    await waitFor(() => expect(readsOf(SIGNER)).toBeGreaterThan(before.mine));
+    expect(mineView.result.current.data?.details).toEqual(details);
+    expect(theirView.result.current.data?.address).toBe(OTHER);
   });
 
-  it("signs and rolls back as the account in its variables, leaving another cached account alone", async () => {
-    client.setQueryData(subscriptionKey, subscription);
-    client.setQueryData(otherSubscriptionKey, otherSubscription);
+  it("bounds each write with a timeout signal", async () => {
+    api.fetchSubscription.mockResolvedValue(subscription);
+    const { one } = await mountWriters();
+    api.putSubscription.mockResolvedValue(undefined);
+
+    act(() => one.result.current.mutate({ identity, details: muted }));
+
+    await waitFor(() => expect(one.result.current.isSuccess).toBe(true));
+    const [, , opts] = api.putSubscription.mock.calls[0] as [AuthIdentity, SubscriptionDetails, { signal: AbortSignal }];
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
+    expect(opts.signal.aborted).toBe(false);
+  });
+
+  it("signs as the account in its variables and leaves another account's view alone", async () => {
+    api.fetchSubscription.mockImplementation(async (who: AuthIdentity) =>
+      who.signer === OTHER ? otherSubscription : subscription,
+    );
+    const theirView = renderHook(() => useSubscription(other), { wrapper });
+    await waitFor(() => expect(theirView.result.current.data).toBeDefined());
+    const { one } = await mountWriters();
     const write = deferred();
     api.putSubscription.mockReturnValue(write.promise);
 
-    const { result } = renderHook(() => useUpdateSubscription(), { wrapper });
-    act(() => result.current.mutate({ identity, details: muted }));
-    await act(async () => write.reject(new Error("500")));
+    act(() => one.result.current.mutate({ identity, details: muted }));
 
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(api.putSubscription).toHaveBeenCalledWith(identity, muted);
-    expect(client.getQueryData(otherSubscriptionKey)).toEqual(otherSubscription);
-    expect(client.getQueryData<SubscriptionResponse>(subscriptionKey)?.details).toEqual(details);
+    await waitFor(() => expect(api.putSubscription).toHaveBeenCalled());
+    expect(api.putSubscription.mock.calls[0]?.[0]).toBe(identity);
+    expect(theirView.result.current.data).toEqual(otherSubscription);
+    await act(async () => write.reject(new Error("500")));
   });
 });
 
@@ -373,18 +407,24 @@ describe("credits", () => {
     expect(api.fetchCreditsStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("shows as opted out only the account that left", async () => {
-    client.setQueryData(creditsKey, { status: "enrolled", optedOutAt: null });
-    client.setQueryData(otherCreditsKey, { status: "enrolled", optedOutAt: null });
+  it("reads the status again for the account that left only", async () => {
+    api.fetchCreditsStatus.mockImplementation(async (who: AuthIdentity) =>
+      who.signer === OTHER ? { status: "enrolled", optedOutAt: null } : { status: "enrolled", optedOutAt: null },
+    );
+    const mine = renderHook(() => useCreditsStatus(identity), { wrapper });
+    const theirs = renderHook(() => useCreditsStatus(other), { wrapper });
+    await waitFor(() => expect(api.fetchCreditsStatus).toHaveBeenCalledTimes(2));
+    const left = { status: "opted_out", optedOutAt: "2026-11-10T00:00:00.000Z" };
+    api.fetchCreditsStatus.mockResolvedValue(left);
     api.optOutOfCredits.mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useOptOutOfCredits(), { wrapper });
     act(() => result.current.mutate({ identity }));
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(mine.result.current.data).toEqual(left));
     expect(api.optOutOfCredits).toHaveBeenCalledWith(identity);
-    expect(client.getQueryData(creditsKey)).toMatchObject({ status: "opted_out", optedOutAt: expect.any(String) });
-    expect(client.getQueryData(otherCreditsKey)).toEqual({ status: "enrolled", optedOutAt: null });
+    expect(api.fetchCreditsStatus).toHaveBeenCalledTimes(3);
+    expect(theirs.result.current.data).toEqual({ status: "enrolled", optedOutAt: null });
   });
 
   it("does not bring back an entry removed by an account switch", async () => {
@@ -400,6 +440,7 @@ describe("credits", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(client.getQueryData(creditsKey)).toBeUndefined();
+    expect(api.fetchCreditsStatus).not.toHaveBeenCalled();
   });
 
   it("keeps the enrolled status when leaving fails", async () => {
