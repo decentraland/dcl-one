@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { fetchEvents, LIVE_COUNT_REFRESH_MS } from '@explorer-core/features/events/eventsApi'
 
-/** Live events right now; 0 while loading or when the service is unreachable (as Unity). */
+/** Live events right now; 0 while loading or when the service is unreachable. */
 export function useLiveEventCount(): number {
   const [count, setCount] = useState(0)
   useEffect(() => {
