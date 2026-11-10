@@ -11,7 +11,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { catalystBase } from "../../../data/catalyst/client";
-import type { ContractData } from "./contracts";
+import type { ContractData } from "@shop/market/lib/contracts";
 import { rpc } from "./rpc";
 import { chainSalt, signTypedData, walletAccount } from "./tx";
 

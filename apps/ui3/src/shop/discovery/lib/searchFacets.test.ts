@@ -9,9 +9,9 @@ import {
   facetsFor,
   normalizeAlias
 } from './searchFacets'
-import { CATEGORIES } from './categories'
-import { RARITIES } from './rarity'
-import { t } from '../intl'
+import { CATEGORIES } from '@shop/discovery/lib/categories'
+import { RARITIES } from '@shop/discovery/lib/rarity'
+import { t } from '@shop/discovery/intl'
 
 const key = (query: string) => facetsFor(query).map(facetId)
 

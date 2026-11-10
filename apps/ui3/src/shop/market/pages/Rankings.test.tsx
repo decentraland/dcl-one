@@ -1,7 +1,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { BOOK } from "../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { COLLECTOR_RANKS, CREATOR_RANKS, ITEM_RANKS, MANA, VOLUME } from "../fixtures";
 import type { FakeRoute } from "../testing";
 import { mountShop } from "../testHarness";

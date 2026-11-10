@@ -11,7 +11,7 @@ import { readManaBalanceWei } from "../checkout/lib/mana";
 import { manaRateQueryOptions } from "../checkout/lib/mana-rate";
 import { settlementChainId } from "../checkout/chain/config";
 import { useShopServices } from "../checkout/services";
-import { getUsdBalance, type UsdBalance } from "./credits";
+import { getUsdBalance, type UsdBalance } from "@shop/credits/credits";
 import { CREDIT_PACKS, fetchCreditPacks, type CreditPack } from "./payments";
 
 const POLL_MS = 15_000;

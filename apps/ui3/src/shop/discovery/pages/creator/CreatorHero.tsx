@@ -3,7 +3,7 @@
 import type { CSSProperties } from "react";
 import { Link } from "react-router";
 
-import { shortAddress } from "../../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../../routes";
 import { fetchStore, LINK_TYPES, type LinkType } from "../../../seller/lib/store";
 import { useShopWallet } from "../../../wallet/context";

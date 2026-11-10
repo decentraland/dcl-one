@@ -4,20 +4,27 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, MaskIcon, Pencil, Tabs, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
-import { nameColor } from '../../lib/identity'
+import { nameColor, splitName } from '../../lib/identity'
+import { relationshipOf, type Relationship } from '../../lib/relationship'
 import { knownUserColor } from '../session/profileStore'
-import { isMemberRole, roleLabel } from './roles'
+import { isMemberRole, memberActions, roleLabel } from './roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
+import { openPassport } from '../profile/Passport'
+import { openProfileCard } from '../profileCard/ProfileCard'
+import { confirmUnblock } from '../friends/friendDialogs'
+import { openFriendRequest } from '../friends/FriendRequestPopup'
+import type { CardAction } from '../chat/ProfileCardPresentation'
 import type {
   Community,
   CommunityDetailMessage,
   CommunityEvent,
   CommunityMember,
+  CommunityMemberAction,
   CommunityPhoto,
   CommunityPlace,
   CommunityPost
@@ -121,36 +128,111 @@ function PostRow({ post }: { post: CommunityPost }): React.JSX.Element {
   )
 }
 
-function MemberRow({ member, requested, onAdd }: { member: CommunityMember; requested: boolean; onAdd: () => void }): React.JSX.Element {
+/** The row's friendship buttons, as unity-explorer's member row: Add Friend, Accept Friend, Request
+ *  Sent (Cancel Request on hover) and Blocked (Unblock on hover). Friends get none. */
+export type FriendAction = 'add' | 'accept' | 'cancel' | 'unblock'
+
+function FriendButton({ relationship, onAction }: { relationship: Relationship; onAction: (action: FriendAction) => void }): React.JSX.Element | null {
+  if (relationship === 'none') {
+    return (
+      <button type="button" className={styles.addFriend} onClick={() => onAction('add')}>
+        <AddFriendIcon /> ADD FRIEND
+      </button>
+    )
+  }
+  if (relationship === 'incoming') {
+    return (
+      <button type="button" className={styles.addFriend} onClick={() => onAction('accept')}>
+        ACCEPT FRIEND
+      </button>
+    )
+  }
+  if (relationship === 'requested') {
+    return (
+      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Request Sent, Cancel Request" onClick={() => onAction('cancel')}>
+        <span className={styles.swapIdle}>REQUEST SENT</span>
+        <span className={styles.swapHover}>CANCEL REQUEST</span>
+      </button>
+    )
+  }
+  if (relationship === 'blocked') {
+    return (
+      <button type="button" className={`${styles.requested} ${styles.swap}`} aria-label="Blocked, Unblock" onClick={() => onAction('unblock')}>
+        <span className={styles.swapIdle}>BLOCKED</span>
+        <span className={styles.swapHover}>UNBLOCK</span>
+      </button>
+    )
+  }
+  return null
+}
+
+function MemberRow({
+  member,
+  self,
+  relationship,
+  busy,
+  menuOpen,
+  onView,
+  onFriend,
+  onMenu
+}: {
+  member: CommunityMember
+  /** The signed-in user's own row, or the user is not known yet: no friendship button and no menu. */
+  self: boolean
+  relationship: Relationship
+  /** An action on this member is running. */
+  busy: boolean
+  menuOpen: boolean
+  onView: () => void
+  onFriend: (action: FriendAction) => void
+  onMenu: (anchor: HTMLElement) => void
+}): React.JSX.Element {
   const label = roleLabel(member.role)
+  const color = knownUserColor(member.address, member.name)
+  const { base, tag } = splitName(member.name)
   return (
-    <div className={styles.member}>
-      <Avatar src={member.picture} name={member.name} color={knownUserColor(member.address, member.name)} size={40} status="online" />
-      <div className={styles.memberInfo}>
-        <span className={styles.memberName} style={{ color: knownUserColor(member.address, member.name) }}>
-          {member.name}
-          {member.hasClaimedName && <Verified />}
+    <div className={`${styles.member} ${menuOpen ? styles.memberActive : ''}`.trim()}>
+      <button type="button" className={styles.memberMain} aria-label={`View ${base}'s profile`} onClick={onView}>
+        <Avatar src={member.picture} name={base} color={color} size={40} />
+        <span className={styles.memberInfo}>
+          <span className={styles.memberName} style={{ color }}>
+            {base}
+            {member.hasClaimedName === true ? <Verified /> : <span className={styles.memberTag}>{tag !== '' ? tag : `#${member.address.slice(-4)}`}</span>}
+          </span>
+          {label && <span className={styles.memberRole}>{label}</span>}
         </span>
-        {label && <span className={styles.memberRole}>{label}</span>}
-      </div>
-      {!member.isFriend && (
-        requested ? (
-          <span className={styles.requested}>Requested</span>
-        ) : (
-          <button type="button" className={styles.addFriend} onClick={onAdd}>
-            <AddFriendIcon /> ADD FRIEND
-          </button>
-        )
+      </button>
+      {!self && <FriendButton relationship={relationship} onAction={onFriend} />}
+      {!self && (
+        <ControlButton
+          shape="circle"
+          size="lg"
+          className={styles.memberMenu}
+          aria-label={`More options for ${base}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-pressed={undefined}
+          active={menuOpen}
+          disabled={busy}
+          onClick={(e) => onMenu(e.currentTarget)}
+        >
+          <Kebab vertical />
+        </ControlButton>
       )}
     </div>
   )
 }
 
-function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
+function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
   return (
     <div className={styles.place}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
+        {onDelete != null && (
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={onDelete}>
+            <Trash size={14} />
+          </button>
+        )}
       </div>
       <span className={styles.placeName} title={place.title}>{place.title}</span>
       <div className={styles.placeMeta}>
@@ -158,6 +240,17 @@ function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
     </div>
+  )
+}
+
+/** unity-explorer's first tile in the card's Places grid for owners and moderators: opens the
+ *  Edit Community form, where places are linked. */
+function AddPlaceTile({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return (
+    <button type="button" className={styles.addPlace} onClick={onClick}>
+      <Plus size={22} />
+      <span>ADD PLACE</span>
+    </button>
   )
 }
 
@@ -183,19 +276,42 @@ function EventRow({ event }: { event: CommunityEvent }): React.JSX.Element {
   )
 }
 
+// unity-explorer's member menu (CommunityMemberListContextMenuSettings, MembersListView)
+const MEMBER_ACTION_LABEL: Record<CommunityMemberAction, string> = {
+  demote: 'Demote Moderator',
+  promote: 'Promote Moderator',
+  transfer: 'Make Community Owner',
+  kick: 'Remove Member',
+  ban: 'Ban'
+}
+const MEMBER_ACTION_ICON: Record<CommunityMemberAction, React.ReactNode> = {
+  demote: <DemoteModeratorIcon />,
+  promote: <PromoteModeratorIcon />,
+  transfer: <TransferIcon />,
+  kick: <RemoveMemberIcon />,
+  ban: <BanIcon />
+}
+const TRANSFER_NEEDS_NAME = 'Community ownership can only be transferred to users who own a NAME.'
+
 export function CommunityModal({
   community,
   detail,
   error = null,
+  me = null,
+  relationship = () => 'none',
   onJoin,
   onRequestToJoin,
   onCancelRequest,
   onLeave,
-  onAddFriend,
+  onFriend = () => undefined,
+  onViewProfile = () => undefined,
+  onMemberMenu = () => undefined,
+  onMemberAction,
   onOpenChat,
   stream,
   onEdit,
   onDelete,
+  onRemovePlace,
   onClose
 }: {
   community: Community
@@ -206,7 +322,19 @@ export function CommunityModal({
   onRequestToJoin: (id: string) => void
   onCancelRequest: (id: string, requestId: string) => void
   onLeave: (id: string) => void
-  onAddFriend: (address: string) => void
+  /** The signed-in user: their own row has no menu, and a transfer shows them handing over. */
+  me?: { address: string; name: string; picture?: string } | null
+  /** The signed-in user's friendship with a member, for the row's button. */
+  relationship?: (address: string) => Relationship
+  /** A member row's friendship button. */
+  onFriend?: (member: CommunityMember, action: FriendAction) => void
+  /** A member row's click: their passport. */
+  onViewProfile?: (address: string) => void
+  /** Open a member's menu at its button, with the owner's or moderator's actions; `onClose` runs
+   *  when it closes. */
+  onMemberMenu?: (member: CommunityMember, anchor: HTMLElement, actions: CardAction[], onClose: () => void) => void
+  /** Run an owner's or moderator's action on a member (asked first where unity-explorer asks). */
+  onMemberAction?: (id: string, address: string, action: CommunityMemberAction) => void
   onOpenChat: () => void
   /** The community's voice stream: live, whether the local user is in it, and whether they may
    *  open one (owner or moderator). */
@@ -215,20 +343,82 @@ export function CommunityModal({
   onEdit?: () => void
   /** Delete the community (owner only; asked first). */
   onDelete?: (id: string) => void
+  /** Unlink a place the user owns (owners and moderators; asked first). */
+  onRemovePlace?: (id: string, placeId: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
   const [coverFailed, setCoverFailed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [requested, setRequested] = useState<ReadonlySet<string>>(new Set())
+  // the places being deleted: their delete waits for the card's places (or an error) to come back
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  // the members acted on: their menu waits for the card's members (or an error) to come back
+  const [acting, setActing] = useState<ReadonlySet<string>>(new Set())
+  // released when the card's data comes back, or when an error arrives (not when one is cleared:
+  // a new action clears the last error while it is still running)
+  useEffect(() => {
+    setRemoving(new Set())
+    setActing(new Set())
+  }, [detail])
+  useEffect(() => {
+    if (error == null) return
+    setRemoving(new Set())
+    setActing(new Set())
+  }, [error])
+  const [menuFor, setMenuFor] = useState<string | null>(null)
   const member = isMemberRole(community.role)
   const isPrivate = community.privacy === 'private'
   const showCover = community.thumbnail != null && !coverFailed
   const loading = detail == null
 
-  const addFriend = (address: string): void => {
-    setRequested((prev) => new Set(prev).add(address))
-    onAddFriend(address)
+  // until the user's own profile is known, no row offers controls: any of them could be theirs
+  const noControls = (address: string): boolean => me == null || me.address.toLowerCase() === address.toLowerCase()
+  const runMemberAction = (member: CommunityMember, action: CommunityMemberAction): void => {
+    setActing((prev) => new Set(prev).add(member.address))
+    onMemberAction?.(community.id, member.address, action)
+  }
+  // unity-explorer asks before a transfer, a kick or a ban; promoting and demoting run at once
+  const askMemberAction = (member: CommunityMember, action: CommunityMemberAction): void => {
+    const name = splitName(member.name).base
+    const face = <Avatar src={member.picture} name={name} color={knownUserColor(member.address, member.name)} size={64} />
+    const confirm =
+      action === 'transfer'
+        ? showConfirm({
+            title: `Transferring Community Ownership to ${name}`,
+            body: (
+              <div className={styles.confirmTransfer}>
+                <div className={styles.confirmFaces}>
+                  {me != null && <Avatar src={me.picture} name={splitName(me.name).base} color={knownUserColor(me.address, me.name)} size={64} />}
+                  <TransferIcon size={24} />
+                  {face}
+                </div>
+                <p>Once you transfer ownership of a Community, you will be demoted from Owner to Moderator. This action cannot be undone by you.</p>
+              </div>
+            ),
+            confirmLabel: 'TRANSFER',
+            cancelLabel: 'CANCEL'
+          })
+        : action === 'kick'
+          ? showConfirm({ title: `Are you sure you want to remove [${name}] from the [${community.name}] Community?`, body: face, confirmLabel: 'KICK', cancelLabel: 'CANCEL' })
+          : action === 'ban'
+            ? showConfirm({ title: `Are you sure you want to ban [${name}] from the [${community.name}] Community?`, body: face, confirmLabel: 'BAN', cancelLabel: 'CANCEL' })
+            : Promise.resolve(true)
+    void confirm.then((yes) => {
+      if (yes) runMemberAction(member, action)
+    })
+  }
+  const openMemberMenu = (member: CommunityMember, anchor: HTMLElement): void => {
+    const actions: CardAction[] =
+      onMemberAction == null
+        ? []
+        : memberActions(community.role, member).map(({ action, needsName }) => ({
+            label: MEMBER_ACTION_LABEL[action],
+            icon: MEMBER_ACTION_ICON[action],
+            onClick: () => askMemberAction(member, action),
+            ...(needsName === true ? { disabledReason: TRANSFER_NEEDS_NAME } : {})
+          }))
+    setMenuFor(member.address)
+    onMemberMenu(member, anchor, actions, () => setMenuFor(null))
   }
   // unity-explorer's confirmation, with the community's picture
   const confirmDelete = (): void => {
@@ -240,6 +430,20 @@ export function CommunityModal({
       cancelLabel: 'CANCEL'
     }).then((yes) => {
       if (yes) onDelete?.(community.id)
+    })
+  }
+  // as unity-explorer: owners and moderators get the ADD PLACE tile, and delete on the places they own
+  const canModify = community.role === 'owner' || community.role === 'moderator'
+  const confirmRemovePlace = (place: CommunityPlace): void => {
+    void showConfirm({
+      title: `Are you sure you want to delete [${place.title}] from [${community.name}]'s Places?`,
+      body: "Photos and events associated with this Place won't appear on the Community's profile anymore.",
+      confirmLabel: 'DELETE',
+      cancelLabel: 'CANCEL'
+    }).then((yes) => {
+      if (!yes) return
+      setRemoving((prev) => new Set(prev).add(place.id))
+      onRemovePlace?.(community.id, place.id)
     })
   }
   const copyLink = (): void => {
@@ -326,11 +530,35 @@ export function CommunityModal({
             detail.posts.length > 0 ? detail.posts.map((p) => <PostRow key={p.id} post={p} />) : <div className={styles.empty}>No announcements yet.</div>
           ) : tab === 'members' ? (
             detail.members.length > 0 ? (
-              <div className={styles.memberGrid}>{detail.members.map((m) => <MemberRow key={m.address} member={m} requested={requested.has(m.address)} onAdd={() => addFriend(m.address)} />)}</div>
+              <div className={styles.memberGrid}>
+                {detail.members.map((m) => (
+                  <MemberRow
+                    key={m.address}
+                    member={m}
+                    self={noControls(m.address)}
+                    relationship={relationship(m.address)}
+                    busy={acting.has(m.address)}
+                    menuOpen={menuFor === m.address}
+                    onView={() => onViewProfile(m.address)}
+                    onFriend={(action) => onFriend(m, action)}
+                    onMenu={(anchor) => openMemberMenu(m, anchor)}
+                  />
+                ))}
+              </div>
             ) : <div className={styles.empty}>No members to show.</div>
           ) : tab === 'places' ? (
-            detail.places.length > 0 ? (
-              <div className={styles.placeGrid}>{detail.places.map((p) => <PlaceCard key={p.id} place={p} />)}</div>
+            detail.places.length > 0 || (canModify && onEdit != null) ? (
+              <div className={styles.placeGrid}>
+                {canModify && onEdit != null && <AddPlaceTile onClick={onEdit} />}
+                {detail.places.map((p) => (
+                  <PlaceCard
+                    key={p.id}
+                    place={p}
+                    onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
+                    deleting={removing.has(p.id)}
+                  />
+                ))}
+              </div>
             ) : <div className={styles.empty}>No places shared yet.</div>
           ) : detail.photos.length > 0 ? (
             <div className={styles.photoGrid}>{detail.photos.map((ph) => <PhotoTile key={ph.id} photo={ph} />)}</div>
@@ -421,9 +649,35 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onRequestToJoin={communities.requestToJoin}
       onCancelRequest={communities.cancelRequest}
       onLeave={communities.leave}
-      onAddFriend={(address) => friends.act('request', address)}
+      me={session.profile.data ?? null}
+      relationship={(address) => relationshipOf(friends, address)}
+      onFriend={(member, action) => {
+        const user = { address: member.address, name: member.name, picture: member.picture }
+        if (action === 'add') openFriendRequest('send', user)
+        else if (action === 'accept') openFriendRequest('accept', user)
+        else if (action === 'cancel') friends.act('cancel', member.address)
+        else void confirmUnblock(splitName(member.name).base).then((ok) => ok && friends.act('unblock', member.address))
+      }}
+      onViewProfile={(address) => openPassport(address)}
+      onMemberMenu={(member, anchor, actions, closed) => {
+        // as the friends list's menu: up from the button, 5px right of and 10px above its centre
+        const r = anchor.getBoundingClientRect()
+        openProfileCard(member.address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, {
+          above: true,
+          context: 'community',
+          communityActions: actions,
+          // as unity-explorer, a chat closes the card first
+          onMessage: (address) => {
+            onClose()
+            chat.openConversation(address)
+          },
+          onClose: closed
+        })
+      }}
+      onMemberAction={communities.memberAction}
       onEdit={() => openCommunityEditModal(community)}
       onDelete={communities.remove}
+      onRemovePlace={communities.removePlace}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })

@@ -1,4 +1,4 @@
-// from: ui3/src/shop/model/{purchase,settlement,wire}.ts (PurchaseOffer, the serde forms the UI decodes), shop@94584a5c:app/src/lib/payment-options.ts (what a presentation needs: a quote per offered method, the outage per withheld one)
+// from: library/shop/model/{purchase,settlement,wire}.ts (PurchaseOffer, the serde forms the UI decodes), shop@94584a5c:app/src/lib/payment-options.ts (what a presentation needs: a quote per offered method, the outage per withheld one)
 //! The wire of the MANA routes: the quote request (cart lines named by
 //! their authoritative listing, never by a price), the `PurchaseOffer` the
 //! UI's `presentPayment` renders, its MANA execution block (network,
@@ -193,7 +193,7 @@ pub struct ManaExecution {
     pub fingerprint: Option<String>,
 }
 
-/// The server's answer for one line (`ui3/src/shop/model/purchase.ts`).
+/// The server's answer for one line (`library/shop/model/purchase.ts`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseOffer {

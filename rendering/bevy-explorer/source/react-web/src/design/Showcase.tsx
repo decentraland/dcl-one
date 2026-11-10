@@ -371,6 +371,19 @@ export function Showcase(): React.JSX.Element {
               ]}
             />
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14 }}>Picker (placeholder)</span>
+            <Select
+              value=""
+              onChange={() => undefined}
+              aria-label="Add a place"
+              placeholder="Select LAND or World"
+              options={[
+                { value: 'a', label: 'Genesis Plaza (0,0)' },
+                { value: 'b', label: 'My World (example.dcl.eth)' }
+              ]}
+            />
+          </div>
         </div>
       </Section>
 

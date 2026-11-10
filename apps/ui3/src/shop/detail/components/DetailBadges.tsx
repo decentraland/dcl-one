@@ -5,9 +5,9 @@ import { Link } from "react-router";
 
 import { SHOP_BASE } from "../../routes";
 import { useCreatorProfile } from "../../discovery/hooks";
-import { t } from "../../discovery/intl";
+import { t } from "@shop/discovery/intl";
 import { addressAvatarColor, avatarInitial } from "../../discovery/lib/avatarColor";
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import styles from "./DetailBadges.module.css";
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

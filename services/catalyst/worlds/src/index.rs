@@ -194,10 +194,7 @@ fn scene_summary(scene: &WorldScene, base_url: &str, now_ms: i64) -> IndexSceneS
         .and_then(Value::as_str)
         .and_then(|file| resolve_content(&scene.entity, file))
         .map(|hash| format!("{base_url}/contents/{hash}"));
-    let timestamp = scene
-        .entity
-        .get("timestamp")
-        .and_then(Value::as_i64)
+    let timestamp = crate::core::store::entity_timestamp_ms(&scene.entity)
         .filter(|&t| t != 0)
         .unwrap_or(now_ms);
     let runtime_version = scene

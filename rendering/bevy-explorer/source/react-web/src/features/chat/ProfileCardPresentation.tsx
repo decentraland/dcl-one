@@ -2,10 +2,12 @@
 // sender's name/avatar, an @mention, or a nearby avatar in the world. Header with
 // avatar / name+copy / address+copy, a relationship-driven friend CTA (Add / Accept +
 // Reject / Requested), then the action list — mirroring bevy-ui-scene's profile-menu:
-// View Passport · Mention · Block/Unblock.
+// View Passport · Mention · Block/Unblock. A community card's member row opens it as
+// unity-explorer's member menu (context 'community'): View Profile · Chat, the owner's and
+// moderators' actions, then Block · Report.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, VerifiedBadge } from '../../design'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
 import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
@@ -65,7 +67,16 @@ function MentionIcon(): React.JSX.Element {
   )
 }
 
-export type MenuContext = 'default' | 'friend' | 'request' | 'blocked'
+export type MenuContext = 'default' | 'friend' | 'request' | 'blocked' | 'community'
+
+/** An extra row of the 'community' menu: a role action on the member. */
+export interface CardAction {
+  label: string
+  icon: React.ReactNode
+  onClick: () => void
+  /** Shown greyed out with this explanation on hover, instead of running. */
+  disabledReason?: string
+}
 
 export function ProfileCardPresentation({
   user,
@@ -74,7 +85,9 @@ export function ProfileCardPresentation({
   above = false,
   me,
   relationship = 'none',
+  blockedBy = false,
   context = 'default',
+  communityActions = [],
   onAddFriend,
   onUnfriend,
   onCancelRequest,
@@ -95,8 +108,12 @@ export function ProfileCardPresentation({
   me?: { address?: string } | null
   /** Relationship of the local user to this profile — drives the friendship button. */
   relationship?: Relationship
+  /** This user blocked the local user ('community' hides Block then, as unity-explorer does). */
+  blockedBy?: boolean
   /** Which list opened it: the item set follows the reference menu for that list. */
   context?: MenuContext
+  /** 'community' only: the owner's or moderator's actions on this member. */
+  communityActions?: CardAction[]
   onAddFriend?: (user: ChatUser) => void
   onUnfriend?: (user: ChatUser) => void
   onCancelRequest?: (user: ChatUser) => void
@@ -119,6 +136,7 @@ export function ProfileCardPresentation({
     return () => clearTimeout(t)
   }, [copied])
   const cardRef = useRef<HTMLDivElement>(null)
+  const reasonId = useId()
   // Start at the anchor; once laid out, clamp to the viewport using the card's REAL size.
   const [pos, setPos] = useState({ left: x, top: y })
   useLayoutEffect(() => {
@@ -147,14 +165,18 @@ export function ProfileCardPresentation({
   }
 
   const other = !isMe && !!user.address
-  const canBlock = other && relationship !== 'blocked' && !!onBlock
+  const community = context === 'community'
+  // unity-explorer's member menu also hides Block when the member blocked you
+  const canBlock = other && relationship !== 'blocked' && !(community && blockedBy) && !!onBlock
   const canReport = other && !!onReport
-  const showMention = context !== 'request' && context !== 'blocked' && !!onMention
-  const showMessage = other && relationship !== 'blocked' && context !== 'blocked' && !!onMessage
+  const showMention = context !== 'request' && context !== 'blocked' && !community && !!onMention
+  // unity-explorer's member menu offers Chat to every other member
+  const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
 
   let cta: React.ReactNode = null
-  if (other && relationship !== 'blocked') {
+  // the member menu's header button only shows a friendship (to remove it): the row carries the rest
+  if (other && relationship !== 'blocked' && (!community || relationship === 'friend')) {
     if (relationship === 'friend' && onUnfriend) {
       cta = (
         <button type="button" className={`${styles.cta} ${styles.ctaFriend}`} onClick={run(onUnfriend)}>
@@ -203,7 +225,13 @@ export function ProfileCardPresentation({
     </button>
   )
   const hasDestructive = !!block || !!report
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive)
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive || communityActions.length > 0)
+  const message = showMessage && (
+    <button type="button" className={styles.row} onClick={run(onMessage)}>
+      <MessageIcon />
+      <span>Chat</span>
+    </button>
+  )
 
   // The backdrop (and click-outside-to-close) is owned by the popup layer (openPopup default
   // options); this just renders the positioned card. The stopPropagation keeps a click on the card
@@ -233,7 +261,33 @@ export function ProfileCardPresentation({
       {hasMenu && (
         <div className={styles.menu}>
           <div className={styles.divider} />
-          {context === 'request' ? (
+          {community ? (
+            <>
+              {viewProfile}
+              {message}
+              {communityActions.length > 0 && <div className={styles.divider} />}
+              {communityActions.map((a, i) =>
+                a.disabledReason != null ? (
+                  // aria-disabled, not disabled: it stays focusable, so the reason is reachable without a mouse
+                  <Tooltip key={a.label} label={a.disabledReason} side="bottom" multiline className={styles.rowTip}>
+                    <button type="button" className={styles.row} aria-disabled="true" aria-describedby={`${reasonId}-${i}`}>
+                      {a.icon}
+                      <span>{a.label}</span>
+                    </button>
+                    <span id={`${reasonId}-${i}`} className={styles.srOnly}>{a.disabledReason}</span>
+                  </Tooltip>
+                ) : (
+                  <button type="button" key={a.label} className={styles.row} onClick={() => { onClose(); a.onClick() }}>
+                    {a.icon}
+                    <span>{a.label}</span>
+                  </button>
+                )
+              )}
+              {hasDestructive && <div className={styles.divider} />}
+              {block}
+              {report}
+            </>
+          ) : context === 'request' ? (
             <>
               {viewProfile}
               {hasDestructive && <div className={styles.divider} />}
@@ -244,12 +298,7 @@ export function ProfileCardPresentation({
             viewProfile
           ) : (
             <>
-              {showMessage && (
-                <button type="button" className={styles.row} onClick={run(onMessage)}>
-                  <MessageIcon />
-                  <span>Chat</span>
-                </button>
-              )}
+              {message}
               {showCall && (
                 <button type="button" className={styles.row} onClick={run(onCall)}>
                   <MaskIcon src={callIcon} size={16} />
