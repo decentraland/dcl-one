@@ -15,8 +15,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SCOPE = 'library/ui/figma'
-const LOCK = 'library/ui/upstream.lock.json'
+export const SCOPE = 'library/ui/figma'
+export const LOCK = 'library/ui/upstream.lock.json'
 
 const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1\n')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -46,7 +46,7 @@ const NOTE = /^[\w ,.;:()'/-]{1,160}$/
  * An entry whose content differs from its FDS blob, or that has no FDS counterpart, must name one or more codes of
  * `deviationCodes`, each mapped to the reason it stands for; the code `note` (mapped to null) instead carries a short
  * per-file `note`, for a difference no code explains. Codes are kept in sorted order so that two branches adding
- * different codes do not edit the same lines. An absent, empty or malformed table is an error, never
+ * different codes rarely touch the same lines. An absent, empty or malformed table is an error, never
  * a pass.
  */
 export function pinnedFiles(lock) {
@@ -135,6 +135,32 @@ export function pinnedFiles(lock) {
   return { digests, problems }
 }
 
+/**
+ * sha256 of each blob in `listing` ({ file, oid } in any order), keyed by repository path. A Git LFS pointer throws: its
+ * text is not the file, and pinning it would vouch for content nobody hashed.
+ */
+export function blobDigests(root, listing) {
+  if (listing.length === 0) return {}
+  const output = execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
+    input: listing.map(({ oid }) => oid).join('\n') + '\n',
+    maxBuffer: 1 << 30
+  })
+  const digests = {}
+  let offset = 0
+  for (const { file, oid } of listing) {
+    const end = output.indexOf(0x0a, offset)
+    const [found, , size] = output.subarray(offset, end).toString('utf8').split(' ')
+    if (found !== oid) throw new Error('git returned an unexpected object')
+    const start = end + 1
+    const content = output.subarray(start, start + Number(size))
+    if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER))
+      throw new Error(`${file} is a Git LFS pointer; ported files are plain git`)
+    digests[file] = sha256(content)
+    offset = start + Number(size) + 1
+  }
+  return digests
+}
+
 /** sha256 of every file the index tracks under the scope, keyed by repository path. */
 export function trackedDigests(root) {
   const listing = execFileSync('git', ['-C', root, 'ls-files', '-s', '-z', '--', SCOPE], {
@@ -149,26 +175,7 @@ export function trackedDigests(root) {
       if (mode === '160000') throw new Error(`${file} is a submodule`)
       return { file, oid }
     })
-  if (listing.length === 0) return {}
-  const output = execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
-    input: listing.map(({ oid }) => oid).join('\n') + '\n',
-    maxBuffer: 1 << 30
-  })
-  const digests = {}
-  let offset = 0
-  for (const { file, oid } of listing) {
-    const end = output.indexOf(0x0a, offset)
-    const [found, , size] = output.subarray(offset, end).toString('utf8').split(' ')
-    if (found !== oid) throw new Error('git returned an unexpected object')
-    const start = end + 1
-    const content = output.subarray(start, start + Number(size))
-    // A pointer's text is not the file: pinning it would vouch for content nobody hashed.
-    if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER))
-      throw new Error(`${file} is a Git LFS pointer; ported files are plain git`)
-    digests[file] = sha256(content)
-    offset = start + Number(size) + 1
-  }
-  return digests
+  return blobDigests(root, listing)
 }
 
 /** Compares pinned and tracked tables; returns { mismatched, missing, unpinned } as sorted path lists. */

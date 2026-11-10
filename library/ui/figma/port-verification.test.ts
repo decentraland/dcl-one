@@ -37,23 +37,61 @@ const commit = (message: string) => {
   git('commit', '--quiet', '--no-gpg-sign', '-m', message)
   return git('rev-parse', 'HEAD')
 }
-type LockOptions = { revision?: string; note?: string; digest?: string; components?: string }
+type Pin = {
+  sha256: string
+  fds: { path: string; sha256: string } | null
+  deviation?: string[]
+  note?: string
+}
+type LockValue = {
+  sources: ({ files: Record<string, Pin>; deviationCodes: Record<string, string | null> } & Record<
+    string,
+    unknown
+  >)[]
+} & Record<string, unknown>
+type LockOptions = {
+  revision?: string
+  note?: string
+  digest?: string
+  components?: string
+  edit?: (lock: LockValue) => void
+}
 const lockValue = ({
   revision = REVISION,
   note = 'v1',
   digest = 'd',
-  components = 'e'
-}: LockOptions = {}) => ({
-  sources: [
-    {
-      repository: 'https://github.com/decentraland/figma-design-system',
-      revision,
-      note,
-      snapshot: { revision: SNAPSHOT_REVISION, digests: { 'pages.json': digest.repeat(64) } }
-    }
-  ],
-  publicComponents: { files: { 'promotion.json': { sha256: components.repeat(64) } } }
-})
+  components = 'e',
+  edit
+}: LockOptions = {}) => {
+  const value: LockValue = {
+    sources: [
+      {
+        repository: 'https://github.com/decentraland/figma-design-system',
+        revision,
+        note,
+        changes: ['A narrative entry.'],
+        deviationCodes: { 'dcl-one-only': 'Owned by this tree.', note: null },
+        snapshot: { revision: SNAPSHOT_REVISION, digests: { 'pages.json': digest.repeat(64) } },
+        files: {
+          'library/ui/figma/a.ts': {
+            sha256: '1'.repeat(64),
+            fds: null,
+            deviation: ['dcl-one-only']
+          },
+          'library/ui/figma/test/a.test.ts': {
+            sha256: '2'.repeat(64),
+            fds: { path: 'upstream/test/a.test.ts', sha256: '3'.repeat(64) },
+            deviation: ['dcl-one-only']
+          }
+        }
+      }
+    ],
+    publicFoundations: { files: { 'foundations.css': { sha256: 'f'.repeat(64) } } },
+    publicComponents: { files: { 'promotion.json': { sha256: components.repeat(64) } } }
+  }
+  edit?.(value)
+  return value
+}
 const passing = () => Object.fromEntries(REQUIRED_CHECKS.map((name) => [name, { result: 'pass' }]))
 // A record that reports passing checks for whatever the working tree will commit next.
 const recordFor = (overrides: Record<string, unknown> = {}) => {
@@ -71,6 +109,20 @@ const recordFor = (overrides: Record<string, unknown> = {}) => {
   }
 }
 const run = (base: string) => main(['--base', base], repo)
+// Every single-, double- or back-quoted literal without escapes or interpolation.
+const pathLiterals = (text: string) =>
+  [...text.matchAll(/(['"`])((?:(?!\1)[^\\\n$])*)\1/g)].map((match) => match[2]!)
+const pointsAtExempt = (file: string, literal: string) => {
+  const target = literal.startsWith('.')
+    ? path.posix.normalize(path.posix.join(path.posix.dirname(file), literal))
+    : undefined
+  return Boolean(
+    (target && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
+    /\.md$/.test(literal) ||
+    /^(?:test|fixtures|__tests__)$/.test(literal) ||
+    /(?:^|\/)(?:test|fixtures|__tests__)\//.test(literal)
+  )
+}
 
 let base: string
 beforeEach(async () => {
@@ -111,11 +163,34 @@ describe('when the pull request leaves the port inputs alone', () => {
     expect(out).toContain('unchanged')
   })
 
-  it('should pass with no record when only lock provenance text changes', async () => {
-    await put(LOCK, JSON.stringify(lockValue({ note: 'v2' })))
+  it.each([
+    ['license', (lock: LockValue) => void (lock.sources[0]!.license = { spdx: 'MIT' })],
+    ['imported paths', (lock: LockValue) => void (lock.sources[0]!.imported = { a: 'b' })],
+    ['narrative changes', (lock: LockValue) => void (lock.sources[0]!.changes = ['Edited.'])],
+    [
+      'a deviation reason or a new code',
+      (lock: LockValue) =>
+        void (lock.sources[0]!.deviationCodes = {
+          added: 'New.',
+          'dcl-one-only': 'Edited.',
+          note: null
+        })
+    ],
+    [
+      'a per-file note',
+      (lock: LockValue) => void (lock.sources[0]!.files['library/ui/figma/a.ts']!.note = 'x')
+    ],
+    [
+      "an exempt file's deviation codes",
+      (lock: LockValue) =>
+        void (lock.sources[0]!.files['library/ui/figma/test/a.test.ts']!.deviation = ['added'])
+    ]
+  ])('should pass with no record when only %s changes', async (_, edit) => {
+    await put(LOCK, JSON.stringify(lockValue({ edit })))
     commit('provenance')
 
     expect(run(base)).toBe(0)
+    expect(out).toContain('unchanged')
   })
 })
 
@@ -201,6 +276,53 @@ describe('when the pull request changes a port input', () => {
     expect(out).toContain('other port inputs')
   })
 
+  it.each([
+    [
+      'a port input counterpart',
+      (lock: LockValue) =>
+        void (lock.sources[0]!.files['library/ui/figma/a.ts']!.fds = {
+          path: 'upstream/a.ts',
+          sha256: '1'.repeat(64)
+        })
+    ],
+    [
+      'an exempt file counterpart',
+      (lock: LockValue) =>
+        void (lock.sources[0]!.files['library/ui/figma/test/a.test.ts']!.fds = null)
+    ],
+    [
+      "a port input's deviation codes",
+      (lock: LockValue) => void (lock.sources[0]!.files['library/ui/figma/a.ts']!.deviation = [])
+    ],
+    [
+      'a new exempt file entry',
+      (lock: LockValue) =>
+        void (lock.sources[0]!.files['library/ui/figma/test/b.test.ts'] = {
+          sha256: '4'.repeat(64),
+          fds: null,
+          deviation: ['dcl-one-only']
+        })
+    ],
+    ['the FDS code commit', (lock: LockValue) => void (lock.sources[0]!.revision = 'b'.repeat(40))],
+    [
+      'the capture commit',
+      (lock: LockValue) =>
+        void ((lock.sources[0]!.snapshot as { revision: string }).revision = 'd'.repeat(40))
+    ],
+    [
+      'the public foundation table',
+      (lock: LockValue) => void (lock.publicFoundations = { files: {} })
+    ],
+    ['a lock field added later', (lock: LockValue) => void (lock.sources[0]!.policy = 'strict')]
+  ])('should require a new record when only %s changes', async (_, edit) => {
+    await put('library/ui/figma/a.ts', 'export const a = 1\n')
+    await put(LOCK, JSON.stringify(lockValue({ edit })))
+    commit('lock-only change')
+
+    expect(run(base)).toBe(1)
+    expect(out).toContain('not committed')
+  })
+
   it('should fail with a schema 1 record', async () => {
     const rest: Record<string, unknown> = recordFor()
     delete rest.portInputHash
@@ -283,6 +405,25 @@ describe('when the pull request changes a port input', () => {
   })
 })
 
+describe('when reading the files of a commit', () => {
+  it('should refuse a Git LFS pointer', async () => {
+    await put(
+      'library/ui/figma/font.woff2',
+      'version https://git-lfs.github.com/spec/v1\noid sha256:x\n'
+    )
+    const head = commit('pointer')
+
+    expect(() => trackedFilesAt(repo, head)).toThrow('Git LFS pointer')
+  })
+
+  it('should refuse a submodule', () => {
+    git('update-index', '--add', '--cacheinfo', `160000,${'e'.repeat(40)},library/ui/figma/vendor`)
+    git('commit', '--quiet', '--no-gpg-sign', '-m', 'submodule')
+
+    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('is not a file')
+  })
+})
+
 describe('when deciding which files are port inputs', () => {
   it.each([
     'library/ui/figma/MAINTENANCE.md',
@@ -303,6 +444,8 @@ describe('when deciding which files are port inputs', () => {
     'library/ui/figma/figma.config.json',
     'library/ui/figma/agent-kit/kit.mjs',
     'library/ui/figma/README.MD',
+    'library/ui/figma/src/notes.md',
+    'library/ui/figma/src/types.test.d.ts',
     'library/ui/figma/doc.md.ts',
     'library/ui/README.md',
     'library/ui/figma-other/test/a.ts',
@@ -311,26 +454,41 @@ describe('when deciding which files are port inputs', () => {
     expect(isRecordExempt(file)).toBe(false)
   })
 
-  // The exemption is only sound while no port input reads an exempt file.
-  it('should find no port input under library/ui/figma that imports or reads an exempt file', () => {
+  // The exemption holds only while no port input names an exempt file. This scans every string literal of the tracked
+  // port inputs for a relative path, a bare directory name or a Markdown name that points at one. It does not see paths
+  // built at run time; the agent kit's readdir of its skills is one, and no check against the capture runs the kit.
+  it('should find no port input under library/ui/figma whose string literals point at an exempt file', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
     const files = execFileSync('git', ['-C', root, 'ls-files', '-z', '--', 'library/ui/figma'])
       .toString('utf8')
       .split('\0')
       .filter((file) => /\.(?:[cm]?[jt]sx?|mts|cts)$/.test(file) && !isRecordExempt(file))
-    expect(files.length).toBeGreaterThan(0)
+    expect(files.length).toBeGreaterThan(100)
     const offenders: string[] = []
     for (const file of files) {
       const text = execFileSync('git', ['-C', root, 'show', `:${file}`]).toString('utf8')
-      for (const match of text.matchAll(/(?:from|import\(|require\()\s*['"]([^'"]+)['"]/g)) {
-        const specifier = match[1]!
-        if (!specifier.startsWith('.')) continue
-        const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier))
-        if (isRecordExempt(target)) offenders.push(`${file} -> ${specifier}`)
-      }
-      if (/['"`][^'"`]*\.md['"`]/.test(text)) offenders.push(`${file} names a Markdown file`)
+      for (const literal of pathLiterals(text))
+        if (pointsAtExempt(file, literal)) offenders.push(`${file}: ${JSON.stringify(literal)}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  it.each([
+    ["import './test/setup.ts'", 'a side-effect import'],
+    ["export * from './fixtures'", 'a directory re-export'],
+    ["new URL('../test/data.json', import.meta.url)", 'a URL'],
+    ["path.join(root, 'fixtures', 'x.json')", 'a bare directory segment'],
+    ['readFile(`notes/README.md`)', 'a Markdown name in a template literal'],
+    ["await import('./src/a.test.ts')", 'a dynamic import of a test']
+  ])('should flag %s as %s', (code) => {
+    const file = 'library/ui/figma/tool.mjs'
+    expect(pathLiterals(code).some((literal) => pointsAtExempt(file, literal))).toBe(true)
+  })
+
+  it('should not flag literals that only look like words', () => {
+    const file = 'library/ui/figma/tool.mjs'
+    const code = "const label = 'testing'; const re = /test/; run('./src/a.ts'); log('mdx')"
+    expect(pathLiterals(code).filter((literal) => pointsAtExempt(file, literal))).toEqual([])
   })
 })
 

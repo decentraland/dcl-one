@@ -78,10 +78,10 @@ jobs:
           RANGE: ${{ steps.scope.outputs.range }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --allowlist-from "$HEAD_SHA"
-      # A change to upstream.lock.json is a port from figma-design-system, where the Figma capture lives. The
-      # checks against that capture run there and locally (pnpm figma fetch-source); this step requires the record
-      # of their results for this exact lock, FDS commit and library tree, and passes untouched for any other change.
-      - name: Require the port verification record when the lock changes
+      # The checks against the Figma capture run where it is readable (locally, after pnpm figma fetch-source). When a
+      # port input changes (the lock outside its provenance text, or a tracked file under library/ui/figma other than
+      # tests, fixtures and Markdown), this step requires the record of their results for exactly those inputs.
+      - name: Require the port verification record when a port input changes
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}

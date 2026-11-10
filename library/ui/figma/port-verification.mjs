@@ -2,24 +2,26 @@
 // port-verification: the checks that compare generated output with the real Figma capture cannot run in this public
 // repository, because the capture lives in decentraland/figma-design-system (FDS). A pull request that changes a port
 // input must carry library/ui/port-verification.json, written after those checks ran locally against the pinned
-// capture (`pnpm figma fetch-source`). The port inputs are the FDS commit and capture pins, the capture digest table,
-// the public foundation and component tables, and the bytes of every tracked file under library/ui/figma except tests,
-// test fixtures and Markdown documentation, which none of the checks read. This check passes when the port inputs are
-// unchanged from the base or the head has no lock, and otherwise only when the record names exactly the head's port
-// inputs and every required check passed. A changed port input without a matching record fails; it is never skipped.
-// The record states what a local run reported: it is not an attestation, a proof that the checks ran, an independent
-// review or evidence of live Figma parity. Dependency-free; it needs no install, no credential and no capture.
-import { Buffer } from 'node:buffer'
+// capture (`pnpm figma fetch-source`). The port inputs are the whole lock except its provenance text (license, imported
+// paths, narrative changes, deviation reasons and per-file notes), plus the bytes of every tracked file under
+// library/ui/figma except tests, test fixtures and Markdown documentation. Exempt files keep their lock entry and FDS
+// counterpart bound, because fetch-source compares every counterpart with the pinned FDS commit; only their own digest
+// and deviation codes are left out. This check passes when the port inputs are unchanged from the base or the head has
+// no lock, and otherwise only when the record names exactly the head's port inputs and every required check passed. A
+// changed port input without a matching record fails; it is never skipped. The record states what a local run
+// reported: it is not an attestation, a proof that the checks ran, an independent review or evidence of live Figma
+// parity. Dependency-free; it needs no install, no credential and no capture.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fdsSource } from './lock-digests.mjs'
+import { isComponentModulePath } from './component-generation.mjs'
+import { LOCK, SCOPE, blobDigests, fdsSource } from './lock-digests.mjs'
 
-const LOCK = 'library/ui/upstream.lock.json'
 const RECORD = 'library/ui/port-verification.json'
-const SCOPE = 'library/ui/figma'
 const SCHEMA = 2
+/** Per-source lock fields that only explain provenance. Every other field, including one added later, is bound. */
+const PROVENANCE_KEYS = ['license', 'imported', 'changes', 'deviationCodes']
 /** Every check a record must report as passed, against the capture pinned in the lock. */
 export const REQUIRED_CHECKS = [
   'fetch-source',
@@ -32,16 +34,17 @@ export const REQUIRED_CHECKS = [
 ]
 const RECORD_KEYS = ['schema', 'portInputHash', 'fdsRevision', 'snapshotRevision', 'checks']
 const CHECK_KEYS = ['result', 'detail']
-const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1\n')
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 /**
- * Whether a path under library/ui/figma is outside the port inputs: a test, a test fixture or Markdown documentation.
- * No check against the capture reads them, and port-verification.test.ts fails when non-exempt code imports one.
+ * Whether a path under library/ui/figma has its bytes outside the port inputs: a test, a test fixture or Markdown
+ * documentation, and never a component generation input (component-generation.mjs). port-verification.test.ts scans
+ * the port inputs for path literals that point at an exempt file.
  */
 export function isRecordExempt(file) {
   if (typeof file !== 'string' || !file.startsWith(`${SCOPE}/`)) return false
+  if (isComponentModulePath(file)) return false
   const relative = file.slice(SCOPE.length + 1)
   return (
     /\.md$/.test(relative) ||
@@ -63,30 +66,36 @@ function canonical(value) {
 
 /**
  * The hash of the port inputs, from a parsed lock and the sha256 of every tracked file under library/ui/figma keyed by
- * repository path. Exempt files are left out; the lock's provenance text (license, imported, changes, deviation codes,
- * counterparts) is left out because lock-digests.mjs validates it and no check against the capture reads it.
+ * repository path. The lock is bound whole except PROVENANCE_KEYS and per-file notes; an exempt file's pinned entry
+ * stays bound without its own digest and deviation codes, so a counterpart edit always needs a new record.
  */
 export function portInputHash(lock, files) {
   const source = fdsSource(lock)
   const digests = source.snapshot?.digests
   if (!digests || typeof digests !== 'object' || Array.isArray(digests))
     throw new Error('upstream.lock.json has no capture digest table')
+  if (!source.files || typeof source.files !== 'object' || Array.isArray(source.files))
+    throw new Error('upstream.lock.json pins no ported files')
+  const inputs = JSON.parse(JSON.stringify(lock))
+  for (const entry of inputs.sources) {
+    if (!entry || typeof entry !== 'object') continue
+    for (const key of PROVENANCE_KEYS) delete entry[key]
+    if (!entry.files || typeof entry.files !== 'object') continue
+    for (const [file, pin] of Object.entries(entry.files)) {
+      if (!pin || typeof pin !== 'object') continue
+      delete pin.note
+      if (isRecordExempt(file)) {
+        delete pin.sha256
+        delete pin.deviation
+      }
+    }
+  }
   const bound = Object.keys(files)
     .filter((file) => !isRecordExempt(file))
     .sort()
     .map((file) => [file, files[file]])
   if (bound.length === 0) throw new Error(`no port input is tracked under ${SCOPE}`)
-  return sha256(
-    canonical({
-      schema: SCHEMA,
-      fdsRevision: source.revision ?? null,
-      snapshotRevision: source.snapshot?.revision ?? null,
-      snapshotDigests: digests,
-      publicFoundations: lock.publicFoundations ?? null,
-      publicComponents: lock.publicComponents ?? null,
-      files: bound
-    })
-  )
+  return sha256(canonical({ schema: SCHEMA, lock: inputs, files: bound }))
 }
 
 /**
@@ -176,7 +185,7 @@ function lockAt(root, commit) {
 
 /** sha256 of every file `commit` tracks under the scope, keyed by repository path. An LFS pointer or submodule throws. */
 export function trackedFilesAt(root, commit) {
-  const entries = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', SCOPE])
+  const listing = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', SCOPE])
     .toString('utf8')
     .split('\0')
     .filter(Boolean)
@@ -186,22 +195,7 @@ export function trackedFilesAt(root, commit) {
       if (type !== 'blob') throw new Error(`${file} is not a file`)
       return { file, oid }
     })
-  if (entries.length === 0) return {}
-  const output = git(root, ['cat-file', '--batch'], entries.map(({ oid }) => oid).join('\n') + '\n')
-  const files = {}
-  let offset = 0
-  for (const { file, oid } of entries) {
-    const end = output.indexOf(0x0a, offset)
-    const [found, , size] = output.subarray(offset, end).toString('utf8').split(' ')
-    if (found !== oid) throw new Error('git returned an unexpected object')
-    const start = end + 1
-    const content = output.subarray(start, start + Number(size))
-    if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER))
-      throw new Error(`${file} is a Git LFS pointer; port inputs are plain git`)
-    files[file] = sha256(content)
-    offset = start + Number(size) + 1
-  }
-  return files
+  return blobDigests(root, listing)
 }
 
 /** Command-line entry point. Returns the exit code. */
