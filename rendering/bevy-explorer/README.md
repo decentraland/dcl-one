@@ -26,11 +26,13 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 The HUD both hosts share lives in `library/ui/apps/hud` (`@hud/*`, the UI) and `library/explorer-core`
 (`@explorer-core/*`, the page's core with no React); where they differ, it reads
 the behaviour from `@hud-host`, each host's `host.ts` (`docs/ui-standards.md`, "Explorer HUD
-transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes:
+transition"). Each host's `App.tsx` renders the shared `HudApp` with its own drivers and Shop page.
+The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes:
 
 - `main.tsx` → `mount.tsx` (`mountPlayApp`), `shell/main.ts` → `shell/mount.ts` (`mountPlayShell`).
-- Same-origin paths resolve against `/play/`: `features/engine/EngineHost.tsx`, `lib/systemScene.ts`
-  (no `sdk-commands` live preview), `lib/publicUrl.ts` (`apps/ui3/public/play`).
+- Same-origin paths resolve against `/play/`: `lib/engineLaunch.ts` (the engine artifact under
+  `/play/engine`), `lib/systemScene.ts` (no `sdk-commands` live preview), `lib/publicUrl.ts`
+  (`apps/ui3/public/play`).
 - Off `decentraland.org`, service URLs come from the gateway's prefix table (`lib/baseDomain.ts`);
   `?baseDomain=decentraland.org` selects the Foundation deployments.
 - `lib/editorEmbed.ts`: the Creator Hub editor frames `/play/` with its trusted scene, the session
@@ -42,29 +44,30 @@ transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with
   snapshot URLs returned by its backend (`apps/ui3/src/play/host.ts` returns them as given).
 - The shared UI foundations: `react-web` loads `@dcl/one-ui/foundations.css` in `main.tsx`; `/play`
   does not load them yet (`docs/ui-standards.md`, "Explorer HUD transition").
-- The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
-  client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
-  keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
-- Tests of the shared HUD UI live once, in `library/ui/apps/hud`, and `react-web`'s `npm test` runs
-  them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
+- The Shop page and its query cache, each host's `App.tsx`: `react-web` renders the catalogue inside
+  `features/shop/ShopQueries.tsx` (one client per account, remounted and emptied when another account
+  or a sign-out replaces it); `/play` renders its in-world Shop, with the app-wide
+  `QueryClientProvider` it uses, until that Shop moves to `react-web`.
+- Tests of the shared HUD live once, in `library/ui/apps/hud` and `library/explorer-core`, and
+  `react-web`'s `npm test` runs them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
   `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried. The shared session only knows that a host may
   have an unattended run (`@hud-host`'s `bootMode` and `unattendedRun`); react-web's `host.ts`
   supplies the autopilot's (`?autopilot` read by `lib/bootMode.ts`, the local guest's sign-in, the
   run's failure report and its Genesis landing), `/play`'s supplies none. Nor are the shell's local
   guest (`shell/localGuest.ts`) and the stream params (`perfStream`, `perfCsv`). `/play` never runs the
-  benchmark: `features/engine/EngineHost.tsx` keeps `autopilot` out of the engine's launch options
+  benchmark: its `lib/engineLaunch.ts` keeps `autopilot` out of the engine's launch options
   on every host (the key is absent, not `false`, so an engine that predates the field still
   launches), and `perfStream` and `perfCsv` are never read. Neither HUD's `lib/launchGate.ts` has
   an entry for these switches: the Explorer's HUD ignores them except on loopback hosts and in
   native, `/play` ignores them everywhere, and `lib/entryParams.ts` does not list `autopilot`
   among the parameters a link can set. Nothing else of the run is carried either, because nothing in
-  `/play` calls it: the drivers' `loginLocalGuest` and `autopilotFailed` (`engine/autopilot.ts`,
-  `engine/EngineDriver.ts`, `engine/bridge.ts`), the shell's `createLocalGuest` with the root key it
-  keeps (`shell/login.ts`, `shell/localGuest.ts`) and the helpers `features/auth/guest.ts` splits
-  out for it, `lib/loopbackHost.ts`, the `__bevyPerfStream` page switch (`EngineHost.tsx`) and the
-  bridge channel's `__engineExited` exemption (`engine/bridgeChannel.ts`; `boot.js` sets it only
-  when the engine ends its own run under the autopilot, which `/play` never starts).
+  `/play` calls it: react-web's autopilot drivers (`engine/autopilot.ts`, extending the shared ones
+  with `loginLocalGuest` and `autopilotFailed`), the shell's `createLocalGuest` with the root key it
+  keeps (`shell/login.ts`, `shell/localGuest.ts`), `lib/loopbackHost.ts`, the `__bevyPerfStream` page
+  switch (react-web's `lib/engineLaunch.ts`) and the bridge channel's `__engineExited` exemption
+  (`@hud-host`'s `engineExited`; `boot.js` sets it only when the engine ends its own run under the
+  autopilot, which `/play` never starts, so `/play`'s host answers false).
 
 Open: `library/explorer-core/features/auth/sso.ts` expects the Foundation auth site's `/auth/login`, which Sites does not
 serve; guest sessions work.

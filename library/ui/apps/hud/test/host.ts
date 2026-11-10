@@ -19,3 +19,6 @@ export const unattendedRun: HudHost['unattendedRun'] = () => null
 export const engineExited: HudHost['engineExited'] = () => false
 export const seedBridgeSession: HudHost['seedBridgeSession'] = () => {}
 export const engineLaunch: HudHost['engineLaunch'] = () => ({ options: {} as ReturnType<HudHost['engineLaunch']>['options'], engineDir: 'http://localhost/engine' })
+export const untrustedLaunchParams: HudHost['untrustedLaunchParams'] = () => []
+export const unrecognisedEntryParams: HudHost['unrecognisedEntryParams'] = () => []
+export const hostEntryParams: HudHost['hostEntryParams'] = () => []

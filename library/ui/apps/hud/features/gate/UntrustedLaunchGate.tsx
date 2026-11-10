@@ -17,15 +17,8 @@ import { Button, DclLogo, ModalShell } from '../../design'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
 import styles from './UntrustedLaunchGate.module.css'
 import { siteUrl } from '@hud-host'
+import type { UntrustedParam } from '@explorer-core/hostContract'
 
-/** A parameter of the entry url that points the session at infrastructure the page does not trust
- *  (each host's lib/launchGate.ts decides which). */
-export interface UntrustedParam {
-  name: string
-  value: string
-  /** what the param would let the link do — the gate's copy */
-  warning: string
-}
 
 // A tab the user opened themselves can't be closed by script, so send them somewhere safe instead.
 // Inside the shell, the shell does it: from here it would only navigate the app's iframe.

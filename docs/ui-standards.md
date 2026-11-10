@@ -329,9 +329,9 @@ Each host keeps only what is its own:
 - its module `host.ts` and the libraries behind it (`lib/baseDomain.ts`,
   `lib/bootMode.ts`, `lib/entryParams.ts`, `lib/launchGate.ts`,
   `lib/publicUrl.ts`, `lib/systemScene.ts`);
-- `App.tsx`, the engine drivers (`engine/EngineDriver.ts`, `engine/bridge.ts`,
-  `engine/bridgeChannel.ts`) and `features/engine/EngineHost.tsx`, which launch
-  and compose the HUD the way the host needs;
+- `App.tsx`, which renders the shared `HudApp` (`library/ui/apps/hud/App.tsx`)
+  with the host's drivers and Shop page, and `lib/engineLaunch.ts`, the engine's
+  launch for the shared `EngineHost`;
 - its global stylesheet (`styles/global.css`, which also gives the shared
   stylesheets the host's public files as CSS variables such as `--hud-logo`);
 - what only one host has: react-web's benchmark autopilot

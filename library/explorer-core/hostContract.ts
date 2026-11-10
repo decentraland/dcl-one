@@ -35,6 +35,15 @@ export interface UnattendedRun {
   loginFailed(driver: LoginDriver, reason: string): void
 }
 
+/** A parameter of the entry url that points the session at infrastructure the page does not trust
+ *  (each host's lib/launchGate.ts decides which). */
+export interface UntrustedParam {
+  name: string
+  value: string
+  /** what the param would let the link do — the gate's copy */
+  warning: string
+}
+
 /** How this host launches the web engine in its page. */
 export interface EngineLaunch {
   /** The engine's launch options (src/web_options.rs, keyed by the web param table). */
@@ -66,6 +75,14 @@ export interface HudHost {
   publicUrl(path: string): string
   /** The entry parameters this host's page advertises. */
   acceptedEntryParams(): AcceptedParam[]
+  /** The entry url's params that point at infrastructure this host does not trust, shown before
+   *  anything boots. */
+  untrustedLaunchParams(options: { native: boolean }): UntrustedParam[]
+  /** The entry url's params nothing reads, besides `hostParams` the page acts on. */
+  unrecognisedEntryParams(q: URLSearchParams, hostParams?: string[]): string[]
+  /** Params this host's page acts on beyond the shared ones (react-web's benchmark switches, where
+   *  it honours them). */
+  hostEntryParams(): string[]
   /** The realm the entry url asks for, or null. */
   entryRealm(q: URLSearchParams): string | null
   /** This deployment's own Shop page for a collection item, or null when the marketplace shows it. */

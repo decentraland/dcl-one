@@ -2,9 +2,10 @@
 // library/ui/apps/hud reads these through the contract in its hostContract.ts.
 import type { HudHost, UnattendedRun } from '@explorer-core/hostContract'
 import { BASE_DOMAIN, DEFAULT_REALM, nativeProfileImage, serviceUrl } from './lib/baseDomain'
-import { bootMode, isNativeHud } from './lib/bootMode'
+import { BENCHMARK_PARAMS, benchmarkSwitchesHonoured, bootMode, isNativeHud } from './lib/bootMode'
 import type { AutopilotDriver } from './engine/autopilot'
-import { acceptedEntryParams, entryRealm } from './lib/entryParams'
+import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/entryParams'
+import { untrustedLaunchParams } from './lib/launchGate'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 import { engineLaunch, seedBridgeSession } from './lib/engineLaunch'
 
@@ -32,7 +33,10 @@ const unattendedRun = (): UnattendedRun | null =>
 /** boot.js sets it when the engine ended its own run (an `AppExit`, the benchmark autopilot). */
 const engineExited = (): boolean => (window as { __engineExited?: boolean }).__engineExited === true
 
-export { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+/** The benchmark's switches, where this page honours them (lib/bootMode.ts). */
+const hostEntryParams = (): string[] => (benchmarkSwitchesHonoured() ? BENCHMARK_PARAMS : [])
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+
+const host: HudHost = { acceptedEntryParams, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

@@ -8,7 +8,7 @@ import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl }
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
-import type { UntrustedParam } from '@hud/features/gate/UntrustedLaunchGate'
+import type { UntrustedParam } from '@explorer-core/hostContract'
 
 export type { UntrustedParam }
 

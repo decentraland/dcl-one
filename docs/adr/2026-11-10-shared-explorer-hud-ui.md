@@ -51,8 +51,8 @@ The rules both layers follow:
   `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh` writes it, and the Sites import checks
   the tracked copy against the build.
 - **Hosts keep only their own code.** Each host keeps its entry points, shell, host module and the
-  libraries behind it, the engine drivers and engine host, `App.tsx`, its global stylesheet and what
-  only it has. Where the two copies had drifted, the shared one kept the fix or feature either host
+  libraries behind it (the engine's launch included), an `App.tsx` that renders the shared `HudApp`
+  with its drivers and Shop page, its global stylesheet and what only it has. Where the two copies had drifted, the shared one kept the fix or feature either host
   had.
 
 ### Layout
