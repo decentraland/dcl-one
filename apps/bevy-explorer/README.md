@@ -213,7 +213,7 @@ docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
 ```
 
 The engine needs no capability for its scene hosts to sandbox themselves, but the runtime's
-seccomp profile must allow `landlock_*` and `seccomp` (Docker 29's default does), or an
+seccomp profile must allow `landlock_*` and `seccomp` (the defaults of Docker 28.0, which CI uses, and 29.8 do), or an
 `--orchestrated` engine exits `78`. Check a host before deploying with the scene host's self-test,
 not as PID 1 (it tries, among others, to create a file in `/tmp`):
 
