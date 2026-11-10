@@ -8,11 +8,11 @@
   },
   "registry": {
     "path": "promotion.json",
-    "sha256": "7b873df319ada58abcc8a2b1fe02e91e1592b33b87b46e6630d89af6fbdabfbb",
-    "components": [],
-    "internal": [
+    "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71",
+    "components": [
       "NavBar"
-    ]
+    ],
+    "internal": []
   },
   "inputs": {
     "config": {
@@ -23,8 +23,8 @@
     "dependencies": [
       {
         "path": "library/ui/package.json",
-        "sha256": "2907b15be5b840cb4517b777e2f6233fcbca3a567ed687823fcbdf667681ae8c",
-        "indexBlobSha": "aa685f51345e962ab94a5ee34b672d1d99802286"
+        "sha256": "2188253ca647805db83725a1fc1c271061a76ba3ee109ef6b3afc0563780acc8",
+        "indexBlobSha": "babdf674076bffa75729e2d186cff90aea5b996f"
       },
       {
         "path": "library/ui/pnpm-lock.yaml",
@@ -586,6 +586,10 @@
   ],
   "output": [
     {
+      "path": "NavBar/NavBar.figma.ts",
+      "sha256": "ead9799e44e9b60c8e8dcc697b180f212f8373d0fce24c4309ad4be7e12fb95b"
+    },
+    {
       "path": "NavBar/NavBar.module.css",
       "sha256": "66fbb388dafcb2a1f3f45fee33b6ff10051f8628c23fe63cc2b475f49504d22d"
     },
@@ -599,7 +603,7 @@
     },
     {
       "path": "promotion.json",
-      "sha256": "7b873df319ada58abcc8a2b1fe02e91e1592b33b87b46e6630d89af6fbdabfbb"
+      "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71"
     },
     {
       "path": "runtime/figma-interactions.tsx",
