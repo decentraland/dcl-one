@@ -32,7 +32,7 @@ use common::{
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
         ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage, PointAtMarkerVisibility,
-        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
+        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
@@ -50,6 +50,8 @@ use volume_settings::{
     AvatarVolumeSetting, MasterVolumeSetting, SceneVolumeSetting, SystemVolumeSetting,
     VoiceVolumeSetting,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use vsync_setting::VsyncSetting;
 
 pub mod aa_settings;
 pub mod ambient_brightness_setting;
@@ -76,6 +78,8 @@ pub mod player_settings;
 pub mod point_at_marker_visibility;
 #[cfg(target_arch = "wasm32")]
 pub mod render_scale_setting;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod resolution_setting;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
@@ -83,6 +87,8 @@ pub mod sky_reflection_setting;
 pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod vsync_setting;
 pub mod window_settings;
 
 pub struct SettingBridgePlugin;
@@ -174,8 +180,18 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
-        if is_fullscreen_available() {
-            add_enum_setting::<WindowSetting>(app, &mut settings, &mut schedule, &config);
+        // On the web the engine runs on a worker with no document: the page drives fullscreen
+        // and the browser paces frames.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            add_enum_setting::<common::structs::WindowSetting>(
+                app,
+                &mut settings,
+                &mut schedule,
+                &config,
+            );
+            resolution_setting::register(app, &mut settings, &config);
+            add_enum_setting::<VsyncSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         if !is_preview {
@@ -272,6 +288,10 @@ pub trait AppSetting: Eq + Send + Sync + 'static {
     fn category() -> SettingCategory;
     fn load(config: &AppConfig) -> Self;
     fn save(&self, config: &mut AppConfig);
+    /// True while another setting makes this one moot.
+    fn is_disabled(_config: &AppConfig) -> bool {
+        false
+    }
     fn apply(
         &self,
         param: SystemParamItem<Self::Param>,
@@ -322,6 +342,9 @@ pub struct Setting {
     >,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
+    disabled: fn(&AppConfig) -> bool,
+    /// Choices known only at run time.
+    variants: Option<Box<dyn Fn() -> Vec<NamedVariant> + Send + Sync + 'static>>,
 }
 
 #[derive(Resource)]
@@ -360,11 +383,44 @@ impl Settings {
         Ok(())
     }
 
-    /// Re-reads every displayed value from `config`.
+    /// Re-reads every displayed value, disabled state and run-time choice list from `config`.
     pub fn refresh(&mut self, config: &AppConfig) {
         for setting in self.settings.iter_mut() {
+            if let Some(variants) = &setting.variants {
+                setting.info.named_variants = variants();
+                setting.info.max_value = setting.info.named_variants.len() as f32;
+                setting.info.default = (setting.load)(&AppConfig::default());
+            }
             setting.info.value = (setting.load)(config);
+            setting.info.disabled = (setting.disabled)(config);
         }
+    }
+
+    /// An enum setting whose choices are only known at run time. `load` gives the selected index,
+    /// negative while unknown. Call `refresh` when the choices change.
+    pub fn add_listed_setting(
+        &mut self,
+        info: SettingInfo,
+        variants: impl Fn() -> Vec<NamedVariant> + Send + Sync + 'static,
+        load: impl Fn(&AppConfig) -> f32 + Send + Sync + 'static,
+        save: impl Fn(&mut AppConfig, usize) -> Result<(), anyhow::Error> + Send + Sync + 'static,
+        disabled: fn(&AppConfig) -> bool,
+    ) {
+        self.settings.push(Setting {
+            info,
+            apply: Some(Box::new(
+                move |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
+                    if value < 0.0 {
+                        anyhow::bail!("invalid variant index");
+                    }
+                    save(config, value as usize)?;
+                    Ok(value as usize as f32)
+                },
+            )),
+            load: Box::new(load),
+            disabled,
+            variants: Some(Box::new(variants)),
+        });
     }
 
     pub fn add_int_setting<S: IntAppSetting>(&mut self, config: &AppConfig) {
@@ -380,6 +436,7 @@ impl Settings {
                 value: value.value() as f32 * S::scale(),
                 default: S::load(&AppConfig::default()).value() as f32 * S::scale(),
                 step_size: S::scale().abs(),
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
                 |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
@@ -389,6 +446,8 @@ impl Settings {
                 },
             )),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
+            disabled: S::is_disabled,
+            variants: None,
         });
     }
 
@@ -422,6 +481,7 @@ impl Settings {
                 value: displayed::<S>(config),
                 default: default_index as f32,
                 step_size: 1.0,
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
                 |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
@@ -433,6 +493,8 @@ impl Settings {
                 },
             )),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
+            disabled: S::is_disabled,
+            variants: None,
         });
     }
 }
@@ -454,6 +516,8 @@ fn handle_settings(
                 if let Err(e) = settings.set_value(&mut config, name, *val) {
                     error!("Error setting {name}: {e}");
                 }
+                // a GetSettings queued behind this one must see the settings it greys out
+                settings.refresh(&config);
             }
             _ => (),
         }
@@ -530,17 +594,4 @@ pub fn record_cameras(
     for ev in new_cams.read() {
         cameras.0.insert(ev.0);
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[inline(always)]
-fn is_fullscreen_available() -> bool {
-    true
-}
-
-// On the web the engine runs on a worker with no document; fullscreen is driven by the page.
-#[cfg(target_arch = "wasm32")]
-#[inline(always)]
-fn is_fullscreen_available() -> bool {
-    false
 }

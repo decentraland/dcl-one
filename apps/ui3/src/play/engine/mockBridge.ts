@@ -236,13 +236,14 @@ const v = (name: string): { name: string; description: string } => ({ name, desc
 
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit).
 const mockSettings: Setting[] = [
-  { name: 'fullscreen', category: 'general', description: 'Run in fullscreen mode.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1 },
-  { name: 'resolution', category: 'general', description: '', minValue: 0, maxValue: 2, namedVariants: [v('1280 × 720'), v('1920 × 1080'), v('2560 × 1440')], value: 1, default: 1, stepSize: 1 },
-  { name: 'graphics_quality', category: 'graphics', description: 'Overall visual quality.', minValue: 0, maxValue: 3, namedVariants: [v('Low'), v('Medium'), v('High'), v('Ultra')], value: 2, default: 1, stepSize: 1 },
-  { name: 'fps_limit', category: 'graphics', description: 'Cap the frame rate.', minValue: 30, maxValue: 144, namedVariants: [], value: 60, default: 60, stepSize: 1 },
-  { name: 'Voice', category: 'audio', description: 'The volume of incoming voice audio from other players.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
-  { name: 'master_volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 80, default: 100, stepSize: 1 },
-  { name: 'voice_chat', category: 'audio', description: 'Enable voice chat.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1 }
+  { name: 'fullscreen', category: 'general', description: 'Run in fullscreen mode.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1, disabled: false },
+  { name: 'resolution', category: 'general', description: '', minValue: 0, maxValue: 2, namedVariants: [v('1280 × 720'), v('1920 × 1080'), v('2560 × 1440')], value: 1, default: 1, stepSize: 1, disabled: false },
+  { name: 'graphics_quality', category: 'graphics', description: 'Overall visual quality.', minValue: 0, maxValue: 3, namedVariants: [v('Low'), v('Medium'), v('High'), v('Ultra')], value: 2, default: 1, stepSize: 1, disabled: false },
+  { name: 'VSync', category: 'graphics', description: 'Sync frames to the monitor refresh.', minValue: 0, maxValue: 2, namedVariants: [v('Off'), v('On')], value: 0, default: 0, stepSize: 1, disabled: false },
+  { name: 'fps_limit', category: 'graphics', description: 'Cap the frame rate.', minValue: 30, maxValue: 144, namedVariants: [], value: 60, default: 60, stepSize: 1, disabled: false },
+  { name: 'Voice', category: 'audio', description: 'The volume of incoming voice audio from other players.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1, disabled: false },
+  { name: 'master_volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 80, default: 100, stepSize: 1, disabled: false },
+  { name: 'voice_chat', category: 'audio', description: 'Enable voice chat.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1, disabled: false }
 ]
 
 // The engine's default binding table (mirrors InputMap::default() in crates/common/src/inputs.rs)

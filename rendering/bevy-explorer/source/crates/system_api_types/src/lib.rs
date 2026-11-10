@@ -587,4 +587,6 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+    /// Shown but not editable: another setting makes it moot.
+    pub disabled: bool,
 }

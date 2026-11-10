@@ -727,6 +727,7 @@ impl AppConfig {
     }
 
     fn reset_preset_settings(&mut self, default: &Self) {
+        self.graphics.vsync = default.graphics.vsync;
         self.graphics.msaa = default.graphics.msaa;
         self.graphics.shadow_distance = default.graphics.shadow_distance;
         self.graphics.shadow_settings = default.graphics.shadow_settings;
@@ -874,8 +875,8 @@ pub struct GraphicsSettings {
     pub light_count: usize,
     pub shadow_caster_count: usize,
     pub window: WindowSetting,
-    // removed until bevy window resizing bugs are fixed
-    // pub fullscreen_res: FullscreenResSetting,
+    /// display size for exclusive fullscreen; `None` keeps the monitor's desktop mode
+    pub fullscreen_size: Option<FullscreenSize>,
     pub fog: FogSetting,
     pub bloom: BloomSetting,
     pub dof: DofSetting,
@@ -907,7 +908,7 @@ impl Default for GraphicsSettings {
             light_count: 4,
             shadow_caster_count: 0,
             window: WindowSetting::Windowed,
-            // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
+            fullscreen_size: None,
             fog: FogSetting::Atmospheric,
             bloom: BloomSetting::Low,
             dof: DofSetting::High,
@@ -1021,8 +1022,12 @@ pub enum WindowSetting {
     Borderless,
 }
 
+/// Physical pixels. No refresh rate: it is chosen from the monitor's modes when applied.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FullscreenResSetting(pub UVec2);
+pub struct FullscreenSize {
+    pub width: u32,
+    pub height: u32,
+}
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
@@ -1939,6 +1944,36 @@ mod tests {
         assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
         assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
         assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
+
+    #[test]
+    fn a_config_saved_before_the_display_settings_keeps_its_vsync_and_no_fullscreen_size() {
+        let config = AppConfig::from_json(br#"{"graphics":{"vsync":true,"window":"Fullscreen"}}"#);
+        assert!(config.graphics.vsync);
+        assert_eq!(config.graphics.fullscreen_size, None);
+
+        let size = FullscreenSize {
+            width: 2560,
+            height: 1440,
+        };
+        let mut saved = AppConfig::default();
+        saved.graphics.fullscreen_size = Some(size);
+        let json = serde_json::to_vec(&saved).unwrap();
+        assert_eq!(
+            AppConfig::from_json(&json).graphics.fullscreen_size,
+            Some(size)
+        );
+    }
+
+    #[test]
+    fn the_first_generation_reset_includes_vsync() {
+        let mut config = AppConfig {
+            settings_generation: 0,
+            ..Default::default()
+        };
+        config.graphics.vsync = true;
+        config.reset_outdated_settings();
+        assert!(!config.graphics.vsync);
     }
 
     #[test]

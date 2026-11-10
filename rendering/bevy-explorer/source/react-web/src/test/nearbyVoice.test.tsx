@@ -7,7 +7,7 @@ import { fakeSession } from './harness'
 function renderSidebar(over: { enabled?: boolean; available?: boolean } = {}) {
   const s = fakeSession()
   s.mic = { ...s.mic, available: true, enabled: false, toggle: vi.fn(), ...over }
-  s.settings = { ...s.settings, list: [{ name: 'Voice', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1 }], set: vi.fn(), load: vi.fn() }
+  s.settings = { ...s.settings, list: [{ name: 'Voice', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1, disabled: false }], set: vi.fn(), load: vi.fn() }
   render(<Sidebar session={s} />)
   return s
 }

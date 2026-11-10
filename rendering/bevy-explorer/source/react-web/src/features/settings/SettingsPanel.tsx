@@ -50,15 +50,16 @@ function Control({ s, onSet }: { s: Setting; onSet: (name: string, value: number
   // A negative value is the engine saying the setting is not known yet (e.g. a server-owned
   // one before the service answers): shown, but not editable.
   const unset = s.value < 0
+  const disabled = unset || s.disabled
   if (isBinary(s)) {
-    return <Toggle checked={s.value >= 1} disabled={unset} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} />
+    return <Toggle checked={s.value >= 1} disabled={disabled} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} />
   }
   if (s.namedVariants.length >= 2) {
     return (
       <Select
         variant="light"
         value={unset ? '' : String(s.value)}
-        disabled={unset}
+        disabled={disabled}
         options={s.namedVariants.map((v, i) => ({ value: String(i), label: v.name }))}
         onChange={(v) => onSet(s.name, Number(v))}
         aria-label={s.name}
@@ -66,7 +67,7 @@ function Control({ s, onSet }: { s: Setting; onSet: (name: string, value: number
     )
   }
   return (
-    <Slider arrows value={s.value} min={s.minValue} max={s.maxValue} step={s.stepSize || 1} disabled={unset} onChange={(v) => onSet(s.name, v)} aria-label={s.name} />
+    <Slider arrows value={s.value} min={s.minValue} max={s.maxValue} step={s.stepSize || 1} disabled={disabled} onChange={(v) => onSet(s.name, v)} aria-label={s.name} />
   )
 }
 
@@ -92,7 +93,14 @@ const SettingField = memo(
       </div>
     )
   },
-  (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.onSet === next.onSet
+  // a setting's choices and disabled state can change at the same value
+  (prev, next) =>
+    prev.s.name === next.s.name &&
+    prev.s.value === next.s.value &&
+    prev.s.disabled === next.s.disabled &&
+    prev.s.namedVariants.length === next.s.namedVariants.length &&
+    prev.s.namedVariants.every((v, i) => v.name === next.s.namedVariants[i].name) &&
+    prev.onSet === next.onSet
 )
 
 /** The chat settings kept by the HUD rather than the engine: translation (the language is the
@@ -157,7 +165,8 @@ export function SettingsPanel({
       }).then((ok) => ok && bindings.reset())
       return
     }
-    items.forEach((s) => settings.set(s.name, s.default))
+    // a negative default is a choice the engine cannot name yet (no monitor read)
+    items.forEach((s) => s.default >= 0 && settings.set(s.name, s.default))
     if (activeTab === CHAT_TAB) {
       setAutoTranslateDefault(false)
       clearAutoTranslate()

@@ -275,7 +275,8 @@ describe('translation settings', () => {
       ],
       value,
       default: 0,
-      stepSize: 1
+      stepSize: 1,
+      disabled: false
     })
     expect(languageFromSettings([language(1)])).toBe('ja')
     expect(languageFromSettings([language(0)])).toBe(systemLanguage())

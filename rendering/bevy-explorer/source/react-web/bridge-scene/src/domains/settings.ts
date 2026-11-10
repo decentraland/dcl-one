@@ -33,7 +33,8 @@ const PRESET_VALUES: Record<string, [number | string, number | string, number | 
   'Distant Scene Rendering': ['Normal', 'Normal', 'Ultra'],
   'Empty Parcel Props': ['Low', 'Mid', 'High'],
   'Max Avatars': [20, 50, 100],
-  'Max Videos': [1, 2, 4]
+  'Max Videos': [1, 2, 4],
+  VSync: ['Off', 'On', 'On']
 }
 
 function resolveValue(setting: Setting, value: number | string): number | undefined {
@@ -79,7 +80,8 @@ function withPreset(settings: Setting[]): Setting[] {
     ],
     value: currentPreset(settings),
     default: 0,
-    stepSize: 1
+    stepSize: 1,
+    disabled: false
   }
   return [preset, ...settings]
 }

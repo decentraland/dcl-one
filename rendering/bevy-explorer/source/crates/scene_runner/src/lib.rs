@@ -12,7 +12,7 @@ use bevy::{
     prelude::*,
     scene::scene_spawner_system,
     time::common_conditions::on_real_timer,
-    window::PrimaryWindow,
+    window::{PrimaryWindow, VideoModeSelection, WindowMode},
     winit::WinitWindows,
 };
 
@@ -466,14 +466,23 @@ impl Plugin for SceneRunnerPlugin {
 }
 
 fn run_scene_loop(world: &mut World) {
-    let mut window_query = world.query_filtered::<Entity, With<PrimaryWindow>>();
+    let mut window_query = world.query_filtered::<(Entity, &Window), With<PrimaryWindow>>();
     let winit_windows = world.get_non_send_resource::<WinitWindows>();
     let refresh_rate = window_query
         .single(world)
         .ok()
-        .and_then(|window_ent| winit_windows.and_then(|ww| ww.get_window(window_ent)))
-        .and_then(|window| window.current_monitor())
-        .and_then(|monitor| monitor.refresh_rate_millihertz());
+        .and_then(|(window_ent, window)| {
+            // exclusive fullscreen runs the monitor at the chosen mode's rate
+            if let WindowMode::Fullscreen(_, VideoModeSelection::Specific(mode)) = window.mode {
+                if mode.refresh_rate_millihertz > 0 {
+                    return Some(mode.refresh_rate_millihertz);
+                }
+            }
+            winit_windows
+                .and_then(|ww| ww.get_window(window_ent))
+                .and_then(|window| window.current_monitor())
+                .and_then(|monitor| monitor.refresh_rate_millihertz())
+        });
     let config = world.resource::<AppConfig>();
     let fps_target = world
         .get_resource::<SessionGraphics>()
@@ -481,7 +490,6 @@ fn run_scene_loop(world: &mut World) {
             session.fps_target(config)
         });
     let fps = if config.graphics.vsync {
-        // TODO this should use video mode if we add fullscreen video modes
         refresh_rate
             .map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil())
             .unwrap_or(fps_target as f64)

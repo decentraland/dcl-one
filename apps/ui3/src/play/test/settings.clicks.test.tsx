@@ -16,6 +16,7 @@ const base = (over: Partial<Setting>): Setting => ({
   value: 0,
   default: 0,
   stepSize: 1,
+  disabled: false,
   ...over
 })
 
@@ -96,6 +97,40 @@ describe('settings panel controls', () => {
       />
     )
     expect(screen.getByRole('tooltip').textContent).toBe('Overall quality.\n\nHigh: prettiest.')
+  })
+})
+
+describe('settings panel disabled controls', () => {
+  it('a disabled select or toggle does not set', async () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'Performance', namedVariants: [{ name: '30 fps', description: '' }, { name: '60 fps', description: '' }, { name: 'Uncapped', description: '' }], value: 1, default: 1, maxValue: 3, disabled: true })
+    const VSYNC = base({ name: 'VSync', category: 'Performance', namedVariants: [{ name: 'Off', description: '' }, { name: 'On', description: '' }], value: 1, maxValue: 2, disabled: true })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [FPS, VSYNC], set: vi.fn() }
+    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    const select = screen.getByRole('button', { name: 'Target Frame Rate' })
+    expect(select).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'VSync' })).toBeDisabled()
+    await userEvent.click(select)
+    expect(vi.mocked(settings.set)).not.toHaveBeenCalled()
+  })
+
+  it('reset skips a negative default', async () => {
+    const RESOLUTION = base({ name: 'Resolution', category: 'Graphics', namedVariants: [], value: -1, default: -1, maxValue: 0 })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [RESOLUTION, { ...SELECT, category: 'Graphics' }], set: vi.fn() }
+    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/i }))
+    expect(vi.mocked(settings.set)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(settings.set)).toHaveBeenCalledWith('quality', 1)
+  })
+
+  it('a field re-renders when its disabled state changes at the same value', () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'Performance', namedVariants: [{ name: '30 fps', description: '' }, { name: '60 fps', description: '' }], value: 1, maxValue: 2 })
+    // one `set` across renders, as the session gives, so the memo compares only the setting
+    const set = vi.fn()
+    const panel = (list: Setting[]) => <SettingsPanel settings={{ ...fakeSession().settings, open: true, list, set }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+    const { rerender } = render(panel([FPS]))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).not.toBeDisabled()
+    rerender(panel([{ ...FPS, disabled: true }]))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeDisabled()
   })
 })
 
