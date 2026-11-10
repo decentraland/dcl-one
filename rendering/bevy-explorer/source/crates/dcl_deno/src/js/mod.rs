@@ -660,7 +660,11 @@ mod tests {
     /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) = create_runtime(false, false, false, Default::default());
+        run_scene_as(false, is_server, scene_js)
+    }
+
+    fn run_scene_as(super_user: bool, is_server: bool, scene_js: &str) -> Result<(), String> {
+        let (mut runtime, _) = create_runtime(false, super_user, false, Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
@@ -810,11 +814,13 @@ mod tests {
         .unwrap();
     }
 
-    /// Scenes get no persistent browser storage, on the client or the server.
+    /// Scenes get no persistent browser storage, on the client or the server, system scenes
+    /// included.
     #[test]
     fn scene_has_no_persistent_storage() {
-        for is_server in [false, true] {
-            run_scene(
+        for (super_user, is_server) in [(false, false), (false, true), (true, false)] {
+            run_scene_as(
+                super_user,
                 is_server,
                 r#"
                 for (const name of ["localStorage", "sessionStorage", "indexedDB", "caches"]) {

@@ -24,6 +24,7 @@ pub const MAX_OUTFIT_SLOT: u32 = 9;
 const MAX_FREE_OUTFIT_SLOT: u32 = 4;
 /// A slot's picture is a PNG data URL of the backpack preview.
 const THUMBNAIL_PREFIX: &str = "data:image/png;base64,";
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 const MAX_THUMBNAIL_BYTES: usize = 1024 * 1024;
 
 /// A deploy in flight, and who waits on its result.
@@ -105,6 +106,20 @@ fn web3_account(wallet: &Wallet, current: &CurrentUserProfile) -> Option<String>
         .map(|a| format!("{a:#x}"))
 }
 
+/// The signed-in web3 account, when it is the one the caller expects.
+fn expected_account(
+    expected: &str,
+    wallet: &Wallet,
+    current: &CurrentUserProfile,
+) -> Result<String, String> {
+    let account = web3_account(wallet, current)
+        .ok_or_else(|| "only a web3 account has outfits".to_owned())?;
+    if !account.eq_ignore_ascii_case(expected) {
+        return Err("another account is signed in".to_owned());
+    }
+    Ok(account)
+}
+
 /// Rejects what the catalyst would without a lookup: slots out of 0..=9, repeated, or past 4 with
 /// no name. The catalyst still checks that the deployer owns the names.
 pub fn check_outfits(outfits: &OutfitsData) -> Result<(), String> {
@@ -127,10 +142,16 @@ pub fn check_outfits(outfits: &OutfitsData) -> Result<(), String> {
     Ok(())
 }
 
+/// Keeps only a PNG: the data URL within the cap, its base64 decoding and the PNG signature.
 fn check_thumbnail(slot: u32, thumbnail: Option<&str>) -> bool {
+    use base64::prelude::*;
     slot <= MAX_OUTFIT_SLOT
-        && thumbnail
-            .is_none_or(|t| t.starts_with(THUMBNAIL_PREFIX) && t.len() <= MAX_THUMBNAIL_BYTES)
+        && thumbnail.is_none_or(|t| {
+            t.len() <= MAX_THUMBNAIL_BYTES
+                && t.strip_prefix(THUMBNAIL_PREFIX)
+                    .and_then(|b64| BASE64_STANDARD.decode(b64).ok())
+                    .is_some_and(|png| png.starts_with(PNG_SIGNATURE))
+        })
 }
 
 pub fn process_outfits(
@@ -142,10 +163,13 @@ pub fn process_outfits(
 ) {
     for request in requests.read() {
         match request {
-            SystemApi::DeployOutfits(outfits, sender) => {
-                let Some(account) = web3_account(&wallet, &current) else {
-                    sender.send(Err("only a web3 account deploys outfits".to_owned()));
-                    continue;
+            SystemApi::DeployOutfits(expected, outfits, sender) => {
+                let account = match expected_account(expected, &wallet, &current) {
+                    Ok(account) => account,
+                    Err(e) => {
+                        sender.send(Err(e));
+                        continue;
+                    }
                 };
                 if let Err(e) = check_outfits(outfits) {
                     sender.send(Err(e));
@@ -173,15 +197,17 @@ pub fn process_outfits(
                 });
                 state.deploys.push((task, sender.clone()));
             }
-            SystemApi::GetOutfitThumbnails(sender) => match web3_account(&wallet, &current) {
-                Some(account) => state.thumbnails.push_back(ThumbnailOp::Read {
-                    account,
-                    sender: sender.clone(),
-                }),
-                None => sender.send(Vec::new()),
-            },
-            SystemApi::SetOutfitThumbnail(slot, thumbnail) => {
-                let Some(account) = web3_account(&wallet, &current) else {
+            SystemApi::GetOutfitThumbnails(expected, sender) => {
+                match expected_account(expected, &wallet, &current) {
+                    Ok(account) => state.thumbnails.push_back(ThumbnailOp::Read {
+                        account,
+                        sender: sender.clone(),
+                    }),
+                    Err(_) => sender.send(Vec::new()),
+                }
+            }
+            SystemApi::SetOutfitThumbnail(expected, slot, thumbnail) => {
+                let Ok(account) = expected_account(expected, &wallet, &current) else {
                     continue;
                 };
                 if !check_thumbnail(*slot, thumbnail.as_deref()) {
@@ -313,13 +339,30 @@ mod tests {
         );
     }
 
+    fn png_url(extra: usize) -> String {
+        use base64::prelude::*;
+        let mut png = PNG_SIGNATURE.to_vec();
+        png.resize(PNG_SIGNATURE.len() + extra, 0);
+        format!("{THUMBNAIL_PREFIX}{}", BASE64_STANDARD.encode(png))
+    }
+
     #[test]
     fn only_png_data_urls_within_the_cap_are_kept() {
-        assert!(check_thumbnail(0, Some("data:image/png;base64,AAAA")));
+        assert!(check_thumbnail(0, Some(&png_url(16))));
         assert!(check_thumbnail(0, None));
         assert!(!check_thumbnail(0, Some("file:///etc/passwd")));
         assert!(!check_thumbnail(10, None));
-        let big = format!("{THUMBNAIL_PREFIX}{}", "A".repeat(MAX_THUMBNAIL_BYTES));
-        assert!(!check_thumbnail(0, Some(&big)));
+        assert!(!check_thumbnail(0, Some(&png_url(MAX_THUMBNAIL_BYTES))));
+    }
+
+    #[test]
+    fn a_data_url_that_is_not_a_png_is_refused() {
+        assert!(!check_thumbnail(0, Some("data:image/png;base64,AAAA")));
+        assert!(!check_thumbnail(
+            0,
+            Some("data:image/png;base64,not base64!")
+        ));
+        let text = format!("{THUMBNAIL_PREFIX}{}", "aGVsbG8gd29ybGQ=");
+        assert!(!check_thumbnail(0, Some(&text)));
     }
 }
