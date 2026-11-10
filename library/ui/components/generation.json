@@ -85,13 +85,13 @@
     },
     {
       "path": "library/ui/figma/public-components-policy.mjs",
-      "sha256": "5fe06313cb6de96fd753b9f83cab6f1ea900e69622172e497ea69feafda4f196",
-      "indexBlobSha": "7e2f8a176b57c697b6afccea5287e2ad97438a3e"
+      "sha256": "41643c28472b172749094a9f0d9cc55e0cd1062ac15d491d87dce8e0ac0f9d4c",
+      "indexBlobSha": "c400ccc452edc0442aacf972d2f7017f8f71b77c"
     },
     {
       "path": "library/ui/figma/public-components.mjs",
-      "sha256": "ecc882d1995767f005b6cecc9b667409ef4ff106cb244d955b51ea9396769839",
-      "indexBlobSha": "0161a33aaedab218b304c07972c97f2c0e48062d"
+      "sha256": "211de9d8c19353f727cdb9c3d9d24cdb46cd742039562d38bffced65789d7a18",
+      "indexBlobSha": "ad61849841c12da06228f5c662ea1e41112e4d6f"
     },
     {
       "path": "library/ui/figma/public-foundations.mjs",
