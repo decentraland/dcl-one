@@ -12,6 +12,7 @@ import { onInWorld } from './googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { siteUrl } from '../lib/baseDomain'
 import { loadOnce } from '../lib/loadOnce'
+import { shellResponse } from '../lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
@@ -130,14 +131,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     if (!m || typeof m !== 'object') return
     switch (m.type) {
       case 'bevy-shell:request': {
-        let reply: { result?: unknown; error?: string }
-        try {
-          const shopRequest = typeof m.method === 'string' && m.method.startsWith('shop.')
-          reply = { result: shopRequest ? await (await shellShop()).request(m.method as string, m.params) : await request(m.method, m.params) }
-        } catch (err) {
-          reply = { error: err instanceof Error ? err.message : String(err) }
-        }
-        f.contentWindow?.postMessage({ type: 'bevy-shell:response', id: m.id, ...reply }, location.origin)
+        const shopRequest = typeof m.method === 'string' && m.method.startsWith('shop.')
+        const response = await shellResponse(m.id, async () => (shopRequest ? (await shellShop()).request(m.method as string, m.params) : request(m.method, m.params)))
+        f.contentWindow?.postMessage(response, location.origin)
         break
       }
       // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar

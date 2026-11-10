@@ -24,9 +24,10 @@ old content again or reusing a version that another peer may already have observ
 - **One source: the centralized catalyst.** The Explorer fetches profiles from
   `Service::Catalyst`'s lambdas (`peer.<base>`, or `--catalyst`): `POST /lambdas/profiles` for
   full profiles and `POST /lambdas/profiles/metadata` for compact ones, at most 100 ids a request.
-  There is no flag between endpoints and no catalyst taken from another player: the LiveKit
-  metadata path is gone. The catalyst's answer is final; a peer's own answer stays the source for
-  guests, who have no deployed profile.
+  The one exception is the compact tier on Decentraland's own deployments, below. There is no
+  flag between endpoints and no catalyst taken from another player: the LiveKit metadata path is
+  gone. The catalyst's answer is final; a peer's own answer stays the source for guests, who have
+  no deployed profile.
 - **The catalyst serves the compact tier from its own deployments.**
   `POST /lambdas/profiles/metadata` answers `{"ids": [...]}` (at most 1000) with upstream's
   `ProfileMetadataDTO` (`decentraland/asset-bundle-registry@f9578d4a`, `getMetadata`): `pointer`,
@@ -34,6 +35,19 @@ old content again or reusing a version that another peer may already have observ
   snapshot url. It projects the documents `/lambdas/profiles` returns (this node's deployments, the
   read-through, the ownership and claimed-name checks, the per-address cache), in request order, so
   the compact and full answers agree.
+- **For now, Decentraland's own deployments read compact profiles from their asset-bundle
+  registry.** Their catalysts have no compact route (`peer.decentraland.org` answered
+  `POST /lambdas/profiles/metadata` with 405 on 2026-11-09), while
+  `asset-bundle-registry.decentraland.org` and `.zone` answer `POST /profiles/metadata` with the
+  same `ProfileMetadataDTO` (checked the same day). When the resolved catalyst's host is
+  `decentraland.org` or `decentraland.zone`, or a host under one
+  (`common::base_domain::decentraland_domain`), compact reads go to
+  `https://asset-bundle-registry.<that domain>/profiles/metadata` (`compact_source` in the comms
+  profile module). Full profiles, the login's read and the default looks stay on the catalyst.
+  The switch follows the resolved catalyst, not the base domain: a dcl-one page on its own host
+  and a native `--gateway` launch keep the default `decentraland.org` while their catalyst is a
+  dcl-one node. This path is temporary and is to be removed once Decentraland's catalysts serve the
+  compact route.
 - **The tier is per address in the Explorer's profile cache.** Each cached address remembers the
   most any reader has asked of it: `ProfileManager::get_compact` (and the face and name readers
   built on it, and the HUD's `getCompactProfiles` for list rows) asks compact; `get_data`, an
@@ -73,7 +87,14 @@ old content again or reusing a version that another peer may already have observ
   `RealmProfileRepository.PostUrl` constructs that compact-tier path for a catalyst, but it
   currently forces full-profile reads there.
 - **A flag between a centralized service and a catalyst.** The catalyst is the centralized
-  service.
+  service; the registry stands in only for the compact route Decentraland's catalysts lack,
+  chosen by where the catalyst is.
+- **The base domain as the registry switch.** A dcl-one page served from its own host, and a
+  native `--gateway` launch, keep `decentraland.org` while their catalyst is a dcl-one node, whose
+  deployments Decentraland's registry does not hold.
+- **Full profiles from the registry too** (Unity Explorer with the flag on). The catalyst already
+  batches full profiles and is authoritative for the login's read and the read-back of our own
+  deploy, which a registry lagging behind it could answer with an older version.
 - **The catalyst a peer announces in its LiveKit metadata.** Another player could make every
   client call a server of its choosing, and the metadata will not carry it.
 - **Fetch behaviour chosen per call.** The Explorer's cache keeps one fetch policy, so the tier
@@ -86,15 +107,16 @@ old content again or reusing a version that another peer may already have observ
 
 - Other players see a profile edit once it has deployed; the player sees it at once.
 - Profiles deployed to a dcl-one node resolve in batches and settle; nothing re-probes them.
-- On a catalyst without the compact route (`decentraland.org`, the default base domain) the first
-  compact read costs a 405, then compact reads cost full profiles.
+- On Decentraland's deployments compact reads cost compact answers from their registry. Another
+  catalyst without the route costs one 404 or 405, then full profiles.
+- A Decentraland profile's compact and full tiers come from different services. Right after a
+  deploy the registry can lag the catalyst; a compact answer never replaces full data.
 - `asset-bundle-registry.<domain>/profiles*` keeps serving Decentraland's registry to
   Unity Explorer.
 - A four-second deploy-coalescing window and identical-profile suppression remain unimplemented.
 
 ## Follow-ups
 
-- Drop the `--asset-bundle-registry` service, which no Explorer code reads any more (the engine's
-  service table, the HUD's generated tables, the headless launcher), and the login's
-  `--profiles` lambdas hint (the engine and the react-web, ui3 and e2e drivers), which always names
-  the same catalyst.
+- Remove the registry path once Decentraland's catalysts answer `POST /lambdas/profiles/metadata`:
+  `compact_source`'s registry branch in the comms profile module and
+  `common::base_domain::decentraland_domain`. Compact reads then go to the catalyst everywhere.
