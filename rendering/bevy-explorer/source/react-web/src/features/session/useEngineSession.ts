@@ -89,6 +89,7 @@ import type {
   Profile,
   ProfileEdit,
   CommunitySaveResultMessage,
+  CommunityPlaceOptionsMessage,
   UpdateCommunityRequest,
   SceneLoadingState,
   Setting,
@@ -108,6 +109,7 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
   leave: 'There was an error leaving the community. Please try again.',
   delete: 'There was an error deleting the community. Please try again.',
+  removePlace: 'There was an error deleting the community place. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -216,6 +218,8 @@ export interface CreateCommunityInput {
   discoverable: boolean
   /** The picture as a data URL, when one was chosen. */
   thumbnail?: string
+  /** The linked places, lands first, then worlds. */
+  placeIds: string[]
 }
 
 /** What the edit form sends: the community and only the fields that changed. */
@@ -241,6 +245,15 @@ export interface CommunitiesState {
   save: CommunitySave | null
   /** Forget the last outcome (the form closed or is being edited again). */
   clearSave: () => void
+  /** The form's places: the user's own (the picker) and, when editing, the community's linked
+   *  ones. Null until they arrive. */
+  placeOptions: CommunityPlaceOptionsMessage | null
+  /** Read the form's places; `communityId` when editing. */
+  loadPlaceOptions: (communityId?: string) => void
+  /** Forget them (the form closed). */
+  clearPlaceOptions: () => void
+  /** Unlink a place from a community (the card's delete). A failure arrives in `error`. */
+  removePlace: (id: string, placeId: string) => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -1182,6 +1195,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
   const [deletedCommunity, setDeletedCommunity] = useState<string | null>(null)
+  const [communityPlaceOptions, setCommunityPlaceOptions] = useState<CommunityPlaceOptionsMessage | null>(null)
+  // Whose places the open form asked for ('' on create), or null with no form open: a late answer
+  // for another form is dropped.
+  const placeOptionsWanted = useRef<string | null>(null)
+  // The community whose card asked for its detail last: details for any other are dropped.
+  const detailWanted = useRef<string | null>(null)
   // A create or update is waiting for its answer. Cleared when the form closes, so an answer that
   // comes after that is dropped instead of driving the next form.
   const communitySaveInFlight = useRef(false)
@@ -1719,6 +1738,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
           break
+        case 'communityPlaceOptions':
+          if (placeOptionsWanted.current !== (msg.communityId ?? '')) break
+          setCommunityPlaceOptions(msg)
+          break
         case 'communitySaveResult': {
           if (!communitySaveInFlight.current) break
           communitySaveInFlight.current = false
@@ -1736,6 +1759,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         case 'communityDetail':
+          // only the card open now: a re-read for a card already closed must not replace its detail
+          if (msg.id !== detailWanted.current) break
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -3060,9 +3085,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     pendingCommunityPicture.current = null
     setCommunitySave(null)
   }, [])
+  const loadCommunityPlaceOptions = useCallback((communityId?: string) => {
+    placeOptionsWanted.current = communityId ?? ''
+    setCommunityPlaceOptions(null)
+    driverRef.current?.send({ kind: 'getCommunityPlaceOptions', ...(communityId != null ? { communityId } : {}) })
+  }, [])
+  const clearCommunityPlaceOptions = useCallback(() => {
+    placeOptionsWanted.current = null
+    setCommunityPlaceOptions(null)
+  }, [])
   const deleteCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'deleteCommunity', id })
+  }, [])
+  const removeCommunityPlace = useCallback((id: string, placeId: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'removeCommunityPlace', id, placeId })
   }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
@@ -3081,6 +3119,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'leaveCommunity', id })
   }, [])
   const loadCommunityDetail = useCallback((id: string) => {
+    detailWanted.current = id
     setCommunityDetail(null) // clear stale detail while the new one loads
     driverRef.current?.send({ kind: 'getCommunityDetail', id })
   }, [])
@@ -3256,6 +3295,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunities([])
     setCommunityCards({})
     clearCommunitySave()
+    clearCommunityPlaceOptions()
     setDeletedCommunity(null)
     savedCommunityPictures.current = {}
     setFriendPending(new Set())
@@ -4053,7 +4093,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

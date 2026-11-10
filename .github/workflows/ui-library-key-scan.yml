@@ -2,8 +2,11 @@ name: Shared UI library key scan
 
 # The Figma file key check. It runs from the default branch, never from a pull request: workflow_run always
 # uses main's copy of this file, the only checkout is main (trusted/), and the pull request's commits and its
-# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. No pull request
-# file is ever executed while FIGMA_FILE_KEY is set. ui-library.yml itself holds no secret.
+# Review build are read as data (Git objects and a downloaded artifact) by main's key guard. This workflow
+# executes no pull request file while FIGMA_FILE_KEY is mapped. ui-library.yml itself holds no secret. The key
+# is a repository secret, so other workflows run on same-repository branches can also read it; the policy in
+# library/ui/figma/test/workflows.test.ts reports any workflow that references it, but cannot prevent that
+# (an accepted risk).
 on:
   workflow_run:
     workflows: ["Shared UI library"]
@@ -21,10 +24,12 @@ concurrency:
 jobs:
   key-scan:
     runs-on: ubuntu-26.04
+    # FIGMA_FILE_KEY is a repository secret. workflow_run runs main's copy of this workflow, and the key is
+    # mapped only into the env of the scan step; no other step can read it.
     steps:
-      # No FIGMA_FILE_KEY is in scope here. Anything unexpected ends the job before the key is read. The
-      # triggering workflow is pinned by its file path and by the id GitHub assigns to that file, resolved
-      # through the API from this repository, never by display name.
+      # FIGMA_FILE_KEY is not mapped into this step's env. Anything unexpected ends the job before the key is
+      # read. The triggering workflow is pinned by its file path and by the id GitHub assigns to that file,
+      # resolved through the API from this repository, never by display name.
       - name: Validate the triggering run
         id: trigger
         env:
@@ -153,8 +158,9 @@ jobs:
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
         run: |
           set -o pipefail
-          count=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate --slurp \
-            --jq "[.[].artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\")] | length")
+          # gh does not combine slurping pages with --jq, so each page prints one id per matching artifact.
+          count=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate \
+            --jq ".artifacts[] | select(.name == \"ui-review-$HEAD_SHA\" and .expired == false and .workflow_run.id == $RUN_ID and .workflow_run.head_sha == \"$HEAD_SHA\") | .id" | wc -l | tr -d ' ')
           [ "$count" = 1 ] || { echo "The run must provide exactly one Review artifact for its head" >&2; exit 1; }
 
       - id: artifact_download
@@ -166,18 +172,26 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      # The only step that holds the key: main's key guard over the scanned commits, their library/ui tree and
-      # the unpacked Review build (enumerated without following links, and size and count limited), all as data.
-      # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
-      # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
-      # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
+      # The only step whose env maps the key: main's key guard over the scanned commits, their library/ui tree
+      # and the unpacked Review build (enumerated without following links, and size and count limited), all as
+      # data.
+      # The guard and its url allowlist are read from TRUSTED_SHA, the default branch commit this workflow_run
+      # runs (github.sha), by object id: no earlier step can change what that id names, whatever it does to
+      # trusted/'s HEAD, index, working tree or refs. The scanned commits only enter refs/key-scan/*, and the
+      # allowlist never comes from the scanned head or a pull request base (which can be another branch), so a
+      # commit cannot allowlist a url it adds: the entry has to land on the default branch first. The guard is
+      # written to a fresh file just before it runs; key-guard.mjs imports only node: builtins, so that file is
+      # the whole program. cat-file prints the raw blob, with no textconv, and replace objects are off for every
+      # git read in this step, so a refs/replace entry cannot swap the guard, the allowlist or a scanned blob.
       - name: Scan for the Figma file key
         id: scan
         if: steps.trigger.outputs.scan == 'true'
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: /dev/null
+          GIT_NO_REPLACE_OBJECTS: "1"
           FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+          TRUSTED_SHA: ${{ github.sha }}
           ARTIFACT_REQUIRED: ${{ steps.inputs.outputs.artifact_required }}
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
           BASE: ${{ steps.trigger.outputs.base }}
@@ -189,8 +203,9 @@ jobs:
           if [ "$ARTIFACT_REQUIRED" = true ]; then
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
-          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
-            --range "$range" --allowlist-from HEAD "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
+          git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"
+          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree \
+            --range "$range" --allowlist-from "$TRUSTED_SHA" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
       # The summary is the scanner's stdout alone, which the scanner redacts: the key never appears in a path,

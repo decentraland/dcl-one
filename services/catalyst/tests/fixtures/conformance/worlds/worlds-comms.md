@@ -140,7 +140,7 @@ Common notes:
 | 6 | GET | `/wallet/:wallet/connected-world` | both mounts → `comms/src/presence/mod.rs` (`connected_world`) | DIVERGENT (intended only) |
 
 Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6 (3 of them on intended differences only),
-MISSING 0. The three mints keep the decision-order differences of WC-09.
+MISSING 0. The three mints follow upstream's decision order (WC-09).
 
 ---
 
@@ -163,16 +163,16 @@ MISSING 0. The three mints keep the decision-order differences of WC-09.
 
 | step | upstream (`logic/comms/component.ts:68-108`, handler) | dcl-one (`world_mint.rs` `mint`) |
 |---|---|---|
-| 1 | shared-secret world and subject throttled → 429 (`handler:46-52`) | signed fetch |
+| 1 | shared-secret world and subject throttled → 429 (`handler:46-52`) | after the signed fetch, the same non-charging check (`SecretThrottle::is_limited`, `world_mint.rs:521`) → 429 |
 | 2 | platform ban (comms-gatekeeper `/users/:a/bans`, fail-open) → 401 | operator block list / platform ban (`admission_ban`) → 401 |
 | 3 | deny list (`DENYLIST_JSON_URL`, 5 min cache, fail-open) → 401 | external deny list → 401 |
-| 4 | `isWorldValid`: a row exists and the owner is not blocked for more than 2 days → else 404 | a name that is not a world key → 404 |
-| 5 | name owner or `checkAccess` → else 401 (403 on a shared-secret world) | unknown or blocked world → 404 |
-| 6 | scene: `getWorldSceneBaseParcelIncludingUndeployed` → else 404 | scene: `SceneId::parse` + `resolve(WorldScene)` (retired scenes included, `worlds/src/rooms.rs:125-143`) → else 404 |
-| 7 | scene: comms-gatekeeper scene ban by base parcel (fail-open) → 401 | `can_access`: platform/device and scene bans (lobby too, WC-10), setting, then owner → 401/403 |
-| 8 | capacity: lobby from the 60 s cached LiveKit status, scenes live, `>= MAX_USERS_PER_WORLD` (100) → 503 | throttle reservation only for an invalid or failed secret (`world_mint.rs:524-544`) → 429 |
-| 9 | token | capacity from the live presence (`admission_occupancy`, ≤5 s sample), fail closed → 503 |
-| 10 | clear the throttle on success | token + `dcl.worldAuthorization` attribute |
+| 4 | `isWorldValid`: a row exists and the owner is not blocked for more than 2 days → else 404 | a name that is not a world key, or an unknown or blocked world → 404 |
+| 5 | name owner or `checkAccess` → else 401 (403 on a shared-secret world) | `decide_access` (`can_access`: platform/device and scene bans, setting, then owner; the throttle reservation only for an invalid or failed secret) → 401/403/429 |
+| 6 | scene: `getWorldSceneBaseParcelIncludingUndeployed` → else 404 | scene: `SceneId::parse` + `resolve(WorldScene)` (retired scenes included, `worlds/src/rooms.rs:125-143`); a missing scene answers the world's access (step 5 without the scene) first, then 404 |
+| 7 | scene: comms-gatekeeper scene ban by base parcel (fail-open) → 401 | `decide_access` with the scene: its bans (lobby too, WC-10) → 401 |
+| 8 | capacity: lobby from the 60 s cached LiveKit status, scenes live, `>= MAX_USERS_PER_WORLD` (100) → 503 | capacity from the live presence (`admission_occupancy`, ≤5 s sample), fail closed → 503 |
+| 9 | token | token + `dcl.worldAuthorization` attribute |
+| 10 | clear the throttle on success | clear the throttle when the secret admitted the caller (WC-11) |
 
 The name deny list: upstream `getRawWorldRecords` excludes banned names, but `getBannedNames`
 strips `.dcl.eth` before comparing with full world names (`name-deny-list-checker.ts:51-54`,
@@ -478,30 +478,21 @@ Both trees advertise
      through the mints.
    - Severity: none (closed).
 
-9. **WC-09 · routes 1–2 · decision order.** Status: open for the throttle pre-check and the
-   access-before-scene order; the ban, deny-list and world steps match upstream.
-   - Upstream:
-     1. the throttle pre-check (shared-secret worlds);
-     2. platform ban;
-     3. deny list;
-     4. world valid;
-     5. owner or access;
-     6. scene exists;
-     7. scene ban;
-     8. capacity.
-   - dcl-one (`world_mint.rs` `mint`, `:399-591`): signed fetch, platform ban (`:420-435`), deny
-     list (`:436-437`), a name that is not a world key as an unknown world, 404 (`:439-442`), world
-     valid (`:462-464`), **scene resolve** (`:466-509`), access (bans, setting, owner; `:513-558`),
-     throttle reservation only for a refused or failed secret (`:524-544`), capacity (`:560-568`).
-     Combinations that answer differently:
-     - a platform-banned wallet on a throttled shared-secret world (upstream 429, here 401);
-     - an owner on a throttled shared-secret world (upstream 429, here admitted);
-     - a wallet without access asking for a missing scene (upstream 401, here 404).
-   - Proposed fix: a non-charging throttle check before the platform ban, and access before the
-     scene. Keep the reservation where it is. Both need `can_access` split into the access setting
-     and the scene ban, a change to the one permission core the scene host also uses.
-   - Left: the throttle pre-check and the access/scene order.
-   - Severity: P2.
+9. **WC-09 · routes 1–2 · decision order.** Status: MATCH, no work.
+   - Upstream: the throttle pre-check (shared-secret worlds), platform ban, deny list, world valid,
+     owner or access, scene exists, scene ban, capacity (`world-comms-handler.ts:46-52`,
+     `logic/comms/component.ts:68-108`).
+   - dcl-one (`world_mint.rs` `mint`, `:462`): signed fetch, then on a shared-secret world a
+     throttle check that charges nothing (`SecretThrottle::is_limited`, `:122`, called at `:521`),
+     platform ban, deny list, an unknown or blocked world as 404, then the access
+     (`decide_access`, `:409`) before a missing scene's 404 (`:561`), the scene's bans, capacity.
+     A throttled caller gets 429 before its ban or ownership is looked at, and a caller without
+     access to the world gets 401 for a scene that does not exist. Pinned in `tests/gatekeeper_policy.rs`
+     `the_world_mints_decide_through_the_permission_core_and_throttle_secrets` (a throttled owner, a
+     throttled platform-banned wallet, a missing or malformed scene id asked by a non-member and a
+     member). For a scene that exists, a caller both without access and banned from it gets 401 with the
+     ban's text where upstream's names the access; the status is the same (the one ban model, WC-10).
+   - Severity: none (closed).
 
 10. **WC-10 · route 1 (and 3) · scene bans refuse the lobby.** Status: intended (worlds-compatibility.md "Scene bans in the lobby").
     - Upstream: the lobby checks no scene ban. Only the scene route checks the ban of that

@@ -1,7 +1,7 @@
 import type { IconSpec } from '../ir/schemas.js'
 import { assertIdentifier, pascalCase, uniqueName } from './naming.js'
 import { renderValue, header, type Renderable } from './render.js'
-import { optimizeIcon, type OptimizedIcon } from './svg-to-jsx.js'
+import { ID_SCOPE, optimizeIcon, type OptimizedIcon } from './svg-to-jsx.js'
 import type { GeneratedFile, GeneratorContext } from './types.js'
 
 type IconMeta = {
@@ -51,10 +51,16 @@ function svgElement(icon: IconSpec, optimized: OptimizedIcon, depth: number): st
     `${pad}  xmlns="http://www.w3.org/2000/svg"`,
     `${pad}  {...props}`,
     `${pad}>`,
-    optimized.jsx,
+    optimized.jsx(depth + 1),
     `${pad}</svg>`
   ].join('\n')
 }
+
+// useId keeps every rendered instance's ids distinct, so a url(#...) never resolves to another copy of
+// the icon (possibly in a hidden subtree). Its separators (`:`, `«»`) are stripped to stay a plain
+// fragment identifier.
+const scopedIdDeclaration = (name: string) =>
+  `  const ${ID_SCOPE} = \`${name}-\${useId().replace(/[^\\w-]/g, '')}\``
 
 function componentSource(
   name: string,
@@ -62,15 +68,18 @@ function componentSource(
 ): string {
   const active = variants.find((v) => v.icon.variant === ACTIVE_ON)
   const idle = variants.find((v) => v.icon.variant === ACTIVE_OFF)
+  const scoped = variants.some((v) => v.optimized.scopedIds)
 
   if (active && idle) {
-    return `export const ${name} = ({ size, active = false, ...props }: ActiveIconProps) =>
-  active ? (
+    const signature = `export const ${name} = ({ size, active = false, ...props }: ActiveIconProps) =>`
+    const branches = `active ? (
 ${svgElement(active.icon, active.optimized, 2)}
   ) : (
 ${svgElement(idle.icon, idle.optimized, 2)}
-  )
-`
+  )`
+    return scoped
+      ? `${signature} {\n${scopedIdDeclaration(name)}\n  return ${branches}\n}\n`
+      : `${signature}\n  ${branches}\n`
   }
   const [only] = variants
   if (variants.length !== 1 || !only || only.icon.variant !== null) {
@@ -78,10 +87,10 @@ ${svgElement(idle.icon, idle.optimized, 2)}
       `Unsupported variants for ${name}: ${variants.map((v) => v.icon.variant).join(', ')}`
     )
   }
-  return `export const ${name} = ({ size, ...props }: IconProps) => (
-${svgElement(only.icon, only.optimized, 1)}
-)
-`
+  const signature = `export const ${name} = ({ size, ...props }: IconProps) =>`
+  return scoped
+    ? `${signature} {\n${scopedIdDeclaration(name)}\n  return (\n${svgElement(only.icon, only.optimized, 2)}\n  )\n}\n`
+    : `${signature} (\n${svgElement(only.icon, only.optimized, 1)}\n)\n`
 }
 
 function generateIcons(icons: IconSpec[], context: GeneratorContext) {
@@ -123,7 +132,7 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
     const component = uniqueName(identifier, usedNames)
     const optimized = variants.map((icon) => ({
       icon,
-      optimized: optimizeIcon(icon.svg, component, variants.length > 1 ? 3 : 2)
+      optimized: optimizeIcon(icon.svg, component)
     }))
     const first = variants[0]!
     const source = componentSource(component, optimized)
@@ -150,9 +159,10 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
       uses.includes('ActiveIconProps') ? 'ActiveIconProps' : null,
       uses.includes(': IconProps') ? 'IconProps' : null
     ].filter(Boolean)
+    const react = uses.includes('useId()') ? `import { useId } from 'react'\n` : ''
     files.push({
       path: `icons/${category}.tsx`,
-      content: `${header()}import type { ${imports.join(', ')} } from './types'\n\n${uses}`
+      content: `${header()}${react}import type { ${imports.join(', ')} } from './types'\n\n${uses}`
     })
   }
 
@@ -162,8 +172,9 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
     path: 'icons/iconMeta.ts',
     content: [
       header(),
+      `import type { IconComponentName } from './index'\n`,
       `export type IconMeta = {
-  component: string
+  component: IconComponentName
   name: string
   category: string
   section: string
@@ -177,24 +188,39 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
       `export const skippedIcons: { name: string; reason: string }[] = ${renderValue(skipped as unknown as Renderable)}\n`
     ].join('\n')
   })
+  const registry = (entries: IconMeta[]) =>
+    categories.flatMap((category) =>
+      entries
+        .filter((m) => m.category === category)
+        .map((m) => `  ${m.component}: ${category}.${m.component},`)
+    )
+  const activeMeta = meta.filter((m) => m.hasActiveState)
+  // Keyed by the generated names: an unknown key is a type error, a lookup by a known name is never
+  // undefined, and each entry keeps its own props, so `active` only type-checks on an active icon.
   files.push({
     path: 'icons/index.ts',
     content: [
       header(),
       `import type { ComponentType } from 'react'`,
       ...categories.map((category) => `import * as ${category} from './${category}'`),
-      `import type { ActiveIconProps } from './types'\n`,
+      `import type { ActiveIconProps, IconProps } from './types'\n`,
       ...categories.map((category) => `export * from './${category}'`),
       `export * from './iconMeta'`,
       `export type * from './types'\n`,
-      `export const iconComponents: Record<string, ComponentType<ActiveIconProps>> = {`,
-      ...categories.flatMap((category) =>
-        meta
-          .filter((m) => m.category === category)
-          .map((m) => `  ${m.component}: ${category}.${m.component},`)
-      ),
-      `}\n`,
-      `export const iconComponentNames = ${renderValue(componentNames)}\n`
+      `export const iconComponentNames = ${renderValue(componentNames)} as const\n`,
+      `export type IconComponentName = (typeof iconComponentNames)[number]\n`,
+      `export const activeIconComponentNames = ${renderValue(activeMeta.map((m) => m.component))} as const\n`,
+      `export type ActiveIconComponentName = (typeof activeIconComponentNames)[number]\n`,
+      `export const iconComponents = {`,
+      ...registry(meta),
+      `} satisfies Record<IconComponentName, ComponentType<IconProps>>\n`,
+      `export const activeIconComponents = {`,
+      ...registry(activeMeta),
+      `} satisfies Record<ActiveIconComponentName, ComponentType<ActiveIconProps>>\n`,
+      `export const isIconComponentName = (name: string): name is IconComponentName =>`,
+      `  Object.hasOwn(iconComponents, name)\n`,
+      `export const isActiveIconComponentName = (name: string): name is ActiveIconComponentName =>`,
+      `  Object.hasOwn(activeIconComponents, name)\n`
     ].join('\n')
   })
 

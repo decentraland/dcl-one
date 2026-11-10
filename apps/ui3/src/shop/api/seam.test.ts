@@ -133,22 +133,21 @@ describe("the host seam of the Shop's read modules", () => {
   });
 
   it("finds the host however a module names it", () => {
-    const file = "shop/api/client.ts";
+    const file = "shop/checkout/lib/api.ts";
     for (const line of [
-      'import { hostApiOptions } from "./host";',
-      'import { hostApiOptions } from "./index";',
-      'import { hostApiOptions } from ".";',
-      'export { shopClient } from "./host.ts";',
-      'const host = await import("./host");',
-      'import "../../data/auth/identity";',
-      'import type { QueryParams } from "../../data/catalyst/client";',
+      'import { hostApiOptions } from "../../api/host";',
+      'import { hostApiOptions } from "../../api/index";',
+      'import { hostApiOptions } from "../../api";',
+      'export { shopClient } from "../../api/host.ts";',
+      'const host = await import("../../api/host");',
+      'import "../../../data/auth/identity";',
+      'import type { QueryParams } from "../../../data/catalyst/client";',
     ]) {
       expect(hostImports(file, line), line).toHaveLength(1);
     }
-    expect(hostImports("shop/discovery/api.ts", 'import { shopClient } from "../api";')).toHaveLength(1);
-    expect(hostImports("shop/discovery/api.ts", 'import { shopFlags } from "./flags";')).toHaveLength(1);
-    expect(hostImports("shop/discovery/lib/categories.ts", 'import type { IconName } from "../components/Icon";')).toHaveLength(1);
-    expect(hostImports("shop/checkout/lib/api.ts", 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
+    expect(hostImports(file, 'import { shopFlags } from "../../discovery/flags";')).toHaveLength(1);
+    expect(hostImports("shop/checkout/lib/trade.ts", 'import type { IconName } from "../../discovery/components/Icon";')).toHaveLength(1);
+    expect(hostImports(file, 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
     expect(hostImports("shop/land/contracts.ts", 'import { ethereumChainId } from "../checkout/chain/config";')).toHaveLength(1);
     expect(hostImports("shop/names/name.ts", 'import { landChainId } from "../land/chain";')).toHaveLength(1);
     expect(hostImports("shop/names/name.ts", 'import { rpcReader } from "../land/evm";')).toHaveLength(1);
@@ -158,10 +157,10 @@ describe("the host seam of the Shop's read modules", () => {
     expect(hostImports("shop/names/name.ts", 'import { requireChain } from "../wallet/chain";')).toHaveLength(1);
     expect(hostImports("shop/names/api.ts", 'import { NAME_PRICE_IN_WEI } from "./name";')).toEqual([]);
     expect(hostImports("shop/names/name.ts", 'import { readContract } from "../land/read";')).toEqual([]);
-    expect(hostImports(file, 'import { SHOP_API_PREFIX } from "./endpoints";')).toEqual([]);
-    expect(hostImports(file, 'const host = require("./host");')).toHaveLength(1);
-    expect(hostImports(file, 'import { hostApiOptions } from "./host.js";')).toHaveLength(1);
-    expect(hostImports(file, '// import { shopClient } from "./host";')).toHaveLength(1);
+    expect(hostImports(file, 'import { ASSET_TYPE } from "./trade";')).toEqual([]);
+    expect(hostImports(file, 'const host = require("../../api/host");')).toHaveLength(1);
+    expect(hostImports(file, 'import { hostApiOptions } from "../../api/host.js";')).toHaveLength(1);
+    expect(hostImports(file, '// import { shopClient } from "../../api/host";')).toHaveLength(1);
     expect(hostImports(file, "const host = await import(where);")).toEqual(["import(where)"]);
   });
 
