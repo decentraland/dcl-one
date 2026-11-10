@@ -25,6 +25,8 @@ const USAGE = `
                            (the multiplayer-server worker contract).
     --tick-hz <n>          Scene tick rate. Default 30.
     --timeout <secs>       Exit cleanly after N seconds.
+    --scene-hosts <mode>   shared (default): one scene host process for every scene;
+                           per-scene: one each, so losing one ends only its scene.
     --pulse-realm <key>    Pulse realm to announce verbatim (what sdk-commands mints for a
                            local preview). Standalone only; orchestrated scenes carry their own.
     --pulse-server <h:p>   Pulse server to join, host:port. Default: derived from --base-domain.
@@ -55,6 +57,7 @@ function translate(argv) {
     '--tick-hz': true,
     '--timeout': true,
     '--scene-threads': true,
+    '--scene-hosts': true,
     '--pulse-realm': true,
     '--pulse-server': true,
     '--base-domain': true,

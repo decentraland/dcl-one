@@ -23,6 +23,7 @@ enabled; you rarely need to run it by hand.
 | `--pulse-server <host:port>` | Pulse server to join. Defaults to the production server; a zone deployment passes the zone one. |
 | `--base-domain <domain>` | Deployment domain the backend hosts (comms gatekeeper, worlds, ...) are composed from. Defaults to `decentraland.org`; a zone deployment passes `decentraland.zone`. |
 | `--timeout <secs>` | Exit cleanly after N seconds. |
+| `--scene-hosts <shared\|per-scene>` | `shared` (default): one scene host process runs every scene. `per-scene`: each scene runs in its own scene host process, so losing one ends only that scene. |
 
 `--scene-id`, `--private-key` and `--env` are accepted for hammurabi compatibility and ignored.
 
@@ -31,6 +32,21 @@ enabled; you rarely need to run it by hand.
 `--orchestrated` starts the engine in multi-scene worker mode: no realm needed, scenes are
 added and removed over stdin (JSON lines) with pre-minted comms adapters, and control
 events come back on stdout with the `@bevy-ctl ` prefix.
+
+With `--scene-hosts per-scene`, a lost scene host process (it exited, closed its connection, or
+the engine ended it over a message it could not accept) ends only its scenes. The engine prints
+
+```
+@bevy-ctl {"type":"scene-host-exited","scenes":["<hash>"],"code":<int|null>,"signal":<int|null>,"reason":"exit"|"protocol"|"spawn"}
+```
+
+before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene`
+for the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
+connection, `protocol` when the engine ended it over a message, and `spawn` when it could not be
+started. The engine exits with status 1 only after three host starts in a row fail. A removed
+scene's host process is ended within seven seconds and reported to nobody. With the default
+`shared`, losing the one host process exits the engine with status 1, as before. The `starting`
+event names the mode in `sceneHosts`.
 
 Orchestrators that manage the process themselves can skip the CLI and resolve the engine
 path programmatically:

@@ -23,7 +23,7 @@ use comms::{
     },
     AdapterManager, ServerSceneRooms,
 };
-use dcl_deno_ipc::init_runtime;
+use dcl_deno_ipc::{init_runtime_with, HostOptions, Placement};
 use dcl_types::SceneLogMessage;
 use ipfs::{map_realm_name, IpfsAssetServer};
 use scene_runner::{
@@ -97,6 +97,17 @@ struct Args {
     #[arg(long, value_name = "seed", help_heading = HEADLESS)]
     wallet_seed: Option<u64>,
 
+    /// Scene host processes: one for every scene, or one per scene so that losing a host ends
+    /// only its scene
+    #[arg(
+        long,
+        value_enum,
+        value_name = "placement",
+        default_value_t = SceneHosts::Shared,
+        help_heading = HEADLESS
+    )]
+    scene_hosts: SceneHosts,
+
     /// Pulse realm to announce verbatim; `--server-mode` only, and optional there: absent, the
     /// engine derives the same key from a locally hosted scene's entity id once it loads, this
     /// just announces it sooner. Orchestrated servers host several realms at once and take one
@@ -113,6 +124,28 @@ struct Args {
     realm: String,
     #[arg(skip)]
     location: IVec2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum SceneHosts {
+    Shared,
+    PerScene,
+}
+
+impl SceneHosts {
+    fn name(self) -> &'static str {
+        match self {
+            SceneHosts::Shared => "shared",
+            SceneHosts::PerScene => "per-scene",
+        }
+    }
+
+    fn placement(self) -> Placement {
+        match self {
+            SceneHosts::Shared => Placement::Shared,
+            SceneHosts::PerScene => Placement::PerScene,
+        }
+    }
 }
 
 /// The launcher's "permanently unavailable here" status (EX_CONFIG). A refused argument is not
@@ -333,10 +366,14 @@ fn main() -> AppExit {
     TIMEOUT.set(args.timeout).ok();
 
     // v8 runtime must init on the main thread before the App is built (matches the tests).
-    // Headless is always a server: a lost JS sidecar must restart the whole engine (the
-    // desktop client and the scene_runner tests leave this false).
+    // Headless is always a server: with shared scene hosts a lost JS sidecar must restart the
+    // whole engine, with per-scene hosts only a pool that can start none does (the desktop
+    // client and the scene_runner tests leave this false).
     dcl_deno_ipc::EXIT_ON_SIDECAR_LOSS.store(true, std::sync::atomic::Ordering::SeqCst);
-    init_runtime().unwrap();
+    init_runtime_with(HostOptions {
+        placement: args.scene_hosts.placement(),
+    })
+    .unwrap();
 
     println!(
         "[headless] realm={} location={} preview={} server_mode={} tick_hz={}",
@@ -456,12 +493,15 @@ fn main() -> AppExit {
             .add_systems(
                 PostUpdate,
                 (
+                    emit_scene_host_exits.before(emit_scene_status),
                     emit_scene_status,
                     emit_scene_stats,
                     emit_failed_scene_status,
                 ),
             );
-        ctl_emit(&serde_json::json!({"type": "starting", "realm": args.realm}));
+        ctl_emit(&serde_json::json!({
+            "type": "starting", "realm": args.realm, "sceneHosts": args.scene_hosts.name()
+        }));
     } else if args.server_mode {
         // before the scene loads: the lifecycle spawns the SceneHash, loading starts next frame
         app.add_systems(
@@ -1190,6 +1230,24 @@ fn emit_scene_log(hash: &str, log: &SceneLogMessage) {
         "@scene-log {}",
         serde_json::json!({"scene": hash, "level": webgpu_build::headless::scene_log_level(&log.level), "ts": log.timestamp, "msg": log.message})
     );
+}
+
+/// Lost scene hosts (`--scene-hosts per-scene`), each reported before its scenes'
+/// `scene-broken` lines.
+fn emit_scene_host_exits(scenes: Query<&RendererSceneContext>) {
+    for exit in dcl_deno_ipc::drain_host_exits() {
+        let hashes = exit
+            .scenes
+            .iter()
+            .filter_map(|scene| scenes.get(scene.0).ok())
+            .map(|ctx| &*ctx.hash)
+            .collect::<Vec<_>>();
+        if !hashes.is_empty() {
+            ctl_emit(&webgpu_build::headless::scene_host_exited_event(
+                &exit, &hashes,
+            ));
+        }
+    }
 }
 
 /// Periodic per-scene status + first-tick / broken events for the orchestrator.

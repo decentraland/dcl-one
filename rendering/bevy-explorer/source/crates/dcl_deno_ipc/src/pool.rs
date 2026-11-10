@@ -1,8 +1,10 @@
 use super::{
-    ipc_socket_name, run_host_connection, HostScenes, NewSceneCommand, EXIT_ON_SIDECAR_LOSS,
+    ipc_socket_name, run_host_connection, ConnectionEnd, HostScenes, NewSceneCommand,
+    EXIT_ON_SIDECAR_LOSS, KILL_GRACE_PERIOD,
 };
 use anyhow::{anyhow, Context};
-use bevy::log::error;
+use bevy::{ecs::entity::Entity, log::error};
+use dcl_types::{SceneId, SceneResponse};
 use futures_util::future::BoxFuture;
 use interprocess::local_socket::{
     traits::tokio::{Listener, Stream as _},
@@ -14,12 +16,21 @@ use std::{
     path::PathBuf,
     pin::Pin,
     process::Stdio,
-    sync::{atomic::Ordering, Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, RwLock,
+    },
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
 };
+
+/// Host spawns that fail in a row before the pool counts as unavailable.
+const SPAWN_FAILURES_UNAVAILABLE: u32 = 3;
+// how often a host whose scenes were all removed checks whether its grace period is over
+const RETIRE_POLL: Duration = Duration::from_millis(250);
 
 /// Which scene host a new scene runs in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -27,6 +38,8 @@ pub enum Placement {
     /// One scene host for every scene.
     #[default]
     Shared,
+    /// A scene host for each scene, never given another scene.
+    PerScene,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -41,10 +54,67 @@ pub enum HostState {
     Lost,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostExitReason {
+    /// The process exited or its connection ended.
+    Exit,
+    /// The engine ended it over a frame it sent.
+    Protocol,
+    /// It could not be started.
+    Spawn,
+}
+
+impl HostExitReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HostExitReason::Exit => "exit",
+            HostExitReason::Protocol => "protocol",
+            HostExitReason::Spawn => "spawn",
+        }
+    }
+}
+
+/// A scene host lost while it still ran scenes. Each of them has been sent a
+/// `SceneResponse::Error`. Only [`Placement::PerScene`] reports these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostExit {
+    pub scenes: Vec<SceneId>,
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+    pub reason: HostExitReason,
+}
+
+/// A scene host as the pool sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneHostInfo {
+    pub pid: Option<u32>,
+    pub state: HostState,
+    /// The scenes it runs, not counting removed ones.
+    pub scenes: Vec<SceneId>,
+}
+
+/// How a scene host process ended.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HostStatus {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+impl std::fmt::Display for HostStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.code, self.signal) {
+            (Some(code), _) => write!(f, "exit code {code}"),
+            (None, Some(signal)) => write!(f, "signal {signal}"),
+            (None, None) => f.write_str("unknown status"),
+        }
+    }
+}
+
 /// What the engine knows about one scene host. Its IPC thread owns the process.
 pub(crate) struct Host {
     pub(crate) scenes: Arc<Mutex<HostScenes>>,
     state: Mutex<HostState>,
+    pid: Mutex<Option<u32>>,
 }
 
 impl Host {
@@ -52,15 +122,28 @@ impl Host {
         Self {
             scenes: Default::default(),
             state: Mutex::new(HostState::Starting),
+            pid: Default::default(),
         }
     }
 
-    pub(crate) fn state(&self) -> HostState {
+    fn state(&self) -> HostState {
         *self.state.lock().unwrap()
     }
 
     fn set_state(&self, state: HostState) {
         *self.state.lock().unwrap() = state;
+    }
+
+    fn info(&self) -> SceneHostInfo {
+        let scenes = self.scenes.lock().unwrap();
+        SceneHostInfo {
+            pid: *self.pid.lock().unwrap(),
+            state: self.state(),
+            scenes: scenes
+                .live()
+                .map(|(id, _)| SceneId(Entity::from_bits(id)))
+                .collect(),
+        }
     }
 }
 
@@ -100,8 +183,9 @@ pub(crate) struct HostLink {
 }
 
 pub(crate) trait HostProcess: Send {
+    fn id(&self) -> Option<u32>;
     fn start_kill(&mut self);
-    fn wait(&mut self) -> BoxFuture<'_, std::io::Result<()>>;
+    fn wait(&mut self) -> BoxFuture<'_, std::io::Result<HostStatus>>;
 }
 
 /// Starts a scene host and connects to it. Called on the host's IPC thread, inside its runtime.
@@ -161,12 +245,26 @@ impl Launch for ProcessLauncher {
 }
 
 impl HostProcess for tokio::process::Child {
+    fn id(&self) -> Option<u32> {
+        tokio::process::Child::id(self)
+    }
+
     fn start_kill(&mut self) {
         let _ = tokio::process::Child::start_kill(self);
     }
 
-    fn wait(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
-        Box::pin(async move { tokio::process::Child::wait(self).await.map(|_| ()) })
+    fn wait(&mut self) -> BoxFuture<'_, std::io::Result<HostStatus>> {
+        Box::pin(async move {
+            let status = tokio::process::Child::wait(self).await?;
+            #[cfg(unix)]
+            let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+            #[cfg(not(unix))]
+            let signal = None;
+            Ok(HostStatus {
+                code: status.code(),
+                signal,
+            })
+        })
     }
 }
 
@@ -176,11 +274,22 @@ struct HostEntry {
     new_scene: UnboundedSender<NewSceneCommand>,
 }
 
+// What the hosts' IPC threads report to the pool. They must not hold the pool itself: dropping
+// the pool is what ends its hosts.
+#[derive(Default)]
+struct PoolEvents {
+    exits: Mutex<Vec<HostExit>>,
+    failed_spawns: AtomicU32,
+}
+
 /// The engine's scene hosts.
 pub struct HostPool {
     options: HostOptions,
     launcher: Arc<dyn Launch>,
     hosts: Mutex<Vec<HostEntry>>,
+    events: Arc<PoolEvents>,
+    // how long a per-scene host outlives the removal of its scene
+    pub(crate) retire_after: Duration,
 }
 
 impl HostPool {
@@ -189,6 +298,8 @@ impl HostPool {
             options,
             launcher,
             hosts: Default::default(),
+            events: Default::default(),
+            retire_after: KILL_GRACE_PERIOD,
         }
     }
 
@@ -198,97 +309,215 @@ impl HostPool {
         match self.options.placement {
             Placement::Shared => {
                 let (ready_sx, ready_rx) = tokio::sync::oneshot::channel();
-                let entry = self.start_host(Some(ready_sx));
+                let entry = self.start_host(Some(ready_sx), None);
                 self.hosts.lock().unwrap().push(entry);
                 ready_rx.blocking_recv()?
             }
+            Placement::PerScene => Ok(()),
         }
     }
 
-    /// Queues a scene on the host its placement picks.
+    /// Queues a scene on the host its placement picks. Never waits for a host to start.
     pub(crate) fn place(&self, command: NewSceneCommand) -> anyhow::Result<()> {
-        let hosts = self.hosts.lock().unwrap();
-        let entry = match self.options.placement {
-            Placement::Shared => hosts.first(),
-        };
-        let Some(entry) = entry.filter(|entry| entry.host.state() != HostState::Lost) else {
-            return Err(anyhow!("scene host lost"));
-        };
-        entry
-            .new_scene
-            .send(command)
-            .map_err(|e| anyhow!("ipc channel closed ({e})"))
+        let mut hosts = self.hosts.lock().unwrap();
+        match self.options.placement {
+            Placement::Shared => {
+                let entry = hosts
+                    .first()
+                    .filter(|entry| command.assign_to(&entry.host.scenes))
+                    .ok_or_else(|| anyhow!("scene host lost"))?;
+                entry
+                    .new_scene
+                    .send(command)
+                    .map_err(|e| anyhow!("ipc channel closed ({e})"))
+            }
+            Placement::PerScene => {
+                hosts.retain(|entry| entry.host.state() != HostState::Lost);
+                let entry = self.start_host(None, Some(command));
+                hosts.push(entry);
+                Ok(())
+            }
+        }
     }
 
     fn start_host(
         &self,
         ready: Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
+        scene: Option<NewSceneCommand>,
     ) -> HostEntry {
         let host = Arc::new(Host::new());
         let (new_scene, new_scene_rx) = unbounded_channel();
-        let thread_host = host.clone();
-        let launcher = self.launcher.clone();
-        std::thread::spawn(move || run_host(thread_host, launcher, new_scene_rx, ready));
+        if let Some(scene) = scene {
+            scene.assign_to(&host.scenes);
+            let _ = new_scene.send(scene);
+        }
+        let thread = HostThread {
+            host: host.clone(),
+            launcher: self.launcher.clone(),
+            events: self.events.clone(),
+            placement: self.options.placement,
+            retire_after: self.retire_after,
+        };
+        std::thread::spawn(move || thread.run(new_scene_rx, ready));
         HostEntry { host, new_scene }
     }
 
+    /// Lost hosts not yet drained, oldest first.
+    pub(crate) fn drain_exits(&self) -> Vec<HostExit> {
+        std::mem::take(&mut *self.events.exits.lock().unwrap())
+    }
+
+    /// Whether the last host spawns all failed, so no scene can run.
     #[cfg(test)]
-    pub(crate) fn hosts(&self) -> Vec<Arc<Host>> {
+    pub(crate) fn unavailable(&self) -> bool {
+        self.events.failed_spawns.load(Ordering::SeqCst) >= SPAWN_FAILURES_UNAVAILABLE
+    }
+
+    pub(crate) fn hosts(&self) -> Vec<SceneHostInfo> {
         let hosts = self.hosts.lock().unwrap();
-        hosts.iter().map(|entry| entry.host.clone()).collect()
+        hosts
+            .iter()
+            .map(|entry| entry.host.info())
+            .filter(|info| info.state != HostState::Lost)
+            .collect()
     }
 }
 
-// The body of a host's IPC thread: starts the scene host, serves it until the connection ends,
-// then ends the process.
-fn run_host(
+// A host's IPC thread: starts the scene host, serves it until it ends, then ends the process
+// and reports the scenes it took with it.
+struct HostThread {
     host: Arc<Host>,
     launcher: Arc<dyn Launch>,
-    new_scene: UnboundedReceiver<NewSceneCommand>,
-    ready: Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
-) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    events: Arc<PoolEvents>,
+    placement: Placement,
+    retire_after: Duration,
+}
 
-    let endpoint = ipc_socket_name();
-    let command = HostCommand::scene_host(&endpoint);
-    let mut link = match rt.block_on(launcher.launch(endpoint, command)) {
-        Ok(link) => link,
-        Err(e) => {
-            error!("runtime initialization failed: {e:#}");
-            host.set_state(HostState::Lost);
-            if let Some(ready) = ready {
-                let _ = ready.send(Err(e));
+impl HostThread {
+    fn run(
+        self,
+        new_scene: UnboundedReceiver<NewSceneCommand>,
+        ready: Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
+    ) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let endpoint = ipc_socket_name();
+        let command = HostCommand::scene_host(&endpoint);
+        let mut link = match rt.block_on(self.launcher.launch(endpoint, command)) {
+            Ok(link) => link,
+            Err(e) => {
+                error!("runtime initialization failed: {e:#}");
+                self.host.set_state(HostState::Lost);
+                if let Some(ready) = ready {
+                    let _ = ready.send(Err(e));
+                    return;
+                }
+                let failed = self.events.failed_spawns.fetch_add(1, Ordering::SeqCst) + 1;
+                rt.block_on(self.report_loss(
+                    HostStatus::default(),
+                    HostExitReason::Spawn,
+                    "scene host failed to start".to_owned(),
+                ));
+                if failed >= SPAWN_FAILURES_UNAVAILABLE
+                    && EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst)
+                {
+                    error!("{failed} scene hosts in a row failed to start; exiting process");
+                    std::process::exit(1);
+                }
+                return;
             }
-            return;
+        };
+        self.events.failed_spawns.store(0, Ordering::SeqCst);
+        *self.host.pid.lock().unwrap() = link.process.id();
+        self.host.set_state(HostState::Ready);
+        if let Some(ready) = ready {
+            let _ = ready.send(Ok(()));
         }
-    };
-    host.set_state(HostState::Ready);
-    if let Some(ready) = ready {
-        let _ = ready.send(Ok(()));
+
+        let connection = run_host_connection(
+            link.inbound,
+            link.outbound,
+            new_scene,
+            self.host.scenes.clone(),
+        );
+        let retired = retired(&self.host.scenes, self.retire_after);
+        let ended = rt.block_on(async {
+            tokio::select! {
+                ended = connection => Some(ended),
+                () = retired, if self.placement == Placement::PerScene => None,
+            }
+        });
+        link.process.start_kill();
+        let status = rt.block_on(link.process.wait()).unwrap_or_default();
+        self.host.set_state(HostState::Lost);
+
+        match self.placement {
+            Placement::Shared => {
+                // Orchestrated headless server only (EXIT_ON_SIDECAR_LOSS): the IPC loops ended,
+                // so the JS sidecar is gone and the engine can run no scene code. Nothing here
+                // can respawn it, and the parent's engine-down recovery never fires for a still-
+                // running process — so exit hard and let the supervisor restart the whole engine.
+                // Desktop/tests leave the flag false and end quietly (tests build a fresh runtime
+                // per app, where this is a normal shutdown, not a crash).
+                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
+                    error!("dcl_deno_ipc runtime terminated (JS sidecar lost); exiting process");
+                    std::process::exit(1);
+                }
+            }
+            Placement::PerScene => {
+                // a host retired after its scenes were removed lost nothing
+                if let Some(ended) = ended {
+                    let reason = match ended {
+                        ConnectionEnd::Closed => HostExitReason::Exit,
+                        ConnectionEnd::Rejected => HostExitReason::Protocol,
+                    };
+                    rt.block_on(self.report_loss(
+                        status,
+                        reason,
+                        format!("scene host exited: {status}"),
+                    ));
+                }
+            }
+        }
     }
 
-    rt.block_on(run_host_connection(
-        link.inbound,
-        link.outbound,
-        new_scene,
-        host.scenes.clone(),
-    ));
-    link.process.start_kill();
-    let _ = rt.block_on(link.process.wait());
-    host.set_state(HostState::Lost);
+    // Reports the host's live scenes as lost: the record first, so it is there by the time a
+    // scene is seen broken, then an error to each scene.
+    async fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) {
+        let lost = self.host.scenes.lock().unwrap().close();
+        if lost.is_empty() {
+            return;
+        }
+        let scenes = lost
+            .iter()
+            .map(|(id, _)| SceneId(Entity::from_bits(*id)))
+            .collect::<Vec<_>>();
+        self.events.exits.lock().unwrap().push(HostExit {
+            scenes: scenes.clone(),
+            code: status.code,
+            signal: status.signal,
+            reason,
+        });
+        for (scene, (_, responses)) in scenes.into_iter().zip(lost) {
+            // the channel is bounded; this message must not be shed
+            let _ = responses
+                .send((scene, SceneResponse::Error(message.clone())))
+                .await;
+        }
+    }
+}
 
-    // Orchestrated headless server only (EXIT_ON_SIDECAR_LOSS): the IPC loops ended,
-    // so the JS sidecar is gone and the engine can run no scene code. Nothing here
-    // can respawn it, and the parent's engine-down recovery never fires for a still-
-    // running process — so exit hard and let the supervisor restart the whole engine.
-    // Desktop/tests leave the flag false and end quietly (tests build a fresh runtime
-    // per app, where this is a normal shutdown, not a crash).
-    if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-        error!("dcl_deno_ipc runtime terminated (JS sidecar lost); exiting process");
-        std::process::exit(1);
+// Completes once every scene the host was given has been removed for `grace`.
+async fn retired(scenes: &Mutex<HostScenes>, grace: Duration) {
+    loop {
+        tokio::time::sleep(RETIRE_POLL).await;
+        let retired_since = scenes.lock().unwrap().retired_since();
+        if retired_since.is_some_and(|since| Instant::now().duration_since(since) >= grace) {
+            return;
+        }
     }
 }
 
@@ -301,4 +530,18 @@ pub fn init_runtime_with(options: HostOptions) -> anyhow::Result<()> {
     pool.start()?;
     *POOL.write().unwrap() = Some(Arc::new(pool));
     Ok(())
+}
+
+/// Scene hosts lost since the last call. Empty with [`Placement::Shared`].
+pub fn drain_host_exits() -> Vec<HostExit> {
+    let pool = POOL.read().unwrap();
+    pool.as_ref()
+        .map(|pool| pool.drain_exits())
+        .unwrap_or_default()
+}
+
+/// The pool's current scene hosts.
+pub fn scene_hosts() -> Vec<SceneHostInfo> {
+    let pool = POOL.read().unwrap();
+    pool.as_ref().map(|pool| pool.hosts()).unwrap_or_default()
 }
