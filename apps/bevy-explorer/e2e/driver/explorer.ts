@@ -4,7 +4,7 @@
 import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
-import { until } from './wait.ts'
+import { sleep, until } from './wait.ts'
 
 /** `/photo_mode` and `/take_photo`: whether the in-world camera is open, where it is, the
  *  player's photo storage and this session's capture counters. */
@@ -42,6 +42,10 @@ export interface WorldState {
   worldHeld: boolean
   outOfWorld: boolean | null
   position: [number, number, number] | null
+  /** A text field (the HUD's or the engine's) holds the keyboard: keys are typed and resolve no
+   *  action. Null where the client takes no input; absent from builds older than the suite, which
+   *  the keyboard waits refuse. */
+  keyboardClaimed?: boolean | null
 }
 
 export interface Control {
@@ -55,6 +59,8 @@ export interface Control {
   visible: boolean
   actionable: boolean
   reason?: string
+  /** Inside a region that says it is still loading (`aria-busy`): what it shows is not final. */
+  busy?: boolean
   x: number
   y: number
   width: number
@@ -79,7 +85,7 @@ export interface HudEntry {
   name: string
 }
 
-export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable'
+export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable' | 'ready'
 
 export interface UserData {
   name: string
@@ -99,6 +105,9 @@ export interface EmoteState {
   repeat: boolean
   finished: boolean
   mask: 'fullBody' | 'upperBody'
+  /** An idle pose, which a triggered emote takes over: a scene's movement animation outranks one
+   *  only while it is not idle. Absent from builds before it was reported. */
+  idle?: boolean
 }
 
 export interface AvatarReport {
@@ -189,11 +198,32 @@ export interface ExplorerOptions {
   /** Accept `"input": "synthetic"` from the HUD commands (a run without the web driver). Off by
    *  default: a spec that passed on DOM events proves nothing about the browser's input path. */
   allowSyntheticInput?: boolean
+  /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
+  profileDeployWindowMs?: number
 }
+
+/** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
+ *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
+ *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
+ *  after the engine reports the new version. */
+export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
+ *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
+ *  frames. A ceiling: the wait ends as soon as `/world_state` reports the change. */
+export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
+/** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
+export const OLDER_CLIENT =
+  "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
+
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
+/** How long a click, a fill or a hover waits for its control to take a click: uncovered and no
+ *  longer moving (a page slides and fades in, a button grows in on hover). */
+const ACTIONABLE_TIMEOUT_MS = 10_000
+
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
@@ -210,12 +240,17 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  readonly #deployWindowMs: number
+  /** The own profile's version as last read, and when it was last seen to change. */
+  #ownVersion: number | undefined
+  #ownVersionChangedAt = 0
   /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
+    this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -404,7 +439,27 @@ export class Explorer {
     const reply = await this.run(address ? `/get_user_data ${address}` : '/get_user_data')
     const match = /^(.*) \((0x[0-9a-fA-F]{40})\): v(\d+), web3=(true|false)$/s.exec(reply.trim())
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
-    return { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    if (address === undefined) {
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      this.#ownVersion = data.version
+    }
+    return data
+  }
+
+  /** Count a deployment of the own profile from now that no version change showed: the sign-in,
+   *  whose first login deploys a new profile before any version was read. */
+  profileDeployed(): void {
+    this.#ownVersionChangedAt = Date.now()
+  }
+
+  /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
+   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
+   *  deployment of its own. A change since the last read counts from now. */
+  async profileDeployWindow(): Promise<void> {
+    await this.userData()
+    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
+    if (left > 0) await sleep(left)
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -499,6 +554,30 @@ export class Explorer {
     return this.key('Escape')
   }
 
+  /** After a HUD text field took the focus (a fill): wait for the engine to hand it the keyboard, as
+   *  `/world_state` reports it; until then a key is still the engine's (Enter opens the chat,
+   *  Escape closes the page) and not typed. A client that does not report it is not waited on. */
+  async keyboardTaken(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== false, timeoutMs, 'the engine to hand the keyboard to the HUD field')
+  }
+
+  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): wait for
+   *  the engine to let the keyboard go, as `/world_state` reports it; a key sent sooner is typed
+   *  into nothing. A client that does not report it (an older build) is not waited on. */
+  async keyboardReleased(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== true, timeoutMs, 'the engine to let the keyboard go (a HUD field had it)')
+  }
+
+  /** Wait for the engine's word on the keyboard to be `done`. Null (a client that takes no input)
+   *  is its own answer; a client whose `/world_state` has no such word is older than the suite and
+   *  is refused, not raced. */
+  async #keyboard(done: (claimed: boolean | null) => boolean, timeoutMs: number, what: string): Promise<void> {
+    const first = await this.worldState()
+    if (first.keyboardClaimed === undefined) throw new Error(OLDER_CLIENT)
+    if (done(first.keyboardClaimed)) return
+    await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
+  }
+
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
   async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
     await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
@@ -576,18 +655,23 @@ export class Hud {
     return control
   }
 
-  /** A real click on the control's centre. Fails on a synthetic (DOM-event) click unless the
-   *  explorer allows it. */
+  /** A real click on the control's centre, once a click would land there (`actionable`). Fails
+   *  on a synthetic (DOM-event) click unless the explorer allows it. */
   async click(selector: Selector): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_click ${selectorArg(selector)}`)
     this.#checkInput(result, `click on ${describeSelector(selector)}`)
     return result
   }
 
-  /** Replace a field's text; the reply holds the field as the typing left it. */
+  /** Replace a field's text, once a click would land on it; the reply holds the field as the
+   *  typing left it. A real fill leaves the field focused: it returns once the engine has handed
+   *  the field the keyboard, so the next key is the field's. */
   async fill(selector: Selector, text: string): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_fill ${JSON.stringify({ ...toSelectorObject(selector), text })}`)
     this.#checkInput(result, `fill of ${describeSelector(selector)}`)
+    if (result.input === 'trusted') await this.#explorer.keyboardTaken()
     return result
   }
 
@@ -601,11 +685,28 @@ export class Hud {
     return this.wait(selector, { state: 'hidden', timeoutMs })
   }
 
+  /** The control once a click would land on it: visible, enabled, in the viewport, uncovered and
+   *  no longer moving (the HUD reports a control on its way in, or growing in, as still moving: a
+   *  click aimed at it there lands where it no longer is). */
+  async waitActionable(selector: Selector, timeoutMs = ACTIONABLE_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'actionable', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
+  /** The control once nothing around it is still loading (`ready`: no `aria-busy` region holds
+   *  it), such as a grid whose newest page has arrived. */
+  async waitReady(selector: Selector, timeoutMs = DEFAULT_HUD_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'ready', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
   /** Put the pointer on a control, for the controls that appear on hover: a real click at its
-   *  centre, which the browser precedes with a move. It also selects the control, as a user's
-   *  click would. */
+   *  centre once a click would land there, which the browser precedes with a move. It also
+   *  selects the control, as a user's click would. */
   async hover(selector: Selector): Promise<Control> {
-    const control = await this.get(selector)
+    const control = await this.waitActionable(selector)
     await this.#explorer.clickAt(control.x + control.width / 2, control.y + control.height / 2)
     return control
   }

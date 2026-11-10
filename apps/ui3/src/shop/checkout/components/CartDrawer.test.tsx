@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { createCartDrawer } from "../../cart/drawer";
 import { createCartStore, type CartStorage } from "../../cart/store";
 import { cartLauncher } from "../../detail/purchase";
-import { evmAddress } from "../../model/address";
-import { itemAsset, tokenAsset } from "../../model/asset";
-import { CHAIN } from "../../model/chain";
+import { evmAddress } from "@shop/model/address";
+import { itemAsset, tokenAsset } from "@shop/model/asset";
+import { CHAIN } from "@shop/model/chain";
 import CartDrawer from "./CartDrawer";
 
 function memory(): CartStorage {

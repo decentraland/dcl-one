@@ -167,7 +167,7 @@ class EngineCacheTests(unittest.TestCase):
             calls.append(args)
             if args[0] == 'wasm-pack' or args[:2] == ('bash', './scripts/gen-ts-bindings.sh'):
                 self.outputs()
-            elif args[0] == 'npx':
+            elif args[0] == 'node':
                 self.write(artifact.SOURCE + 'target/sandbox-worker.meta.json',
                            json.dumps({'outputs': {'worker': {'entryPoint': 'worker.js', 'exports': []}}}))
                 self.write(artifact.SOURCE + 'deploy/web/engine/pkg/sandbox_worker.bundle.js', 'worker')
@@ -188,7 +188,7 @@ class EngineCacheTests(unittest.TestCase):
         self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
-        self.assertTrue(any(c[0] == 'npx' for c in calls))
+        self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)

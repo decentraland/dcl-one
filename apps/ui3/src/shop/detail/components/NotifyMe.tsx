@@ -2,11 +2,11 @@
 
 import { useState, type FormEvent } from "react";
 
-import { shopClient } from "../../api/shop";
 import Icon from "../../discovery/components/Icon";
 import { useShopQuery } from "../../discovery/query";
 import { useShopWallet } from "../../wallet/context";
 import { pdpText } from "../copy";
+import { shopClient } from "../../api/host";
 
 const isEmailish = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 

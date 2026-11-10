@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, secretOf } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, scrubCredentials, secretOf } from '../driver/console.ts'
 import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
@@ -87,5 +87,43 @@ describe('ConsoleError', () => {
     const error = new ConsoleError('/teleport 1 2', 'failed to set location')
     assert.equal(error.line, '/teleport 1 2')
     assert.equal(error.message, '`/teleport 1 2` failed: failed to set location')
+  })
+})
+
+describe('scrubCredentials', () => {
+  test('replaces a room access token in an adapter url and keeps the rest of the line', () => {
+    assert.equal(
+      scrubCredentials('signed login ok, connecting to inner livekit:wss://rooms.example.test/r?access_token=eyJhbGciOi.x-y_z&mode=1 done'),
+      'signed login ok, connecting to inner livekit:wss://rooms.example.test/r?access_token=REDACTED&mode=1 done'
+    )
+  })
+
+  test('replaces named string fields however they are quoted', () => {
+    assert.equal(scrubCredentials('{"privateKey":"0xabc","name":"x"}'), '{"privateKey":"REDACTED","name":"x"}')
+    assert.equal(scrubCredentials('identity "{\\"privateKey\\":\\"0xabc\\"}"'), 'identity "{\\"privateKey\\":\\"REDACTED\\"}"')
+    assert.equal(scrubCredentials('AuthLink { signature: "0xdead", kind: x }'), 'AuthLink { signature: "REDACTED", kind: x }')
+    assert.equal(scrubCredentials('event signature="0xbeef" ok'), 'event signature="REDACTED" ok')
+    assert.equal(scrubCredentials('{"accessToken":"t0k"}'), '{"accessToken":"REDACTED"}')
+  })
+
+  test('replaces base64 of an identity, as /login_identity takes it', () => {
+    const identity = Buffer.from(JSON.stringify({ ephemeralIdentity: { address: '0x1', privateKey: '0x2' }, authChain: [] })).toString('base64')
+    assert.equal(scrubCredentials(`> /login_identity ${identity} --guest`), '> /login_identity REDACTED --guest')
+  })
+
+  test('replaces the other formats a line can take: bare after =, an Option, a Bearer token, a glued identity', () => {
+    assert.equal(scrubCredentials('key privateKey=0xabc next'), 'key privateKey=REDACTED next')
+    assert.equal(scrubCredentials('Identity { private_key: Some("0xabc") }'), 'Identity { private_key: Some("REDACTED") }')
+    assert.equal(scrubCredentials('authorization: Bearer eyJhbGciOi.payload.sig rest'), 'authorization: Bearer REDACTED rest')
+    const identity = Buffer.from(JSON.stringify({ ephemeralIdentity: { privateKey: '0x2' }, authChain: [] })).toString('base64')
+    for (const glue of ['a', 'ab', 'abc', 'ab/']) {
+      assert.equal(scrubCredentials(`GET ?id=${glue}${identity}`), 'GET ?id=REDACTED', `glued to "${glue}"`)
+    }
+  })
+
+  test('leaves a line without credentials as it was', () => {
+    const line = '08:09:03 iframe log: INFO crates/scene_runner found 4 entities; signature check skipped'
+    assert.equal(scrubCredentials(line), line)
+    assert.equal(scrubCredentials('a token=abc and ?access_token=&next=1'), 'a token=abc and ?access_token=&next=1')
   })
 })

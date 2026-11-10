@@ -1,11 +1,12 @@
 // Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop; an
 // outfit's page there; and a NAME's.
 
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { itemUrn } from '../../../shop/detail/lib/urn'
-import { landNetwork } from '../../../shop/land/contracts'
-import { CHAIN } from '../../../shop/model/chain'
-import { nameTokenIdOf } from '../../../shop/names/names'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
+import { itemUrn } from '@shop/detail/lib/urn'
+import { landChainId } from '../../../shop/land/chain'
+import { landNetwork } from '@shop/land/contracts'
+import { CHAIN } from '@shop/model/chain'
+import { nameTokenIdOf } from '@shop/names/name'
 import { siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'
 
@@ -38,5 +39,5 @@ export function webNameTokenUrl(contract: string, tokenId: string): string {
 
 /** A registered NAME's bid page on the web Shop: an offer to its owner, whether or not they list it. */
 export function webNameOfferUrl(name: string): string {
-  return withUtm(siteUrl(`/shop/token/${landNetwork().nameRegistrar}/${nameTokenIdOf(name)}/bid`))
+  return withUtm(siteUrl(`/shop/token/${landNetwork(landChainId()).nameRegistrar}/${nameTokenIdOf(name)}/bid`))
 }

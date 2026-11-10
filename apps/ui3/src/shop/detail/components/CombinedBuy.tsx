@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
-import { authorizeUsdCredit, cancelUsdIntents } from "../../credits/credits";
+import { authorizeUsdCredit, cancelUsdIntents } from "@shop/credits/credits";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
@@ -24,13 +24,13 @@ import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine } from "../../checkout/purchase/cart";
 import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, type PurchaseTarget } from "../../checkout/purchase/mana";
 import type { RailContext } from "../../checkout/purchase/rail";
-import { createSpendGuard } from "../../checkout/purchase/spend-guard";
+import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
 import { cartLineId, type CartAddInput } from "../../cart/store";
-import { formatMana } from "../../model/money";
-import type { CartLine, PurchaseOffer } from "../../model/purchase";
-import type { MixedPayment } from "../../payment/present";
+import { formatMana } from "@shop/model/money";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import type { MixedPayment } from "@shop/payment/present";
 import { useShopWallet } from "../../wallet/context";
 import "./legacyorderbuy.css";
 
@@ -53,7 +53,6 @@ type CombinedPhase =
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
-const REVERTED_RETURNED = "The purchase failed on-chain, so nothing was bought, and your Credits were returned.";
 
 // A split sent and not confirmed yet, per account and item, in this tab. The run writes it itself, so it is there however
 // the split was started (Buy now's dialog or the page's) and even when its screen is gone by then (an account switched
@@ -61,7 +60,10 @@ const REVERTED_RETURNED = "The purchase failed on-chain, so nothing was bought, 
 const SENT_KEY = "dcl-shop-buynow-split:v1:";
 export const SENT_HOLD_MS = 15 * 60 * 1000;
 
-/** `creditId`: the credit the split reserved, released at once when Check again finds the purchase reverted. */
+/**
+ * `creditId`: the credit the split reserved. When Check again finds the purchase reverted it retires that reservation, as
+ * the live path does; the Credits then come back with the expiry sweep.
+ */
 export type SentSplit = { at: number; txHash: string | null; chainId: number | null; creditId: string | null };
 
 const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
@@ -127,10 +129,18 @@ type CombinedBuyRun = {
   reset(): void;
   /** A split for this account and line was sent and is not known to be confirmed yet (this run's, or an earlier one). */
   remembered: boolean;
-  /** It has a transaction to read: a split stopped before its purchase went out (a MANA approval still confirming) has none. */
+  /**
+   * Check again has something to do: a transaction to read, or a hold that has run out (it then lets the item go). A split
+   * recorded with no hash (a MANA approval still confirming, or a record in the first, timestamp-only format) never has
+   * one to read, so it becomes checkable only once its hold runs out. The purchase itself always records its hash: it is
+   * broadcast before anything can leave it pending.
+   */
   checkable: boolean;
   checking: boolean;
-  /** Reads the sent split's receipt: confirmed completes it, reverted fails it, and either releases the hold. */
+  /**
+   * Reads the sent split's receipt: confirmed completes it, reverted fails it (retiring its credit), and either releases
+   * the hold. With no receipt, or nothing to read, a hold that has run out is let go; a failed read keeps it held.
+   */
   checkAgain(): Promise<void>;
 };
 
@@ -159,6 +169,15 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const lineId = cartLineId(line.asset, line.listing);
   const [sent, setSent] = useState(() => readSentSplit(wallet.account, lineId));
   useEffect(() => setSent(readSentSplit(wallet.account, lineId)), [wallet.account, lineId]);
+  // Drawn again the moment the hold runs out, so a record with nothing to read can then be let go by Check again.
+  const [, setExpiredTick] = useState(0);
+  useEffect(() => {
+    if (!sent) return;
+    const left = sent.at + SENT_HOLD_MS - Date.now();
+    if (left <= 0) return;
+    const t = setTimeout(() => setExpiredTick((n) => n + 1), left + 1);
+    return () => clearTimeout(t);
+  }, [sent]);
   const [checking, setChecking] = useState(false);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
@@ -276,7 +295,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         isRejection(e) || isSignatureDeclined(e)
           ? "You cancelled the request in your wallet. Nothing was charged."
           : isRevertedTxError(e)
-            ? "The purchase failed on-chain. Nothing was bought and your Credits were returned."
+            ? REVERTED
             : friendlyError(e, FALLBACK, { sale: true });
       setPhase({ kind: "error", message });
     }
@@ -303,7 +322,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!busy) setPhase({ kind: "review" });
     },
     remembered: sent !== null,
-    checkable: !!sent?.txHash && sent.chainId !== null,
+    // A receipt to read, or a hold that has run out (Check again then lets the item go).
+    checkable: !!sent && ((!!sent.txHash && sent.chainId !== null) || !held(sent, Date.now())),
     checking,
     checkAgain: async () => {
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
@@ -324,9 +344,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           if (receipt) {
             release();
             if (receipt.status === "reverted") {
-              // The only purchase this credit went into reverted, so nothing consumed it: release it now.
-              const returned = record.creditId ? await cancelUsdIntents([record.creditId], services.client).then(() => true, () => false) : false;
-              setPhase({ kind: "error", message: returned ? REVERTED_RETURNED : REVERTED });
+              // The only purchase this credit went into reverted, so nothing consumed it: retire it now, as the live path
+              // does. Retired credits come back with the expiry sweep, not at once, which is what the copy says.
+              if (record.creditId) await cancelUsdIntents([record.creditId], services.client).catch(() => 0);
+              setPhase({ kind: "error", message: REVERTED });
             } else {
               setPhase({ kind: "success", txHash: record.txHash });
               onDone?.(record.txHash);

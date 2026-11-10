@@ -14,8 +14,8 @@ import {
 } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "./abi";
+import { CHAIN } from "@shop/model/chain";
+import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import { chainContracts, contractAt, replacedCreditsManager, requireContracts } from "./contracts";
 import {
   chainIdSalt,

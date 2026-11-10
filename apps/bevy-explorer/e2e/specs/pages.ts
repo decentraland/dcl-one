@@ -4,6 +4,19 @@
 // engine's default bindings, so a tab is `Places [ Z ]` as the page joins its text nodes.
 import type { Explorer, Selector } from '../driver/index.ts'
 
+/** A community card's name without the initial its cover shows for an image that did not load,
+ *  which shows only once the image fails: the initial is dropped when the next word starts with it. */
+export function withoutInitial(cardName: string): string {
+  const words = cardName.split(' ')
+  if (words.length > 1 && words[0]!.length === 1 && words[1]!.toLowerCase().startsWith(words[0]!.toLowerCase())) words.shift()
+  return words.join(' ')
+}
+
+/** The community card a name read earlier (`withoutInitial`) names, with or without its initial. */
+export function cardSelector(card: string): Selector {
+  return { name: card, role: 'button', exact: false }
+}
+
 export interface Page {
   /** The `KeyboardEvent.code` that toggles the page, when the engine binds one. */
   key?: string
@@ -28,6 +41,9 @@ export const PAGES: Record<PageName, Page> = {
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000
+/** The most an Escape is given to close a page, which takes a third of a second: a ceiling for a
+ *  press the page did not take, before the top bar's Close button. */
+const PAGE_CLOSE_TIMEOUT_MS = 10_000
 
 /** Open a page by its key and wait for it. */
 export async function openWithKey(explorer: Explorer, page: PageName): Promise<void> {
@@ -53,15 +69,27 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
   await explorer.hud.wait(marker, { timeoutMs: PAGE_OPEN_TIMEOUT_MS })
 }
 
-/** Close the open page with Escape, as explorer-automation's Panel.Close does, and the top bar's
- *  Close button when Escape leaves it open. */
+/** Close the open page with Escape, as explorer-automation's Panel.Close does. While a field of
+ *  the page holds the keyboard (the engine says so) no action resolves: the first press only
+ *  leaves the field, so it waits for the engine to have the keyboard back, and the next closes the
+ *  page. The top bar's Close button closes a page the Escape did not, and one whose field keeps
+ *  the keys through a press (the map's search spends its first Escape clearing itself). Closing
+ *  the Backpack deploys the look it changed, so it waits out the catalyst's window since the last
+ *  deployment first. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
-  await explorer.escape()
+  if (page === 'backpack') await explorer.profileDeployWindow()
   try {
-    await explorer.hud.waitHidden(marker, 5000)
+    if ((await explorer.worldState()).keyboardClaimed === true) {
+      await explorer.escape()
+      await explorer.keyboardReleased()
+    }
+    await explorer.escape()
+    await explorer.hud.waitHidden(marker, PAGE_CLOSE_TIMEOUT_MS)
+    return
   } catch {
-    await explorer.hud.click({ name: 'Close', role: 'button', index: 0 })
-    await explorer.hud.waitHidden(marker, 15_000)
+    // still open: a field kept the keys, or the page did not take the press
   }
+  await explorer.hud.click({ name: 'Close', role: 'button', index: 0 })
+  await explorer.hud.waitHidden(marker, 15_000)
 }

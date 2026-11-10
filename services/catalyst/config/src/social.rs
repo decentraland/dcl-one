@@ -639,21 +639,54 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_max_age_secs: u64,
 
-    // social/badges: the old catalyrst-badges settings (the art is embedded).
-    /// Bearer of the badge grant/revoke routes; unset refuses them.
+    // social/badges.
+    /// Bearer of the badge admin routes (read, grant, revoke); unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
+    /// The base every badge asset path resolves against: upstream's CDN, so
+    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
     #[arg(
         long,
         env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://badges.decentraland.org"
+        default_value = "https://assets-cdn.decentraland.org"
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Files here override the embedded badge art one by one.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`),
+    /// served at /badges/assets.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
+
+    /// Run the badge processor (leased: the primary only, and only while
+    /// social writes are enabled): it reads social.client_events,
+    /// content.deployments, the Polygon shop logs and mirrors and the accepted
+    /// referrals, and grants upstream's evaluated badges with their
+    /// badge_granted notifications. Off by default: a node opts in once its
+    /// sources are current (the cursors start at the head when it does).
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_processor_enabled: bool,
+
+    /// Rows (or recounted wallets) the badge processor writes per transaction.
+    #[arg(long, env = "BADGES_PROCESSOR_BATCH_SIZE", default_value_t = 200)]
+    pub badges_processor_batch_size: u32,
+
+    /// Upstream's EVENT_PROCESSING_MAX_AGE_IN_SECONDS: the badge processor
+    /// passes, without effect, an event (client event, deployment, sale)
+    /// older than this many seconds by its own time; 0 keeps every event.
+    #[arg(long, env = "BADGES_EVENT_MAX_AGE_SECS", default_value_t = 0)]
+    pub badges_event_max_age_secs: u64,
+
+    /// A deployment the node stored more than this many seconds after its
+    /// entity timestamp is history a syncing node caught up on: the badge
+    /// processor passes it without effect; 0 keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 86_400)]
+    pub badges_deployment_max_lag_secs: u64,
+    /// Count the gatekeeper's room joins and leaves toward the presence
+    /// badges (social.presence_badges): every process stores the events,
+    /// the leased badges-presence jobs apply them and close lost visits.
+    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_presence_enabled: bool,
 
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL

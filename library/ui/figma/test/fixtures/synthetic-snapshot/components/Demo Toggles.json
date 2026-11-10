@@ -1,0 +1,49 @@
+{
+ "page": {"id":"10:2","name":"Demo Toggles"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "21:1",
+   "name": "SwitchTitle",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Property 1":{"type":"VARIANT","default":"On","options":["On","Off"]}},
+   "base": {
+    "id": "21:2",
+    "name": "Property 1=On",
+    "props": {"Property 1":"On"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=On",
+     "w": 200,
+     "h": 32,
+     "layout": {"mode":"HORIZONTAL","pad":[4,0,4,0],"gap":8,"main":"SPACE_BETWEEN","cross":"CENTER"},
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Title",
+       "w": 96,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Enable option",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      },
+      {"type":"INSTANCE","name":"Switch","componentId":"20:21","w":40,"h":24}
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "21:3",
+     "name": "Property 1=Off",
+     "props": {"Property 1":"Off"},
+     "patches": [{"at":[],"set":{"name":"Property 1=Off"}},{"at":[1],"set":{"componentId":"20:22"}}]
+    }
+   ]
+  }
+ ]
+}
