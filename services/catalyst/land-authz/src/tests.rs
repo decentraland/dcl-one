@@ -4257,3 +4257,148 @@ async fn a_switch_refuses_a_database_shared_with_another_network() {
     assert_eq!(links, 1, "the other network's links are kept");
     db.drop().await;
 }
+
+/// The networks whose cursor this database holds, in order.
+async fn cursor_networks(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT network FROM land_authz.index_cursor ORDER BY network")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Until a backend waits on an advisory lock.
+async fn wait_until_an_advisory_lock_is_awaited(pool: &PgPool) {
+    for _ in 0..500 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on an advisory lock");
+}
+
+/// A switch admitted to the database, and still waiting on the old
+/// registries' fold, holds the admission: another network's cursor created
+/// meanwhile waits for it, then is refused, so the switch never deletes a
+/// link of a network that joined under it.
+#[tokio::test]
+async fn a_network_created_while_a_switch_waits_is_refused_once_the_switch_lands() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let sepolia = Settings::for_network("sepolia", None).unwrap();
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+
+    let mut folding = pool.begin().await.unwrap();
+    let fold_pid = backend_pid(&mut folding).await;
+    indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+    let switch = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    wait_until_blocked_by(pool, fold_pid).await;
+    let create = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { indexer::ensure_cursor(&pool, &sepolia).await })
+    };
+    wait_until_an_advisory_lock_is_awaited(pool).await;
+    assert!(!create.is_finished(), "the creation waits on the switch");
+
+    folding.commit().await.unwrap();
+    assert_eq!(switch.await.unwrap().unwrap(), ReplayStart::Begun);
+    let refused = create.await.unwrap().unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert_eq!(
+        cursor_networks(pool).await,
+        vec![NETWORK_MAINNET.to_string()]
+    );
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.land_registry, configured.land_registry);
+    db.drop().await;
+}
+
+/// Two networks creating the first cursor of an empty database: whichever
+/// is admitted first holds it, and the other, whether through
+/// `ensure_cursor` or a replay that would create it, is refused.
+#[tokio::test]
+async fn the_first_cursor_of_an_empty_database_admits_one_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let sepolia = Settings::for_network("sepolia", None).unwrap();
+
+    // Mainnet's creation is admitted and holds the admission until it commits.
+    let mut creating = pool.begin().await.unwrap();
+    let creating_pid = backend_pid(&mut creating).await;
+    assert_eq!(
+        indexer::admit_network(&mut creating, NETWORK_MAINNET)
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, $4, true)",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(START as i64 - 1)
+    .execute(&mut *creating)
+    .await
+    .unwrap();
+
+    let create = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { indexer::ensure_cursor(&pool, &sepolia).await })
+    };
+    let replay = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { begin_replay(&pool, &sepolia, sepolia.start_block).await })
+    };
+    wait_until_blocked_by(pool, creating_pid).await;
+    creating.commit().await.unwrap();
+
+    let refused = create.await.unwrap().unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert_eq!(
+        replay.await.unwrap().unwrap(),
+        ReplayStart::SharedDatabase {
+            other: NETWORK_MAINNET.to_string()
+        }
+    );
+    assert_eq!(
+        cursor_networks(pool).await,
+        vec![NETWORK_MAINNET.to_string()]
+    );
+    db.drop().await;
+}
