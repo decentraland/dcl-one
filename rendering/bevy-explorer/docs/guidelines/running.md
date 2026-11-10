@@ -58,10 +58,11 @@ credentials and the signed-fetch `x-identity-*` and `x-authoritative-scope` head
 cross-origin hop, and on the authoritative server
 returns the redirect response instead of following it. Scenes cannot create custom HTTP
 clients, proxies or trust roots. Native scene
-WebSockets follow the same rule as native Fetch: preview, the bundled bridge and an
-operator-selected `--system-scene` on desktop may use `ws://` and reach loopback and LAN
-addresses; every other scene, and every scene on the authoritative server, needs `wss://` to
-a public address. Link-local and metadata addresses stay blocked in every mode. TLS
+WebSockets follow the same rule as native Fetch: preview (on desktop or on an authoritative
+server launched in preview), the bundled bridge and an operator-selected `--system-scene` on
+desktop may use `ws://` and reach loopback and LAN addresses; every other scene, including
+every non-preview scene on the authoritative server, needs `wss://` to a public address.
+Link-local and metadata addresses stay blocked in every mode. TLS
 certificates are checked against the operating system's trust store.
 
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request

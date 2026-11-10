@@ -119,10 +119,15 @@ fn serve(
     let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(
         header("sec-websocket-key").unwrap_or_default().as_bytes(),
     );
-    let protocol = header("sec-websocket-protocol")
-        .and_then(|p| p.split(',').next().map(|p| p.trim().to_owned()))
-        .map(|p| format!("Sec-WebSocket-Protocol: {p}\r\n"))
-        .unwrap_or_default();
+    let protocol = match path.as_str() {
+        // selects none of the requested subprotocols
+        "/noproto" => String::new(),
+        "/otherproto" => "Sec-WebSocket-Protocol: other\r\n".to_owned(),
+        _ => header("sec-websocket-protocol")
+            .and_then(|p| p.split(',').next().map(|p| p.trim().to_owned()))
+            .map(|p| format!("Sec-WebSocket-Protocol: {p}\r\n"))
+            .unwrap_or_default(),
+    };
     log.lock().unwrap().handshakes.push(request.clone());
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n{protocol}\r\n"
@@ -133,7 +138,17 @@ fn serve(
 
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     match parts.as_slice() {
-        ["echo"] => echo(&mut *conn, &stop),
+        ["echo" | "noproto" | "otherproto"] => echo(&mut *conn, &stop),
+        // reads nothing for `ms`, then discards data frames and answers the close
+        ["drain", ms] => {
+            std::thread::sleep(Duration::from_millis(ms.parse().unwrap()));
+            while let Some((opcode, payload)) = read_frame(&mut *conn, &stop) {
+                if opcode == 8 {
+                    let _ = write_frame(&mut *conn, true, 8, &payload);
+                    return;
+                }
+            }
+        }
         ["frame", n] => {
             let _ = write_frame(&mut *conn, true, 2, &vec![7; n.parse().unwrap()]);
             echo(&mut *conn, &stop);
@@ -941,7 +956,99 @@ fn an_unanswered_close_holds_the_slot_until_the_close_timeout() {
     assert!(started.elapsed() < Duration::from_millis(1500));
 }
 
+/// Fills the kernel buffers towards a peer that is not reading, so later sends stay queued.
+const FILL_UNTIL_QUEUED: &str = r#"
+async function fillUntilQueued(ws) {
+    const chunk = new Uint8Array(512 * 1024);
+    for (let i = 0; i < 128 && ws.bufferedAmount < 1024 * 1024; i++) {
+        ws.send(chunk);
+        await new Promise((r) => setTimeout(r, 20));
+    }
+    return ws.bufferedAmount >= 1024 * 1024;
+}
+"#;
+
+#[test]
+fn queued_sends_are_written_before_the_close_timer_starts() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem).with_net(WsNet {
+        close_timeout: Duration::from_millis(300),
+        ..WsNet::default()
+    });
+    let outcome = harness.run(&format!(
+        r#"
+        {FILL_UNTIL_QUEUED}
+        const {{ ws }} = await connect({:?});
+        const queued = await fillUntilQueued(ws);
+        const event = await close(ws, 3000, "bye");
+        return [queued, event.code, event.wasClean].join(" ");
+        "#,
+        server.url("/drain/1500")
+    ));
+    assert_eq!(outcome, "true 3000 true");
+    assert_eq!(harness.sockets(), 0);
+}
+
+#[test]
+fn a_close_behind_sends_a_peer_never_reads_frees_the_slot_after_the_drain_timeout() {
+    let server = WsServer::start();
+    let mut harness = Harness::new(Scene::DesktopSystem).with_net(WsNet {
+        close_timeout: Duration::from_millis(100),
+        close_drain_timeout: Duration::from_millis(1500),
+        ..WsNet::default()
+    });
+    harness.start(&format!(
+        r#"
+        {FILL_UNTIL_QUEUED}
+        const {{ ws }} = await connect({:?});
+        globalThis.__queued = await fillUntilQueued(ws);
+        const event = await close(ws);
+        return event.code + " " + event.wasClean;
+        "#,
+        server.url("/sink")
+    ));
+    assert!(!harness.drive(Duration::from_millis(1000)));
+    assert_eq!(harness.eval("String(__queued)"), "true");
+    assert_eq!(harness.sockets(), 1);
+    assert!(harness.drive(Duration::from_secs(10)));
+    assert_eq!(harness.eval("String(__result)"), "1006 false");
+    assert_eq!(harness.sockets(), 0);
+}
+
 // ---- protocol ----
+
+#[test]
+fn a_server_that_selects_no_subprotocol_is_accepted() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const {{ ws, ok, error }} = await connect({:?}, ["chat"]);
+        if (!ok) return "refused " + error;
+        ws.send("hi");
+        const reply = await message(ws);
+        await close(ws);
+        return JSON.stringify(ws.protocol) + " " + reply;
+        "#,
+        server.url("/noproto")
+    ));
+    assert_eq!(outcome, "\"\" hi");
+}
+
+#[test]
+fn a_server_that_selects_an_unrequested_subprotocol_is_refused() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const {{ ok, error, code }} = await connect({:?}, ["chat"]);
+        return ok ? "open" : code + " " + error;
+        "#,
+        server.url("/otherproto")
+    ));
+    assert!(
+        outcome.starts_with("1006 ") && outcome.contains("not requested"),
+        "{outcome}"
+    );
+}
 
 #[test]
 fn self_signed_wss_is_refused() {
