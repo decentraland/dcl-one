@@ -76,11 +76,15 @@ and metadata addresses blocked. State the scope for each transport and platform 
 [running guide](running.md).
 
 On web, a scene's HTTP requests go through the sandbox's `createSceneFetch`
-(`deploy/web/engine/scene_fetch.js`). The sandbox removes the native `fetch` from the worker
-global's prototype chain, not only the own property. The service worker adds a
-`Content-Security-Policy` to the sandbox script's response, which the worker takes as its own:
-it allows `eval` and wasm but loads no script, module, worker or font. A sandbox started from a
-page the service worker does not control has no such policy.
+(`deploy/web/engine/scene_fetch.js`). The sandbox removes the native `fetch`, `WebTransport` and
+`FontFace` from the worker global's whole prototype chain, not only the own property. The
+service worker adds a `Content-Security-Policy` to the sandbox script's response, which the
+worker takes as its own: it allows `eval` and wasm but loads no script, module, worker or font.
+A sandbox started outside it (from a page the service worker does not control, or that an older
+version still controls) has no policy, and scene code there could load modules with the origin's
+cookies. So the sandbox checks that a `data:` module import fails before any scene code runs,
+and runs no scene when it loads (`deploy/web/engine/sandbox_policy.js`). The service worker
+claims open pages when it activates, so a reload brings the policy back.
 
 For signed service routing, verify the path the destination actually checks against the real
 proxy rewrite. Reject paths whose interpretation can shift the request to another service

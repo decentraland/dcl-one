@@ -38,6 +38,8 @@ async function bundleSandbox() {
     stdin: {
       contents: `import './transport.js'
         import './sandbox_worker.js'
+        import { sandboxPolicyInForce } from './sandbox_policy.js'
+        self.policyInForce = sandboxPolicyInForce
         self.onmessage = ({data}) => postMessage({type:'INIT_COMPLETE', killToken:data.payload.killToken})`,
       resolveDir: fileURLToPath(engine),
     },
@@ -250,12 +252,16 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
         // the scene fetch is the global's own property; nothing up the chain holds another
         nativeFetch: owners(Object.getPrototypeOf(self), 'fetch'),
         WebTransport: owners(self, 'WebTransport'),
+        fonts: owners(self, 'FontFace') + owners(self, 'fonts'),
+        policy: await policyInForce(),
         url: location.pathname + location.search,
       }
     }, { url, otherOrigin })
 
     const open = await probe(await spawn('client'), `${otherOrigin}/open.js?scene=data`)
     assert.deepEqual([open.imported, open.dataModule, open.blobModule], ['loaded', 'loaded', 'loaded'])
+    // the sandbox sees it has no policy, and runs no scene (sandbox_worker.js)
+    assert.deepEqual([open.policy, open.fonts], [false, 0])
     assert.deepEqual(imports, ['/open.js?scene=data'])
 
     for (const role of ['client', 'server']) {
@@ -263,7 +269,7 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
       assert.deepEqual(result, {
         imported: 'blocked', sameOrigin: 'blocked', dataModule: 'blocked', blobModule: 'blocked', wasm: 'compiled',
         fetched: new URL('/chosen', origin).href, data: 'data body', blob: 'blob body', opened: true,
-        sent: 3, nativeFetch: 0, WebTransport: 0,
+        sent: 3, nativeFetch: 0, WebTransport: 0, fonts: 0, policy: true,
         url: `/engine/pkg/sandbox_worker.bundle.js${role === 'server' ? '?server' : ''}`,
       })
     }
