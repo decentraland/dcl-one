@@ -616,7 +616,10 @@ fn a_redirect_from_https_to_http_is_refused() {
         std::thread::spawn(move || {
             for stream in plain.incoming() {
                 plain_hits.fetch_add(1, Ordering::SeqCst);
-                let _ = stream.unwrap().write_all(
+                let mut stream = stream.unwrap();
+                // closing with the request unread resets the connection on Windows
+                let _ = stream.read(&mut [0u8; 4096]);
+                let _ = stream.write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\narrived",
                 );
             }
