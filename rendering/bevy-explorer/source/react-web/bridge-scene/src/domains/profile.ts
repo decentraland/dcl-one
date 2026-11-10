@@ -322,7 +322,7 @@ let ownedNames: string[] | undefined
 identity.onChange(() => {
   ownedNames = undefined
 })
-async function fetchOwnedNames(address: string): Promise<string[]> {
+export async function fetchOwnedNames(address: string): Promise<string[]> {
   if (ownedNames != null) return ownedNames
   const base = await catalystBase()
   const r = await getJson<NamesResponse>(`${base}/lambdas/users/${address}/names`).catch(() => undefined)

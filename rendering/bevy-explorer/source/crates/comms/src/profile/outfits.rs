@@ -20,6 +20,8 @@ use super::{deploy_entity, CurrentUserProfile};
 
 /// The catalyst accepts slots 0 to 9.
 pub const MAX_OUTFIT_SLOT: u32 = 9;
+/// Slots past this one need a name in `namesForExtraSlots`.
+const MAX_FREE_OUTFIT_SLOT: u32 = 4;
 /// A slot's picture is a PNG data URL of the backpack preview.
 const THUMBNAIL_PREFIX: &str = "data:image/png;base64,";
 const MAX_THUMBNAIL_BYTES: usize = 1024 * 1024;
@@ -103,15 +105,23 @@ fn web3_account(wallet: &Wallet, current: &CurrentUserProfile) -> Option<String>
         .map(|a| format!("{a:#x}"))
 }
 
-/// Rejects what the catalyst would: slots out of 0..=9 or repeated.
+/// Rejects what the catalyst would without a lookup: slots out of 0..=9, repeated, or past 4 with
+/// no name. The catalyst still checks that the deployer owns the names.
 pub fn check_outfits(outfits: &OutfitsData) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
+    let has_name = outfits
+        .names_for_extra_slots
+        .iter()
+        .any(|n| !n.trim().is_empty());
     for slot in outfits.outfits.iter().map(|o| o.slot) {
         if slot > MAX_OUTFIT_SLOT {
             return Err(format!("outfit slot {slot} is out of range"));
         }
         if !seen.insert(slot) {
             return Err(format!("outfit slot {slot} is repeated"));
+        }
+        if slot > MAX_FREE_OUTFIT_SLOT && !has_name {
+            return Err(format!("outfit slot {slot} needs an owned name"));
         }
     }
     Ok(())
@@ -252,8 +262,23 @@ mod tests {
     }
 
     #[test]
-    fn slots_within_range_and_distinct_pass() {
-        assert_eq!(check_outfits(&outfits(&[0, 4, 9])), Ok(()));
+    fn free_slots_within_range_and_distinct_pass() {
+        assert_eq!(check_outfits(&outfits(&[0, 2, 4])), Ok(()));
+    }
+
+    #[test]
+    fn an_extra_slot_with_a_name_passes() {
+        let mut named = outfits(&[0, 9]);
+        named.names_for_extra_slots = vec!["somename".to_owned()];
+        assert_eq!(check_outfits(&named), Ok(()));
+    }
+
+    #[test]
+    fn an_extra_slot_without_a_name_is_refused() {
+        assert!(check_outfits(&outfits(&[5])).is_err());
+        let mut blank = outfits(&[5]);
+        blank.names_for_extra_slots = vec!["  ".to_owned()];
+        assert!(check_outfits(&blank).is_err());
     }
 
     #[test]
