@@ -6,6 +6,7 @@ import { withCreatorName, type Creations } from "@/data/lib/catalyst/marketplace
 import { withContactName, type ProfilePlace } from "@/data/lib/catalyst/places/index";
 import {
   canReadProfile,
+  badgesQuery,
   creationsQuery,
   myCommunitiesQuery,
   ownedNamesQuery,
@@ -51,6 +52,11 @@ export function useProfilePlaces(address: string, contactName?: string) {
     [contactName],
   );
   return useQuery({ ...placesQuery(address), enabled: canReadProfile(address), select });
+}
+
+/** A profile's badges; only read for a wallet that has a profile, so a bare address shows none. */
+export function useProfileBadges(address: string, hasProfile: boolean) {
+  return useQuery({ ...badgesQuery(address), enabled: hasProfile && canReadProfile(address) });
 }
 
 export function useProfilePhotos(address: string) {

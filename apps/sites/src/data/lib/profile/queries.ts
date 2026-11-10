@@ -4,6 +4,7 @@ import type { AuthIdentity } from "../auth/types";
 import { fetchCreations } from "../catalyst/marketplace/index";
 import { fetchOwnedNames, fetchOwnedWearables } from "../catalyst/marketplace/account";
 import { fetchProfilePlaces } from "../catalyst/places/index";
+import { fetchUserBadges } from "../catalyst/social/badges";
 import { fetchUserPhotos } from "../catalyst/social/photos";
 import { fetchMyCommunities } from "../catalyst/social/profile-communities";
 import {
@@ -28,6 +29,7 @@ export const profileKeys = {
   creations: (address: string) => ["profile", "creations", normalizeAddress(address)] as const,
   places: (address: string) => ["profile", "places", normalizeAddress(address)] as const,
   photos: (address: string) => ["profile", "photos", normalizeAddress(address)] as const,
+  badges: (address: string) => ["profile", "badges", normalizeAddress(address)] as const,
   ownedWearables: (address: string) =>
     ["profile", "owned-wearables", normalizeAddress(address)] as const,
   ownedNames: (address: string) => ["profile", "owned-names", normalizeAddress(address)] as const,
@@ -72,6 +74,13 @@ export const photosQuery = (address: string) =>
     staleTime: PROFILE_STALE_MS,
     queryFn: async ({ signal }) =>
       mapPhotos(await fetchUserPhotos(normalizeAddress(address), { signal })),
+  });
+
+export const badgesQuery = (address: string) =>
+  queryOptions({
+    queryKey: profileKeys.badges(address),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchUserBadges(normalizeAddress(address), { signal }),
   });
 
 export const ownedWearablesQuery = (address: string) =>

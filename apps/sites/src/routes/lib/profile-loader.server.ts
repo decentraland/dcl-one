@@ -5,6 +5,7 @@ import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import {
+  badgesQuery,
   canReadProfile,
   creationsQuery,
   ownedNamesQuery,
@@ -31,6 +32,8 @@ export type ProfileRouteError = { address: string; reason: "not-found" | "unavai
 /** `assets` reaches here only for the member's own profile: `readProfileTab` refuses it otherwise. */
 function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
   switch (tab) {
+    case "overview":
+      return client.prefetchQuery(badgesQuery(address));
     case "creations":
       return client.prefetchQuery(creationsQuery(address));
     case "places":
