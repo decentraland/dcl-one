@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { BOOK } from "../../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { OWNED_NAMES, OWNED_WEARABLES } from "../../fixtures";
 import type { FakeRoute } from "../../testing";
 import { mountShop } from "../../testHarness";

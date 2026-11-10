@@ -35,7 +35,7 @@ describe('EngineDriver', () => {
       expect(shellRequest).toHaveBeenCalledWith('createLocalGuest')
       expect(command).toHaveBeenCalledTimes(1)
       const line = (command.mock.calls[0] as [string])[0]
-      expect(line).toMatch(/^\/login_identity \S+ --guest --profiles /)
+      expect(line).toMatch(/^\/login_identity \S+ --guest$/)
       expect(JSON.parse(atob(line.split(' ')[1]))).toEqual(identity)
       driver.dispose()
     })

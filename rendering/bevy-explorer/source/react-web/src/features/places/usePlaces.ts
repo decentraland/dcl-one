@@ -51,6 +51,10 @@ export function usePlaces(): UsePlaces {
   const [category, setCategory] = useState('all')
   const [sort, setSort] = useState<PlacesSort>('most_active')
   const [section, setSection] = useState<PlacesSection>('all')
+  // The query the shown places answer: until it is the current one, the places are loading, from
+  // the render that changes the query (the fetch starts in an effect after it).
+  const key = JSON.stringify([search, category, sort, section])
+  const [resultKey, setResultKey] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -66,6 +70,7 @@ export function usePlaces(): UsePlaces {
     // yet — leave it empty until the picker hands us the identity for signed-fetch.
     if (section === 'favourites') {
       setPlaces([])
+      setResultKey(key)
       setLoading(false)
       setError(null)
       return
@@ -96,19 +101,21 @@ export function usePlaces(): UsePlaces {
       .then((data) => {
         if (cancelled) return
         setPlaces(data)
+        setResultKey(key)
         setLoading(false)
       })
       .catch((e: unknown) => {
         if (cancelled) return
         setError(e instanceof Error ? e.message : 'Failed to load places')
         setPlaces([])
+        setResultKey(key)
         setLoading(false)
       })
 
     return () => {
       cancelled = true
     }
-  }, [search, category, sort, section])
+  }, [search, category, sort, section, key])
 
-  return { places, liveFeed, featured, loading, error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
+  return { places, liveFeed, featured, loading: loading || resultKey !== key, error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
 }

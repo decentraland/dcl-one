@@ -22,7 +22,7 @@ scenario('every registered debug reading resolves or explains what it is waiting
       assert.ok(explained, `${section.title} → ${label}: ${section.query} returned no value or explanation for ${path}`)
     }
   }
-}, { session: { signIn: 'guest' } })
+}, { session: { signIn: 'guest' }, closeSession: true })
 
 scenario('the debug panel shows live plugin data and can play an avatar emote', async ({ explorer }) => {
   const filter = { name: 'Find debug controls' }
@@ -80,6 +80,10 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
     await expand('Avatar')
+    // a scene's movement animation outranks a triggered emote while it is not idle (the scene
+    // under the player can drive one): the wave goes out once the avatar would take it
+    await until(async () => (await explorer.myAvatar()).emote, (emote) => !(emote?.source === 'sceneMovementAnim' && emote.idle === false),
+      { timeoutMs: 20_000, intervalMs: 100, what: "the scene under the player to let its movement animation go (it outranks a triggered emote)" })
     await explorer.hud.click(button('Play wave'))
     await until(async () => (await explorer.myAvatar()).emote, (emote) =>
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
@@ -92,11 +96,18 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)
 })
 
+// An unsigned guest, the session-only one the engine's `/login_guest` signs in (as a scene
+// preview's `?guest=1` does), has no signed identity to send a client login with. The HUD's
+// Continue as guest makes a guest account, which signs and sends them like any account. The
+// session's HUD stays on its start page, so the scenario gets no opening Escape.
 scenario('an unsigned guest does not produce authenticated client login events', async ({ explorer }) => {
+  const world = await explorer.worldState()
+  assert.ok(world.signedIn && world.address, 'the unsigned guest should be signed in')
+  assert.equal(world.guest, false, 'an unsigned guest is not a guest account')
   const state = await explorer.json<{ active: boolean; inFlight: boolean; pending: number; memoryOnly: boolean; storageFailures: number }>('/client_login_state')
   assert.equal(typeof state.memoryOnly, 'boolean')
   assert.equal(typeof state.storageFailures, 'number')
   assert.equal(state.active, false)
   assert.equal(state.inFlight, false)
   assert.ok(Number.isInteger(state.pending) && state.pending >= 0)
-}, { session: { signIn: 'guest' } })
+}, { session: { signIn: 'unsigned-guest' }, noEscape: true, closeSession: true })

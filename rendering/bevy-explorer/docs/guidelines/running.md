@@ -192,10 +192,14 @@ State, in every build:
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
-  waits for it to grow with `inWorld`.
+  waits for it to grow with `inWorld`. `keyboardClaimed` is whether a text field (the HUD's or a
+  scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
+  waits for it to turn true after filling a field and false after leaving one (null where the
+  client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
-  each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
+  each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
+  movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
@@ -228,13 +232,22 @@ State, in every build:
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
 
+- `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
+  they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
+  scenarios hold them still for their frames.
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role
   and accessible name. The selector is JSON `{"name", "role", "index", "exact"}` or just the name;
   `/hud_fill` adds `"text"`, and `/hud_wait` adds `"state"` (`visible`, `hidden`, `enabled`,
-  `actionable`) and `"timeout"` in ms (10000 by default). A click needs the control visible,
-  enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
+  `actionable`, `ready`) and `"timeout"` in ms (10000 by default). A click needs the control
+  `actionable`: visible, enabled, not covered, no longer moving (a running CSS animation or
+  transition on it or a box around it; `"reason"` says `still moving`) and no pointer lock taking
+  the click (photo mode's camera holds the pointer until the right button frees it), and several
+  matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
+  the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
+  control out of every such region. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
@@ -250,6 +263,24 @@ The HUD and input:
   session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
+- `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
+  and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
+  click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
+  through the pointer pipeline, on native and web alike. The pointer ray is aimed from the camera
+  at the entity, and a click presses the key or mouse button bound to the action. The reply is
+  JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
+  hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
+  (`null`, `blocked by entity <id>`, `entity not live`, `input held by the HUD`,
+  `timed out waiting for target|hover|tick|release`). `--event down` keeps the press
+  held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
+  (`src/automation/pointer.rs`). `--frames` is at most 1800, and a hover's deadline is never
+  shorter than its frames plus 3, whatever `--timeout-frames` says.
+  A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
+  [Interaction](interaction.md) has every option and reply field.
+- `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
+  uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
+  cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or
+  override it from 0 to 10 ms; `auto` ends the override).
 
 The accepted design makes these commands the client's agent surface in every build,
 so agents and tests share the same interface. Its native implementation asks the page where
@@ -262,6 +293,10 @@ which prove the HUD's handlers but not the browser's input path, and give a page
 lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
 are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
+
+On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine
+through `engine_console_command` and write Bevy input events, unlike `/press_key` and `/click_at`,
+which go through the page's trusted input; they need no DevTools client.
 
 **The loopback console contract.** The design requires every native build, including headless client mode, to carry a
 JSON-RPC server that runs console commands from outside the process, off unless the client is

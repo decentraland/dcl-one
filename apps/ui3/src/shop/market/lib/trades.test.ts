@@ -14,9 +14,9 @@ import {
 } from "viem";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CHAIN } from "../../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { fakeChain, fakeWallet, noWait } from "../testing";
-import { COLLECTION_V2_ABI, COUPON_MANAGER_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, marketplaceForTrade } from "./contracts";
+import { COLLECTION_V2_ABI, COUPON_MANAGER_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, marketplaceForTrade } from "@shop/market/lib/contracts";
 import { executeMetaTransactionData, metaTransactionTypedData, normalizeV } from "./metaTx";
 import {
   cancelTrade,

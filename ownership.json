@@ -218,12 +218,13 @@
     },
     {
       "id": "shop-ui",
-      "description": "Shop product UI",
+      "description": "Shop product UI and its portable core",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/shop/",
+        "/library/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"
@@ -317,6 +318,50 @@
       ],
       "paths": [
         "/docs/"
+      ]
+    },
+    {
+      "id": "ui-provenance",
+      "description": "Provenance of the shared UI library: source and public pins, font origins, port verification and their checks; a change needs an approving code-owner review",
+      "owners": [
+        "@decentraland/web-applications"
+      ],
+      "paths": [
+        "/library/ui/upstream.lock.json",
+        "/library/ui/port-verification.json",
+        "/library/ui/figma/lock-digests.mjs",
+        "/library/ui/figma/port-verification.mjs",
+        "/library/ui/figma/public-foundations.mjs",
+        "/library/ui/figma/src/public-foundations.test.ts",
+        "/library/ui/test/foundations-source.test.ts",
+        "/library/ui/test/foundations.test.tsx",
+        "/library/ui/foundations/source.json",
+        "/library/ui/foundations/typography/font-source.json",
+        "/library/ui/figma/src/install.ts",
+        "/library/ui/figma/src/install.test.ts",
+        "/library/ui/figma/component-generation.mjs",
+        "/library/ui/figma/source-identity.mjs",
+        "/library/ui/figma/public-output.mjs",
+        "/library/ui/figma/public-components.mjs",
+        "/library/ui/figma/public-components-policy.mjs",
+        "/library/ui/figma/src/component-generation.test.ts",
+        "/library/ui/figma/src/public-output.test.ts",
+        "/library/ui/figma/src/public-components.test.ts",
+        "/library/ui/figma/src/public-components-policy.test.ts",
+        "/library/ui/figma/src/install-components.ts",
+        "/library/ui/figma/src/install-components.test.ts",
+        "/library/ui/components/generation.json"
+      ]
+    },
+    {
+      "id": "ui-library-workflow",
+      "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/infra"
+      ],
+      "paths": [
+        "/.github/workflows/ui-library.yml"
       ]
     }
   ]

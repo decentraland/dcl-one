@@ -1,0 +1,67 @@
+{
+  "styles": [
+    {
+      "name": "heading/xl",
+      "fontFamily": "Inter",
+      "fontStyle": "Bold",
+      "fontSize": 32,
+      "lineHeightPercent": 120,
+      "letterSpacingPx": 0,
+      "textCase": "ORIGINAL"
+    },
+    {
+      "name": "body/md",
+      "fontFamily": "Inter",
+      "fontStyle": "Regular",
+      "fontSize": 16,
+      "lineHeightPercent": 150,
+      "letterSpacingPx": 0,
+      "textCase": "ORIGINAL"
+    },
+    {
+      "name": "body/sm",
+      "fontFamily": "Inter",
+      "fontStyle": "Regular",
+      "fontSize": 14,
+      "lineHeightPercent": 150,
+      "letterSpacingPx": 0,
+      "textCase": "ORIGINAL"
+    },
+    {
+      "name": "label/md-caps",
+      "fontFamily": "Inter",
+      "fontStyle": "Semi Bold",
+      "fontSize": 14,
+      "lineHeightPercent": 150,
+      "letterSpacingPx": 0.5,
+      "textCase": "UPPER"
+    },
+    {
+      "name": "label/sm-caps",
+      "fontFamily": "Inter",
+      "fontStyle": "Semi Bold",
+      "fontSize": 12,
+      "lineHeightPercent": 150,
+      "letterSpacingPx": 0,
+      "textCase": "UPPER"
+    },
+    {
+      "name": "button/md",
+      "fontFamily": "Inter",
+      "fontStyle": "Semi Bold",
+      "fontSize": 16,
+      "lineHeightPercent": 125,
+      "letterSpacingPx": 0,
+      "textCase": "UPPER"
+    },
+    {
+      "name": "caption",
+      "fontFamily": "Inter",
+      "fontStyle": "Regular",
+      "fontSize": 12,
+      "lineHeightPercent": 140,
+      "letterSpacingPx": 0,
+      "textCase": "ORIGINAL"
+    }
+  ]
+}

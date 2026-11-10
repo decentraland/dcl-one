@@ -13,7 +13,7 @@ pub use relationship_source_collection::*;
 use crate::{
     component::{Component, HookContext, Mutable},
     entity::{ComponentCloneCtx, Entity, SourceComponent},
-    error::{ignore, CommandWithEntity, HandleError},
+    error::{CommandWithEntity, HandleError},
     system::entity_command::{self},
     world::{DeferredWorld, EntityWorldMut},
 };
@@ -172,7 +172,7 @@ pub trait Relationship: Component + Sized {
 
                     world
                         .commands()
-                        .queue(command.with_entity(target_entity).handle_error_with(ignore));
+                        .queue(command.with_entity(target_entity).ignore_error());
                 }
             }
         }
@@ -231,7 +231,7 @@ pub trait RelationshipTarget: Component<Mutability = Mutable> + Sized {
                 commands.queue(
                     entity_command::remove::<Self::Relationship>()
                         .with_entity(source_entity)
-                        .handle_error_with(ignore),
+                        .ignore_error(),
                 );
             } else {
                 warn!(
@@ -256,7 +256,7 @@ pub trait RelationshipTarget: Component<Mutability = Mutable> + Sized {
                 commands.queue(
                     entity_command::despawn()
                         .with_entity(source_entity)
-                        .handle_error_with(ignore),
+                        .ignore_error(),
                 );
             } else {
                 warn!(
