@@ -1151,7 +1151,8 @@ handlers at the destination's delivery rate: the explorer reports a
 `move_to_parcel` per parcel crossing and the distance and height events on
 thresholds, so the expected order is one row per active player per minute; no
 production rate is measured. Readers are consumers scanning forward in
-insertion order from a cursor of their own (none in this change) and the purge;
+insertion order (`seq`) from a cursor of their own (the badge processor, below)
+and the purge;
 the trigger `client_events_notify_trigger` announces each stored row's identity
 columns (never the metadata) on the `social.client_events` channel for
 listeners outside the request path.
@@ -1170,7 +1171,9 @@ agent, page and locale). The auth chain is verified at the ingress and not
 stored: no consumer reads it.
 
 Invariants: `key` is Segment's `messageId`, so an at-least-once redelivery
-inserts nothing (`INSERT ... ON CONFLICT (key) DO NOTHING`); `address` is the
+inserts nothing (`INSERT ... SELECT ... WHERE NOT EXISTS` on the key, then
+`ON CONFLICT (key) DO NOTHING` for a concurrent duplicate; the check comes
+first so a redelivery draws no `seq`); `address` is the
 owner of the auth chain the event carried (client: the chain proves that the
 wallet once delegated to a key, not that it sent this event, so a consumer
 reads the row as a claim about the wallet, not by it, and never flags a
@@ -1182,13 +1185,37 @@ Deletion is the `client-events-purge` job only: hourly, leased, it deletes rows
 whose `created_at` is older than `CLIENT_EVENTS_RETENTION_DAYS` (default 30)
 in batches of 5,000 keys through `client_events_created_idx (created_at,
 key)`, at most 200 batches a pass (a million rows an hour, some 280 inserts a
-second sustained). A consumer that adds a cursor records that
-its cursor stays above the purge horizon; without a consumer the horizon is
-free.
+second sustained). The badge processor's cursor stays above the purge horizon
+while it runs: it passes rows seconds after their insert, so the purge only
+reaches rows a stopped processor never read (their badges are then not
+counted, which is the accepted cost of the retention).
 
-The bootstrap (`schemas/40_social.sql`) defines the table, the index and the
-trigger; an existing database gains them from the object pass, so no step
-exists.
+The bootstrap (`schemas/40_social.sql`) defines the table, the indexes and the
+trigger; an existing database gains them from the object pass. Step
+`0038_social_badge_processor` adds `seq` to a table that predates it as a
+nullable column, then its default (`nextval` of `social.client_events_seq`,
+named as text so the step precedes the object pass that creates the
+sequence): both change the catalog only, no row is rewritten, and the kept
+rows keep a NULL `seq` (they precede every cursor, which starts at the head).
+Both take ACCESS EXCLUSIVE on the table, and `migrate` runs the steps and the
+object pass in one transaction, so the lock is held until it commits: reads,
+the webhook inserts and the purge all wait for the rest of the migration.
+The object pass then builds `client_events_seq_idx` (`seq`) and
+`client_events_session_moves_idx` (`address, session_id, seq` over
+`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in that
+transaction, one heap scan each with nothing to sort. On 2M
+synthetic rows (822 MB, about two months at the expected rate) the step took
+22 ms and the two builds 0.24 s and 0.35 s with a warm cache; the identity
+column it replaces rewrote the same table in 27.7 s under ACCESS EXCLUSIVE.
+To take even that off the migrate window, add the column by hand first
+(`ALTER TABLE social.client_events ADD COLUMN IF NOT EXISTS seq bigint`, the
+step's first statement, without the default: the sequence does not exist
+yet), then build both indexes with the definitions of `schemas/40_social.sql`
+and `CREATE INDEX CONCURRENTLY`; `migrate` then sets the default, creates the
+sequence and skips the indexes (a failed concurrent build leaves an invalid
+index: drop it before retrying).
+`client_events_seq_idx` serves the cursor scan and
+`client_events_session_moves_idx` traveler's read-back of one session.
 
 ## Credits wallet flags workload
 
@@ -1231,3 +1258,253 @@ primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
+
+## Badges catalog and progress workload
+
+The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
+`schemas/40_social.sql`) is reference data: upstream's 34 badges and 84 tiers,
+seeded by the bootstrap, a few dozen rows that change through the admin catalog
+routes (below) or the TS database import. Every read route reads the published
+rows in `created_at, id` order per request, as upstream does: one statement of
+about 0.3 ms and 30 KB, so an import or a catalog edit shows at once
+(`social/src/badges/store.rs`). Per
+wallet, `user_badge_progress` holds one row per badge touched (its
+`steps_done` plus upstream's `progress` document verbatim: the evaluators'
+dedup and resume state, a few KB at most) and `user_achieved_tiers` one row per
+earned tier; reads load both for one address in one statement.
+
+Writers of progress go through `badges::progress::apply_progress` in their own
+transaction: the badge row `FOR SHARE` only when published and not archived
+(upstream's awardable rule, `published_at IS NOT NULL AND archived_at IS
+NULL`), a transaction advisory lock per (address, badge) that also serializes
+the console revoke, then the document, the counter, the newly reached tiers,
+completion and, unless suppressed, one idempotent `badge_granted` notification
+per new tier. The console grant raises the steps to the requested tier's
+target through it. The backfill (`POST /badges/badges/{id}/backfill`,
+`social/src/badges/backfill.rs`) runs one such transaction per wallet (a
+statement error fails that wallet; a lost connection fails it and reports
+every later wallet as not attempted, at once): it
+takes the same badge lock and advisory lock first, merges upstream's way over
+the progress it reads under them, writes through `apply_progress` without
+notifications, then sets the merger's instants on the earned tiers and the
+completion.
+
+Invariants: `steps_done` equals the document's `steps`; earned tiers and
+completion are never taken back by a write (only the console revoke deletes
+them); a tiered badge completes at its last tier, a single badge at
+`criteria_steps`; an archived badge stays listed and kept by its earners and is
+never awarded; an unpublished one is invisible. A database stamped before step
+`0037_social_badges_catalog_parity` keeps its four placeholder rows: the step
+gives `open_for_business` and `emotionista` upstream's content and leaves
+`decentraland_citizen` and `walkabout` unpublished. It also fits the old
+progress rows to the new targets: a tiered row keeps completion only when the
+wallet holds the last tier and its steps stop at its highest held tier's
+target (no unearned tier on the next write), and a completed single badge
+reads its target as reached. The rest of upstream's
+catalog reaches it through the TS database import.
+
+### Badge processor
+
+The writers of evaluated progress are four leased jobs
+(`social/src/badges/jobs/`, on where `BADGES_PROCESSOR_ENABLED`, off by
+default, and social writes are), each a reader of tables other areas own, with one row of
+`social.badge_cursors` per source:
+
+- `social.client_events` by `seq` (citizen, traveler, walkabout, moves
+  master, social butterfly, vertical voyager), traveler resolving a parcel's
+  scene title through `content.active_pointers` and `content.deployments`.
+  The values are the client's claim, as upstream took them, within bounds:
+  a `walked-distance` event counts at most 10,000 steps (the explorer
+  reports on thresholds far below it), a `vertical-height-reached` height
+  above 5,000 m is passed (no scene is that tall) and a `passport-opened`
+  receiver must be a wallet address;
+- `content.deployments` by `id` (rarity badges, profile pro, land architect,
+  the store half of open for business), a wearable's rarity from its active
+  entity or `shop.items`;
+- `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
+  and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
+  each up to the block its index published in `shop.chain_cursor`
+  (emotionista, fashionista; one step per transaction hash, the legacy order's
+  chain position standing in for its missing hash). A sale of an item
+  `shop.items` lacks holds its log's cursor until the item is mirrored or the
+  items mirror completes a pass an hour after the sale (a pass walks every
+  item, minutes at the defaults); then it is passed without effect. Without
+  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
+  not started (logged at startup);
+- recounts of `shop.items` and `shop.collections` on Polygon (once
+  `shop.mirror_state` records a complete pass) and of accepted
+  `social.referral_progress` rows (creators, the collection half of open for
+  business, referral), for the wallets whose stored steps are behind. A pass
+  walks those wallets in address order and records the last one recounted
+  (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
+  imported document whose flag is truthy but not `true`) never starves the
+  ones after it; `position` counts completed passes. A batch reads its
+  creators' items in one statement through `items_creator_lower_idx`
+  (`lower(creator)`: the mirror lowercases, no constraint says so): 20 ms
+  for 200 creators on 1M synthetic items (781 MB), where the unindexed
+  per-creator read scanned the table once per creator. The candidate scan
+  itself reads the table once per batch (150 ms on the same rows). The
+  object pass builds the index non-concurrently in the migrate transaction,
+  SHARE on `shop.items` until it commits (the mirror's upserts wait): 1.7 s
+  on those rows; it can be
+  built beforehand with `CREATE INDEX CONCURRENTLY` and the definition of
+  `schemas/30_shop.sql`.
+
+One transaction holds a batch (`BADGES_PROCESSOR_BATCH_SIZE`, default 200):
+the cursor row `FOR UPDATE`, the batch's progress writes through
+`apply_progress` and the cursor advance, so a database error rolls the batch
+back and the next tick reads the same rows; a row an evaluator cannot read is
+logged and passed. Invariants: a cursor never moves past a row it did not
+pass; its first pass records the source's head and replays no history; a
+recount's first pass writes no notification.
+
+The id cursors (`client_events` by `seq`, `deployments` by `id`) never skip a
+committed row. A sequence value is drawn before its transaction commits, so
+ids become visible out of order: the sync flushes insert concurrent batches,
+and a younger transaction can hold a lower id than rows an older one already
+committed. A batch therefore passes every visible row past the cursor and
+records each run of ids it passed without seeing in
+`social.badge_cursor_gaps` (`lo..=hi`, the `horizon` and `seen_at` of the scan
+that found it). The invariant: every id at or below a cursor's position is
+processed or inside a gap of that source. Each batch first re-reads the gaps
+and processes the rows that appeared (out of id order, as upstream's queue
+delivered them), then drops a gap only when both hold:
+
+- its `horizon` is at or below the `xmin` of a snapshot taken before the
+  re-read that still misses it. The horizon is the transaction id of the
+  batch that found the gap, which reads the cursor without a lock, scans,
+  and only then locks the cursor row, which assigns that id: every
+  transaction that had an id at the scan, so every one that could hold an id
+  of the gap, has a lower one. (A snapshot's `xmax` is one past the highest
+  completed id; a transaction still running can be above it.) Once `xmin`
+  reaches the horizon all of them have ended, and a committed row would have
+  been visible to the re-read. A batch that finds the cursor row changed when
+  it locks it (a second runner after a lease expiry) writes nothing;
+- it is older than the grace (600 s) and was then re-stamped. A writer draws
+  the value inside its INSERT before it takes its transaction id (the row's
+  default is evaluated before the heap insert assigns the id), so a writer
+  between the two at the scan is not under the horizon. Usually that window
+  is one row's projection, but an `ON CONFLICT` pre-check can wait in it on
+  another open transaction inserting the same key. So the first batch past
+  the grace replaces the gap's `horizon` with its own transaction id
+  (`restamped`), and the gap is dropped only once `xmin` reaches that one
+  too: every transaction such a writer could be waiting on has then ended.
+
+Values that never commit (a rolled-back flush, a value an `ON CONFLICT DO
+NOTHING` burned, as a concurrent duplicate Segment delivery does) are what
+expire. A long
+write transaction anywhere on the cluster delays expiry, never a row: rows
+are processed as soon as they are visible. A source holds at most 5,000 gap
+ranges; at the cap its cursor passes no row that would open another until
+gaps resolve (it holds, it does not skip): alert on
+`badges_processor_cursor_gaps` well before 5,000. The first pass starts at the
+head, so a row still uncommitted below the head when a cursor is created is
+history and not read. Each tick publishes, per source,
+`badges_processor_cursor_lag` (ids behind the head; blocks behind the
+published block for the sales logs), and for the id cursors
+`badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
+a cursor that stops advancing shows as a growing lag, and a horizon held by a
+transaction left open on the cluster as gaps that keep ageing. A deployment stored
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
+timestamp is history a syncing node caught up on and is passed without
+effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+`EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
+adds `seq`; the object pass creates `social.badge_cursors`,
+`social.badge_cursor_gaps` and both indexes.
+
+### Presence badges flow
+
+Input is the gatekeeper's verified LiveKit joins and leaves (`RoomEventFanout`
+in `serve`, beside the worlds access log): wallet identities only, scene and
+world rooms only, with LiveKit's participant sid as the session. Each process
+queues them without blocking the webhook (10,000 events, a dropped one counted
+in `badges_presence_events_dropped_total`) and its writer inserts batches into
+`social.presence_events`, keyed by LiveKit's event id, so a redelivered
+webhook is one row. The writer keeps only events in a place a badge could
+count now: a 5 s snapshot of the published badges' worlds, parcels and the
+scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
+with the engine's lookahead and lookback. A scene entity the snapshot does not
+know (a redeploy since) is looked up once per batch by `entity_id` and dropped
+only when it is deployed off every badge parcel; one the node has not synced
+is kept for the engine. Every event is kept when the snapshot cannot be read.
+A badge published or moved earlier is seen within 5 s; joins before that are
+not counted, and the player's next join is. A failed batch insert is
+retried once after 1 s, then dropped and counted. Expected volume is every
+join and leave of the scene and world rooms of active presence badges while
+`BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
+until the next pass of the leased `badges-presence` job (5 s), which applies
+up to 500 in `seq` order, one transaction per event that deletes it, so the
+queue is its own cursor and a row committed behind a later `seq` is still
+there on the next pass. The clock (bookkeeping times and the 5-minute future
+guard) is read per event, so a long drain stays current. Only a deterministic
+failure counts toward dropping an event (after 3 passes, logged and counted);
+a connection, pool, timeout, conflict or failover error is retried on the next
+pass without counting until the event has been queued for an hour, then counts
+too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
+reports the age of the oldest queued event each pass.
+
+Every presence transaction first takes one advisory lock: the engine and the
+`badges-presence-sweep` job are a single writer fleet-wide, so the runtime
+tables need no per-session locks. The runtime state is upstream's
+(`presence_visits` keyed by badge, wallet and room, cascading from
+`presence_badges`; `presence_applied_events`, `presence_pending_leaves` and
+`presence_absence_facts` keyed by their facts), in epoch milliseconds where a
+value meets a LiveKit event time or the `intervals` document. Indexes follow
+the statements: `(wallet, realm_name)` for a leave's open visits,
+`opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
+and each fact table's retention column for the bounded prune (batches of 1,000
+per table until one comes back short, at most 20 per sweep, after the 7-day
+redelivery window). Completed badges are left out in one statement per event,
+so a wallet with nothing left to earn in a place records no visit or pending
+leave there. A scene badge resolves
+the event's entity to its parcels through `content.deployments` (`entity_id`
+is unique); a world badge compares names. Progress is written through
+`apply_progress` with the progress document `{ steps, intervals }` kept as
+upstream writes it, so an imported document resumes. Invariants: a session
+counts only from its own join to its own leave, never past the first
+occupancy observation that missed the wallet; an ended session never reopens
+for that badge; overlapping connections count once; a stay completes at the
+instant the union reaches `required_seconds`. The sweeper reads this
+process's LiveKit occupancy observation (`comms::presence`) and only closes
+visits; no observation, or an empty one, changes nothing.
+### Adding a badge
+
+A running node takes a new badge through the bearer-gated catalog routes
+(`social/src/badges/catalog.rs`, bearer `CATALYRST_BADGES_ADMIN_TOKEN`, writes
+refused while `SOCIAL_WRITES_ENABLED` is off). A schema step cannot insert
+catalog rows, and the bootstrap seed reaches only new databases.
+
+1. `PUT /badges/badges/{id}` with the definition in the shape `GET
+   /badges/{id}` reads: `name`, `description`, `category` (upstream's enum),
+   and either `criteria: {steps}` (a single badge) or `tiers: [{tierId,
+   tierName, description, criteria: {steps}}]` in tier order (a tiered one,
+   steps strictly increasing). `assets` (`{"2d": {...}, "3d": {...}}`, paths
+   relative to `BADGES_PUBLIC_ASSET_BASE_URL`) defaults to upstream's CDN
+   layout: `<id>/{2d,3d}/...` for a single badge, `<id>/<slot>/{2d,3d}/...`
+   for a tier whose id is `<id with _ as ->-<slot>`; any other tier id names
+   its assets. Every problem is one 400. A new badge is created unpublished
+   and invisible (201); a repeated `PUT` replaces the content in place (200),
+   keeping publication, archive and `created_at`. A `PUT` that would remove a
+   tier a wallet holds, or switch a badge with player rows between single and
+   tiered, is a 409 and changes nothing; a removed tier nobody holds is
+   deleted from `badge_tiers`. Player rows are never written: a lowered
+   target awards on the wallet's next progress write, not retroactively, and
+   a tier added above a completed badge leaves it complete until that write.
+   A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
+   the badges routes refuse bodies over 1 MiB (413).
+2. Make the art reachable: upload it to the CDN that
+   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
+   into `BADGES_ASSETS_DIR` under the same relative paths when the base is
+   `<node>/badges/assets`.
+3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
+   awardable.
+4. Grant it per wallet with the console grant (`POST
+   /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
+
+Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
+its earners, and `apply_progress` answers `NotAwardable`. `{"archived":
+false}` reopens it. `{"published": false}` hides a badge and is a 409 once
+any wallet has a row of it. Each upsert (with the definition it wrote) and
+each publication or archive transition appends a row to
+`social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
+revokes, whose `address` a catalog write does not have.

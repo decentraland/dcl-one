@@ -23,12 +23,15 @@ pub struct ClientEventRow {
     pub metadata: Value,
 }
 
-/// Inserts `row`; `false` when its key is already stored.
+/// Inserts `row`; `false` when its key is already stored. A redelivery
+/// is refused before the row's `seq` is drawn, so it leaves no gap for the
+/// badge processor's cursor; only a concurrent duplicate burns one.
 pub async fn insert_client_event(pool: &PgPool, row: &ClientEventRow) -> sqlx::Result<bool> {
     let result = sqlx::query(
         "INSERT INTO social.client_events \
          (key, source, sub_type, address, session_id, anonymous_id, realm, ip, reported_at, received_at, metadata) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 \
+         WHERE NOT EXISTS (SELECT 1 FROM social.client_events WHERE key = $1) \
          ON CONFLICT (key) DO NOTHING",
     )
     .bind(&row.key)
@@ -146,5 +149,26 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_redelivered_key_draws_no_seq() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let seq = |key: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT seq FROM social.client_events WHERE key = $1")
+                    .bind(key)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert!(insert_client_event(&pool, &row("first")).await.unwrap());
+        assert!(!insert_client_event(&pool, &row("first")).await.unwrap());
+        assert!(insert_client_event(&pool, &row("second")).await.unwrap());
+        assert_eq!(seq("second").await, seq("first").await + 1);
     }
 }
