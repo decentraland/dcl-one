@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
+import { normalizeNodeId } from './figma-index.js'
 import {
   resolveComponent,
   type ResolveContext,
@@ -17,7 +18,26 @@ const entrySchema = z
   })
   .strict()
 
-type BatchEntry = { index: number; input: unknown; result: ResolveResult }
+// `repeats` names the earlier entry an identical instance shares its answer with.
+type BatchEntry = { index: number; input: unknown; result: ResolveResult; repeats?: number }
+
+const FIELDS = ['nodeId', 'name', 'variantProperties', 'texts'] as const
+
+// What a refused entry echoes: only the fields a batch accepts, plus the names of any others, so an unknown
+// field (a component key, say) is never printed back.
+function echo(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { refused: typeof input }
+  const record = input as Record<string, unknown>
+  const unknownFields = Object.keys(record).filter(
+    (key) => !(FIELDS as readonly string[]).includes(key)
+  )
+  return {
+    ...Object.fromEntries(
+      FIELDS.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]])
+    ),
+    ...(unknownFields.length ? { unknownFields } : {})
+  }
+}
 type BatchResult =
   | { ok: false; errors: Diagnostic[] }
   | {
@@ -54,7 +74,7 @@ async function resolveBatch(ctx: ResolveContext, entries: unknown): Promise<Batc
     if (!parsed.success) {
       results.push({
         index,
-        input,
+        input: echo(input),
         result: invalid(
           `Entry ${index} must hold nodeId or name, and string variantProperties and texts only.`,
           { index }
@@ -64,18 +84,15 @@ async function resolveBatch(ctx: ResolveContext, entries: unknown): Promise<Batc
     }
     const entry = parsed.data as ResolveInput
     const identity = JSON.stringify([
-      entry.nodeId,
+      entry.nodeId === undefined ? undefined : normalizeNodeId(entry.nodeId),
       entry.name,
       Object.entries(entry.variantProperties ?? {}).sort(),
       Object.entries(entry.texts ?? {}).sort()
     ])
+    // A design often repeats an instance (two identical buttons): the repeat shares the earlier answer.
     const first = seen.get(identity)
     if (first !== undefined) {
-      results.push({
-        index,
-        input,
-        result: invalid(`Entry ${index} repeats entry ${first}.`, { index, repeats: first })
-      })
+      results.push({ index, input, result: results[first]!.result, repeats: first })
       continue
     }
     seen.set(identity, index)

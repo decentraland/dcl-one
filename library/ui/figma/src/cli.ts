@@ -143,16 +143,29 @@ async function main(argv: string[]): Promise<number> {
       variantProperties: pairs('variant', values.variant),
       texts: pairs('text', values.text)
     }
+    // A batch that cannot be read is a broken invocation (exit 2), told apart from an entry that fails (exit 1).
     let batchEntries: unknown
     if (values.batch !== undefined) {
-      const text =
-        values.batch === '-'
-          ? await readStdin()
-          : await readFile(path.resolve(values.batch), 'utf8')
+      let text: string
+      try {
+        text =
+          values.batch === '-'
+            ? await readStdin()
+            : await readFile(path.resolve(values.batch), 'utf8')
+      } catch (error) {
+        process.stderr.write(
+          `--batch cannot read ${values.batch}: ${(error as NodeJS.ErrnoException).code ?? 'error'}\n`
+        )
+        return 2
+      }
       try {
         batchEntries = JSON.parse(text)
       } catch {
-        throw new Error('--batch needs a JSON array of instances')
+        batchEntries = undefined
+      }
+      if (!Array.isArray(batchEntries) || batchEntries.length === 0) {
+        process.stderr.write('--batch needs a non-empty JSON array of instances\n')
+        return 2
       }
     }
     const runtime = await createRuntime({

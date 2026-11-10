@@ -468,12 +468,35 @@ describe('resolveComponent', () => {
 
       expect(codes(result)).toEqual(['identity-ambiguous'])
       expect(!result.ok && result.errors[0]!.details).toMatchObject({
-        reason: 'name',
-        candidates: [
-          { nodeId: '1:1', file: 'src/Button.figma.ts' },
-          { nodeId: '2:2', file: 'src/Other.figma.ts' }
-        ]
+        reason: 'name-mappings',
+        files: ['src/Button.figma.ts', 'src/Other.figma.ts']
       })
+      expect(!result.ok && result.errors[0]!.action).toMatch(/library defect/)
+    })
+
+    it('should refuse a name that one mapping declares and an alias gives another', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Other.figma.ts': mappingSource({ nodeId: '2-2', id: 'other', component: 'Other' })
+        }
+      })
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [], componentNames: { Button: 'Other' } }),
+        { name: 'Button', variantProperties: { Kind: 'Primary' } }
+      )
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-mappings' })
+    })
+
+    it.each([
+      ['a declared state only', { Hover: 'No' }],
+      ['a property the mapping does not read only', { Size: 'L' }]
+    ])('should not confirm a name with %s', async (_label, variantProperties) => {
+      const result = await named('Button', variantProperties)
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unconfirmed' })
     })
 
     it('should resolve a mapping that reads no variant property by name alone', async () => {

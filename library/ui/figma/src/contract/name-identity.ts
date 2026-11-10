@@ -1,4 +1,9 @@
+import path from 'node:path'
+import { diagnostic, type Diagnostic } from './diagnostics.js'
+import type { FigmaSet } from './figma-index.js'
+import type { LibraryInfo } from './library.js'
 import type { ParsedMapping } from './mapping-file.js'
+import type { ResolveInput } from './resolve.js'
 
 /**
  * TODO(figma-identity): Align with the Design team on stable
@@ -15,6 +20,9 @@ import type { ParsedMapping } from './mapping-file.js'
  * Once this workflow is enforced, revisit component identity
  * resolution and remove the temporary fallback if appropriate.
  */
+
+// The fallback is resolveByName and setsFittingVariantProperties in this file; resolve.ts calls them and adds
+// the capture-side identity-name-match warning, and diagnostics.ts holds the name-* reasons.
 
 type NameMatch = { mapping: ParsedMapping; matchedBy: 'component' | 'id' | 'alias' }
 
@@ -66,10 +74,11 @@ function nameCompatibility(
     ...mapping.header.states
   ])
   const requested = Object.entries(variantProperties)
-  if (requested.length === 0)
-    return enums.size === 0
-      ? { ok: true }
-      : { ok: false, reason: 'name-unconfirmed', reads: [...enums.keys()] }
+  // A state or boolean alone does not tell two components apart: when the mapping reads enum properties, at
+  // least one of them must be given.
+  if (enums.size > 0 && !requested.some(([property]) => enums.has(property)))
+    return { ok: false, reason: 'name-unconfirmed', reads: [...enums.keys()] }
+  if (requested.length === 0) return { ok: true }
   const unknown = requested
     .filter(([property]) => !known.has(property))
     .map(([property]) => property)
@@ -82,5 +91,88 @@ function nameCompatibility(
     : { ok: true }
 }
 
-export { matchMappingsByName, nameCompatibility }
+// With a capture, several captured sets can share a name: the instance's variant properties may fit exactly
+// one of them, which then identifies it; any other outcome leaves the name ambiguous.
+function setsFittingVariantProperties(
+  sets: FigmaSet[],
+  variantProperties: Readonly<Record<string, string>> = {}
+): FigmaSet[] {
+  const requested = Object.entries(variantProperties)
+  if (!requested.length) return []
+  return sets.filter((set) =>
+    requested.every(([property, value]) => {
+      const definition = Object.hasOwn(set.properties, property)
+        ? set.properties[property]
+        : undefined
+      return definition !== undefined && (!definition.options || definition.options.includes(value))
+    })
+  )
+}
+
+// Without a capture a set name resolves only to exactly one mapping, and only once the instance's variant
+// properties fit it. Two mappings answering to one name are a library defect, never a choice.
+function resolveByName(
+  mappings: ParsedMapping[],
+  name: string,
+  input: ResolveInput,
+  componentNames: Readonly<Record<string, string>> | undefined,
+  library: LibraryInfo,
+  context: Record<string, unknown>
+): { errors: Diagnostic[] } | { setId: string; warning: Diagnostic } {
+  const matches = matchMappingsByName(mappings, name, componentNames)
+  if (matches.length === 0)
+    return {
+      errors: [
+        diagnostic(
+          'identity-uncertain',
+          `No mapping declares the name "${name}" and no capture is available to identify it.`,
+          { reason: 'name-unmatched', name, ...context }
+        )
+      ]
+    }
+  if (matches.length > 1)
+    return {
+      errors: [
+        diagnostic('identity-ambiguous', `"${name}" matches ${matches.length} mappings.`, {
+          reason: 'name-mappings',
+          name,
+          files: matches.map(({ mapping }) => path.relative(library.rootDir, mapping.file))
+        })
+      ]
+    }
+  const [{ mapping, matchedBy }] = matches as [(typeof matches)[number]]
+  const compatibility = nameCompatibility(mapping, input.variantProperties)
+  if (!compatibility.ok) {
+    const details = Object.fromEntries(
+      Object.entries(compatibility).filter(([key]) => key !== 'ok')
+    )
+    return {
+      errors: [
+        diagnostic(
+          'identity-uncertain',
+          compatibility.reason === 'name-unconfirmed'
+            ? `"${name}" matches ${mapping.header.component}, which reads ${compatibility.reads.join(', ')}; pass the instance variant properties to confirm it.`
+            : `The variant properties of "${name}" do not fit ${mapping.header.component}.`,
+          {
+            ...details,
+            reason: compatibility.reason,
+            name,
+            component: mapping.header.component,
+            ...context
+          }
+        )
+      ]
+    }
+  }
+  return {
+    setId: mapping.figma!.nodeId,
+    warning: diagnostic(
+      'identity-name-match',
+      `Identified "${name}" by name (${matchedBy}) as ${mapping.header.component}, checked against its variant properties.`,
+      { name, matchedBy, component: mapping.header.component }
+    )
+  }
+}
+
+export { matchMappingsByName, nameCompatibility, resolveByName, setsFittingVariantProperties }
 export type { Compatibility, NameMatch }

@@ -273,23 +273,28 @@ describe('figma from a consuming project', () => {
       expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
     }, 30_000)
 
-    it('should exit 1 on malformed JSON', async () => {
-      const file = path.join(consumer, 'bad.json')
-      await writeFile(file, '{not json')
+    it.each([
+      ['malformed JSON', '{not json'],
+      ['an empty array', '[]'],
+      ['an object', '{"name":"Button"}']
+    ])(
+      'should exit 2 on %s, apart from a failed entry',
+      async (_label, text) => {
+        const file = path.join(consumer, 'bad.json')
+        await writeFile(file, text)
 
-      await expect(cli([...args, file])).rejects.toMatchObject({
-        code: 1,
-        stderr: expect.stringContaining('--batch needs a JSON array of instances')
-      })
-    }, 30_000)
+        await expect(cli([...args, file])).rejects.toMatchObject({
+          code: 2,
+          stderr: expect.stringContaining('--batch needs a non-empty JSON array of instances')
+        })
+      },
+      30_000
+    )
 
-    it('should exit 1 with invalid-input on an empty array', async () => {
-      const file = path.join(consumer, 'empty.json')
-      await writeFile(file, '[]')
-
-      await expect(cli([...args, file])).rejects.toMatchObject({
-        code: 1,
-        stdout: expect.stringContaining('invalid-input')
+    it('should exit 2 when the batch file is missing', async () => {
+      await expect(cli([...args, path.join(consumer, 'missing.json')])).rejects.toMatchObject({
+        code: 2,
+        stderr: expect.stringContaining('ENOENT')
       })
     }, 30_000)
   })

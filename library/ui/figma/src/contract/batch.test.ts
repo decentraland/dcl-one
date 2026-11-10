@@ -113,11 +113,35 @@ describe('resolveBatch', () => {
       ])
 
       if (!('results' in batch)) throw new Error('expected per-entry results')
-      expect(batch.results[1]!.result).toMatchObject({
-        ok: false,
-        errors: [
-          expect.objectContaining({ code: 'invalid-input', details: { index: 1, repeats: 0 } })
-        ]
+      expect(batch.ok).toBe(true)
+      expect(batch.results[1]).toMatchObject({ repeats: 0, result: { ok: true } })
+      expect(batch.summary).toMatchObject({ requested: 2, resolved: 2, failed: [] })
+    })
+
+    it('should treat 1-1 and 1:1 as the same node', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
+        { nodeId: '1:1' },
+        { nodeId: '1-1' }
+      ])
+
+      expect('results' in batch && batch.results[1]!.repeats).toBe(0)
+    })
+  })
+
+  describe('when a refused entry carries a field the batch does not accept', () => {
+    it('should echo the field name, never its value', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        { name: 'Button', componentKey: 'fake-component-key-value' }
+      ])
+
+      expect(JSON.stringify(batch)).not.toContain('fake-component-key-value')
+      expect('results' in batch && batch.results[0]!.input).toEqual({
+        name: 'Button',
+        unknownFields: ['componentKey']
       })
     })
   })

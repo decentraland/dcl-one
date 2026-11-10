@@ -23,19 +23,25 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    ```js
    const instance = await figma.getNodeByIdAsync('<instance id>')
    const main = await instance.getMainComponentAsync()
+   const texts = Object.fromEntries(
+     instance.findAll((node) => node.type === 'TEXT').map((node) => [node.name, node.characters])
+   )
    return {
-     set: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
-     variantProperties: instance.variantProperties
+     name: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
+     variantProperties: instance.variantProperties ?? undefined,
+     texts
    }
    ```
 
-2. **Resolve the instances** with the CLI, from `library/ui`, in one batch:
+2. **Resolve the instances** with the CLI, from `library/ui`, in one batch read from standard input, so no file is written in the repository:
 
    ```sh
-   pnpm --silent figma resolve --mapping-only --batch instances.json
+   pnpm --silent figma resolve --mapping-only --batch - <<'EOF'
+   [{ "name": "NavBar", "variantProperties": { "viewport": "desktop" }, "texts": { "Label": "Buy" } }]
+   EOF
    ```
 
-   Write the list outside the repository, or pass `-` to read it from standard input. It is a JSON array such as `[{ "name": "NavBar", "variantProperties": { "viewport": "desktop" }, "texts": { "Label": "Buy" } }]`; an entry may give `nodeId` instead of `name` when the design is the library file itself. A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`) and exits 1 when any entry fails. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant "Prop=Value"` and `--text "Layer=Value"`.
+   Each entry is one script result: `name`, `variantProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant "Prop=Value"` and `--text "Layer=Value"`.
 
 3. **Read the answer.** `ok: true`: import from `resolved.component.importSpecifier` and copy the props from `resolved.usage` and `resolved.propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
    Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The codes, severities and audiences in this table are checked against the resolver's registry; `action` is the authority on what to do.
@@ -66,7 +72,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    ```text
    Unresolved component
    Component: <name from the design>
-   Node: <component set id>
+   Name or node: <component set name, or the node id you passed>
    Code: <code> (<details.reason>, when present)
    Variant properties: <Prop=Value, ...>
    Library: <context.library.name>@<context.library.version>

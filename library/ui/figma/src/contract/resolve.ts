@@ -4,7 +4,7 @@ import { normalizeNodeId, type FigmaSet } from './figma-index.js'
 import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } from './library.js'
 import { readMappingFile, type MappingLocal, type ParsedMapping } from './mapping-file.js'
 import { importSpecifier, validateAgainstFigma, validateAgainstLibrary } from './validate.js'
-import { matchMappingsByName, nameCompatibility } from './name-identity.js'
+import { resolveByName, setsFittingVariantProperties } from './name-identity.js'
 
 type ResolveContext = {
   mappingRoot?: string
@@ -177,19 +177,7 @@ function identify(
         .map((candidate) => [candidate.setId, candidate])
     ).values()
   ]
-  // Several sets share a name: the instance's variant properties may fit exactly one of them, which then
-  // identifies it (name-based, see TODO(figma-identity)); otherwise the name stays ambiguous.
-  const requested = Object.entries(input.variantProperties ?? {})
-  const fitting = requested.length
-    ? matches.filter((set) =>
-        requested.every(([property, value]) => {
-          const definition = own(set.properties, property)
-          return (
-            definition !== undefined && (!definition.options || definition.options.includes(value))
-          )
-        })
-      )
-    : []
+  const fitting = setsFittingVariantProperties(matches, input.variantProperties)
   if (fitting.length === 1) return { errors: [], set: fitting[0], setId: fitting[0]!.setId }
   if (matches.length > 1) {
     return {
@@ -216,73 +204,6 @@ function identify(
     }
   }
   return { errors: [], set: matches[0], setId: matches[0]!.setId }
-}
-
-// The temporary name-based fallback (see TODO(figma-identity) in name-identity.ts): without a capture a set
-// name resolves only to exactly one mapping, and only once the instance's variant properties fit it.
-function resolveByName(
-  mappings: ParsedMapping[],
-  name: string,
-  input: ResolveInput,
-  componentNames: Readonly<Record<string, string>> | undefined,
-  library: LibraryInfo,
-  context: Record<string, unknown>
-): { errors: Diagnostic[] } | { setId: string; warning: Diagnostic } {
-  const matches = matchMappingsByName(mappings, name, componentNames)
-  if (matches.length === 0)
-    return {
-      errors: [
-        diagnostic(
-          'identity-uncertain',
-          `No mapping declares the name "${name}" and no capture is available to identify it.`,
-          { reason: 'name-unmatched', name, ...context }
-        )
-      ]
-    }
-  if (matches.length > 1)
-    return {
-      errors: [
-        diagnostic('identity-ambiguous', `"${name}" matches ${matches.length} mappings.`, {
-          reason: 'name',
-          candidates: matches.map(({ mapping }) => ({
-            nodeId: mapping.figma!.nodeId,
-            file: path.relative(library.rootDir, mapping.file)
-          }))
-        })
-      ]
-    }
-  const [{ mapping, matchedBy }] = matches as [(typeof matches)[number]]
-  const compatibility = nameCompatibility(mapping, input.variantProperties)
-  if (!compatibility.ok) {
-    const details = Object.fromEntries(
-      Object.entries(compatibility).filter(([key]) => key !== 'ok')
-    )
-    return {
-      errors: [
-        diagnostic(
-          'identity-uncertain',
-          compatibility.reason === 'name-unconfirmed'
-            ? `"${name}" matches ${mapping.header.component}, which reads ${compatibility.reads.join(', ')}; pass the instance variant properties to confirm it.`
-            : `The variant properties of "${name}" do not fit ${mapping.header.component}.`,
-          {
-            ...details,
-            reason: compatibility.reason,
-            name,
-            component: mapping.header.component,
-            ...context
-          }
-        )
-      ]
-    }
-  }
-  return {
-    setId: mapping.figma!.nodeId,
-    warning: diagnostic(
-      'identity-name-match',
-      `Identified "${name}" by name (${matchedBy}) as ${mapping.header.component}, checked against its variant properties.`,
-      { name, matchedBy, component: mapping.header.component }
-    )
-  }
 }
 
 function renderUsage(

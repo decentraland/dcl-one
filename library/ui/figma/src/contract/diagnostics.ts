@@ -53,6 +53,7 @@ const DIAGNOSTICS = {
     action: {
       name: 'Several captured components share this name. Resolve again with a nodeId from details.candidates; never pick one yourself.',
       mappings: `Several mappings claim this node, which is a library defect. Do not pick one. ${REPORT}`,
+      'name-mappings': `Several mappings answer to this component set name (details.files), which is a library defect. Do not pick one or retry with one of their ids. ${REPORT}`,
       'duplicate-node':
         'Two mappings in the library target the same Figma node. Keep one mapping per component set.',
       'duplicate-id':
