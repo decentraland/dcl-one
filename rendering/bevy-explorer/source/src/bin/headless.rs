@@ -396,7 +396,10 @@ fn main() -> AppExit {
             SceneHosts::Shared => 0,
             SceneHosts::PerScene => args.scene_host_spares.unwrap_or(1),
         },
-        memory_cap: args.scene_host_memory_mb.map(|mib| mib * 1024 * 1024),
+        memory_cap: args.scene_host_memory_mb.map(|mib| {
+            mib.checked_mul(1024 * 1024)
+                .unwrap_or_else(|| usage_error("--scene-host-memory-mb is too large"))
+        }),
     })
     .unwrap();
 

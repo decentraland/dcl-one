@@ -335,6 +335,12 @@ impl Launch for ProcessLauncher {
                         if libc::getppid() as u32 != engine {
                             libc::_exit(1);
                         }
+                        // the kernel's OOM killer picks a host before the engine; best effort
+                        let adj = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY);
+                        if adj >= 0 {
+                            libc::write(adj, b"1000".as_ptr().cast(), 4);
+                            libc::close(adj);
+                        }
                         Ok(())
                     });
                 }
