@@ -223,10 +223,11 @@ fn process_room_events(
         &mut UnannouncedParticipants,
         &mut RoomRecovery,
         Option<&RoomAccessScope>,
+        Has<crate::archipelago::IslandOwner>,
     )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced, mut recovery, scope) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced, mut recovery, scope, island) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -249,20 +250,15 @@ fn process_room_events(
                     }
                 }
                 RoomEvent::Disconnected { reason } => {
-                    if matches!(
+                    record_disconnect(
+                        &mut commands,
+                        entity,
+                        &mut recovery,
+                        scope,
                         reason,
-                        DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
-                    ) {
-                        if common::structs::server_mode() {
-                            // a server has no "connected in another tab" UX: mark the room
-                            // terminal so the headless supervisor reaps it and re-mints
-                            commands.entity(entity).try_insert(ServerRoomTerminal);
-                        } else if reason == DisconnectReason::DuplicateIdentity {
-                            record_identity_conflict(&mut commands, &mut recovery, scope);
-                        } else {
-                            recovery.failure = Some(FailureKind::Denied);
-                        }
-                    }
+                        island,
+                        time.elapsed_secs_f64(),
+                    );
                 }
                 RoomEvent::ConnectionStateChanged(state) => match state {
                     ConnectionState::Connected => {
@@ -628,6 +624,35 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
+fn record_disconnect(
+    commands: &mut Commands,
+    entity: Entity,
+    recovery: &mut RoomRecovery,
+    scope: Option<&RoomAccessScope>,
+    reason: DisconnectReason,
+    island: bool,
+    now: f64,
+) {
+    if matches!(
+        reason,
+        DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
+    ) {
+        if common::structs::server_mode() {
+            // The headless supervisor reaps the room and obtains a fresh adapter.
+            commands.entity(entity).try_insert(ServerRoomTerminal);
+        } else if reason == DisconnectReason::DuplicateIdentity {
+            record_identity_conflict(commands, recovery, scope);
+        } else if island {
+            // ConnectionStateChanged can already have started the backoff.
+            if recovery.failure != Some(FailureKind::Transient) {
+                recovery.fail(now, AdmissionError::new(FailureKind::Transient));
+            }
+        } else {
+            recovery.failure = Some(FailureKind::Denied);
+        }
+    }
+}
+
 fn record_identity_conflict(
     commands: &mut Commands,
     recovery: &mut RoomRecovery,
@@ -645,7 +670,71 @@ fn record_identity_conflict(
 #[cfg(test)]
 mod disconnect_tests {
     use super::*;
+    use crate::archipelago::{IslandOwner, RefreshIsland};
+    use bevy::ecs::system::RunSystemOnce;
     use common::access_status::AccessScope;
+
+    #[test]
+    fn participant_removed_from_island_requests_a_fresh_assignment() {
+        let mut world = World::new();
+        let owner = world.spawn_empty().id();
+        let island = world
+            .spawn((IslandOwner(owner), ConnectFailed, RoomRecovery::default()))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            island,
+            &mut recovery,
+            None,
+            DisconnectReason::ParticipantRemoved,
+            true,
+            0.0,
+        );
+        world.entity_mut(island).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_some());
+        assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    #[test]
+    fn participant_removed_from_a_credentialed_room_stays_denied() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/voice".into(),
+                    metadata: "{}".into(),
+                },
+                ConnectFailed,
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::PrivateChat)),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Denied));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+    }
 
     #[test]
     fn a_private_identity_conflict_stops_only_its_room() {

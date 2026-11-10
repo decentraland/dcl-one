@@ -22,6 +22,8 @@ login. Transient failures retry indefinitely with delays capped at five seconds;
 server retry deadlines are respected. Refreshable sources obtain credentials before
 an application reconnect. Fixed external credentials require replacement after
 rejection. The LiveKit SDK retains responsibility for its internal reconnects.
+Credential responses cannot start another signed-login request; such responses
+are invalid and stop recovery for that room.
 
 Archipelago keeps its assignment protocol and uses the shared recovery policy. Its
 owner tracks active and pending islands and rejects stale assignments. The active
@@ -29,6 +31,8 @@ island stays connected until the replacement is usable. Repeated assignments ret
 an SDK connection already in progress, and credential replacement retains the island's
 retry budget on its owner. Held-world transitions and
 headless supervisor authority remain explicit connection gates.
+Removal from an island requests a fresh assignment through its owner after
+backoff. Removal from a credentialed scene or private room remains a scoped denial.
 
 All adapter ingress uses one validator. Diagnostics expose safe failure categories
 and connection phases rather than credentials or upstream response bodies. Signed
@@ -48,12 +52,15 @@ publication retries after cleanup, using the shared backoff capped at five secon
 Known native publish denial suppresses attempts until permission returns.
 Browser playback uses one mixer, and room teardown disposes its remote handles and
 playback independently of asynchronous SDK disconnect events. Private chat remains data-only.
+Browser proximity microphones have one gain writer, combining spatial attenuation,
+voice volume and any transmitter multiplier. Other tracks use the scene-volume path.
 
 ## Connectivity feedback
 
 One engine watchdog owns connectivity sampling, loss grace and reachability probes.
-It requires previous connectivity and excludes intentional offline states, held
-worlds and terminal access failures. A healthy required transport suppresses an
+It requires previous connectivity and excludes intentional offline states and held
+worlds. Terminal or suspended rooms are excluded from the required-room sample;
+their failures do not suppress monitoring of other required rooms. A healthy required transport suppresses an
 offline warning. The HUD presents this shared state through the existing engine
 bridge and supplies Retry and Exit controls; it does not implement another recovery
 or probe policy. Debug sections and the authenticated automation surface expose the

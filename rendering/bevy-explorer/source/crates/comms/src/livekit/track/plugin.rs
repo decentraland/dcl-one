@@ -199,6 +199,10 @@ fn track_published(
         let Some(sender) = transport_senders.get(room_entity) else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        if track.source() == TrackSource::Microphone {
+            entity_cmd.try_insert(ProximityMicrophone);
+        }
         let task = livekit_runtime.spawn(async move {
             sender
                 .send(
@@ -850,26 +854,58 @@ fn update_track_volume(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[derive(Component)]
+pub(in crate::livekit) struct ProximityMicrophone;
+
+#[cfg(target_arch = "wasm32")]
 #[expect(clippy::type_complexity)]
 fn update_track_volume(
     tracks: Populated<
         (
             &LivekitTrack,
             Option<&AudioTransmitterVolume>,
-            Has<Microphone>,
+            Has<ProximityMicrophone>,
         ),
         (With<Audio>, With<Subscribed>),
     >,
     audio_settings: Res<AudioSettings>,
 ) {
-    for (livekit_track, multiplier, microphone) in tracks.into_inner() {
-        // Proximity microphone panning is owned by locate_foreign_streams.
-        if microphone && multiplier.is_none() {
+    for (livekit_track, multiplier, proximity_microphone) in tracks.into_inner() {
+        let Some(volume) = scene_track_volume(
+            proximity_microphone,
+            multiplier.map(|volume| **volume),
+            audio_settings.scene(),
+        ) else {
             continue;
-        }
+        };
         let Some(RemoteTrack::Audio(audio)) = livekit_track.track() else {
             debug_panic!("A subscribed audio track did not have an audio RemoteTrack.");
         };
-        audio.set_volume(multiplier.map_or(1.0, |volume| **volume) * audio_settings.scene());
+        audio.set_volume(volume);
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn scene_track_volume(
+    proximity_microphone: bool,
+    multiplier: Option<f32>,
+    scene_volume: f32,
+) -> Option<f32> {
+    // Proximity microphone panning is owned by locate_foreign_streams.
+    if proximity_microphone {
+        return None;
+    }
+    Some(multiplier.unwrap_or(1.0) * scene_volume)
+}
+
+#[cfg(test)]
+mod browser_volume_tests {
+    use super::*;
+
+    #[test]
+    fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(true, None, 0.5), None);
+        assert_eq!(scene_track_volume(true, Some(0.25), 0.5), None);
+        assert_eq!(scene_track_volume(false, Some(0.25), 0.5), Some(0.125));
     }
 }
