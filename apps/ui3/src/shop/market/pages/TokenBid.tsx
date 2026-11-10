@@ -8,13 +8,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import type { EvmAddress } from "../../model/address";
-import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "../../model/chain";
-import { shopClient } from "../../api/shop";
+import type { EvmAddress } from "@shop/model/address";
+import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "@shop/model/chain";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
 import ManaMark from "../../../atoms/ManaMark";
-import { formatMana, type ManaWei } from "../../model/money";
-import type { WalletGuidance } from "../../model/settlement";
+import { formatMana, type ManaWei } from "@shop/model/money";
+import type { WalletGuidance } from "@shop/model/settlement";
 import { shopPath } from "../../routes";
 import ManaGuidance from "../../wallet/ManaGuidance";
 import { useShopWallet } from "../../wallet/context";
@@ -24,6 +23,7 @@ import { DEFAULT_BID_DAYS, placeBid, type BidPhase, type BidTarget } from "../pu
 import { EnsureQueryClient, formatDate, LoadFailure, Loading, NetworkNotice, useShopProvider, useWrite, WalletGate, WriteStatus } from "../components/kit";
 import { TokenFrame, useIsOwner, useToken, useTokenParams } from "../components/TokenAction";
 import { ConfirmValueModal, dateInputMs, dateInputValue, manaNetwork, RequireSignIn, TaButton, TaField, TokenActionRoot } from "./tokenActionUi";
+import { shopClient } from "../../api/host";
 
 const DAY = 86_400_000;
 

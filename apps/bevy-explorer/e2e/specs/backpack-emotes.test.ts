@@ -22,6 +22,10 @@
 // urn's last word: bridge-scene emotes.ts), so the search is for `Fist` and the card is the first
 // whose name matches /fist ?pump/i.
 //
+// Partial, TestUnequipEmoteWithSlotButton: the emote equipped into slot 4 is the first card that
+// offers EQUIP; a base-only account wears all ten of its emotes, so then slot 4 is freed first with
+// its own Unequip and its emote is the card equipped back from the grid.
+//
 // Partial, TestEmotesPagination: the pager shows only past 16 emotes (Unity's account has more).
 // The HUD lists the ten base emotes plus the owned ones, so a base-only account has no second page;
 // the scenario is then skipped with that reason, which the report counts apart from a pass.
@@ -34,6 +38,7 @@ import {
   emoteCards,
   emoteSlot,
   equipEmoteIntoSlot,
+  firstCard,
   flipPage,
   hoverCard,
   normalize,
@@ -44,8 +49,8 @@ import {
   sameCards,
   searchFor,
   selectEmoteSlot,
-  stableFirstCard,
   unequipAllEmotes,
+  unequipEmoteSlot,
   waitForAction,
   waitForCards,
   waitForPlayer
@@ -128,7 +133,15 @@ scenario(
         break
       }
     }
-    assert.ok(found, 'at least one of the first twelve emotes should be loaded and not equipped')
+    if (!found) {
+      // Every emote listed sits in a slot (a base-only account wears its ten): free slot 4, and
+      // its emote is the card to equip back into it.
+      const held = await emoteSlot(explorer, slot)
+      assert.notEqual(held.emote, 'None', `slot ${slot} is empty while every listed emote is equipped`)
+      await unequipEmoteSlot(explorer, slot)
+      found = cards.find((candidate) => normalize(candidate.name) === normalize(held.emote))
+    }
+    assert.ok(found, 'an emote of the first page should be free to equip into slot 4')
     const card = found
     const over = await equipEmoteIntoSlot(explorer, slot, card)
     await waitForAction(explorer, over, 'UNEQUIP', EQUIP_TIMEOUT_MS)
@@ -163,10 +176,10 @@ scenario(
       t.skip(`the account has one page of emotes (${cards.length}), so there is no pager to exercise`)
       return
     }
-    const first = await stableFirstCard(explorer, emoteCards)
-    const second = await flipPage(explorer, 'Next page', emoteCards, first)
+    const first = await firstCard(explorer, emoteCards)
+    const second = await flipPage(explorer, 'Next page', emoteCards)
     assert.notEqual(second, first, 'First emote on page 2 should differ from first emote on page 1')
-    const back = await flipPage(explorer, 'Previous page', emoteCards, second)
+    const back = await flipPage(explorer, 'Previous page', emoteCards)
     assert.equal(back, first, "Navigating back should show page 1's first emote again")
     await closePage(explorer, 'backpack')
   },

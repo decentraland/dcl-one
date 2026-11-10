@@ -7,8 +7,9 @@
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
-import { isShopApiError } from "../api/client";
-import { shopClient, type ShopClient } from "../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
+import { shopClient } from "../api/host";
 
 export type { NftResult };
 

@@ -1,0 +1,132 @@
+{
+ "page": {"id":"10:8","name":"Demo Dialogs"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "30:1",
+   "name": "Dialog",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Size":{"type":"VARIANT","default":"Default","options":["Default","Compact"]},"Scroll":{"type":"VARIANT","default":"No","options":["No","Yes"]}},
+   "base": {
+    "id": "30:2",
+    "name": "Size=Default, Scroll=No",
+    "props": {"Size":"Default","Scroll":"No"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Size=Default, Scroll=No",
+     "w": 400,
+     "h": 320,
+     "layout": {"mode":"VERTICAL","pad":[24,24,24,24],"gap":16,"main":"MIN","cross":"MIN"},
+     "radius": 12,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "effects": [{"type":"DROP_SHADOW","radius":16,"color":"#000000","alpha":0.5,"offset":[0,8]}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Dialog Title",
+       "w": 120,
+       "h": 38,
+       "sizing": ["HUG","HUG"],
+       "text": "Dialog Title",
+       "textStyle": "heading/xl",
+       "font": "Inter Bold",
+       "fontSize": 32,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      },
+      {"type":"FRAME","name":"Content","w":352,"h":210,"fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],"radius":8}
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "30:3",
+     "name": "Size=Default, Scroll=Yes",
+     "props": {"Size":"Default","Scroll":"Yes"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Size=Default, Scroll=Yes",
+        "w": 400,
+        "h": 480,
+        "layout": {"mode":"VERTICAL","pad":[24,24,24,24],"gap":16,"main":"MIN","cross":"MIN"},
+        "radius": 12,
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "effects": [{"type":"DROP_SHADOW","radius":16,"color":"#000000","alpha":0.5,"offset":[0,8]}],
+        "children": [
+         {
+          "type": "TEXT",
+          "name": "Dialog Title",
+          "w": 120,
+          "h": 38,
+          "sizing": ["HUG","HUG"],
+          "text": "Dialog Title",
+          "textStyle": "heading/xl",
+          "font": "Inter Bold",
+          "fontSize": 32,
+          "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+         },
+         {"type":"FRAME","name":"Content","w":352,"h":370,"fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],"radius":8}
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "30:4",
+     "name": "Size=Compact, Scroll=No",
+     "props": {"Size":"Compact","Scroll":"No"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Size=Compact, Scroll=No",
+        "w": 400,
+        "h": 240,
+        "layout": {"mode":"VERTICAL","pad":[24,24,24,24],"gap":16,"main":"MIN","cross":"MIN"},
+        "radius": 12,
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "effects": [{"type":"DROP_SHADOW","radius":16,"color":"#000000","alpha":0.5,"offset":[0,8]}],
+        "children": [
+         {
+          "type": "TEXT",
+          "name": "Dialog Title",
+          "w": 120,
+          "h": 38,
+          "sizing": ["HUG","HUG"],
+          "text": "Dialog Title",
+          "textStyle": "heading/xl",
+          "font": "Inter Bold",
+          "fontSize": 32,
+          "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+         },
+         {"type":"FRAME","name":"Content","w":352,"h":130,"fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],"radius":8}
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "component",
+   "id": "30:20",
+   "name": "Sheet",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "30:20",
+    "name": "Sheet",
+    "props": {},
+    "tree": {"type":"COMPONENT","name":"Sheet","w":375,"h":200,"radius":16,"fills":[{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],"children":[]}
+   },
+   "others": []
+  }
+ ]
+}

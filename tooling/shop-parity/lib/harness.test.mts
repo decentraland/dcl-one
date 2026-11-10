@@ -170,12 +170,23 @@ describe("pixelDiff", () => {
 });
 
 /**
- * The same-origin bases (VITE_*_URL=/path) an env file sets, in every form dotenv reads: indented or not, with or
+ * Each VITE_*_URL an env file sets, with its value as written, in every form dotenv reads: indented or not, with or
  * without export, `=` with spaces around it or `:` and a space, any of its three quotes, a trailing comment. Never past
  * the line's end, so an empty variable does not take the next line's value.
  */
+function envUrls(env: string): { name: string; value: string }[] {
+  const lines = env.matchAll(/^[ \t]*(?:export[ \t]+)?(VITE_[A-Z0-9_]+_URL)(?:[ \t]*=[ \t]*|:[ \t]+)["'`]?([^\s"'`#]*)/gm);
+  return [...lines].map((m) => ({ name: m[1]!, value: m[2]! }));
+}
+
+/** The same-origin bases (VITE_*_URL=/path) an env file sets. */
 function envPaths(env: string): string[] {
-  return [...env.matchAll(/^[ \t]*(?:export[ \t]+)?VITE_[A-Z0-9_]+_URL(?:[ \t]*=[ \t]*|:[ \t]+)["'`]?(\/[^\s"'`#]*)/gm)].map((m) => m[1]!);
+  return envUrls(env).map((v) => v.value).filter((v) => v.startsWith("/"));
+}
+
+/** The VITE_*_URL values Vite expands from another variable (`${VITE_BASE}/x`): the guard cannot read their path. */
+function envExpanded(env: string): string[] {
+  return envUrls(env).filter((v) => v.value.includes("$")).map((v) => v.name);
 }
 
 describe("services", () => {
@@ -208,8 +219,16 @@ describe("services", () => {
     ].join("\n");
     assert.deepEqual(envPaths(env), ["/a", "/v2/x", "/b", "/c", "/d", "/e"]);
   });
+  it("names a base Vite expands from another variable, which the guard cannot read", () => {
+    const env = ["VITE_A_URL=/a", "VITE_F_URL=${VITE_BASE}/f", 'VITE_G_URL="$VITE_BASE"'].join("\n");
+    assert.deepEqual(envPaths(env), ["/a"]);
+    assert.deepEqual(envExpanded(env), ["VITE_F_URL", "VITE_G_URL"]);
+  });
   it("relays to the replay every same-origin service path the production sites build reads", () => {
-    const paths = envPaths(readFileSync(join(SITES, ".env.production"), "utf8"));
+    const env = readFileSync(join(SITES, ".env.production"), "utf8");
+    // Vite expands these after this reads them: write the base out, so its path is checked.
+    assert.deepEqual(envExpanded(env), [], "apps/sites/.env.production builds a URL from another variable, which this guard cannot check");
+    const paths = envPaths(env);
     assert.ok(paths.includes("/camera-reel-service"), "apps/sites/.env.production no longer names the camera reel's path");
     for (const p of paths) assert.ok(relaysToNode(p), `${p} renders the sites app's 404 instead of reaching the replay`);
   });

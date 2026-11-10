@@ -39,12 +39,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
-- **Profiles always from the centralized catalyst.** unity-explorer switches between the
+- **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
-  player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas only:
+  player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:
   `POST /lambdas/profiles` for full profiles and `POST /lambdas/profiles/metadata` for the compact
   tier, which falls back to full where the route is missing, as unity-explorer forces full on a
-  catalyst. No flag, and no catalyst named by another player. See the
+  catalyst. No flag, and no catalyst named by another player. For now, when that catalyst is on
+  `decentraland.org` or `decentraland.zone`, whose catalysts lack the compact route, compact reads
+  go to that deployment's asset-bundle registry instead. This path is to be removed once those
+  catalysts serve the route. See the
   [ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md).
 - **Own profile versions never repeat.** unity-explorer's `SelfProfile` numbers an edit one above
   the profile it holds, so after a failed publish puts the old profile back, the next edit reuses
@@ -69,6 +72,38 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
+  the content check's two refusal screens, every HTTP 400 read as the check's answer), with
+  these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
+  form's own CANCEL does; unity-explorer closes at once. A refused edit says "Your Community
+  Couldn't Be Updated"; unity-explorer says "Created" for edits too. A failed delete shows its
+  message on the community card, like the card's other actions, instead of as a toast. A
+  picture saved by an edit is kept by the HUD for the session, as unity-explorer's image cache
+  does, since its URL does not change and the CDN (CloudFront on .org) ignores a version query.
+  The places picker links the LANDs and Worlds the user owns or operates, as unity-explorer's does.
+  An edit sends `placeIds` only when the linked places changed, and the service keeps them when the
+  field is absent; unity-explorer sends them on every save. When the community's linked places
+  could not be read, the picker and its remove buttons are disabled, so a save cannot replace them
+  with a partial list; unity-explorer leaves them editable. Linked places the places service does
+  not return (a disabled one, say) are kept on every save without being shown, and the community's
+  places are read a page at a time; unity-explorer reads one page and would unlink the rest. As in
+  unity-explorer, the picker also lists LANDs the user only operates, which the service refuses to
+  link: the save fails with the generic error. That a moderator can unlink only the places they own
+  is a HUD rule, as in unity-explorer; the service checks ownership only of places being added.
+  On the card's Places tab, owners and moderators get unity-explorer's ADD PLACE tile (it opens the
+  edit form) and delete on the places they own, asked first. A failed delete shows its message on
+  the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
+  PLACES tab button for owners and moderators is not ported.
+  On the card's Members tab, a row opens the member's passport and carries unity-explorer's
+  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, the owner's
+  and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove Member, Ban)
+  with unity-explorer's rules and confirmations, then Block and Report. Call, Gift and Invite to
+  Community are left out until private calls, gifting and invites exist (unity-explorer shows
+  Gift only behind its gifting flag). Chat is always offered in-world: unity-explorer greys it
+  only while its chat area is down. unity-explorer's row shows no presence, so neither does
+  this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
+  action shows its message on the card instead of as a toast, and the tab lists the first 100
+  members without unity-explorer's paging.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

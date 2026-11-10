@@ -1,10 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import { newCheckout } from "../cart/machine";
-import { partitionCart } from "../cart/partition";
-import { rarityCardPalette } from "../discovery/lib/rarity";
-import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
+import { newCheckout } from "@shop/cart/machine";
+import { partitionCart } from "@shop/cart/partition";
+import { rarityCardPalette } from "@shop/discovery/lib/rarity";
+import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "@shop/payment/fixtures";
 import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { batchAuthorization, creatorTrade } from "./fakes";
