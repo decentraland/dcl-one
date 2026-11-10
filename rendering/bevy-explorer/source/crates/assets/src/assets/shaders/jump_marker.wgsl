@@ -54,8 +54,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     );
     let inner_radius = bitcast<f32>(#{INNER_RADIUS}u);
     let outer_radius = bitcast<f32>(#{OUTER_RADIUS}u);
+    let fade_factor = bitcast<f32>(#{FADE_FACTOR}u);
 
-    let opacity = mix(opacity_range.x, opacity_range.y, rise_and_fall(opacity_distances, material.ground_distance));
+    // the projector's fade factor scales the material's opacity
+    let opacity = fade_factor * mix(opacity_range.x, opacity_range.y, rise_and_fall(opacity_distances, material.ground_distance));
     // small near the ground, growing with the distance
     let scale = mix(scale_range.x, scale_range.y, 1.0 - rise_and_fall(scale_distances, material.ground_distance));
 

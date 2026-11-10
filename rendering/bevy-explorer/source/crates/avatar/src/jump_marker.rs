@@ -20,7 +20,7 @@ use bevy::{
     },
 };
 use common::{
-    sets::{SceneSets, SetupSets},
+    sets::{PostUpdateSets, SetupSets},
     structs::{AvatarDynamicState, PrimaryUser},
 };
 
@@ -36,6 +36,9 @@ pub const OUTER_RADIUS: f32 = 1.0;
 /// `_Opacity_Distance_Ranges`)
 pub const OPACITY_RANGE: Vec2 = Vec2::new(0.0, 0.9);
 pub const OPACITY_DISTANCES: Vec4 = Vec4::new(0.0, 1.0, 6.0, 10.0);
+/// the decal projector's fade factor, which scales the material's opacity
+/// (unity:Explorer/Assets/DCL/JumpIndicator/JumpIndicator.prefab, `m_FadeFactor`)
+pub const FADE_FACTOR: f32 = 0.5;
 /// the blob's scale range and the distances it follows (BlobShadow.mat `_Height_Scaling_Range`,
 /// `_Height_Scaling_Distance_Ranges`). The material's "small to large" scaling inverts the
 /// shadergraph's ramp, which is one over the first pair of distances and falls over the second,
@@ -66,10 +69,12 @@ fn rise_and_fall(distances: Vec4, ground_distance: f32) -> f32 {
 }
 
 /// Opacity of the blob for a ground distance in metres (the shadergraph's two four-point ramps:
-/// rises over the first pair, falls over the second).
+/// rises over the first pair, falls over the second), scaled by the projector's fade factor.
 pub fn marker_opacity(ground_distance: f32) -> f32 {
-    OPACITY_RANGE.x
-        + (OPACITY_RANGE.y - OPACITY_RANGE.x) * rise_and_fall(OPACITY_DISTANCES, ground_distance)
+    FADE_FACTOR
+        * (OPACITY_RANGE.x
+            + (OPACITY_RANGE.y - OPACITY_RANGE.x)
+                * rise_and_fall(OPACITY_DISTANCES, ground_distance))
 }
 
 /// Scale of the blob for a ground distance in metres: small near the ground, growing over the
@@ -127,6 +132,7 @@ fn shader_defs() -> Vec<ShaderDefVal> {
     let mut defs = vec![
         float("INNER_RADIUS", INNER_RADIUS),
         float("OUTER_RADIUS", OUTER_RADIUS),
+        float("FADE_FACTOR", FADE_FACTOR),
     ];
     for (name, values) in [
         ("OPACITY_RANGE", OPACITY_RANGE.to_array().to_vec()),
@@ -150,7 +156,15 @@ impl Plugin for JumpMarkerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<JumpMarkerMaterial>::default());
         app.add_systems(Startup, spawn_jump_marker.in_set(SetupSets::Main));
-        app.add_systems(Update, update_jump_marker.in_set(SceneSets::PostLoop));
+        // after the movement writes this frame's position and ground distance, before the
+        // transforms propagate: in `Update` the quad would sit at last frame's distance under
+        // this frame's player, below the ground (and hidden by it) while falling
+        app.add_systems(
+            PostUpdate,
+            update_jump_marker
+                .after(PostUpdateSets::PlayerUpdate)
+                .before(PostUpdateSets::CameraUpdate),
+        );
     }
 }
 
@@ -222,10 +236,11 @@ mod tests {
 
     #[test]
     fn marker_ramps_follow_the_material_ranges() {
-        // opacity rises 0 to 0.9 over 0..1 m and falls to 0 over 6..10 m
+        // opacity rises 0 to 0.9 over 0..1 m and falls to 0 over 6..10 m, halved by the fade
+        // factor
         assert_eq!(marker_opacity(0.0), 0.0);
-        assert!((marker_opacity(1.0) - 0.9).abs() < 1e-6);
-        assert!((marker_opacity(3.0) - 0.9).abs() < 1e-6);
+        assert!((marker_opacity(1.0) - 0.45).abs() < 1e-6);
+        assert!((marker_opacity(3.0) - 0.45).abs() < 1e-6);
         assert_eq!(marker_opacity(10.0), 0.0);
         // the blob is small near the ground and grows to full size over 4..8 m
         assert!((marker_scale(0.5) - 0.4).abs() < 1e-6);
