@@ -3,7 +3,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 //
 // The seller and marketplace reads, mapped from the wire onto what the pages render, over the ONE client
-// (api/shop.ts). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
+// (@shop/api/shop). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
 // RESALE, so its price is kept as the MANA (or USD-pegged) amount the order signed, never converted into
 // a credit price. A 503 unavailable envelope (a route whose indexer has not caught up) is surfaced as
 // `DataUnavailable`, with the missing source, never as an empty page.
