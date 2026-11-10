@@ -39,6 +39,8 @@ export const SEARCH_PAGE_SIZE = 10;
 export const SEARCH_MIN_LENGTH = 3;
 /** The deepest `?page=` a list loads: each page is one CMS request, so the cap bounds a request's fan-out. */
 export const MAX_PAGES = 20;
+/** The deepest search page: a search reads its visible results in one request, and cms-server caps a page at 100. */
+export const SEARCH_MAX_PAGES = 10;
 
 const WORDS_PER_MINUTE = 200;
 

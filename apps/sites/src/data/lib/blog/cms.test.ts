@@ -52,6 +52,20 @@ describe("request building", () => {
     expect(posts).toHaveLength(9);
     expect(requestedUrls(fetchMock)).toContain(`${CMS_BASE}/blog/posts?q=news&locale=en-US&limit=10&skip=0`);
   });
+
+  it("reads a deep search page in one request, capped at the CMS page limit", async () => {
+    const fetchMock = installFakeCms();
+    await blogCms().search("news", 3, signal());
+    expect(requestedUrls(fetchMock).filter((u) => u.includes("q=news"))).toEqual([
+      `${CMS_BASE}/blog/posts?q=news&locale=en-US&limit=30&skip=0`,
+    ]);
+
+    fetchMock.mockClear();
+    await blogCms().search("news", 999, signal());
+    expect(requestedUrls(fetchMock).filter((u) => u.includes("q=news"))).toEqual([
+      `${CMS_BASE}/blog/posts?q=news&locale=en-US&limit=100&skip=0`,
+    ]);
+  });
 });
 
 describe("response mapping", () => {

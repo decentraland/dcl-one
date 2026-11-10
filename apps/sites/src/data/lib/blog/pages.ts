@@ -17,6 +17,7 @@ import { withDeadline } from "../request-deadline";
 import { blogCms, BlogUnavailableError, listPageWindow, searchPageWindow, type BlogCms } from "./cms";
 import {
   MAX_PAGES,
+  SEARCH_MAX_PAGES,
   parseBlogPage,
   parseBlogQuery,
   SEARCH_MIN_LENGTH,
@@ -56,9 +57,9 @@ async function guarded<T>(
 const menu = (categories: BlogCmsCategory[]): BlogCategory[] =>
   categories.filter((c) => c.isShownInMenu).map(({ slug, title }) => ({ slug, title }));
 
-function nextHref(path: string, page: number, total: number, window: (n: number) => { skip: number; limit: number }, extra: Record<string, string> = {}): string | null {
+function nextHref(path: string, page: number, total: number, window: (n: number) => { skip: number; limit: number }, extra: Record<string, string> = {}, maxPages = MAX_PAGES): string | null {
   const { skip, limit } = window(page);
-  if (page >= MAX_PAGES || skip + limit >= total) return null;
+  if (page >= maxPages || skip + limit >= total) return null;
   return `${path}?${new URLSearchParams({ ...extra, page: String(page + 1) })}`;
 }
 
@@ -150,7 +151,7 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
         query: q,
         posts: found.posts.map(toCard),
         total: found.total,
-        nextHref: nextHref(BLOG_SEARCH, page, found.total, searchPageWindow, { q }),
+        nextHref: nextHref(BLOG_SEARCH, page, found.total, searchPageWindow, { q }, SEARCH_MAX_PAGES),
         emptyText: short
           ? `Type at least ${SEARCH_MIN_LENGTH} characters to search.`
           : `Nothing matches “${q}”. Try another word or browse every article.`,

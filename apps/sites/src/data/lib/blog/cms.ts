@@ -16,6 +16,7 @@ import {
   mapPost,
   NEXT_PAGE_SIZE,
   postAssetIds,
+  SEARCH_MAX_PAGES,
   SEARCH_PAGE_SIZE,
   type BlogCmsAuthor,
   type BlogCmsCategory,
@@ -169,15 +170,17 @@ export function createBlogCms(base: string) {
       return { posts: uniqueBySlug(loaded.flatMap((p) => p.posts)), total: loaded[0]?.total ?? 0 };
     },
 
-    /** Pages 1..`pages` of the full-text search (cms-server's `q`), best match first; not memoized. */
+    /**
+     * Pages 1..`pages` of the full-text search (cms-server's `q`), best match first. Not memoized
+     * (any `q`), so it is one upstream request whatever the page: the visible results in a single
+     * read, capped at cms-server's 100-item limit (SEARCH_MAX_PAGES).
+     */
     async search(q: string, pages: number, signal: AbortSignal): Promise<{ posts: BlogCmsPost[]; total: number }> {
-      const loaded = await Promise.all(
-        Array.from({ length: pages }, async (_, i) => {
-          const { skip, limit } = searchPageWindow(i + 1);
-          return mapPage(await cmsList(cmsUrl(base, "/blog/posts", { q, locale: LOCALE, limit, skip }), signal));
-        }),
+      const last = searchPageWindow(Math.min(Math.max(pages, 1), SEARCH_MAX_PAGES));
+      const page = await mapPage(
+        await cmsList(cmsUrl(base, "/blog/posts", { q, locale: LOCALE, limit: last.skip + last.limit, skip: 0 }), signal),
       );
-      return { posts: uniqueBySlug(loaded.flatMap((p) => p.posts)), total: loaded[0]?.total ?? 0 };
+      return { posts: uniqueBySlug(page.posts), total: page.total };
     },
 
     /** A post by its slug with the pictures its body embeds, or null when there is none. */
