@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 
 use super::catalog::{
     ACCESSORY_CATEGORIES, Builder, HEAD_CATEGORIES, escape_like, unified_trades_cte,
@@ -37,6 +37,7 @@ use super::nfts::{
 use super::orders::Order;
 use super::wire::{ApiError, Histogram, Network, NftCategory, consolidate, fix_urn};
 use super::{MarketplaceState, Source, unavailable};
+use crate::land_authz::indexer::ReadySnapshot;
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 
 /// The deepest window the index serves (`first + skip`); the total is an
@@ -104,11 +105,90 @@ fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
     }
 }
 
-/// The land_authz index is the LAND/estate source: published and recent.
+/// The land_authz index is the LAND/estate source: published, recent, and
+/// indexed from the mainnet registries these reads name. A yes/no for the
+/// gates only: a read of the index runs on [`land_snapshot`].
 pub async fn land_ready(pool: &PgPool) -> bool {
-    crate::land_authz::indexer::ready_cursor(pool, crate::land_authz::NETWORK_MAINNET)
+    use crate::land_authz::NETWORK_MAINNET;
+    crate::land_authz::indexer::ready_cursor(
+        pool,
+        NETWORK_MAINNET,
+        LAND_REGISTRY_MAINNET,
+        ESTATE_REGISTRY_MAINNET,
+    )
+    .await
+    .is_some()
+}
+
+/// [`land_ready`] as the snapshot the LAND/estate reads run on: the check
+/// and every read see one state
+/// ([`crate::land_authz::indexer::ReadySnapshot`]), so a rebind of the
+/// cursor between them cannot join these registries' rights to another
+/// registry's estate links. A database error reads as not ready.
+pub async fn land_snapshot(pool: &PgPool) -> Option<ReadySnapshot> {
+    use crate::land_authz::NETWORK_MAINNET;
+    match crate::land_authz::indexer::ready_snapshot(
+        pool,
+        NETWORK_MAINNET,
+        LAND_REGISTRY_MAINNET,
+        ESTATE_REGISTRY_MAINNET,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot open the land-authz index snapshot");
+            None
+        }
+    }
+}
+
+fn land_unavailable() -> Response {
+    unavailable(
+        Source::LandAuthzIndex,
+        "LAND and estate ownership reads the land-authz index, which is not published yet",
+    )
+}
+
+/// Where a read of [`Sources`] runs: on the land snapshot when it reads
+/// LAND ([`land_snapshot`]), else on a pool connection.
+enum ReadConn {
+    Land(ReadySnapshot),
+    Pool(sqlx::pool::PoolConnection<sqlx::Postgres>),
+}
+
+impl std::ops::Deref for ReadConn {
+    type Target = PgConnection;
+    fn deref(&self) -> &PgConnection {
+        match self {
+            Self::Land(snapshot) => &snapshot.tx,
+            Self::Pool(conn) => conn,
+        }
+    }
+}
+
+impl std::ops::DerefMut for ReadConn {
+    fn deref_mut(&mut self) -> &mut PgConnection {
+        match self {
+            Self::Land(snapshot) => &mut snapshot.tx,
+            Self::Pool(conn) => conn,
+        }
+    }
+}
+
+/// The connection a read of `sources` runs on; a LAND read whose index is
+/// not ready answers its unavailable envelope.
+async fn read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Response> {
+    if sources.land {
+        return land_snapshot(pool)
+            .await
+            .map(ReadConn::Land)
+            .ok_or_else(land_unavailable);
+    }
+    pool.acquire()
         .await
-        .is_some()
+        .map(ReadConn::Pool)
+        .map_err(|e| ApiError::internal(e.to_string()).into_response())
 }
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published.
@@ -139,10 +219,7 @@ pub async fn require_ready(
         }
     }
     if sources.land && !land_ready(pool).await {
-        return Err(unavailable(
-            Source::LandAuthzIndex,
-            "LAND and estate ownership reads the land-authz index, which is not published yet",
-        ));
+        return Err(land_unavailable());
     }
     Ok(())
 }
@@ -737,8 +814,8 @@ fn row_to_result(
 }
 
 /// The member parcels of the page's estates, in one statement.
-async fn estate_parcels(
-    pool: &PgPool,
+pub(super) async fn estate_parcels(
+    conn: &mut PgConnection,
     estate_ids: &[String],
 ) -> Result<std::collections::HashMap<String, Vec<EstateParcel>>, sqlx::Error> {
     let mut out: std::collections::HashMap<String, Vec<EstateParcel>> =
@@ -751,7 +828,7 @@ async fn estate_parcels(
          FROM land_authz.estate_land el WHERE el.estate_token_id = ANY($1::numeric[]) ORDER BY el.estate_token_id, x, y",
     )
     .bind(estate_ids)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await?;
     for r in rows {
         out.entry(r.get("estate")).or_default().push(EstateParcel {
@@ -778,15 +855,17 @@ pub async fn list_nfts(
     }
     let sources = sources_for(f);
     require_sources(state, f, sources).await?;
+    // The page, its total and the estates' parcels read one state.
+    let mut conn = read_conn(&state.pool, sources).await?;
     let now_ms = Utc::now().timestamp_millis();
     let ((page_sql, page_args), (total_sql, total_args)) =
         build_nfts_query(f, sources, first, skip, now_ms, trades_since(state));
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
     let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(total_sql), total_args)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
     let estates: Vec<String> = rows
@@ -794,7 +873,7 @@ pub async fn list_nfts(
         .filter(|r| r.get::<String, _>("category") == "estate")
         .map(|r| r.get::<String, _>("token_text"))
         .collect();
-    let parcels = estate_parcels(&state.pool, &estates)
+    let parcels = estate_parcels(&mut conn, &estates)
         .await
         .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
     Ok((
@@ -829,12 +908,12 @@ pub async fn require_prices_sources(
 /// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
 /// and names); `category` narrows the sources as `/v1/nfts` does. Read
 /// only after [`require_prices_sources`].
-pub async fn nft_prices(
-    state: &MarketplaceState,
-    f: &NftFilters,
-) -> Result<Histogram, sqlx::Error> {
+pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
     let f = on_sale(f);
     let sources = sources_for(&f);
+    let mut conn = read_conn(&state.pool, sources)
+        .await
+        .map_err(|_| "the nft prices' LAND index is not published".to_string())?;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,
@@ -850,8 +929,9 @@ pub async fn nft_prices(
         wheres.join(" AND ")
     ));
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
-        .fetch_all(&state.pool)
-        .await?;
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(consolidate(
         rows.iter()
             .filter_map(|r| r.get::<Option<String>, _>("price")),
@@ -871,6 +951,7 @@ pub async fn estate_sizes(state: &MarketplaceState, f: &NftFilters) -> Result<Hi
         ..Default::default()
     };
     require_sources(state, &f, sources).await?;
+    let mut conn = read_conn(&state.pool, sources).await?;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,
@@ -887,7 +968,7 @@ pub async fn estate_sizes(state: &MarketplaceState, f: &NftFilters) -> Result<Hi
         sort_sql(f.sort_by)
     ));
     let sizes: Vec<Option<i32>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(b.sql), b.args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
     Ok(consolidate(
