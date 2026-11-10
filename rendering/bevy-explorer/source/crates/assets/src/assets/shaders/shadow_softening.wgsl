@@ -14,12 +14,18 @@
 /// the cascade count.
 const CASCADE_BORDER: f32 = 0.7053232;
 
-// Fade a directional shadow value from `shadows::fetch_directional_shadow` to lit at the shadow
-// distance. `far` is the far bound of the light's last cascade (the shadow distance) and `dist2`
-// the squared distance from the camera to the fragment.
+/// How much of the sun a shadow blocks: 1 is full (Unity's sun, `m_Strength` 1), 0 is none.
+/// Unity's Trilight ambient fills its shadows in; ours is darker, so shadows block 0.65 of the
+/// sun until that ambient lands (see decisions.md).
+const SHADOW_OPACITY: f32 = 0.65;
+
+// Soften a directional shadow value from `shadows::fetch_directional_shadow` and fade it to lit
+// at the shadow distance. `far` is the far bound of the light's last cascade (the shadow
+// distance) and `dist2` the squared distance from the camera to the fragment.
 fn soften_directional_shadow(base: f32, far: f32, dist2: f32) -> f32 {
-    if far <= 0.0 { return base; }
+    let softened = mix(1.0, base, SHADOW_OPACITY);
+    if far <= 0.0 { return softened; }
     let fade_near = (1.0 - CASCADE_BORDER) * far;
     let fade = saturate((dist2 - fade_near * fade_near) / (far * far - fade_near * fade_near));
-    return mix(base, 1.0, fade);
+    return mix(softened, 1.0, fade);
 }

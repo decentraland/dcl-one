@@ -23,6 +23,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   texels times 2.5 are the normal bias and the depth bias stays bevy's 0.02 m. A depth bias
   sized from the widest cascade let the soft filter shade the ground with its own shadow,
   jagged-edged patches in Low and High alike, and lost contact shadows.
+- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
+  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
+  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
+  ambient lands, and the two get tuned together after that.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
