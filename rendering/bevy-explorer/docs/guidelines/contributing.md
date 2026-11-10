@@ -74,17 +74,22 @@ understand the change in one sitting.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
 - Explain the chosen behavior, constants, alternatives and verification in this engine's own
-  terms. Follow [public prose](#public-prose) and [implementing features](implementing-features.md).
+  terms. Follow [public prose](#public-prose); for ports, use [Porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
 
 ## Public prose
 
-Document current behavior, ownership, constraints and reasons directly. Throughout this
-repository, omit Unity implementation provenance from code comments, tracked documentation
+Document current behavior, ownership, constraints and reasons directly. Except for the
+porting workflow below, omit Unity implementation provenance from code comments, tracked documentation
 (including ADRs and agent instructions), and PR titles and descriptions: source-file or
 revision inventories, copied-constant attribution, and comparisons offered as the reason for
 this engine's design. Keep that research in ignored task/review reports. This supersedes older
-instructions to put implementation provenance in PRs.
+instructions to put implementation provenance in PRs outside that workflow.
+
+The [Porting from Unity guide](porting-from-unity.md) is an explicit exception: preserve
+its source inventory, mappings and integration instructions. Its workflow may name Unity
+source files, carried constants and intentional divergences in porting PR descriptions.
+Code comments still explain this engine's constraints, as that guide requires.
 
 Unity remains an existing Decentraland client. Name it accurately in client lists, protocol
 consumer requirements, compatibility and rollout limitations, tooling instructions, and
@@ -110,9 +115,9 @@ document leaves the policy unenforced on the next generation.
 
 Before committing or updating a PR, search every changed file and the complete PR text with
 `rg -ni '\bunity(?:\b|[-_])'`. This is a minimum check: also inspect the diff for source-file
-and type names that do not contain that word. Remove implementation provenance, preserve
-client facts and operational references, and check the diff for lost
-compatibility information. Record the classification in the ignored review report. Explain
+and type names that do not contain that word. Apply the porting-workflow exception above;
+otherwise remove implementation provenance. Preserve client facts and operational references,
+and check the diff for lost compatibility information. Record the classification in the ignored review report. Explain
 this engine's design using its requirements and tests.
 
 ## Before pushing

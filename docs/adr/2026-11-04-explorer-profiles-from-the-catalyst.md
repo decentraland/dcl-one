@@ -12,8 +12,10 @@ must satisfy both sets of readers without letting fetch policy vary by caller.
 
 Every backend area in dcl-one is served by one catalyst. The asset-bundle registry routes are
 a read-through of Decentraland's registry and are empty on an `island` node; they cannot be the
-authority for profiles deployed to that node. Profile reads must use the catalyst's own
-deployments and avoid endpoints supplied by another player.
+authority for profiles deployed to that node. Full profiles are read from the catalyst.
+Compact reads use the same source, except on Decentraland's own deployments: their registry
+serves the compact tier until their catalysts provide its route. Neither tier uses
+endpoints supplied by another player.
 
 A local edit should appear immediately while it deploys, but peers must hear only a version
 the server holds. A failed publish must restore the confirmed profile without deploying the
@@ -76,9 +78,10 @@ old content again or reusing a version that another peer may already have observ
 ## Rejected
 
 - **Batching through `asset-bundle-registry.<domain>`.** On dcl-one it serves Decentraland's
-  registry, not the node's deployments, and nothing on an `island` node. In that fetch cascade,
-  a node-deployed profile misses the batch, falls back to a single-address GET, and remains
-  non-final, so it is asked of the registry again every 30 s.
+  registry, not the node's deployments, and nothing on an `island` node. The previous fetch
+  path tried a registry batch, then a single-address GET on a peer-named catalyst, then the
+  peer. A node-deployed profile missed the batch, fell back to the GET and remained non-final,
+  so it was asked of the registry again every 30 s.
 - **Serving the node's own data from the registry routes instead of a lambdas route.**
   Registry routes serve Unity Explorer's boot reads of Decentraland's registry; the node's
   deployed profiles already live at `/lambdas/profiles`. The compact projection belongs beside them at

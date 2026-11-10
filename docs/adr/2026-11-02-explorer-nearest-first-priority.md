@@ -118,17 +118,20 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 
 ## Rejected
 
-- **Distance buckets and a bucket-indexed tick-rate table.** Excluded by the constraint in
-  Context: the aging scheduler already shares ticks by distance. The evaluated alternative
-  uses 16 m steps up to 160 m, then 320, 640 and 1,280 m, measured from the nearest parcel corner,
+- **Distance buckets and a bucket-indexed tick-rate table.** Download admission already
+  groups by parcel ring, then compares facing and raw distance; a metric-distance bucket
+  would add a separate grouping policy. The aging scheduler already shares ticks by distance.
+  The evaluated alternative uses 16 m steps up to 160 m, then 320, 640 and 1,280 m,
+  measured from the nearest parcel corner,
   and a tick-rate table of 40, 30, 15, 10, 5 and 0 frames a second. That table freezes scenes
   from 80 m on and adds a second tuning policy. No bucket field in `LoadPriority`, no rate
   table in the scene loop.
 - **Raw squared distance first, facing second.** Facing could then break only exact-distance
   ties: it could never put a slightly farther scene in front ahead of a nearer scene behind.
   An integer parcel ring groups those scenes so facing can decide within the ring.
-- **Parcel distance as `floor(distance / 16)`.** The ring is the Chebyshev ring index,
-  which measures square parcel rings rather than rounding the metric distance.
+- **Parcel distance as `floor(distance / 16)`.** Metric bins can split parcels in the same
+  ring, making distance decide before facing. The Chebyshev ring index keeps those parcels
+  tied so facing can decide first, with raw distance breaking the remaining ties.
 - **The nearest parcel corner as the distance.** It reads 11.3 m from a point over the
   centre of a parcel and is 0 only on a corner. It would disagree with `parcels_in_range`, which
   decides what is in range
@@ -200,10 +203,11 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - **Per-scene priority in a resource map.** A fact about a scene is a component on its root; the
   gate's keys inside `IpfsIo` are the one exception, because `ipfs` cannot depend on
   `scene_runner`, and the hooks keep them in step with the components.
-- **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves (six
-  scenes a wave) and the unload margin are separate scene-loading work. Frame-time,
-  loading-slot and memory budgets build on the memory status provider; scene LOD and the
-  visual-state resolver are separate rendering work.
+- **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves and
+  the unload margin are separate scene-loading work; the evaluated alternative uses six
+  scenes a wave, but this decision chooses no wave size. Frame-time, loading-slot and memory
+  budgets are separate work; the memory budget builds on the memory status provider. Scene
+  LOD and the visual-state resolver are separate rendering work.
 
 ## Consequences
 
