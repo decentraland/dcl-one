@@ -164,6 +164,8 @@ impl SceneResponseSender {
 pub enum CommsMessageType {
     String = 1,
     Binary = 2,
+    /// A `CommsApi` topic message: `[u16 LE topic length][topic UTF-8][data UTF-8]`.
+    CommsData = 3,
 }
 
 #[cfg(test)]

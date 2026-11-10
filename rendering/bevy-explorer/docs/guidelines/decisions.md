@@ -172,6 +172,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
+- **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
+  protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
+  the array. Changing it to the protocol's shape would break those scenes here.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
