@@ -206,11 +206,13 @@ export type PageToScene =
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
+  | BrowseCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
   | UpdateCommunityRequest
   | GetCommunityPlaceOptionsRequest
   | RemoveCommunityPlaceRequest
+  | CommunityMemberActionRequest
   | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
@@ -1102,6 +1104,17 @@ export interface Community {
   visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** The first three of the user's friends who are members, for the browse card. Only the paged
+   *  browse read carries them. */
+  friends?: CommunityFriend[]
+}
+
+/** A friend who is a member of a community, for the browse card. */
+export interface CommunityFriend {
+  address: string
+  name: string
+  picture?: string
+  hasClaimedName: boolean
 }
 
 /** A page request's handler threw, so its reply never came (scene → page). */
@@ -1117,6 +1130,7 @@ export interface AvatarSaveFailedMessage {
   message: string
 }
 
+/** The communities the user is a member of: My Communities (scene → page). */
 export interface CommunitiesMessage {
   kind: 'communities'
   communities: Community[]
@@ -1124,6 +1138,29 @@ export interface CommunitiesMessage {
 
 export interface GetCommunitiesRequest {
   kind: 'getCommunities'
+}
+
+/** One page of the browse grid: 20 communities a page, by name on the
+ *  server when `search` is set (page → scene → social-api GET /v2/communities). */
+export interface BrowseCommunitiesRequest {
+  kind: 'browseCommunities'
+  /** '' lists every community. */
+  search: string
+  /** From 1. */
+  page: number
+}
+
+/** The answer to BrowseCommunitiesRequest, naming the search and page it is for, so the page drops
+ *  an answer to an older search (scene → page). */
+export interface CommunityBrowseMessage {
+  kind: 'communityBrowse'
+  search: string
+  page: number
+  communities: Community[]
+  /** How many communities the search has in all. */
+  total: number
+  /** The read failed; `communities` is empty. */
+  failed?: boolean
 }
 
 /** One community by id (page → scene → social-api GET /v2/communities/{id}), for a card opened
@@ -1256,7 +1293,20 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace'
+/** What an owner or moderator can do to a member from the card's member menu (unity-explorer's
+ *  MembersListView): promote to moderator, demote to member, hand over ownership, remove, ban. */
+export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
+
+/** A member action from the card's member menu (page → scene → signed social-api write). */
+export interface CommunityMemberActionRequest {
+  kind: 'communityMemberAction'
+  id: string
+  /** The member acted on. */
+  address: string
+  action: CommunityMemberAction
+}
+
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace' | CommunityMemberAction
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1274,8 +1324,6 @@ export interface CommunityMember {
   role: string
   picture?: string
   hasClaimedName?: boolean
-  /** the local user already follows them (hides "Add Friend"). */
-  isFriend?: boolean
 }
 
 /** A place shared by a community (Places tab). */
@@ -1939,6 +1987,7 @@ export type SceneToPage =
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
+  | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage

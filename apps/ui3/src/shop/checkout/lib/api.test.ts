@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, RESALE_WEARABLE } from "../../discovery/fixtures";
-import { createShopClient } from "../../api/shop";
-import { fetchShopListingForItem } from "../../detail/api";
+import { createShopClient } from "@shop/api/shop";
+import { fetchShopListingForItem } from "@shop/detail/api";
 import { fetchTradeForItem } from "./api";
 
 /** Creator sales off, as a page has them until the switch says yes. */

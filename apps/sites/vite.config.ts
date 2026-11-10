@@ -104,7 +104,7 @@ export function nodeProxy(): Record<string, ProxyOptions> {
     "/price/": to(),
     "/_play": to(),
     "/auth-api": to(),
-    // The NAME banned list (shop/names/api.ts) and the image derivatives
+    // The NAME banned list (library/shop/names/api.ts) and the image derivatives
     // (`/media/convert`) the cards request.
     "/dcl-lists": to(),
     "/media/": to(),

@@ -11,7 +11,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { SHOP_BASE } from "../../routes";
-import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "../api";
+import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "@shop/discovery/api";
 import { t } from "@shop/discovery/intl";
 import { highlightMatches } from "../lib/highlight";
 import { popularSearchesFor } from "../lib/popularSearches";

@@ -35,7 +35,7 @@ import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
 import { applyProfileEdit } from '../../engine/profileEdit'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setProfileRequester, updateProfile } from './profileStore'
+import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -61,6 +61,7 @@ import type {
   Community,
   DmUserState,
   CommunityAction,
+  CommunityMemberAction,
   CommunityDetailMessage,
   CommunityChannel,
   CommunityMember,
@@ -110,6 +111,12 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   leave: 'There was an error leaving the community. Please try again.',
   delete: 'There was an error deleting the community. Please try again.',
   removePlace: 'There was an error deleting the community place. Please try again.',
+  // the member menu's (MembersListController *_ERROR_TEXT)
+  promote: 'There was an error adding moderator to user. Please try again.',
+  demote: 'There was an error removing moderator from user. Please try again.',
+  transfer: 'There was an error transfering ownership. Please try again.',
+  kick: 'There was an error kicking the user. Please try again.',
+  ban: 'There was an error banning the user. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -233,8 +240,35 @@ export type UpdateCommunityInput = Omit<UpdateCommunityRequest, 'kind'>
 /** A community create or update in flight (`saving`) or its outcome (`done`). */
 export type CommunitySave = { status: 'saving' } | { status: 'done'; result: CommunitySaveResultMessage }
 
+/** The Communities page's browse grid: the pages read so far for one search. */
+export interface CommunityBrowse {
+  /** The search the grid shows; '' is every community. */
+  search: string
+  items: Community[]
+  /** How many communities the search has in all (the service's total). */
+  total: number
+  /** The first page is being read. */
+  loading: boolean
+  /** A further page is being read. */
+  loadingMore: boolean
+  /** The first page could not be read: the grid shows no count and no empty state. */
+  failed?: boolean
+}
+
+/** The toast when a browse page can't be read. */
+export const BROWSE_ERROR = 'There was an error loading Communities. Please try again.'
+
+const NO_BROWSE: CommunityBrowse = { search: '', items: [], total: 0, loading: false, loadingMore: false }
+
 export interface CommunitiesState {
+  /** My Communities: every community the user is a member of. */
   list: Community[]
+  /** The browse grid, a page at a time. */
+  browse: CommunityBrowse
+  /** Read the grid's first page for a search ('' for every community), replacing the grid. */
+  loadBrowse: (search: string) => void
+  /** Read the grid's next page, when there is one and no read is running. */
+  loadMoreBrowse: () => void
   open: boolean
   toggle: () => void
   /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
@@ -259,6 +293,9 @@ export interface CommunitiesState {
   clearPlaceOptions: () => void
   /** Unlink a place from a community (the card's delete). A failure arrives in `error`. */
   removePlace: (id: string, placeId: string) => void
+  /** An owner's or moderator's action on a member, from the card's member menu. The card's
+   *  members are read again after it; a failure arrives in `error`. */
+  memberAction: (id: string, address: string, action: CommunityMemberAction) => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -1195,6 +1232,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
   const [communityCards, setCommunityCards] = useState<Record<string, Community>>({})
+  const [communityBrowse, setCommunityBrowse] = useState<CommunityBrowse>(NO_BROWSE)
+  // The grid as last set, and the page read last, for the next page's request.
+  const communityBrowseRef = useRef<CommunityBrowse>(NO_BROWSE)
+  const communityBrowsePage = useRef(0)
+  // The search and page the grid waits for: an answer for any other (an older search) is dropped.
+  const communityBrowseWanted = useRef<{ search: string; page: number } | null>(null)
+  const updateCommunityBrowse = useCallback((next: (prev: CommunityBrowse) => CommunityBrowse) => {
+    communityBrowseRef.current = next(communityBrowseRef.current)
+    setCommunityBrowse(communityBrowseRef.current)
+  }, [])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
@@ -1224,8 +1271,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const swap = <T extends { id: string; thumbnail?: string }>(c: T): T => (c.id === id ? { ...c, thumbnail: picture } : c)
     setCommunities((prev) => prev.map(swap))
     setCommunityCards((prev) => (prev[id] != null ? { ...prev, [id]: swap(prev[id]) } : prev))
+    updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.map(swap) }))
     setCommunityConvos((prev) => prev.map(swap))
-  }, [])
+  }, [updateCommunityBrowse])
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
@@ -1298,7 +1346,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const settleProfileSave = (ok: boolean, error?: string): void => {
       profileInFlightRef.current = false
       // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-      // pre-save profile goes back — see saveProfile.
+      // pre-save profile goes back — see saveProfile. When the failed edit is the one the engine
+      // shows, it puts the profile from before it back too and announces it; the store re-reads
+      // that, and drops a read of the edit still on its way instead of showing the edit again.
       const revert = profileRevertRef.current
       profileRevertRef.current = null
       if (!ok) {
@@ -1642,6 +1692,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'profile':
           setProfile(msg.profile)
+          setOwnProfile(msg.profile?.address ?? null)
           // The passport reads the store, so an authoritative own profile has to reach it too or a
           // just-saved name would keep its stale claimed-name seal until reopened.
           if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
@@ -1736,10 +1787,38 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communities':
           setCommunities(msg.communities.map(withSavedPicture))
           break
-        case 'community':
-          // one community for a card, kept apart from the browse list (replaced if already there)
-          setCommunityCards((prev) => ({ ...prev, [msg.community.id]: withSavedPicture(msg.community) }))
+        case 'community': {
+          // one community for a card, kept apart from the browse list (replaced if already there);
+          // after a write it is the community that changed, so its browse card shows the change too
+          // (keeping the friends only the browse read carries)
+          const fresh = withSavedPicture(msg.community)
+          setCommunityCards((prev) => ({ ...prev, [fresh.id]: fresh }))
+          if (communityBrowseRef.current.items.some((c) => c.id === fresh.id)) {
+            updateCommunityBrowse((prev) => ({
+              ...prev,
+              items: prev.items.map((c) => (c.id === fresh.id ? { ...fresh, friends: fresh.friends ?? c.friends } : c))
+            }))
+          }
           break
+        }
+        case 'communityBrowse': {
+          const wanted = communityBrowseWanted.current
+          if (wanted == null || wanted.search !== msg.search || wanted.page !== msg.page) break
+          communityBrowseWanted.current = null
+          if (msg.failed === true) {
+            showToast(BROWSE_ERROR, { tone: 'error' })
+            updateCommunityBrowse((prev) => ({ ...prev, loading: false, loadingMore: false, failed: msg.page === 1 }))
+            break
+          }
+          communityBrowsePage.current = msg.page
+          const page = msg.communities.map(withSavedPicture)
+          updateCommunityBrowse((prev) => {
+            // a community that moved up the order while paging is listed once
+            const items = msg.page === 1 ? page : [...prev.items, ...page.filter((c) => !prev.items.some((p) => p.id === c.id))]
+            return { search: msg.search, items, total: msg.total, loading: false, loadingMore: false }
+          })
+          break
+        }
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
           break
@@ -1754,10 +1833,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const pending = pendingCommunityPicture.current
           pendingCommunityPicture.current = null
           if (msg.mode === 'update' && msg.id != null && pending?.id === msg.id) showSavedPicture(pending.id, pending.picture)
+          // a save reloads the grid: a new or changed community may
+          // join, leave or move in the grid
+          if (msg.id != null && communityBrowsePage.current > 0) loadCommunityBrowse(communityBrowseRef.current.search)
           break
         }
         case 'communityDeleted':
           setDeletedCommunity(msg.id)
+          if (communityBrowseRef.current.items.some((c) => c.id === msg.id)) {
+            updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.filter((c) => c.id !== msg.id), total: Math.max(0, prev.total - 1) }))
+          }
           setCommunityCards((prev) => {
             const { [msg.id]: _gone, ...rest } = prev
             return rest
@@ -1766,6 +1851,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communityDetail':
           // only the card open now: a re-read for a card already closed must not replace its detail
           if (msg.id !== detailWanted.current) break
+          // the members' names and faces, for the member menu and the passport they open; an unclaimed
+          // name with its #tag, as every explorer shows it (the card reads a bare name as claimed)
+          seedProfiles(
+            msg.members.map((m) => ({
+              address: m.address,
+              name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`,
+              picture: m.picture,
+              claimed: m.hasClaimedName
+            }))
+          )
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -2433,6 +2528,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [exclusive, ensure]
   )
   const toggleCommunities = useCallback(() => exclusive(setCommunitiesOpen, () => ensure('getCommunities')), [exclusive, ensure])
+  const loadCommunityBrowse = useCallback((search: string) => {
+    communityBrowseWanted.current = { search, page: 1 }
+    communityBrowsePage.current = 0
+    updateCommunityBrowse(() => ({ search, items: [], total: 0, loading: true, loadingMore: false }))
+    driverRef.current?.send({ kind: 'browseCommunities', search, page: 1 })
+  }, [updateCommunityBrowse])
+  const loadMoreCommunityBrowse = useCallback(() => {
+    const current = communityBrowseRef.current
+    if (communityBrowseWanted.current != null || current.loading || current.loadingMore) return
+    if (communityBrowsePage.current === 0 || current.items.length >= current.total) return
+    const page = communityBrowsePage.current + 1
+    communityBrowseWanted.current = { search: current.search, page }
+    updateCommunityBrowse((prev) => ({ ...prev, loadingMore: true }))
+    driverRef.current?.send({ kind: 'browseCommunities', search: current.search, page })
+  }, [updateCommunityBrowse])
   const fetchCommunity = useCallback((id: string) => {
     // a failed fetch's message would otherwise outlive a later success
     setCommunityError((prev) => (prev?.id === id ? null : prev))
@@ -3098,6 +3208,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunityError(null)
     driverRef.current?.send({ kind: 'removeCommunityPlace', id, placeId })
   }, [])
+  const communityMemberAction = useCallback((id: string, address: string, action: CommunityMemberAction) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'communityMemberAction', id, address, action })
+  }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'joinCommunity', id })
@@ -3275,6 +3389,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     profileRevertRef.current = null
     profileInFlightRef.current = false
     queuedProfileEditRef.current = null
+    setOwnProfile(null)
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
@@ -3290,6 +3405,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     clearRewardPopups()
     setCommunities([])
     setCommunityCards({})
+    communityBrowseWanted.current = null
+    communityBrowsePage.current = 0
+    updateCommunityBrowse(() => NO_BROWSE)
     clearCommunitySave()
     clearCommunityPlaceOptions()
     setDeletedCommunity(null)
@@ -4082,7 +4200,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

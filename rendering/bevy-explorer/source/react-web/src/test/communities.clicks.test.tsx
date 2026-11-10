@@ -9,6 +9,7 @@ import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../design'
 import type { Community, CommunityDetailMessage, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../engine/protocol'
 import type { CommunitiesState, CommunitySave } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
+import type { CardAction } from '../features/chat/ProfileCardPresentation'
 
 afterEach(resetPopups) // the community modal now lives on the module-level popup stack
 
@@ -26,9 +27,21 @@ const community = (over: Partial<Community>): Community => ({
 describe('communities page clicks', () => {
   // The community detail modal opens as a popup and reads live data via useSession(), so the page and
   // <PopupHost/> must share one SessionProvider (its `communities` is what the popup content reads).
-  function renderPage(list: Community[]): CommunitiesState {
+  // `mine` is My Communities; `items` the browse grid's pages.
+  function renderPage(items: Community[], opts: { mine?: Community[]; browse?: Partial<CommunitiesState['browse']> } = {}): CommunitiesState {
     const session = fakeSession()
-    session.communities = { ...session.communities, open: true, list, join: vi.fn(), loadDetail: vi.fn() }
+    session.communities = {
+      ...session.communities,
+      open: true,
+      list: opts.mine ?? [],
+      browse: { search: '', items, total: items.length, loading: false, loadingMore: false, ...opts.browse },
+      join: vi.fn(),
+      requestToJoin: vi.fn(),
+      cancelRequest: vi.fn(),
+      loadDetail: vi.fn(),
+      loadBrowse: vi.fn(),
+      loadMoreBrowse: vi.fn()
+    }
     render(
       <SessionProvider value={session}>
         <CommunitiesPage communities={session.communities} profile={fakeProfileState()} onNavigate={vi.fn()} />
@@ -38,10 +51,42 @@ describe('communities page clicks', () => {
     return session.communities
   }
 
-  it('Join on a browse card joins that community', async () => {
+  it('opening the page reads the first page of every community', () => {
+    const communities = renderPage([])
+    expect(vi.mocked(communities.loadBrowse)).toHaveBeenCalledWith('')
+  })
+
+  it('Join on a public browse card joins that community', async () => {
     const communities = renderPage([community({ id: 'c1', role: 'none' })])
+    expect(screen.getByText(/Public · 12 Members/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Join' }))
     expect(vi.mocked(communities.join)).toHaveBeenCalledWith('c1')
+  })
+
+  it('a private card asks to join, and cancels a request in flight', async () => {
+    const communities = renderPage([
+      community({ id: 'p1', name: 'Locked', privacy: 'private' }),
+      community({ id: 'p2', name: 'Asked', privacy: 'private', pendingRequestId: 'r2' })
+    ])
+    expect(screen.getAllByText(/Private · 12 Members/)).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Join' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Request to Join' }))
+    expect(vi.mocked(communities.requestToJoin)).toHaveBeenCalledWith('p1')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel join request' }))
+    expect(vi.mocked(communities.cancelRequest)).toHaveBeenCalledWith('p2', 'r2')
+    // neither click opened the card
+    expect(vi.mocked(communities.loadDetail)).not.toHaveBeenCalled()
+  })
+
+  it("shows the user's friends in the community and its description", () => {
+    const friends = [
+      { address: '0xa', name: 'Mojito', hasClaimedName: true },
+      { address: '0xb', name: 'Kimbo', hasClaimedName: false }
+    ]
+    renderPage([community({ id: 'c1', friends })])
+    expect(screen.getByLabelText('Friends in this community: Mojito, Kimbo')).toBeInTheDocument()
+    expect(screen.getByRole('tooltip', { name: 'Mojito' })).toBeInTheDocument()
+    expect(screen.getByText('we build')).toBeInTheDocument()
   })
 
   it('View on a joined community opens its modal and loads detail', async () => {
@@ -51,23 +96,111 @@ describe('communities page clicks', () => {
     expect(screen.getByRole('heading', { name: 'Builders' })).toBeInTheDocument()
   })
 
-  // the bridge adds the user's communities the browse page left out (unlisted ones too) to the list
-  it('My Communities lists every membership in the list, an unlisted one included', async () => {
+  // My Communities is its own list (every membership, an unlisted one too), apart from the grid
+  it('My Communities lists every membership, an unlisted one included', async () => {
     const hidden = community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner', privacy: 'private', visibility: 'unlisted' })
-    const communities = renderPage([community({ id: 'c1', role: 'none' }), hidden])
+    const communities = renderPage([community({ id: 'c1', role: 'none' })], { mine: [hidden] })
     expect(screen.queryByText("You haven't joined any communities yet.")).toBeNull()
-    // its row under My Communities, and its card at the end of the Browse grid
-    const rows = screen.getAllByRole('button', { name: /Secret Club/ })
-    expect(rows).toHaveLength(2)
-    await userEvent.click(rows[0])
+    await userEvent.click(screen.getByRole('button', { name: /Secret Club/ }))
     expect(vi.mocked(communities.loadDetail)).toHaveBeenCalledWith('c-unlisted')
     expect(screen.getByRole('heading', { name: 'Secret Club' })).toBeInTheDocument()
   })
 
   it('VIEW ALL shows the communities the user is a member of', async () => {
-    renderPage([community({ id: 'c1', role: 'none' }), community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })])
+    renderPage([community({ id: 'c1', role: 'none' })], { mine: [community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })] })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /VIEW ALL/ }))
-    expect(screen.getByText('My Communities (1)')).toBeInTheDocument()
+    expect(screen.getByText('My Communities', { selector: 'span:not([class*="sideHead"])' })).toBeInTheDocument()
+    expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+
+  it("titles the grid with the service's total", () => {
+    renderPage([community({ id: 'c1' })], { browse: { total: 57 } })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
+    expect(screen.getByText('(57)')).toBeInTheDocument()
+  })
+
+  it('searches a second after typing stops, at once on Enter, and lists everything when cleared', () => {
+    vi.useFakeTimers()
+    try {
+      const communities = renderPage([])
+      const loadBrowse = vi.mocked(communities.loadBrowse)
+      loadBrowse.mockClear()
+      const field = screen.getByRole('textbox', { name: 'Search' })
+      fireEvent.change(field, { target: { value: 'pi' } })
+      fireEvent.change(field, { target: { value: 'pix' } })
+      act(() => vi.advanceTimersByTime(999))
+      expect(loadBrowse).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1))
+      expect(loadBrowse).toHaveBeenCalledTimes(1)
+      expect(loadBrowse).toHaveBeenCalledWith('pix')
+      fireEvent.change(field, { target: { value: 'pixel' } })
+      fireEvent.keyDown(field, { key: 'Enter' })
+      expect(loadBrowse).toHaveBeenLastCalledWith('pixel')
+      // the delayed search for the same text was cancelled
+      act(() => vi.advanceTimersByTime(2000))
+      expect(loadBrowse).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+      expect(loadBrowse).toHaveBeenLastCalledWith('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the same search again reads nothing', () => {
+    const communities = renderPage([], { browse: { search: 'pix' } })
+    const loadBrowse = vi.mocked(communities.loadBrowse)
+    loadBrowse.mockClear()
+    const field = screen.getByRole('textbox', { name: 'Search' })
+    fireEvent.change(field, { target: { value: 'pix' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(loadBrowse).not.toHaveBeenCalled()
+  })
+
+  it("titles search results, says when nothing matches, and goes back to every community", async () => {
+    const communities = renderPage([], { browse: { search: 'zzzz' } })
+    expect(screen.getByText("Results for 'zzzz'")).toBeInTheDocument()
+    expect(screen.getByText('(0)')).toBeInTheDocument()
+    expect(screen.getByText('No Communities match your search terms.')).toBeInTheDocument()
+    vi.mocked(communities.loadBrowse).mockClear()
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Browse Communities' }))
+    expect(vi.mocked(communities.loadBrowse)).toHaveBeenCalledWith('')
+  })
+
+  it('a failed first page shows no count and no empty state (the toast says it failed)', () => {
+    renderPage([], { browse: { failed: true, total: 0 } })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
+    expect(screen.queryByText('(0)')).toBeNull()
+    expect(screen.queryByText('No Communities match your search terms.')).toBeNull()
+  })
+
+  it('shows a spinner and no count while the first page is read', () => {
+    renderPage([], { browse: { loading: true, total: 0 } })
+    expect(screen.queryByText('(0)')).toBeNull()
+    expect(screen.queryByText('No Communities match your search terms.')).toBeNull()
+  })
+
+  it("reads the next page when the grid's end comes into view, while there is one", () => {
+    const observed: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = []
+    class FakeObserver {
+      constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        observed.push(cb)
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    try {
+      const communities = renderPage([community({ id: 'c1' })], { browse: { total: 30 } })
+      act(() => observed.at(-1)?.([{ isIntersecting: true }]))
+      expect(vi.mocked(communities.loadMoreBrowse)).toHaveBeenCalledTimes(1)
+      cleanup()
+      observed.length = 0
+      renderPage([community({ id: 'c1' })], { browse: { total: 1 } })
+      expect(observed).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
@@ -84,7 +217,7 @@ describe('community modal clicks', () => {
   })
 
   function renderModal(c: Community, d: CommunityDetailMessage | null = detail()) {
-    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() }
+    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() }
     render(<CommunityModal community={c} detail={d} {...spies} />)
     return spies
   }
@@ -103,16 +236,6 @@ describe('community modal clicks', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Leave community' }))
     expect(s.onLeave).toHaveBeenCalledWith('c1')
     expect(s.onClose).toHaveBeenCalledTimes(1)
-  })
-
-  it('Members tab: ADD FRIEND sends a request', async () => {
-    const s = renderModal(
-      community({ role: 'member' }),
-      detail({ members: [{ address: '0xm', name: 'M', role: 'member', isFriend: false }] })
-    )
-    await userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
-    await userEvent.click(screen.getByRole('button', { name: /ADD FRIEND/i }))
-    expect(s.onAddFriend).toHaveBeenCalledWith('0xm')
   })
 
   it('close button closes the modal', async () => {
@@ -137,7 +260,7 @@ describe('community card places', () => {
     photos: []
   })
   function renderCard(role: string, places: CommunityDetailMessage['places']) {
-    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn(), onEdit: vi.fn(), onRemovePlace: vi.fn() }
+    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn(), onEdit: vi.fn(), onRemovePlace: vi.fn() }
     render(
       <>
         <PopupHost />
@@ -461,7 +584,7 @@ describe('community edit', () => {
   }
 
   it('offers Edit Community on the card to owners and moderators only', () => {
-    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() }
+    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() }
     const onEdit = vi.fn()
     const { rerender } = render(<CommunityModal community={community({ role: 'moderator' })} detail={null} onEdit={onEdit} {...spies} />)
     expect(screen.getByRole('button', { name: 'Edit Community' })).toBeInTheDocument()
@@ -568,7 +691,7 @@ describe('community edit', () => {
 // Delete Community, as unity-explorer's: the owner's ⋮ menu, asked first, and the card closes once
 // the community is gone.
 describe('community delete', () => {
-  const spies = () => ({ onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() })
+  const spies = () => ({ onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() })
 
   it('is in the owner\'s menu only', async () => {
     const onDelete = vi.fn()
@@ -671,5 +794,180 @@ describe('community picture checks', () => {
     expect(read).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:pic')
     read.mockRestore()
+  })
+})
+
+// The card's Members tab, as unity-explorer's member list: the row opens the passport, carries the
+// friendship button for the relationship, and a menu with View Profile, Chat, the owner's and
+// moderators' actions, Block and Report.
+describe('community card members', () => {
+  const owner = { address: '0xowner', name: 'Boss', role: 'owner', hasClaimedName: true }
+  const mod = { address: '0xmod', name: 'Mod', role: 'moderator', hasClaimedName: true }
+  const plain = { address: '0xabcd1234', name: 'Plain', role: 'member', hasClaimedName: false }
+  const me = { address: '0xme', name: 'Me', role: 'member', hasClaimedName: true }
+  const members = [owner, mod, plain, me]
+  const withMembers: CommunityDetailMessage = { kind: 'communityDetail', id: 'c1', members, posts: [], places: [], events: [], photos: [] }
+
+  function renderCard(role: string, over: Partial<React.ComponentProps<typeof CommunityModal>> = {}) {
+    const spies = {
+      onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn(),
+      onFriend: vi.fn(), onViewProfile: vi.fn(), onMemberMenu: vi.fn(), onMemberAction: vi.fn()
+    }
+    const card = (props: Partial<React.ComponentProps<typeof CommunityModal>>): React.JSX.Element => (
+      <>
+        <PopupHost />
+        <CommunityModal community={community({ id: 'c1', name: 'Builders', role })} detail={withMembers} me={{ address: '0xME', name: 'Me' }} {...spies} {...props} />
+      </>
+    )
+    const { rerender } = render(card(over))
+    return { ...spies, rerender: (props: Partial<React.ComponentProps<typeof CommunityModal>>) => rerender(card({ ...over, ...props })) }
+  }
+  const openMembers = async (): Promise<void> => userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
+  /** The member menu's rows as the card's opener got them. */
+  const menuFor = async (s: ReturnType<typeof renderCard>, name: string): Promise<{ labels: string[]; actions: { label: string; onClick: () => void; disabledReason?: string }[] }> => {
+    await userEvent.click(screen.getByRole('button', { name: `More options for ${name}` }))
+    const actions: CardAction[] = vi.mocked(s.onMemberMenu).mock.calls.at(-1)?.[2] ?? []
+    return { labels: actions.map((a) => a.label), actions }
+  }
+
+  it("opens a member's passport from the row, and shows the #tag of an unclaimed name", async () => {
+    const s = renderCard('member')
+    await openMembers()
+    expect(screen.getByText('#1234')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: "View Plain's profile" }))
+    expect(s.onViewProfile).toHaveBeenCalledWith('0xabcd1234')
+  })
+
+  it("gives the user's own row no friendship button and no menu", async () => {
+    renderCard('member')
+    await openMembers()
+    expect(screen.queryByRole('button', { name: 'More options for Me' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /ADD FRIEND/ })).toHaveLength(3)
+  })
+
+  it.each([
+    ['none', /ADD FRIEND/, 'add'],
+    ['incoming', /ACCEPT FRIEND/, 'accept'],
+    ['requested', /Cancel Request/, 'cancel'],
+    ['blocked', /Unblock/, 'unblock']
+  ] as const)('a %s member gets the friendship button that runs %s', async (rel, name, action) => {
+    const s = renderCard('member', { relationship: (a: string) => (a === plain.address ? rel : 'friend') })
+    await openMembers()
+    await userEvent.click(screen.getByRole('button', { name }))
+    expect(s.onFriend).toHaveBeenCalledWith(plain, action)
+  })
+
+  it('gives a friend no friendship button', async () => {
+    renderCard('member', { relationship: () => 'friend' })
+    await openMembers()
+    expect(screen.queryByRole('button', { name: /ADD FRIEND|ACCEPT FRIEND|Cancel Request|Unblock/ })).toBeNull()
+  })
+
+  it('a plain member gets no owner or moderator actions', async () => {
+    const s = renderCard('member')
+    await openMembers()
+    expect((await menuFor(s, 'Mod')).labels).toEqual([])
+  })
+
+  it("the owner can demote a moderator, hand over, remove or ban; promote a member", async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    expect((await menuFor(s, 'Mod')).labels).toEqual(['Demote Moderator', 'Make Community Owner', 'Remove Member', 'Ban'])
+    expect((await menuFor(s, 'Plain')).labels).toEqual(['Promote Moderator', 'Make Community Owner', 'Remove Member', 'Ban'])
+  })
+
+  it('a moderator can remove or ban plain members only', async () => {
+    const s = renderCard('moderator')
+    await openMembers()
+    expect((await menuFor(s, 'Plain')).labels).toEqual(['Remove Member', 'Ban'])
+    expect((await menuFor(s, 'Mod')).labels).toEqual([])
+    expect((await menuFor(s, 'Boss')).labels).toEqual([])
+  })
+
+  it('greys out handing over to a member without a NAME, with unity-explorer\'s reason', async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Plain')
+    expect(actions.find((a) => a.label === 'Make Community Owner')?.disabledReason).toBe('Community ownership can only be transferred to users who own a NAME.')
+    expect(actions.find((a) => a.label === 'Remove Member')?.disabledReason).toBeUndefined()
+  })
+
+  it('promotes at once', async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Plain')
+    await act(async () => actions.find((a) => a.label === 'Promote Moderator')?.onClick())
+    expect(s.onMemberAction).toHaveBeenCalledWith('c1', '0xabcd1234', 'promote')
+  })
+
+  it.each([
+    ['Remove Member', 'Are you sure you want to remove [Plain] from the [Builders] Community?', 'KICK', 'kick'],
+    ['Ban', 'Are you sure you want to ban [Plain] from the [Builders] Community?', 'BAN', 'ban']
+  ] as const)('%s asks first, with unity-explorer\'s question', async (label, question, confirm, action) => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Plain')
+    act(() => actions.find((a) => a.label === label)?.onClick())
+    expect(await screen.findByText(question)).toBeInTheDocument()
+    expect(s.onMemberAction).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: confirm }))
+    expect(s.onMemberAction).toHaveBeenCalledWith('c1', '0xabcd1234', action)
+  })
+
+  it('asks before handing over ownership, and does nothing on CANCEL', async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    act(() => actions.find((a) => a.label === 'Make Community Owner')?.onClick())
+    expect(await screen.findByText('Transferring Community Ownership to Mod')).toBeInTheDocument()
+    expect(screen.getByText(/you will be demoted from Owner to Moderator/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
+    expect(s.onMemberAction).not.toHaveBeenCalled()
+  })
+
+  it('keeps the hold when the new action clears an earlier error', async () => {
+    const s = renderCard('owner', { error: 'There was an error kicking the user. Please try again.' })
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    await act(async () => actions.find((a) => a.label === 'Demote Moderator')?.onClick())
+    s.rerender({ error: null })
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeDisabled()
+  })
+
+  it("releases a member's menu when the action fails", async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    await act(async () => actions.find((a) => a.label === 'Demote Moderator')?.onClick())
+    s.rerender({ error: 'There was an error removing moderator from user. Please try again.' })
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeEnabled()
+  })
+
+  it('does nothing when Remove Member is cancelled', async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Plain')
+    act(() => actions.find((a) => a.label === 'Remove Member')?.onClick())
+    await userEvent.click(await screen.findByRole('button', { name: 'CANCEL' }))
+    expect(s.onMemberAction).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'More options for Plain' })).toBeEnabled()
+  })
+
+  it("offers no row controls until the user's own profile is known", async () => {
+    renderCard('owner', { me: null })
+    await openMembers()
+    expect(screen.queryByRole('button', { name: /More options for/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /ADD FRIEND/ })).toBeNull()
+  })
+
+  it("holds a member's menu while an action on them runs, until the members come back", async () => {
+    const s = renderCard('owner')
+    await openMembers()
+    const { actions } = await menuFor(s, 'Mod')
+    await act(async () => actions.find((a) => a.label === 'Demote Moderator')?.onClick())
+    expect(s.onMemberAction).toHaveBeenCalledWith('c1', '0xmod', 'demote')
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeDisabled()
+    s.rerender({ detail: { ...withMembers, members: [owner, { ...mod, role: 'member' }, plain, me] } })
+    expect(screen.getByRole('button', { name: 'More options for Mod' })).toBeEnabled()
   })
 })

@@ -90,3 +90,5 @@ library/ui/apps/sites/assets/**/*.svg filter=lfs diff=lfs merge=lfs -text
 library/ui/apps/sites/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
 library/ui/apps/sites/assets/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
 library/ui/apps/sites/assets/**/*.webm filter=lfs diff=lfs merge=lfs -text
+library/ui/package.json text eol=lf
+library/ui/tsconfig.json text eol=lf

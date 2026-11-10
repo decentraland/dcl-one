@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-raycast-storm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Raycast scene: 200 continuous raycasts for the per-frame raycast budget",
+  "scripts": {
+    "build": "dcl-scene-cli build --built-in"
+  }
+}

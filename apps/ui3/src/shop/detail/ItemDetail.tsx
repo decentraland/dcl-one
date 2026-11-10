@@ -22,7 +22,7 @@ import type { PaymentMethod } from "@shop/model/settlement";
 import { SHOP_BASE, shopPath } from "../routes";
 import { useShopWallet } from "../wallet/context";
 import FavoriteButton from "../market/components/FavoriteButton";
-import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "../discovery/api";
+import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "@shop/discovery/api";
 import { cardEligibility } from "@shop/discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
 import { useMarketplace } from "../market/access";
@@ -34,7 +34,7 @@ import SaleTag from "../discovery/components/SaleTag";
 import { OfferStock, SaleTimer } from "../discovery/components/SaleTimer";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
-import { indexUnavailable } from "../discovery/freshness";
+import { indexUnavailable } from "@shop/discovery/freshness";
 import { useSaleActive, useSeo } from "../discovery/hooks";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
@@ -58,8 +58,8 @@ import {
   fetchPrimaryListingForItem,
   fetchUnifiedListingForItem,
   itemListingKey,
-} from "./api";
-import type { LegacyOrderRef } from "./api";
+} from "@shop/detail/api";
+import type { LegacyOrderRef } from "@shop/detail/api";
 import { fetchItemVideoUrl, fetchSmartWearableRequiredPermissions } from "./builder";
 import ItemPreview from "./components/ItemPreview";
 import LandBranch from "./components/LandBranch";
@@ -71,7 +71,7 @@ import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
 import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
-import { itemUrn } from "./lib/urn";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
 import { useShopServices } from "../checkout/services";

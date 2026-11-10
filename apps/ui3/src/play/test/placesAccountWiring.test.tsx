@@ -7,7 +7,7 @@ vi.mock('../features/session/useEngineSession', async (original) => ({ ...await 
 vi.mock('../features/engine/EngineHost', () => ({ EngineHost: () => null }))
 vi.mock('../engine/engineRpc', () => ({ EngineRpc: class {} }))
 vi.mock('../lib/isMobile', async (original) => ({ ...await original<typeof import('../lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
-vi.mock('../lib/gpu', () => ({ hasUsableGpu: async () => true }))
+vi.mock('../lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
 vi.mock('../features/places/PlacesPicker', () => ({ PlacesPicker: ({ account }: { account?: string }) => <div data-testid="picker-account">{account ?? 'pending'}</div> }))
 vi.mock('../features/places/PlacesPage', () => ({ PlacesPage: ({ account }: { account?: string }) => <div data-testid="places-account">{account ?? 'pending'}</div> }))
 import { App } from '../App'

@@ -522,6 +522,44 @@ describe('when an untrusted path carries the private key', () => {
     expect(result.stderr).not.toContain('fatal:')
   })
 
+  // The workflow runs a copy of the guard read from TRUSTED_SHA; the summary names that commit, not HEAD.
+  it('should name the revision it was given instead of the checkout HEAD', async () => {
+    const pinned = git('rev-parse', 'base')
+    await put('later.md', 'later\n')
+    commit('later')
+    const result = scanner('--no-worktree', '--no-range', '--revision', 'base')
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${pinned}`)
+    expect(result.stdout).not.toContain(git('rev-parse', 'HEAD'))
+  })
+
+  it('should name the checkout HEAD without --revision', () => {
+    const result = scanner('--no-worktree', '--no-range')
+
+    expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${git('rev-parse', 'HEAD')}`)
+  })
+
+  it.each([
+    [['--revision'], '--revision takes a commit'],
+    [['--revision', '--no-range'], '--revision takes a commit'],
+    [['--revision', ''], '--revision takes a commit'],
+    [['--revision', 'no-such-commit'], 'figma-key-guard: Command failed']
+  ])('should refuse to run with %j', (args, message) => {
+    const result = scanner('--no-worktree', '--no-range', ...args)
+
+    expect(result.status).toBe(2)
+    expect(result.stdout).not.toContain('check key: ran')
+    expect(result.stderr).toContain(message)
+  })
+
+  it('should redact a revision that carries the key', () => {
+    const result = scanner('--no-worktree', '--no-range', '--revision', FAKE_KEY)
+
+    expect(result.status).toBe(2)
+    expectNoKey(result)
+  })
+
   it('should redact an argument it rejects', () => {
     const result = scanner(`--${FAKE_KEY}`)
 
@@ -592,29 +630,25 @@ describe('when selecting a main push range', () => {
         *) return 1 ;;
       esac
     }\n`
-    const result = spawnSync(
-      'bash',
-      ['-e', '-c', mock + workflow().jobs['key-scan']!.steps[0]!.run!],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          WORKFLOW_PATH: '.github/workflows/ui-library.yml',
-          WORKFLOW_ID: '42',
-          REPOSITORY: 'example/repository',
-          HEAD_REPO: 'example/repository',
-          RUN_ID: '123',
-          EVENT: 'push',
-          CONCLUSION: 'success',
-          HEAD_SHA: head,
-          HEAD_BRANCH: 'main',
-          DEFAULT_BRANCH: 'main',
-          JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
-          GITHUB_OUTPUT: output
-        }
+    const result = spawnSync('bash', ['-e', '-c', mock + workflow().jobs.prepare!.steps[0]!.run!], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WORKFLOW_PATH: '.github/workflows/ui-library.yml',
+        WORKFLOW_ID: '42',
+        REPOSITORY: 'example/repository',
+        HEAD_REPO: 'example/repository',
+        RUN_ID: '123',
+        EVENT: 'push',
+        CONCLUSION: 'success',
+        HEAD_SHA: head,
+        HEAD_BRANCH: 'main',
+        DEFAULT_BRANCH: 'main',
+        JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
+        GITHUB_OUTPUT: output
       }
-    )
+    })
     const text = readFileSync(output, 'utf8')
     return { ...result, output: text, base: /^base=(.*)$/m.exec(text)?.[1] }
   }
@@ -739,8 +773,9 @@ describe('when selecting a main push range', () => {
       [
         '-e',
         '-c',
-        // This repository stands in for trusted/: the step's fresh copy of the guard is not needed here.
-        `git() { case " $* " in *' cat-file '*) return 0;; esac; command git "$@"; }\n` +
+        // This repository stands in for trusted/, which already holds the commits: neither the step's fresh copy
+        // of the guard nor its bundle fetch is needed here.
+        `git() { case " $* " in *' cat-file '*|*' fetch '*) return 0;; esac; command git "$@"; }\n` +
           `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` +
           scan
       ],
@@ -1010,5 +1045,70 @@ describe('when listing the LFS objects a scan will read', () => {
         .split('\n')
         .map((line) => JSON.parse(line))
     ).toEqual([{ oid: /sha256:([0-9a-f]+)/.exec(pointer)![1], size: Buffer.byteLength('listed') }])
+  })
+})
+
+// The key scan job gets the prefetched objects as downloaded data, outside the checkout's own store.
+describe('when the LFS objects come from a separate store', () => {
+  // Inside .git only so that commit's git add leaves it out; it is not the checkout's own store.
+  const store = () => path.join(root, '.git/downloaded-lfs')
+  async function putObject(directory: string, content: string, stored = content) {
+    const oid = createHash('sha256').update(content).digest('hex')
+    const file = path.join(directory, oid.slice(0, 2), oid.slice(2, 4), oid)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, stored)
+    return `${POINTER_PREFIX}${oid}\nsize ${Buffer.byteLength(content)}\n`
+  }
+  const run = (...args: string[]) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, 'key-guard.mjs'),
+        '--root',
+        root,
+        '--range',
+        'base..HEAD',
+        '--no-worktree',
+        ...args
+      ],
+      { encoding: 'utf8', env: { ...process.env, FIGMA_FILE_KEY: FAKE_KEY } }
+    )
+
+  it('should read a pointer payload from --lfs-store and find the key in it', async () => {
+    await put('apps/sites/public/leak.bin', await putObject(store(), `x ${FAKE_KEY} x`))
+    commit('pointer stored elsewhere')
+    const result = run('--lfs-store', store())
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain(`FAIL key ${short('HEAD')}:apps/sites/public/leak.bin`)
+    expect(result.stdout).not.toContain(FAKE_KEY)
+  })
+
+  it('should ignore the checkout store when --lfs-store names another one', async () => {
+    const pointer = await storeObject(FAKE_KEY)
+    await put('apps/sites/public/local.bin', pointer)
+    commit('pointer stored only in the checkout')
+    const result = run('--lfs-store', store())
+    expect(result.stdout).toContain(`FAIL lfs ${short('HEAD')}:apps/sites/public/local.bin`)
+    expect(result.stdout).not.toContain('FAIL key')
+  })
+
+  it('should reject an object in --lfs-store whose bytes do not match its pointer', async () => {
+    await put('apps/sites/public/swapped.bin', await putObject(store(), FAKE_KEY, 'clean bytes'))
+    commit('swapped object')
+    const result = run('--lfs-store', store())
+    expect(result.stdout).toContain(`FAIL lfs ${short('HEAD')}:apps/sites/public/swapped.bin`)
+    expect(result.status).toBe(1)
+  })
+
+  it('should fail with no directory after --lfs-store', () => {
+    const result = run('--lfs-store')
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('--lfs-store takes a directory')
+  })
+
+  it('should not take the next option as the --lfs-store directory', () => {
+    const result = run('--lfs-store', '--range', 'HEAD')
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('--lfs-store takes a directory')
   })
 })

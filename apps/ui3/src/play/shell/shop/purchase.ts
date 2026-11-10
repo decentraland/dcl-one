@@ -16,9 +16,9 @@
 import type { AuthIdentity as SignerIdentity } from '../../../data/auth/identity'
 import { fetchProfile } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { createShopClient, type ShopClient } from '../../../shop/api/shop'
+import { createShopClient, type ShopClient } from '@shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
-import { type ShopSigner } from '../../../shop/api/signer'
+import { type ShopSigner } from '@shop/api/signer'
 import { partitionCart, type CartGroup } from '@shop/cart/partition'
 import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
@@ -26,13 +26,14 @@ import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../sh
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
+import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
-import { fetchShopListingForItem } from '../../../shop/detail/api'
+import { fetchShopListingForItem } from '@shop/detail/api'
 import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
-import { fetchBannedNames } from '../../../shop/names/api'
-import { checkNameAvailability } from '../../../shop/names/names'
-import { quoteNameCredits } from '../../../shop/names/offer'
+import { rpcReader } from '../../../shop/land/evm'
+import { readBannedNames } from '../../../shop/names/reads'
+import { checkNameAvailability } from '@shop/names/name'
+import { quoteNameCredits } from '@shop/names/api'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '@shop/model/address'
@@ -290,10 +291,11 @@ const LIVE: ShellShopServices = {
     return 'quoted' in quote ? quote.quoted : null
   },
   nameStanding: async (name) => {
-    const banned = await fetchBannedNames({ signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS) })
+    const banned = await readBannedNames(AbortSignal.timeout(NAME_READ_TIMEOUT_MS))
     if (banned.some((b) => b.toLowerCase() === name.toLowerCase())) return 'banned'
     // On the chain the gate checked (namesModeFor), never another the land override names.
-    return (await checkNameAvailability(name, { signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS), chainId: ethereumChainId() })) === 'available' ? 'available' : 'taken'
+    const chainId = ethereumChainId()
+    return (await checkNameAvailability(name, { signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS), reader: rpcReader(chainId), chainId })) === 'available' ? 'available' : 'taken'
   },
   namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() })
 }

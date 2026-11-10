@@ -1,37 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "3bb2c85dc8a49465f0bfc4cee02276047f323b2a9e90065cf33fda437eb66ad2",
+  "lockHash": "9557e6d41df53bbc10ba2121cb501dcc6ad97ab6904c50a7ff0027aaff5cb036",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "7e1bf46247d289dadbe6ff4e38fef602eafa35b6",
+  "figmaTree": "e1fc092fc76117efee9e2362cc7e45e197b33f9a",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
+      "detail": "Verified existing 544 cache files against the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "439 tooling files and 39 public foundation files match pinned bytes and origins"
+      "detail": "450 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
-      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
+      "detail": "Fresh check passes with 1 public NavBar mapping and no diagnostics"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components and 561 variants"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
+      "detail": "Public consumer4, foundations4 and gallery19 bounds pass with accepted bridge limitations unchanged"
     },
     "install": {
       "result": "pass",
-      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
+      "detail": "Private11 component outputs reproduced merged metadata with repeat no-op and prior39 foundations unchanged"
     }
   }
 }

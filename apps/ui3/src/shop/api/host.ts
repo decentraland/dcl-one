@@ -1,4 +1,4 @@
-// The browser host's wiring for the Shop API. The client (api/client.ts, api/shop.ts) reads no configuration and
+// The browser host's wiring for the Shop API. The client (@shop/api/client, @shop/api/shop) reads no configuration and
 // reaches for no network or identity of its own; this module gives it each of them:
 // - where the API is: the configured mode and base, in their precedence, the base normalized (data/catalyst);
 // - how a request travels: fetch, or the Explorer's engine bridge;
@@ -8,10 +8,10 @@
 import type { AuthIdentity } from "../../data/auth/identity";
 import { signAuthChain } from "../../data/auth/signerCore";
 import { catalystBase, signedFetch } from "../../data/catalyst/client";
-import type { ShopPeers, UrnNetwork } from "../detail/lib/urn";
-import type { ShopApiMode, ShopApiOptions } from "./client";
-import { createShopClient, type ShopClient } from "./shop";
-import type { ShopSigner, ShopTransport } from "./signer";
+import type { ShopPeers, UrnNetwork } from "@shop/detail/lib/urn";
+import type { ShopApiMode, ShopApiOptions } from "@shop/api/client";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { ShopSigner, ShopTransport } from "@shop/api/signer";
 
 type ShopWindow = Window &
   typeof globalThis & { __SHOP_API_MODE__?: string; __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };

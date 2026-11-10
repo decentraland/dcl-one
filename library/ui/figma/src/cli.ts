@@ -24,7 +24,7 @@ const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
-  dcl-figma install foundations [--source snapshot] [--out <private-stage>]
+  dcl-figma install foundations|components [--source snapshot] [--out <private-stage>]
   dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]

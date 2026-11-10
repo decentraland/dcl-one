@@ -359,7 +359,9 @@ function parseArgs(argv) {
     trees: [],
     artifacts: [],
     allowlistRev: undefined,
+    revision: undefined,
     root: undefined,
+    lfsStore: undefined,
     lfsObjects: false
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -376,7 +378,17 @@ function parseArgs(argv) {
       if (colon <= 0 || colon === value.length - 1) throw new Error('--tree takes <rev>:<path>')
       options.trees.push({ rev: value.slice(0, colon), prefix: value.slice(colon + 1) })
     } else if (arg === '--allowlist-from') options.allowlistRev = argv[++i]
-    else if (arg === '--lfs-objects') options.lfsObjects = true
+    else if (arg === '--revision') {
+      // The commit this copy of the guard was read from, when it runs outside a checkout of that commit.
+      options.revision = argv[++i]
+      if (!options.revision || options.revision.startsWith('-'))
+        throw new Error('--revision takes a commit')
+    } else if (arg === '--lfs-store') {
+      // A directory of LFS objects laid out like .git/lfs/objects, read instead of the root's own store.
+      options.lfsStore = argv[++i]
+      if (!options.lfsStore || options.lfsStore.startsWith('-'))
+        throw new Error('--lfs-store takes a directory')
+    } else if (arg === '--lfs-objects') options.lfsObjects = true
     else throw new Error(`unknown argument: ${arg}`)
   }
   return options
@@ -392,6 +404,7 @@ export function runGuard({
   artifacts = [],
   artifactLimits,
   allowlistRev,
+  revision = 'HEAD',
   key
 }) {
   const allowlist = loadAllowlist(root, allowlistRev)
@@ -404,7 +417,8 @@ export function runGuard({
     })
   }
   const lines = []
-  lines.push(`figma-key-guard at ${git(root, ['rev-parse', 'HEAD']).toString().trim()}`)
+  const at = git(root, ['rev-parse', '--verify', `${revision}^{commit}`])
+  lines.push(`figma-key-guard at ${at.toString().trim()}`)
   lines.push(
     `check url: ran (allowlisted public file ids in ${allowlist.size} paths${allowlistRev ? ` from ${allowlistRev}` : ''})`
   )
@@ -441,6 +455,7 @@ export function main(argv) {
     const options = parseArgs(argv)
     const root =
       options.root ?? git(process.cwd(), ['rev-parse', '--show-toplevel']).toString().trim()
+    if (options.lfsStore) lfsStores.set(root, resolve(options.lfsStore))
     // Lists, one JSON object per line, the LFS objects the same scan would read; scans nothing.
     if (options.lfsObjects) {
       const objects = listLfsObjects({ root, range: options.range, trees: options.trees })

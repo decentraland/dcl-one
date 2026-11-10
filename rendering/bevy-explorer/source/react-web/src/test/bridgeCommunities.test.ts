@@ -1,15 +1,19 @@
-// The bridge's community places: the form's picker (the user's own places, the community's linked
+// The bridge's communities: the form's place picker (the user's own places, the community's linked
 // ones and the ids the places service did not return), the card's places with the user's own marked,
-// and the card's place delete.
+// the card's place delete, the member menu's actions, and the browse grid's pages.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene, SceneToPage } from '../engine/protocol'
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
-const { signed, getCompactProfiles } = vi.hoisted(() => ({ signed: vi.fn(), getCompactProfiles: vi.fn() }))
+const { signed, getCompactProfiles, serviceBase } = vi.hoisted(() => ({
+  signed: vi.fn(),
+  getCompactProfiles: vi.fn(),
+  serviceBase: vi.fn(async (name: string) => `https://${name}.example`)
+}))
 vi.mock('../../bridge-scene/src/http', () => ({
-  serviceBase: async (name: string) => `https://${name}.example`,
+  serviceBase,
   signed,
   getJson: vi.fn(async () => undefined),
   signedForm: vi.fn(),
@@ -182,5 +186,188 @@ describe('bridge community card places', () => {
     await h.req({ kind: 'removeCommunityPlace', id: 'c1', placeId: 'land-1' })
     expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'removePlace', message: 'HTTP 403' })
     expect(detail(h.sent)).toBeUndefined()
+  })
+})
+
+// The card's member menu, as unity-explorer's MembersListController: the role PATCH (moderator,
+// member, owner), the member DELETE and the ban POST, then the card's members read again.
+describe('bridge community member actions', () => {
+  const member = 'https://socialApi.example/v1/communities/c1/members/0xm'
+  const members = 'https://socialApi.example/v2/communities/c1/members?limit=100'
+
+  it.each([
+    ['promote', 'PATCH', member, { role: 'moderator' }],
+    ['demote', 'PATCH', member, { role: 'member' }],
+    ['transfer', 'PATCH', member, { role: 'owner' }],
+    ['kick', 'DELETE', member, undefined],
+    ['ban', 'POST', `${member}/bans`, undefined]
+  ] as const)('%s sends %s and reads the members again', async (action, method, url, body) => {
+    serve({ [`GET ${members}`]: { results: [{ memberAddress: '0xm', role: 'moderator' }] } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    expect(signed).toHaveBeenCalledWith(url, method, ...(body != null ? [body] : []))
+    expect(detail(h.sent)?.members).toEqual([{ address: '0xm', name: '0xm', role: 'moderator', picture: undefined, hasClaimedName: false }])
+    expect(h.sent.some((s) => s.kind === 'communityActionFailed')).toBe(false)
+  })
+
+  it('reads the community again after a transfer, since the user is no longer its owner', async () => {
+    serve({ [`GET https://socialApi.example/v2/communities/c1`]: { id: 'c1', name: 'Builders', description: '', membersCount: 2, role: 'moderator' } })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'transfer' })
+    const card = h.sent.find((s) => s.kind === 'community')
+    expect(card?.kind === 'community' ? card.community.role : undefined).toBe('moderator')
+  })
+
+  it.each(['kick', 'ban'] as const)('reads the community again after a %s, for its member count', async (action) => {
+    serve({
+      [`GET https://socialApi.example/v2/communities/c1`]: { id: 'c1', name: 'Builders', description: '', membersCount: 1, role: 'owner' },
+      [`GET https://socialApi.example/v2/communities?onlyMemberOf=true&limit=100&offset=0`]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action })
+    const card = h.sent.find((s) => s.kind === 'community')
+    expect(card?.kind === 'community' ? card.community.membersCount : undefined).toBe(1)
+    expect(h.sent.some((s) => s.kind === 'communities')).toBe(true)
+  })
+
+  it('does not read the community again after a promote', async () => {
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'promote' })
+    expect(h.sent.some((s) => s.kind === 'community')).toBe(false)
+  })
+
+  it('says on the card when the service cannot be located', async () => {
+    serviceBase.mockRejectedValueOnce(new Error('no socialApi service'))
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'kick' })
+    expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'kick', message: 'no socialApi service' })
+  })
+
+  it('says on the card when the action fails, and reads nothing', async () => {
+    serve({ [`POST ${member}/bans`]: new Error('HTTP 401') })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c1', address: '0xm', action: 'ban' })
+    expect(h.sent).toContainEqual({ kind: 'communityActionFailed', id: 'c1', action: 'ban', message: 'HTTP 401' })
+    expect(detail(h.sent)).toBeUndefined()
+  })
+})
+
+describe('bridge community browse', () => {
+  const v2 = 'https://socialApi.example/v2/communities'
+  const memberOf = `GET ${v2}?onlyMemberOf=true&limit=100&offset=0`
+  const raw = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({ id, name: id, description: '', membersCount: 1, role: 'none', ...over })
+  const browsed = (sent: SceneToPage[]): Extract<SceneToPage, { kind: 'communityBrowse' }> => {
+    const m = sent.find((s) => s.kind === 'communityBrowse')
+    if (m?.kind !== 'communityBrowse') throw new Error('no browse page sent')
+    return m
+  }
+
+  it('reads a page of 20, the search on the server', async () => {
+    serve({ [`GET ${v2}?search=pix%20el&onlyMemberOf=false&offset=20&limit=20`]: { results: [raw('b1')], total: 21 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'browseCommunities', search: 'pix el', page: 2 })
+    expect(browsed(h.sent)).toMatchObject({ search: 'pix el', page: 2, total: 21, communities: [{ id: 'b1' }] })
+    expect(browsed(h.sent).failed).toBeUndefined()
+  })
+
+  it("names the first three of the user's friends in each community", async () => {
+    serve({ [`GET ${v2}?search=&onlyMemberOf=false&offset=0&limit=20`]: { results: [raw('b1', { friends: ['0xa', '0xb', '0xc', '0xd'] }), raw('b2')], total: 2 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'browseCommunities', search: '', page: 1 })
+    const [b1, b2] = browsed(h.sent).communities
+    expect(b1.friends).toEqual(['0xa', '0xb', '0xc'].map((a) => ({ address: a, name: a, hasClaimedName: false })))
+    expect(b2.friends).toBeUndefined()
+  })
+
+  it('answers a failed read as failed, so the grid stops loading', async () => {
+    serve({ [`GET ${v2}?search=&onlyMemberOf=false&offset=0&limit=20`]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'browseCommunities', search: '', page: 1 })
+    expect(browsed(h.sent)).toEqual({ kind: 'communityBrowse', search: '', page: 1, communities: [], total: 0, failed: true })
+  })
+
+  it('takes an answer without a results list for a failed read', async () => {
+    serve({ [`GET ${v2}?search=&onlyMemberOf=false&offset=0&limit=20`]: { total: 3 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'browseCommunities', search: '', page: 1 })
+    expect(browsed(h.sent).failed).toBe(true)
+  })
+
+  it('My Communities is every membership, not a browse page', async () => {
+    serve({ [memberOf]: { results: [raw('m1', { role: 'member' })], total: 1 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunities' })
+    expect(h.sent).toEqual([expect.objectContaining({ kind: 'communities', communities: [expect.objectContaining({ id: 'm1' })] })])
+    expect(signed.mock.calls.map((c) => c[0] as string).some((u) => u.includes('onlyMemberOf=false'))).toBe(false)
+  })
+
+  it('a join sends the community it changed, then My Communities and the channels from one read', async () => {
+    serve({
+      [`GET ${v2}/c1`]: raw('c1', { role: 'member', membersCount: 2 }),
+      [memberOf]: { results: [raw('c1', { role: 'member' })], total: 1 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'joinCommunity', id: 'c1' })
+    expect(signed).toHaveBeenCalledWith('https://socialApi.example/v1/communities/c1/members', 'POST')
+    expect(h.sent.map((s) => s.kind)).toEqual(['community', 'communities', 'communityChannels'])
+    expect(signed.mock.calls.filter((c) => c[0] === memberOf.slice(4))).toHaveLength(1)
+  })
+
+  const requests = 'GET https://socialApi.example/v2/members/0xme/requests?type=request_to_join'
+  const sentCommunity = (sent: SceneToPage[]): Extract<SceneToPage, { kind: 'community' }>['community'] | undefined => {
+    const m = sent.filter((s) => s.kind === 'community').at(-1)
+    return m?.kind === 'community' ? m.community : undefined
+  }
+
+  it("marks the communities the user asked to join, from the user's own join requests", async () => {
+    serve({
+      [`GET ${v2}?search=&onlyMemberOf=false&offset=0&limit=20`]: { results: [raw('b1', { privacy: 'private' }), raw('b2', { privacy: 'private' })], total: 2 },
+      [requests]: { results: [{ id: 'r1', communityId: 'B1', type: 'request_to_join', status: 'pending' }], total: 1 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'browseCommunities', search: '', page: 1 })
+    const [b1, b2] = browsed(h.sent).communities
+    expect(b1.pendingRequestId).toBe('r1')
+    expect(b2.pendingRequestId).toBeUndefined()
+  })
+
+  it("keeps the request POST's id so the card can cancel it, and forgets it on cancel", async () => {
+    serve({
+      [`POST https://socialApi.example/v1/communities/p1/requests`]: { id: 'r9' },
+      [`PATCH https://socialApi.example/v1/communities/p1/requests/r9`]: {},
+      [`GET ${v2}/p1`]: raw('p1', { privacy: 'private' }),
+      [memberOf]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'requestToJoinCommunity', id: 'p1' })
+    expect(sentCommunity(h.sent)?.pendingRequestId).toBe('r9')
+    await h.req({ kind: 'cancelJoinRequest', id: 'p1', requestId: 'r9' })
+    expect(signed).toHaveBeenCalledWith('https://socialApi.example/v1/communities/p1/requests/r9', 'PATCH', { intention: 'cancelled' })
+    expect(sentCommunity(h.sent)?.pendingRequestId).toBeUndefined()
+  })
+
+  it("reads the user's join requests when a closed community's card opens", async () => {
+    serve({
+      [`GET ${v2}/p2`]: raw('p2', { privacy: 'private' }),
+      [requests]: { results: [{ id: 'r2', communityId: 'p2' }], total: 1 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunity', id: 'p2' })
+    expect(sentCommunity(h.sent)?.pendingRequestId).toBe('r2')
+  })
+
+  it('a re-read without the friends list leaves the card its friends', async () => {
+    serve({ [`GET ${v2}/c1`]: raw('c1', { role: 'member' }), [memberOf]: { results: [], total: 0 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'joinCommunity', id: 'c1' })
+    expect(sentCommunity(h.sent)).not.toHaveProperty('friends', [])
+    expect(sentCommunity(h.sent)?.friends).toBeUndefined()
+  })
+
+  it('a failed member-of read after a write sends neither list', async () => {
+    serve({ [`GET ${v2}/c1`]: raw('c1', { role: 'member' }), [memberOf]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'joinCommunity', id: 'c1' })
+    expect(h.sent.map((s) => s.kind)).toEqual(['community'])
   })
 })

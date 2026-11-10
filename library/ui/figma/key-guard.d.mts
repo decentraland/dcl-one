@@ -9,6 +9,7 @@ type GuardOptions = {
   artifacts?: string[]
   artifactLimits?: ArtifactLimits
   allowlistRev?: string
+  revision?: string
   key?: string
 }
 export declare const URL_PATTERN: RegExp

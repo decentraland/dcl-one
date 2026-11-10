@@ -6,9 +6,9 @@
 // own hooks keep it current (a money read such as a listing is refetched on mount, never trusted).
 
 import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
-import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@ui/shop/discovery/api";
-import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@ui/shop/detail/api";
-import { LAND_NETWORKS } from "@ui/shop/land/contracts";
+import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
+import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";

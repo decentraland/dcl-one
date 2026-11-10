@@ -4,7 +4,7 @@
 // Fail-soft: null means the preview plays no emote.
 
 import { shopPeers } from "../../api/host";
-import { peerUrlFor } from "./urn";
+import { peerUrlFor } from "@shop/detail/lib/urn";
 
 type ActiveEntity = {
   content?: { file: string; hash: string }[];

@@ -18,9 +18,9 @@ import {
   type FlagsTransport,
   type RemoteFlag,
   type RemoteFlagsAnswer,
-} from "./rolloutFlags";
+} from "@shop/discovery/lib/rolloutFlags";
 
-export { parseRemoteFlags, REMOTE_FLAG, type RemoteFlag, type RemoteFlagsAnswer } from "./rolloutFlags";
+export { parseRemoteFlags, REMOTE_FLAG, type RemoteFlag, type RemoteFlagsAnswer } from "@shop/discovery/lib/rolloutFlags";
 
 const TTL_MS = 60_000;
 const TIMEOUT_MS = 3_000;

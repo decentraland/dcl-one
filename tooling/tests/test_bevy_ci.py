@@ -1,5 +1,7 @@
 """Engine selection uses committed inputs; publication requires explicit producers."""
 import importlib.util
+import fnmatch
+import re
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, SHARED
 
 SPEC = importlib.util.spec_from_file_location('bevy_ci', Path(__file__).parents[1] / 'bevy-ci.py')
 ci = importlib.util.module_from_spec(SPEC)
@@ -24,6 +27,49 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_nix_play_tooling_dependencies_are_watched_by_image_selection(self):
+        contract = (ci.ROOT / 'infra/packages/play.nix').read_text()
+        paths = set(re.findall(r'/tooling/[a-zA-Z0-9_-]+\.py', contract))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path.lstrip('/'), pattern) for pattern in ci.IMAGES_INPUTS))
+
+    def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+            block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
+            patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
+            for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                         'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
+                with self.subTest(event=event, path=name):
+                    self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns))
+        self.assertIn("-p 'test_hud_shared_inputs.py' -v", workflow)
+
+    def test_pure_nix_hud_corpus_runs_after_nix_install_and_before_heavy_builds(self):
+        workflow = (ci.ROOT / '.github/workflows/apis-sites-images.yml').read_text()
+        install = workflow.index('cachix/install-nix-action@')
+        corpus = workflow.index('run: python3 tooling/tests/check_hud_manifest_nix.py')
+        build = workflow.index('run: nix build')
+        self.assertLess(install, corpus)
+        self.assertLess(corpus, build)
+        for name in ('tooling/tests/check_hud_manifest_nix.py', 'tooling/tests/hud_manifest_invalid_cases.json',
+                     'tooling/tests/hud_manifest_fixture.py', 'infra/packages/hud-shared-inputs.nix',
+                     'infra/packages/hud-shared-inputs-corpus.nix'):
+            self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in ci.IMAGES_INPUTS), name)
+
+    def test_generator_suite_is_a_ci_gate_after_build_and_before_artifact_upload(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        job = workflow.split('  build-deploy-web:', 1)[1].split('  headless-packages:', 1)[0]
+        build = job.index('run: python3 ../../../apps/bevy-explorer/build-web.py')
+        tests = job.index('run: npm run test:shared-inputs --prefix react-web')
+        upload = job.index('- name: Upload the complete web app')
+        self.assertLess(build, tests)
+        self.assertLess(tests, upload)
+        test_step = job[job.rfind('- name:', 0, tests):job.index('- name:', tests)]
+        self.assertNotIn('continue-on-error', test_step)
+        self.assertNotIn('if:', test_step)
+
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
@@ -94,9 +140,28 @@ class SelectionTest(unittest.TestCase):
         path.write_text(value)
 
     def commit(self):
+        seal(self.root)
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture', '--allow-empty')
         return self.git('rev-parse', 'HEAD')
+
+    def test_reader_changes_select_web_but_test_only_changes_do_not_build(self):
+        for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                     'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'reader input')
+                result = ci.select(before, self.commit())
+                self.assertEqual(result['web'], name == 'tooling/hud_shared_inputs.py')
+                self.assertFalse(any(result[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
+
+    def test_shared_reader_only_change_selects_images_without_engine_lanes(self):
+        self.write('tooling/hud_shared_inputs.py', 'changed image verification dependency')
+        head = self.commit()
+        self.assertTrue(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+        selected = ci.select(self.base, head)
+        self.assertTrue(selected['web'])
+        self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
     def test_sites_hud_review_does_not_select_engine_builds(self):
         self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))
@@ -196,13 +261,23 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web'})
 
     def test_shared_hud_sources_validate_web_only(self):
-        for name in (ci.HUD_SHARED[0] + 'model/money.ts', ci.HUD_SHARED[1] + 'credits/BalanceOut.ts'):
+        for name in SHARED:
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
+
+    def test_library_ui_outside_the_hud_entries_selects_nothing(self):
+        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
+                     'library/ui/components/NavBar/NavBar.tsx',
+                     'library/ui/components/runtime/figma-module-runtime.module.css', 'library/ui/upstream.lock.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, set())
 
     def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
         for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',

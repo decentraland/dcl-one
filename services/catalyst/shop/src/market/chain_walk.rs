@@ -280,17 +280,20 @@ pub async fn analyze_if_stale(
     Ok(stale)
 }
 
-pub async fn cursor(
-    pool: &PgPool,
+pub async fn cursor<'e, E>(
+    executor: E,
     indexer: &str,
     net: ChainNet,
-) -> Result<Option<Cursor>, sqlx::Error> {
+) -> Result<Option<Cursor>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CURSOR_COLUMNS} FROM shop.chain_cursor WHERE indexer = $1 AND network = $2"
     )))
     .bind(indexer)
     .bind(net.db_name())
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
 }
 

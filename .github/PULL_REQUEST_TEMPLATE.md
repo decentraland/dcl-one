@@ -34,5 +34,9 @@ not run. -->
 ## Code Review Reference
 
 <!-- Follow repository-root AGENTS.md and services/catalyst/docs/comms/README.md.
+Apply rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose:
+preserve named client facts. Porting PRs follow the source-attribution workflow in
+rendering/bevy-explorer/docs/guidelines/porting-from-unity.md; keep other implementation
+provenance in private reports.
 Verify acceptance claims against current readiness evidence. Keep private links,
 findings and credentials out of the public PR. -->
