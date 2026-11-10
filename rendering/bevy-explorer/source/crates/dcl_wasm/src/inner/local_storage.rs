@@ -42,7 +42,8 @@ const STORAGE_FILE: &str = "data";
 // player signed in: the scene's own directory is kept until the sign-in, so the player's file can
 // still be opened. Until then the scene can reach its other players' files, and no other scene's.
 thread_local! {
-    static FILE: RefCell<Option<FileSystemFileHandle>> = const { RefCell::new(None) };
+    // with the player it was opened for: it is theirs for the life of the scene
+    static FILE: RefCell<Option<(String, FileSystemFileHandle)>> = const { RefCell::new(None) };
     static SCENE_DIR: RefCell<Option<FileSystemDirectoryHandle>> = const { RefCell::new(None) };
 }
 
@@ -93,7 +94,8 @@ async fn read(handle: &FileSystemFileHandle) -> Result<Option<String>, JsValue> 
 }
 
 async fn store(data: &str) -> Result<(), JsValue> {
-    let Some(handle) = FILE.with(|file| file.borrow().clone()) else {
+    let Some(handle) = FILE.with(|file| file.borrow().as_ref().map(|(_, handle)| handle.clone()))
+    else {
         return Err(JsValue::from_str("scene storage unavailable"));
     };
 
@@ -132,7 +134,7 @@ async fn load(
         Err(e) => warn!("failed to read storage: {e:?}"),
     }
 
-    FILE.with(|slot| *slot.borrow_mut() = Some(file));
+    FILE.with(|slot| *slot.borrow_mut() = Some((address, file)));
 }
 
 pub async fn init(state: &WorkerContext) {
@@ -182,18 +184,28 @@ fn write(state: &WorkerContext) {
 
 fn address(state: &WorkerContext) -> Result<String, WasmError> {
     let address = storage_address(&*state.state.borrow())?;
-    if FILE.with(|file| file.borrow().is_none()) {
-        // the player signed in after the scene started: open their file, for a later call
-        if let Some(scene_dir) = SCENE_DIR.with(|slot| slot.borrow_mut().take()) {
-            spawn_local(load(Rc::downgrade(&state.state), scene_dir, address));
+    let open_for_player =
+        FILE.with(|file| file.borrow().as_ref().map(|(player, _)| *player == address));
+    match open_for_player {
+        Some(true) => {
+            debug!("local storage address: {address:?}");
+            Ok(address)
         }
-        return Err(anyhow::anyhow!(
-            "localStorage is not available: the player's storage is not open"
+        Some(false) => Err(anyhow::anyhow!(
+            "localStorage is not available: it is open for another player"
         )
-        .into());
+        .into()),
+        None => {
+            // the player signed in after the scene started: open their file, for a later call
+            if let Some(scene_dir) = SCENE_DIR.with(|slot| slot.borrow_mut().take()) {
+                spawn_local(load(Rc::downgrade(&state.state), scene_dir, address));
+            }
+            Err(
+                anyhow::anyhow!("localStorage is not available: the player's storage is not open")
+                    .into(),
+            )
+        }
     }
-    debug!("local storage address: {address:?}");
-    Ok(address)
 }
 
 fn strip_prefix(key: &mut String) {
