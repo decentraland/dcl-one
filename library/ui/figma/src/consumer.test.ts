@@ -207,7 +207,16 @@ describe('figma from a consuming project', () => {
       expect(JSON.parse(stdout)).toMatchObject({
         ok: true,
         captureChecked: false,
-        warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
+        warnings: [expect.objectContaining({ code: 'capture-unchecked', audience: 'maintainer' })]
+      })
+    }, 30_000)
+
+    it('should fail without a mapping source instead of passing an empty check', async () => {
+      await expect(
+        cli(['check-mappings', '--mapping-only', '--mapping-root', tmpdir()])
+      ).rejects.toMatchObject({
+        code: 1,
+        stdout: expect.stringContaining('mapping-root-not-configured')
       })
     }, 30_000)
   })

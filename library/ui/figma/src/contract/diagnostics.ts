@@ -41,6 +41,7 @@ const DIAGNOSTICS = {
     action: {
       name: 'No captured component has this name. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
       node: 'The node is not a component of the captured library. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
+      'stale-mapping': `The node is not in the capture, but a mapping still targets it (details.files): a stale mapping, which is a library defect. Do not build a replacement. ${REPORT}`,
       'mapping-node':
         'A mapping targets a node that is not in the capture. Point the mapping at the captured component set, or retire it.'
     },
@@ -76,7 +77,7 @@ const DIAGNOSTICS = {
   'variant-unsupported': {
     severity: 'error',
     audience: 'consumer',
-    action: `The mapping does not cover this variant value. Do not pick the closest value. ${REPORT}`
+    action: `The mapping does not cover this variant value, or the value is not one the property takes (details.supported). Do not pick the closest value. ${REPORT}`
   },
   'variant-not-in-figma': {
     severity: 'error',
@@ -107,7 +108,7 @@ const DIAGNOSTICS = {
     severity: 'warning',
     audience: 'consumer',
     action:
-      'The mapping ignores this Figma property. Do not emulate it in the app; mention it when you report the result.'
+      'The mapping ignores this Figma property or text layer (a misspelt name lands here too). Do not emulate it in the app; check the spelling and mention it when you report the result.'
   },
   'figma-drift': {
     severity: 'warning',
@@ -126,6 +127,12 @@ const DIAGNOSTICS = {
     audience: 'consumer',
     action:
       'Identity and variants were checked against the mapping only, not against a capture. Repeat this when you report the result; differences from the live design may come from capture age.'
+  },
+  'capture-unchecked': {
+    severity: 'warning',
+    audience: 'maintainer',
+    action:
+      'check-mappings ran without a capture, so a mapping that drifted from the design or points at a deleted node still passes. Run it with the capture (pnpm figma fetch-source) before relying on the result.'
   },
   'superseded-by-sync': {
     severity: 'warning',

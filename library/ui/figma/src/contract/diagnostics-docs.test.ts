@@ -86,6 +86,15 @@ describe('the diagnostic registry', () => {
     expect(() => diagnostic('contract-incompatible', 'x', { reason: 'library-versoin' })).toThrow()
   })
 
+  it('should list only registered reasons as maintainer reasons', () => {
+    for (const [code, spec] of registry)
+      for (const reason of spec.maintainerReasons ?? [])
+        expect([
+          code,
+          typeof spec.action === 'object' && Object.hasOwn(spec.action, reason)
+        ]).toEqual([code, true])
+  })
+
   it('should give a reason that only check-mappings emits the maintainer audience', () => {
     expect(diagnostic('identity-ambiguous', 'x', { reason: 'duplicate-id' }).audience).toBe(
       'maintainer'
