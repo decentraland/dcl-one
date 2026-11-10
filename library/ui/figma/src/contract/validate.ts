@@ -13,7 +13,7 @@ type ValidationContext = {
 }
 
 const incompatible = (reason: string, message: string, details: Record<string, unknown> = {}) =>
-  diagnostic('contract-incompatible', 'error', message, { reason, ...details })
+  diagnostic('contract-incompatible', message, { reason, ...details })
 
 function importSpecifier(mapping: ParsedMapping): string | undefined {
   return mapping.imports
@@ -89,7 +89,6 @@ async function validateAgainstLibrary(
         found.push(
           diagnostic(
             'export-unverifiable',
-            'warning',
             `${rel}: the package entry uses "export *", ${component} cannot be confirmed as a public export statically`
           )
         )
@@ -134,7 +133,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
         found.push(
           diagnostic(
             'figma-drift',
-            'warning',
             `${rel}: Figma options of "${local.figmaProperty}" not covered by the mapping: ${uncovered.join(', ')}`,
             { property: local.figmaProperty, uncovered }
           )
@@ -144,7 +142,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
         found.push(
           diagnostic(
             'figma-drift',
-            'warning',
             `${rel}: mapping lists options of "${local.figmaProperty}" that Figma no longer has: ${stale.join(', ')}`,
             { property: local.figmaProperty, stale }
           )
@@ -159,7 +156,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
       found.push(
         diagnostic(
           'figma-drift',
-          'warning',
           `${rel}: declared state "${state}" is not a Figma property of "${set.name}"`,
           {
             state
@@ -174,7 +170,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
       found.push(
         diagnostic(
           'unmapped-figma-property',
-          'warning',
           `${rel} does not read Figma property "${name}" (${property.type}). Map it or declare it in "// states=".`,
           { property: name, type: property.type }
         )

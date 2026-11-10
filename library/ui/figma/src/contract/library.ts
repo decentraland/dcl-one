@@ -67,5 +67,27 @@ async function findMappingFiles(mappingRoot: string): Promise<string[]> {
   return found.sort()
 }
 
-export { findMappingFiles, loadLibrary }
+const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
+
+// The capture revision the library's tracked lock pins, read without touching the capture itself. A library with
+// no lock has none; a lock that exists but pins no full capture revision is a broken checkout and throws.
+async function readCaptureRevision(rootDir: string): Promise<string | undefined> {
+  let text: string
+  try {
+    text = await readFile(path.join(rootDir, 'upstream.lock.json'), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  const lock = JSON.parse(text) as {
+    sources?: { repository?: unknown; snapshot?: { revision?: unknown } }[]
+  }
+  const revision = lock.sources?.find((source) => source.repository === FDS_REPOSITORY)?.snapshot
+    ?.revision
+  if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/.test(revision))
+    throw new Error('upstream.lock.json pins no full figma-design-system capture revision')
+  return revision
+}
+
+export { findMappingFiles, loadLibrary, readCaptureRevision }
 export type { LibraryInfo }

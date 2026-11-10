@@ -29,10 +29,24 @@ const USAGE = `Usage:
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
-  dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--mapping-root <dir>] [--config <file>]
-  dcl-figma check-mappings [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--text "Layer=Value"]... [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
+
+// Repeated "Key=Value" flags. A pair without "=", an empty key or a repeated key is refused, never guessed.
+function pairs(flag: string, entries: string[] | undefined): Record<string, string> | undefined {
+  if (!entries?.length) return undefined
+  const result: Record<string, string> = {}
+  for (const entry of entries) {
+    const split = entry.indexOf('=')
+    const key = split > 0 ? entry.slice(0, split) : ''
+    if (!key) throw new Error(`--${flag} takes "Name=Value", got "${entry}"`)
+    if (Object.hasOwn(result, key)) throw new Error(`--${flag} names "${key}" twice`)
+    result[key] = entry.slice(split + 1)
+  }
+  return result
+}
 
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 
@@ -75,12 +89,17 @@ async function main(argv: string[]): Promise<number> {
       'node-id': { type: 'string' },
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
+      text: { type: 'string', multiple: true },
+      'mapping-only': { type: 'boolean' },
       'mapping-root': { type: 'string' },
       'library-range': { type: 'string' },
       config: { type: 'string' }
     }
   })
   const [command] = positionals
+  if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
+    throw new Error('--mapping-only applies only to resolve and check-mappings')
+  if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
 
   if (command === 'install') {
     if (positionals.length !== 2) throw new Error(USAGE)
@@ -105,7 +124,8 @@ async function main(argv: string[]): Promise<number> {
       env: process.env,
       configPath: values.config,
       mappingRoot: values['mapping-root'],
-      libraryRange: values['library-range']
+      libraryRange: values['library-range'],
+      mappingOnly: values['mapping-only']
     })
     const context = await runtime.resolveContext()
     if (command === 'check-mappings') {
@@ -114,16 +134,11 @@ async function main(argv: string[]): Promise<number> {
       print({ ok: failing.length === 0, checked: results.length, results })
       return failing.length === 0 ? 0 : 1
     }
-    const variantProperties = Object.fromEntries(
-      (values.variant ?? []).map((pair) => {
-        const [key, ...rest] = pair.split('=')
-        return [key!, rest.join('=')]
-      })
-    )
     const result = await resolveComponent(context, {
       nodeId: values['node-id'],
       name: values.name,
-      variantProperties
+      variantProperties: pairs('variant', values.variant),
+      texts: pairs('text', values.text)
     })
     print(result)
     return result.ok ? 0 : 1

@@ -2,6 +2,7 @@ import { libraryComponentEntries } from './guard/library.js'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createApp, type App } from './app.js'
 import { resolveContractConfig } from './contract/config.js'
 import { buildFigmaIndex } from './contract/figma-index.js'
@@ -16,10 +17,12 @@ type RuntimeOptions = {
   configPath?: string
   mappingRoot?: string
   libraryRange?: string
+  // Resolve against the mappings only: no Figma config is loaded and the capture cache is never read.
+  mappingOnly?: boolean
 }
 
 type Runtime = {
-  // Undefined in resolve-only mode: a consuming project that has no Figma config of its own.
+  // Undefined in resolve-only mode (no Figma config, or --mapping-only).
   app?: App
   resolveContext(): Promise<ResolveContext>
 }
@@ -54,7 +57,30 @@ async function syncedComponents(app: App): Promise<Map<string, string[]>> {
   return supersessionCandidates(specs, app.config.promotion?.include, record)
 }
 
+// The library's own mapping directory, the default mapping root under --mapping-only.
+const LIBRARY_MAPPING_ROOT = fileURLToPath(new URL('../../components', import.meta.url))
+
+function mappingOnlyRuntime(options: RuntimeOptions): Runtime {
+  if (options.configPath)
+    throw new Error('--mapping-only reads no Figma config; drop --config or drop --mapping-only')
+  return {
+    async resolveContext() {
+      const contract = resolveContractConfig({
+        cwd: options.cwd,
+        args: { mappingRoot: options.mappingRoot, libraryRange: options.libraryRange },
+        env: options.env
+      })
+      return {
+        mappingRoot: contract.mappingRoot ?? LIBRARY_MAPPING_ROOT,
+        libraryRange: contract.libraryRange,
+        figmaSets: []
+      }
+    }
+  }
+}
+
 async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
+  if (options.mappingOnly) return mappingOnlyRuntime(options)
   const { cwd, env } = options
   const configFile = path.resolve(
     cwd,
@@ -82,8 +108,8 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
           : undefined
       })
       let figmaSets: ResolveContext['figmaSets'] = []
-      // Only a missing Figma configuration means resolve-only mode: a configured capture that fails to load
-      // (malformed, or an unmaterialized LFS pointer) is a broken checkout and fails closed.
+      // Without --mapping-only, only a missing Figma configuration means resolve-only mode: a configured capture
+      // that fails to load (malformed, or an unmaterialized LFS pointer) is a broken checkout and fails closed.
       if (app) figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
       return {
         mappingRoot: contract.mappingRoot,
@@ -95,5 +121,5 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
   }
 }
 
-export { createRuntime, supersessionCandidates }
+export { LIBRARY_MAPPING_ROOT, createRuntime, supersessionCandidates }
 export type { Runtime, RuntimeOptions }

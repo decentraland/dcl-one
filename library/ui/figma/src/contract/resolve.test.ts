@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkMappings, resolveComponent, type ResolveContext } from './resolve.js'
 import { buttonSet, makeLibrary, mappingSource } from './test-fixtures.js'
@@ -16,6 +17,16 @@ const context = (mappingRoot: string, extra: Partial<ResolveContext> = {}): Reso
   figmaSets: [buttonSet],
   ...extra
 })
+
+const lock = (revision: string) =>
+  JSON.stringify({
+    sources: [
+      {
+        repository: 'https://github.com/decentraland/figma-design-system',
+        snapshot: { revision }
+      }
+    ]
+  })
 
 const codes = (result: Awaited<ReturnType<typeof resolveComponent>>) =>
   result.ok ? [] : result.errors.map((error) => error.code)
@@ -233,6 +244,112 @@ describe('resolveComponent', () => {
 
       expect(result.ok && result.resolved.provenance.figma.identity).toBe('mapping-only')
       expect(result.warnings.map((w) => w.code)).toContain('figma-identity-unverified')
+    })
+  })
+
+  describe('when identity cannot be established', () => {
+    it('should report identity-uncertain, not mapping-missing, for an unmapped node without a capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '7:7'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.action).toMatch(/Do not treat it as a missing mapping/)
+    })
+
+    it('should report identity-uncertain for a name lookup without a capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        name: 'Button'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+    })
+
+    it('should report identity-not-found for a node outside the capture with no mapping', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '7:7' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+    })
+
+    it('should report identity-not-found for an unknown name in the capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { name: 'Nothing' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+    })
+  })
+
+  describe('when a captured component has no mapping', () => {
+    it('should give the contributor report context and no Figma URL or key', async () => {
+      const { root, mappingRoot } = await library({
+        mappings: { 'Other.figma.ts': mappingSource({ nodeId: '5-5', component: 'Other' }) }
+      })
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('c'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' }
+      })
+
+      expect(codes(result)).toEqual(['mapping-missing'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toMatchObject({
+        nodeId: '1:1',
+        name: 'Button',
+        variantProperties: { Kind: 'Primary' },
+        library: { name: 'fixture-library', version: '1.2.0' },
+        captureRevision: 'c'.repeat(40),
+        supported: ['Other']
+      })
+      expect(error!.action).toMatch(/Do not build a replacement/)
+      expect(JSON.stringify(result)).not.toMatch(/figma\.com|AAAAAAAAAAAAAAAAAAAAAA/)
+    })
+  })
+
+  describe('when the library tracks a capture lock', () => {
+    it('should name the pinned capture revision in the provenance without a capture', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('d'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1-1'
+      })
+
+      expect(result.ok && result.resolved.provenance.capture).toEqual({ revision: 'd'.repeat(40) })
+    })
+
+    it('should omit the capture when the library has no lock', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1-1' })
+
+      expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+    })
+
+    it.each([
+      ['a short revision', lock('abc')],
+      ['no figma-design-system source', JSON.stringify({ sources: [] })]
+    ])('should fail closed on a lock with %s', async (_label, text) => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), text)
+
+      await expect(resolveComponent(context(mappingRoot), { nodeId: '1-1' })).rejects.toThrow(
+        'pins no full figma-design-system capture revision'
+      )
+    })
+
+    it('should fail closed on a lock that is not JSON', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), '{not json')
+
+      await expect(resolveComponent(context(mappingRoot), { nodeId: '1-1' })).rejects.toThrow()
     })
   })
 
