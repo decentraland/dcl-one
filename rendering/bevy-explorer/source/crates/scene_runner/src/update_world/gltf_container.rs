@@ -239,7 +239,7 @@ pub struct GltfProcessed {
 /// the instance stays hidden until it is done. A node is processed once it has a
 /// [`ContainerEntity`], which processing gives it first.
 #[derive(Component, Default)]
-struct GltfProcessing {
+pub(crate) struct GltfProcessing {
     /// Collider indices handed out so far, per collider name.
     collider_counter: HashMap<Option<String>, u32>,
     has_animations: bool,
