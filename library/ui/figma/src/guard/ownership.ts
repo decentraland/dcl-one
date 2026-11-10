@@ -1,4 +1,9 @@
-import { componentOwner, componentOwnerById, type ComponentOwner } from './component-identity.js'
+import {
+  componentOwner,
+  componentOwnerById,
+  componentIdOfFile,
+  type ComponentOwner
+} from './component-identity.js'
 import { assetUsers } from './asset-users.js'
 import { CACHED_LEDGERS, LEDGER, RETIREMENTS } from './consumers.js'
 import { exportStatements } from './exports.js'
@@ -383,19 +388,6 @@ function ownerOf(ownership: Ownership, file: string): Owner | null {
   if (id) return componentOwnerById(ownership, id)
 
   return null
-}
-
-function componentIdOfFile(ownership: Ownership, file: string): string | undefined {
-  const prefix = file.startsWith(LIBRARY_GENERATED) ? LIBRARY_GENERATED : `${GENERATED}/components/`
-  if (!file.startsWith(prefix)) return undefined
-  const relative = file.slice(prefix.length)
-  const suffixes = ['.tsx', '.module.css', '.module.css.d.ts', '.figma.ts']
-  for (const suffix of suffixes) {
-    if (!relative.endsWith(suffix)) continue
-    const id = ownership.fileComponentId.get(relative.slice(0, -suffix.length))
-    if (id) return id
-  }
-  return undefined
 }
 
 // Public labels are metadata for selectors; only the recorded module/component ID establishes ownership.

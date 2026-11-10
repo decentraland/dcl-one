@@ -338,7 +338,19 @@
         "/library/ui/foundations/source.json",
         "/library/ui/foundations/typography/font-source.json",
         "/library/ui/figma/src/install.ts",
-        "/library/ui/figma/src/install.test.ts"
+        "/library/ui/figma/src/install.test.ts",
+        "/library/ui/figma/component-generation.mjs",
+        "/library/ui/figma/source-identity.mjs",
+        "/library/ui/figma/public-output.mjs",
+        "/library/ui/figma/public-components.mjs",
+        "/library/ui/figma/public-components-policy.mjs",
+        "/library/ui/figma/src/component-generation.test.ts",
+        "/library/ui/figma/src/public-output.test.ts",
+        "/library/ui/figma/src/public-components.test.ts",
+        "/library/ui/figma/src/public-components-policy.test.ts",
+        "/library/ui/figma/src/install-components.ts",
+        "/library/ui/figma/src/install-components.test.ts",
+        "/library/ui/components/generation.json"
       ]
     },
     {

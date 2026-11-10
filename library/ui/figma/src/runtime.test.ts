@@ -195,6 +195,33 @@ describe('when distinguishing configured capture failures from resolve-only mode
       await expect(context.loadSyncedComponents?.()).resolves.toBeInstanceOf(Map)
     })
 
+    describe('and the library registry marks a generated component internal', () => {
+      let registry: string
+      let fixtureRoot: string
+      beforeEach(async () => {
+        fixtureRoot = library.root
+        library.root = path.join(fixtureRoot, 'figma')
+        await mkdir(library.root)
+        registry = path.join(fixtureRoot, 'components/promotion.json')
+        await mkdir(path.dirname(registry), { recursive: true })
+        await writeFile(registry, JSON.stringify({ components: [], internal: ['DemoNav'] }))
+      })
+      afterEach(async () => {
+        await rm(fixtureRoot, { recursive: true, force: true })
+      })
+      it('should not treat an installed internal component as a pending public supersession', async () => {
+        const runtime = await pinnedRuntime()
+        runtime.app!.config.promotion = { ...runtime.app!.config.promotion, include: ['DemoNav'] }
+        expect(await (await runtime.resolveContext()).loadSyncedComponents!()).toEqual(new Map())
+      })
+      it('should reject an invalid internal list instead of ignoring installed visibility', async () => {
+        await writeFile(registry, JSON.stringify({ components: [], internal: 'DemoNav' }))
+        const context = await (await pinnedRuntime()).resolveContext()
+        await expect(context.loadSyncedComponents!()).rejects.toThrow(
+          'library component registry name list'
+        )
+      })
+    })
     it('should propagate an I/O error instead of resolving an empty map', async () => {
       const context = await (await pinnedRuntime()).resolveContext()
       specsFailure.error = Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' })
