@@ -65,8 +65,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "11902ca70028ba557b0d63a140b9e770a24dcfa2662f75c036ad6fb97850c6f6",
-      "indexBlobSha": "45cbf8f2a9c382fa47c05dc1a1c890fd26edeb4a"
+      "sha256": "da983de8b92d6c176b40c2893533a3a8c1ad428a2ffa3de4a0864c5f070c3071",
+      "indexBlobSha": "2f2bf43678028a2f4c2c1975f4c52da0cb2e1ae1"
     },
     {
       "path": "library/ui/figma/key-guard.d.mts",
@@ -385,8 +385,8 @@
     },
     {
       "path": "library/ui/figma/src/guard/library.ts",
-      "sha256": "eafe2b336c770cd01143f1403ff859e0efbee4243a806c2a2d665054a7c8a9f2",
-      "indexBlobSha": "ba162345287c799869d5076891b0d054216b2789"
+      "sha256": "9ab30c0f9497e1c8e90d297772fcb51f785b92f534ac652e8f4cf5b3176c875c",
+      "indexBlobSha": "7f627df1717ae3dfed0a62afd13813b903f1f0c8"
     },
     {
       "path": "library/ui/figma/src/guard/lifecycle-fixture.ts",

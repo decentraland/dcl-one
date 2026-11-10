@@ -691,7 +691,7 @@
             "component-install-integrity",
             "accepted-limits"
           ],
-          "sha256": "11902ca70028ba557b0d63a140b9e770a24dcfa2662f75c036ad6fb97850c6f6"
+          "sha256": "da983de8b92d6c176b40c2893533a3a8c1ad428a2ffa3de4a0864c5f070c3071"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -2858,7 +2858,7 @@
           ]
         },
         "library/ui/figma/src/guard/apply-retirements.test.ts": {
-          "sha256": "75ff4bf72e0ad9b178535ee426251654420bb165b30a87a570dba9e01656ad1a",
+          "sha256": "cd23cf0256e9027407c2e5eb394d6dec7578ef055293000cbe7aab2bfd687847",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/apply-retirements.test.ts",
             "sha256": "4258811a0782aa1b103ea8afd9912513e3ca3aec36cff188c651b51ea34aaa77"
@@ -3051,10 +3051,10 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "c0a7f5985293655cf0bc21343df05fbabf87d45b203036dd027c94cfe172f4fa"
+          "sha256": "9a77171b509e9710f43e79eab0df86e8e13ebb0b1f1602569fe305a9b121599b"
         },
         "library/ui/figma/src/guard/library.ts": {
-          "sha256": "eafe2b336c770cd01143f1403ff859e0efbee4243a806c2a2d665054a7c8a9f2",
+          "sha256": "9ab30c0f9497e1c8e90d297772fcb51f785b92f534ac652e8f4cf5b3176c875c",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/library.ts",
             "sha256": "9e8b27fb597200c12d4a473185c5fadfbdfdc1eafc9e95f9c5f1460251e5e6d7"
@@ -3302,7 +3302,7 @@
             "component-install-integrity",
             "accepted-limits"
           ],
-          "sha256": "5ed7a915a2b61a480d32576ee33e35aa2dac02a76f8893b18551b81e9e1fab14"
+          "sha256": "805dae6051246b2abda300d64e7097e8ceef036fd50aff6f030002bcc2587dd6"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -4679,7 +4679,7 @@
         }
       },
       "generation.json": {
-        "sha256": "bc75393721daced3cd08e908d967749b2bf41a94ebb91414a227d58b612b6c76",
+        "sha256": "5b67d7dabec4644efc9f65be9b8698cdb5ae338e82bf8850320cdea169e9c713",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
