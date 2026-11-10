@@ -74,6 +74,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
     for (const file of [
       'component-generation.mjs',
       'source-identity.mjs',
+      'tsconfig.json',
       'src/install.ts',
       'src/install-components.ts',
       'src/generators/components.ts',
@@ -101,6 +102,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
       '{"name":"synthetic-ui","private":true,"devDependencies":{"postcss":"8.5.32","postcss-modules":"6.0.1"}}\n'
     )
     put(componentDependencyPaths[1]!, 'lockfileVersion: 9.0\nimporters: {}\n')
+    put('library/ui/tsconfig.json', '{"compilerOptions":{}}\n')
     files = new Map([
       ['NavBar/NavBar.tsx', Buffer.from('export const NavBar = () => null\n')],
       ['NavBar/NavBar.module.css', Buffer.from('.root {}\n')],
@@ -398,18 +400,21 @@ describe('when the offline component guard checks a staged internal plan', () =>
       ])
     })
   })
-  describe.each([installer, ledger, componentConfigPath, ...componentDependencyPaths])(
-    'and the pinned input %s changes in both the index and tree',
-    (file) => {
-      beforeEach(() => {
-        put(file, 'changed input\n')
-        git('add', '--', file)
-      })
-      it('should reject changed input bytes despite a matching staged identity', () => {
-        expect(publicComponentsProblems(root, lock)).toEqual(['changed public input: ' + file])
-      })
-    }
-  )
+  describe.each([
+    installer,
+    ledger,
+    componentConfigPath,
+    'library/ui/figma/tsconfig.json',
+    ...componentDependencyPaths
+  ])('and the pinned input %s changes in both the index and tree', (file) => {
+    beforeEach(() => {
+      put(file, 'changed input\n')
+      git('add', '--', file)
+    })
+    it('should reject changed input bytes despite a matching staged identity', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual(['changed public input: ' + file])
+    })
+  })
   describe.each([
     [
       'module',

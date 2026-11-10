@@ -387,7 +387,7 @@ async function componentPhysicalInventory(
     withFileTypes: true
   })) {
     const file = prefix + '/' + entry.name
-    if (!executable(file)) continue
+    if (!executable(file) && entry.name !== 'tsconfig.json') continue
     if (entry.isSymbolicLink() || !entry.isFile())
       throw new Error('Component helper implementation is unsafe')
     add(file)

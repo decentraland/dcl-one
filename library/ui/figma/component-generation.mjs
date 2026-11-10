@@ -13,13 +13,18 @@ const MODULES = [
   ROOT + 'component-generation.mjs',
   ROOT + 'source-identity.mjs',
   ROOT + 'ledger/retirements.json',
+  ROOT + 'tsconfig.json',
   ROOT + 'src/install.ts',
   ROOT + 'src/install-components.ts',
   ROOT + 'src/generators/components.ts',
   ROOT + 'src/generators/tokens.ts',
   ...RUNTIME.map((file) => ROOT + 'review/src/components/' + file)
 ]
-export const componentDependencyPaths = ['library/ui/package.json', 'library/ui/pnpm-lock.yaml']
+export const componentDependencyPaths = [
+  'library/ui/package.json',
+  'library/ui/pnpm-lock.yaml',
+  'library/ui/tsconfig.json'
+]
 export const componentGenerationFile = 'generation.json'
 export const componentConfigPath = ROOT + 'figma.config.json'
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -43,7 +48,7 @@ const safe = (value) =>
     )
 const ordered = (entries) => [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 
-/** The implementation and effective retirement ledger are independent generation inputs. */
+/** Implementation, resolver configuration and the effective retirement ledger are generation inputs. */
 export function isComponentModulePath(file) {
   return (
     typeof file === 'string' &&

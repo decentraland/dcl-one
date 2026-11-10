@@ -362,6 +362,7 @@ describe('when component installation owns its verified input read-set and trans
   const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
   const modulePath = 'library/ui/figma/src/fixture-generator.ts'
   const ledgerPath = 'library/ui/figma/ledger/retirements.json'
+  const resolverPath = 'library/ui/figma/tsconfig.json'
   const stage = '../.agent-work/figma-install/components-proof/components'
 
   beforeEach(async () => {
@@ -407,6 +408,7 @@ describe('when component installation owns its verified input read-set and trans
     modulePaths = [
       modulePath,
       ledgerPath,
+      resolverPath,
       ...runtimeFiles.map((file) => 'library/ui/figma/review/src/components/' + file)
     ]
     vi.mocked(componentModulePaths).mockReset().mockReturnValue(modulePaths)
@@ -422,6 +424,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(repository, modulePath), 'export const fixtureGenerator = true\n')
     await mkdir(path.join(figma, 'ledger'), { recursive: true })
     await writeFile(path.join(repository, ledgerPath), '{"schema":1,"retired":[]}')
+    await writeFile(path.join(repository, resolverPath), '{"compilerOptions":{}}')
     await mkdir(path.join(figma, 'review/src/components'), { recursive: true })
     for (const file of runtimeFiles)
       await writeFile(
@@ -435,6 +438,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(root, 'index.ts'), 'export const foundationsOnly = true\n')
     await writeFile(path.join(root, 'package.json'), '{"name":"@fixture/ui","version":"0.0.0"}')
     await writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9')
+    await writeFile(path.join(root, 'tsconfig.json'), '{"compilerOptions":{}}')
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     lock.sources[0].files = {}
     for (const file of [...modulePaths, 'library/ui/figma/figma.config.json'])
@@ -729,6 +733,37 @@ describe('when component installation owns its verified input read-set and trans
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
+
+  it.each(['figma/tsconfig.json', 'tsconfig.json'])(
+    'should reject dirty resolver configuration %s before planning',
+    async (config) => {
+      await writeFile(
+        path.join(root, config),
+        '{"compilerOptions":{"paths":{"postcss":["./synthetic-alias.ts"]}}}'
+      )
+      await expect(runInstall(app, options)).rejects.toThrow('Commit component source changes')
+      expect(planComponents).not.toHaveBeenCalled()
+      expect(await readFile(registryPath)).toEqual(originalRegistry)
+      expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
+    }
+  )
+
+  it.each(['figma/tsconfig.json', 'tsconfig.json'])(
+    'should reject resolver configuration %s changed during planning without publication',
+    async (config) => {
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        await writeFile(
+          path.join(root, config),
+          '{"compilerOptions":{"paths":{"postcss":["./synthetic-alias.ts"]}}}'
+        )
+        return plan
+      })
+      await expect(runInstall(app, options)).rejects.toThrow('Commit component source changes')
+      expect(await readFile(registryPath)).toEqual(originalRegistry)
+      expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
+    }
+  )
 
   it('should reject dirty committed module source before planning', async () => {
     await writeFile(path.join(repository, modulePath), 'changed')

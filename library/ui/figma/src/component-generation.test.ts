@@ -54,6 +54,7 @@ describe('when validating component generation as an offline consistency record'
           'component-generation.mjs',
           'source-identity.mjs',
           'ledger/retirements.json',
+          'tsconfig.json',
           'src/install.ts',
           'src/install-components.ts',
           'src/generators/components.ts',
@@ -208,6 +209,28 @@ describe('when validating component generation as an offline consistency record'
     expect(isComponentModulePath(prefix + 'src/specs.test.ts')).toBe(false)
     expect(isComponentModulePath(prefix + 'ledger/unrelated.json')).toBe(false)
     expect(modules.some((module) => module.path === prefix + 'ledger/retirements.json')).toBe(true)
+  })
+
+  it('should bind both operational resolver configuration files', () => {
+    expect(isComponentModulePath(prefix + 'tsconfig.json')).toBe(true)
+    expect(modules.some((module) => module.path === prefix + 'tsconfig.json')).toBe(true)
+    expect(componentDependencyPaths).toEqual([
+      'library/ui/package.json',
+      'library/ui/pnpm-lock.yaml',
+      'library/ui/tsconfig.json'
+    ])
+    expect(
+      parsed.inputs.dependencies.some(
+        (dependency: Identity) => dependency.path === 'library/ui/tsconfig.json'
+      )
+    ).toBe(true)
+  })
+
+  it('should reject an omitted Figma resolver configuration pin', () => {
+    delete source.files[prefix + 'tsconfig.json']
+    expect(() => validateComponentGeneration(bytes, source)).toThrow(
+      'Missing locked component implementation: ' + prefix + 'tsconfig.json'
+    )
   })
 
   it('should reject an omitted retirement ledger pin', () => {
