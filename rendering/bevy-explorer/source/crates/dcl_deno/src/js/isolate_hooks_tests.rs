@@ -3,7 +3,6 @@
 // test instead of the whole run.
 
 use super::{context, fetch_outcome, run_scene};
-use crate::js::{create_runtime_with, SceneMemory};
 use deno_core::{v8, JsRuntime};
 use std::time::Duration;
 
@@ -17,11 +16,16 @@ thread_local! {
 
 const MIB: usize = 1024 * 1024;
 
-fn scene(memory: SceneMemory) -> (JsRuntime, dcl_js::KillFlag) {
+/// A client scene; `heap` and `array_buffers` replace the default caps.
+fn scene(heap: Option<usize>, array_buffers: Option<usize>) -> (JsRuntime, dcl_js::KillFlag) {
     let handle = RT.with(|rt| rt.handle().clone());
     let _guard = handle.enter();
     let kill_flag = dcl_js::KillFlag::default();
-    let (runtime, _) = create_runtime_with(false, false, kill_flag.clone(), memory);
+    crate::js::TEST_HEAP_LIMIT.set(heap);
+    crate::js::TEST_ARRAY_BUFFER_LIMIT.set(array_buffers);
+    let (runtime, _) = crate::js::create_runtime(false, false, kill_flag.clone());
+    crate::js::TEST_HEAP_LIMIT.set(None);
+    crate::js::TEST_ARRAY_BUFFER_LIMIT.set(None);
     {
         let state = runtime.op_state();
         let mut state = state.borrow_mut();
@@ -120,7 +124,7 @@ fn wasm_streaming_rejects() {
         .unwrap();
     }
     // a context made after start-up gets the streaming functions back; they reject
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     deno_core::scope!(scope, runtime);
     let fresh = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, fresh);
@@ -150,7 +154,7 @@ fn a_scene_cannot_end_the_process_from_a_long_error_message() {
 #[test]
 #[ignore = "run in its own process by the test that names it"]
 fn long_error_strings_are_cut() {
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     // each pair of strings is longer than V8's longest string once encoded as UTF-8
     let outcome = eval(
         &mut runtime,
@@ -186,10 +190,7 @@ fn formatting_a_stack_runs_no_scene_code() {
         format!("Object.defineProperty(TypeError.prototype, 'name', {{ get() {forever} }});"),
         format!("Object.defineProperty(globalThis, 'made', {{ value: new TypeError('x') }}); Object.defineProperty(made, 'message', {{ get() {forever} }});"),
     ] {
-        let (mut runtime, _) = scene(SceneMemory {
-            heap: 64 * MIB,
-            ..SceneMemory::DEFAULT
-        });
+        let (mut runtime, _) = scene(Some(64 * MIB), None);
         let outcome = eval(
             &mut runtime,
             &format!(
@@ -212,10 +213,7 @@ fn a_scene_cannot_end_the_process_from_a_wasm_compile_while_terminated() {
 #[test]
 #[ignore = "run in its own process by the test that names it"]
 fn wasm_compile_during_termination() {
-    let (mut runtime, kill_flag) = scene(SceneMemory {
-        heap: 64 * MIB,
-        ..SceneMemory::DEFAULT
-    });
+    let (mut runtime, kill_flag) = scene(Some(64 * MIB), None);
     eval(
         &mut runtime,
         r#"
@@ -239,7 +237,7 @@ fn a_scene_cannot_end_the_process_from_a_failed_dynamic_import() {
 #[test]
 #[ignore = "run in its own process by the test that names it"]
 fn failed_dynamic_import() {
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     eval(
         &mut runtime,
         r#"
@@ -253,39 +251,11 @@ fn failed_dynamic_import() {
     assert_eq!(eval(&mut runtime, "out").unwrap(), "rejected");
 }
 
-#[test]
-fn a_scene_cannot_end_the_process_with_large_allocations_at_its_heap_cap() {
-    passes_in_own_process("large_allocations_at_the_heap_cap");
-}
-
-#[test]
-#[ignore = "run in its own process by the test that names it"]
-fn large_allocations_at_the_heap_cap() {
-    // 24 MB and 64 MB per allocation
-    for elements in [3_000_000, 8_000_000] {
-        let (mut runtime, kill_flag) = scene(SceneMemory {
-            heap: 128 * MIB,
-            ..SceneMemory::DEFAULT
-        });
-        let outcome = eval(
-            &mut runtime,
-            &format!(
-                "globalThis.keep = []; for (;;) {{ keep.push(new Array({elements}).fill(1.5)); }}"
-            ),
-        );
-        assert!(outcome.is_err(), "{outcome:?}");
-        assert!(kill_flag.killed());
-    }
-}
-
 /// ArrayBuffers live outside the heap; a scene's together stay within its budget, and past it
 /// the allocation fails or the scene ends.
 #[test]
 fn array_buffers_are_capped_per_scene() {
-    let (mut runtime, kill_flag) = scene(SceneMemory {
-        array_buffers: 16 * MIB,
-        ..SceneMemory::DEFAULT
-    });
+    let (mut runtime, kill_flag) = scene(None, Some(16 * MIB));
     let budget = runtime
         .op_state()
         .borrow()
@@ -313,7 +283,7 @@ fn array_buffers_are_capped_per_scene() {
 /// A stream a scene feeds can be read whole only up to a cap.
 #[test]
 fn reading_a_scene_stream_to_its_end_is_capped() {
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     eval(
         &mut runtime,
         r#"
@@ -343,7 +313,7 @@ fn reading_a_scene_stream_to_its_end_is_capped() {
 /// Only a stream the fetch JS made can be an upload body.
 #[test]
 fn a_fetch_upload_body_must_be_a_stream() {
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     let err = eval(
         &mut runtime,
         r#"
@@ -359,7 +329,7 @@ fn a_fetch_upload_body_must_be_a_stream() {
 /// Blobs a scene drops free their share of its Blob storage for later ones.
 #[test]
 fn dropped_blobs_free_their_storage() {
-    let (mut runtime, _) = scene(SceneMemory::DEFAULT);
+    let (mut runtime, _) = scene(None, None);
     eval(
         &mut runtime,
         r#"

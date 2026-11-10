@@ -89,7 +89,7 @@ function require(moduleName) {
     }
 
     // [result, null] or [null, [thrown, isNativeError, isCompileError]]
-    const evaluated = opEvalContext(source, `file://${moduleName}`);
+    const evaluated = opEvalContext(source, "file://${moduleName}");
     if (evaluated[1]) {
         throw evaluated[1][0];
     }
