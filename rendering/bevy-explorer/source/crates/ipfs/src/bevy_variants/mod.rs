@@ -3,9 +3,10 @@
 //! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
 //! `bevy_variants_url` config field). For each scene entity the explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to variants, each
-//! addressed by its own raw-leaf CID. A content file read whose original CID has a variant in a
-//! format this client takes is answered with `{base}/bevy/contents/{variantCid}` instead, checked
-//! against the variant CID and cached under that CID only. A texture variant is a BC KTX2, handed
+//! with the path it is served at and the raw-leaf CID of its bytes. A content file read whose
+//! original CID has a variant in a format this client takes is answered with
+//! `{base}/{variantPath}` instead, checked against the variant CID and cached under that CID
+//! only. A texture variant is a BC KTX2, handed
 //! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too, under a name derived
 //! from the variant CID. Anything else, at any step, reads the original. A variant that fails to
 //! decode is marked bad for the session and its asset reloaded from the original.
@@ -140,6 +141,11 @@ const BREAKER_FAILURES: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Variant {
+    /// Where the variant is served, relative to the base: `bevy/{prefix}/{name}`. Missing
+    /// reads as empty, which drops that variant, not the manifest.
+    #[serde(default)]
+    pub path: String,
+    /// Raw-leaf CID of the variant's bytes: what they are checked against and cached under.
     pub cid: String,
     pub kind: String,
     pub format: String,
@@ -174,12 +180,16 @@ struct ManifestJson {
     files: HashMap<String, Vec<Variant>>,
 }
 
-/// A v1 manifest for `entity`. Variants whose cid is not a raw-leaf CIDv1 (`bafkrei…`) are
-/// dropped: the cid becomes a url path segment and a cache file name, and only that scheme is
-/// checked against the bytes.
+/// The manifest schema version this client reads.
+pub const MANIFEST_VERSION: u32 = 2;
+
+/// A v2 manifest for `entity`. Variants whose cid is not a raw-leaf CIDv1 (`bafkrei…`) are
+/// dropped (the cid becomes a cache file name, and only that scheme is checked against the
+/// bytes), and so are variants whose path is not `bevy/{prefix}/{name}` with plain segments
+/// (it becomes part of a url).
 pub fn parse_manifest(bytes: &[u8], entity: &str) -> Result<Manifest, String> {
     let version: ManifestVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if version.v != 1 {
+    if version.v != MANIFEST_VERSION {
         return Err(format!("unsupported manifest version {}", version.v));
     }
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
@@ -192,7 +202,7 @@ pub fn parse_manifest(bytes: &[u8], entity: &str) -> Result<Manifest, String> {
         .map(|(original, variants)| {
             let variants: Vec<_> = variants
                 .into_iter()
-                .filter(|variant| is_raw_cid(&variant.cid))
+                .filter(|variant| is_raw_cid(&variant.cid) && is_variant_path(&variant.path))
                 .collect();
             (original, variants)
         })
@@ -211,6 +221,26 @@ fn is_raw_cid(cid: &str) -> bool {
         && cid
             .bytes()
             .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+}
+
+/// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
+/// alphanumeric or `_`. No dots, slashes or escapes can reach the url.
+fn is_variant_path(path: &str) -> bool {
+    let mut segments = path.split('/');
+    let (Some("bevy"), Some(prefix), Some(name), None) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) else {
+        return false;
+    };
+    path.len() <= 256
+        && prefix != "manifest"
+        && !prefix.is_empty()
+        && prefix.bytes().all(|b| b.is_ascii_alphanumeric())
+        && !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn extension(file_path: &str) -> Option<String> {
@@ -581,13 +611,14 @@ impl IpfsIo {
 
         let Decoded::BcTexture(format) = supported_format(&variant)?.decoded;
 
-        let url = format!("{base}/bevy/contents/{}", variant.cid);
+        let url = format!("{base}/{}", variant.path);
         let key = CacheKey::Content(variant.cid.clone());
         // the unwrapped DDS, under a name no content hash can take
         #[cfg(not(target_arch = "wasm32"))]
         let dds_key = format!("{}.dds", variant.cid);
+        // keyed by the variant CID, not its path: a cache entry must name the bytes it holds
         #[cfg(target_arch = "wasm32")]
-        let dds_url = format!("{url}.dds");
+        let dds_url = format!("{base}/bevy/dds/{}.dds", variant.cid);
         let served = ServedVariant {
             scene: scene.to_owned(),
             file: file.to_owned(),
@@ -615,8 +646,11 @@ impl IpfsIo {
         // the cache holds bytes under a content key only once they hash to it
         #[cfg(not(target_arch = "wasm32"))]
         let cached = self.read_disk_cache(&key).await.ok().flatten();
+        // the web cache is keyed by url, and a path names its bytes only by convention: check
         #[cfg(target_arch = "wasm32")]
-        let cached = crate::web_cache::read(&url).await;
+        let cached = crate::web_cache::read(&url)
+            .await
+            .filter(|bytes| content_hash::matches_content_hash(&variant.cid, bytes));
         let (ktx2, from_cache) = match cached {
             Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
             None => {
