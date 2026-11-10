@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AuthIdentity } from "../auth/types";
 import { NOTIFICATIONS_PREFIX } from "../catalyst/bases";
 import { postJSON, signedGetJSON } from "../catalyst/client";
+import { SubscriptionSchema } from "../catalyst/generated-schemas/notifications";
 
 const BASE = NOTIFICATIONS_PREFIX;
 
@@ -14,13 +15,8 @@ const SubscriptionDetailsSchema = z.object({
   message_type: z.record(z.string(), ChannelSchema),
 });
 
-const SubscriptionResponseSchema = z.object({
-  address: z.string(),
-  email: z.string().optional(),
-  /** Set while an address change waits for its confirmation link. */
-  unconfirmedEmail: z.string().optional(),
-  details: SubscriptionDetailsSchema,
-});
+/** The generated reply leaves `details` open; the settings page needs its shape. */
+const SubscriptionResponseSchema = SubscriptionSchema.extend({ details: SubscriptionDetailsSchema });
 
 export type SubscriptionDetails = z.infer<typeof SubscriptionDetailsSchema>;
 export type SubscriptionResponse = z.infer<typeof SubscriptionResponseSchema>;
