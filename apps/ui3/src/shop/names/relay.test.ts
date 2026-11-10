@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { requireContracts } from "../checkout/chain/contracts";
-import { OFFCHAIN_META_TX_ABI } from "../checkout/chain/abi";
+import { OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import { createFakeChain, createFakeRelay, createFakeWallet } from "../checkout/fakes";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { relayedUseCreditsSubmitter, type NameUseCreditsArgs } from "./names";
 
 const ARGS: NameUseCreditsArgs = {

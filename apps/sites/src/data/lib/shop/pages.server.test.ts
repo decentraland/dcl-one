@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createShopClient } from "@ui/shop/api";
+import { createShopClient, fetchTransport } from "@ui/shop/api";
 import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
 import { loadShopPage, serverShopClient } from "./pages.server";
-import { LAND_NETWORKS } from "@ui/shop/land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
 
@@ -22,7 +22,7 @@ function node(routes: Route[]) {
     if (!hit) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
     return new Response(JSON.stringify(hit.body), { status: hit.status ?? 200 });
   }) as typeof fetch;
-  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, fetchImpl }) };
+  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, transport: fetchTransport(fetchImpl) }) };
 }
 
 const request = (path: string) => new Request(`https://sites.test${path}`);

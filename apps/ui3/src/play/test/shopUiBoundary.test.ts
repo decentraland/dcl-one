@@ -1,7 +1,7 @@
 // The in-world Shop's UI (features/shop/ui) moves to library/ui/apps/shop/ once that exists
 // (docs/ui-standards.md, App-specific UI): it may import React, the HUD's design primitives and assets,
-// its own files and the web Shop's pure model and formatting — never data (queries, fetchers, TanStack)
-// nor the HUD's runtime (session, engine, menu, its libs).
+// its own files, the Shop's pure model and formatting (library/shop) and the web Shop's credits mark —
+// never data (queries, fetchers, TanStack) nor the HUD's runtime (session, engine, menu, its libs).
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,7 +13,8 @@ const ALLOWED = [
   /^\.\/[A-Za-z]+(\.module\.css)?$/,
   /^\.\.\/\.\.\/\.\.\/design$/,
   /^\.\.\/\.\.\/\.\.\/assets\//,
-  /^\.\.\/\.\.\/\.\.\/\.\.\/shop\/(model\/|checkout\/lib\/currency$|credits\/components\/CreditMark$|discovery\/cardPrice$|discovery\/lib\/price-slider$)/
+  /^\.\.\/\.\.\/\.\.\/\.\.\/shop\/credits\/components\/CreditMark$/,
+  /^@shop\/(model\/|checkout\/lib\/currency$|discovery\/cardPrice$|discovery\/lib\/price-slider$)/
 ]
 
 // `import x from '…'`, `import '…'` and `export … from '…'`, across lines.

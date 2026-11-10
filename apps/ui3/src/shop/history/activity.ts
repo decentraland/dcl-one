@@ -5,7 +5,7 @@
 // MANA amount and never a credit figure (SHOP.md: no credit price on a resale); the unified Shop does not
 // route resale proceeds to credits, so no payout row changes that.
 
-import type { CreditOrder, PurchaseRecord } from "../credits/credits";
+import type { CreditOrder, PurchaseRecord } from "@shop/credits/credits";
 import { groupPurchases, type PurchaseOrder } from "./purchases";
 
 export type ActivityFilter = "all" | "purchases" | "sales";

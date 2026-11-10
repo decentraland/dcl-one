@@ -97,4 +97,32 @@ describe('places browser', () => {
     fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'tortilla' } })
     expect(await screen.findByRole('button', { name: /My Scene/ }, { timeout: 2000 })).toBeInTheDocument()
   })
+
+  it('marks the results loading until they answer the current search', async () => {
+    let answer: ((response: Response) => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (!url.includes('search=gallery')) return Promise.resolve(new Response(JSON.stringify({ ok: true, total: 1, data: [other] })))
+        return new Promise<Response>((resolve) => {
+          answer = resolve
+        })
+      })
+    )
+    render(<PlacesBrowser onPick={vi.fn()} />)
+    const results = screen.getByRole('region', { name: 'Places results' })
+    await screen.findByRole('button', { name: /Other Scene/ })
+    expect(results).toHaveAttribute('aria-busy', 'false')
+
+    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'gallery' } })
+    // the old cards stay while the box waits out its debounce: the panel says they are not this search's
+    expect(screen.getByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
+    expect(results).toHaveAttribute('aria-busy', 'true')
+    await waitFor(() => expect(answer).toBeDefined(), { timeout: 2000 })
+    expect(results).toHaveAttribute('aria-busy', 'true')
+
+    answer!(new Response(JSON.stringify({ ok: true, total: 1, data: [empty] })))
+    await screen.findByRole('button', { name: /Quiet Gallery/ })
+    expect(results).toHaveAttribute('aria-busy', 'false')
+  })
 })

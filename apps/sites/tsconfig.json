@@ -30,6 +30,10 @@
       "@ui/*": ["../ui3/src/*"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with ui3.
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
+      // The Shop's portable core (model, prices, rules), shared with ui3.
+      "@shop/*": ["../../library/shop/*"],
+      // library/shop has no node_modules of its own: its packages resolve to this app's copy.
+      "viem": ["./node_modules/viem"],
       // The validation seam ui3 owns. Types always resolve to the checking
       // implementation: both expose the same surface, so either type-checks the
       // same, and this keeps zod's types reachable.

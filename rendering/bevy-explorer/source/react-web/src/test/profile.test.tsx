@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 import { describe, it, expect } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { Profile } from '../engine/protocol'
@@ -177,6 +178,7 @@ describe('profile domain', () => {
   })
 
   it('a save the bridge failed to handle counts as failed, so the queue behind it still runs', async () => {
+    expectConsoleOutput('error', [['[bridge] saveProfile failed:', 'boom']])
     const h = renderSession()
     await enterAsGuest(h, { keepSent: true })
     h.driver.emit({ kind: 'profile', profile })

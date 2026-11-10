@@ -44,8 +44,8 @@ import { bindBuyNowTopUp, dropBuyNowTopUp, stashBuyNowTopUp, type BuyNowReturn }
 import { myItemsRouteFor } from "../../discovery/lib/routes";
 import { invalidateShopQueries } from "../../discovery/query";
 import { Confetti, JumpInIcon } from "../../history/celebration";
-import { creditsCeil, manaWei, ZERO_MANA } from "../../model/money";
-import type { CartLineDisplay } from "../../model/purchase";
+import { creditsCeil, manaWei, ZERO_MANA } from "@shop/model/money";
+import type { CartLineDisplay } from "@shop/model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { backpackDeepLink, jumpUrl } from "../lib/jump";
