@@ -58,7 +58,7 @@ and shows no other avatars:
 
 With the web dependencies installed, `VITE_SITES_DEV_PUBLIC_DISCOVERY=1 pnpm --dir apps/sites dev` enables read-only public events and places for the local homepage preview. It is off by default and only works in Vite's development mode. The existing clients send unauthenticated GET requests to the public events and places APIs; unsupported queries, explicit backend overrides, authenticated reads and writes retain the configured dcl-one backend. Failed reads show the actual empty or error state.
 
-Production builds ignore this flag and continue using `CATALYST_URL`. Authentication, profiles and other backend features still require the local stack.
+Production builds ignore this flag and continue using `CATALYST_URL`. Authentication, profiles and other backend features still require the local stack. The decorative download counter independently reads the same public aggregate as production Sites; `DOWNLOAD_COUNTS_URL` optionally overrides that source. A failed aggregate read keeps the static fallback and retries on the next request.
 
 ## The web Explorer (`/play`)
 

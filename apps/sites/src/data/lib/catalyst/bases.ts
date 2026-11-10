@@ -3,6 +3,8 @@
 // mounts (src/main.rs). The old per-service env names stay as overrides.
 
 export const DEFAULT_CATALYST_URL = "http://127.0.0.1:5210";
+export const DEFAULT_DOWNLOAD_COUNTS_URL =
+  "https://cdn-data.decentraland.org/public/current/explorer-alpha-downloads.json";
 
 export const WORLDS_PREFIX = "/worlds-content-server";
 export const SOCIAL_PREFIX = "/social-api";
@@ -139,11 +141,11 @@ export function playUrl(
   return qs ? `${base}?${qs}` : base;
 }
 
-/** The optional public download totals endpoint used by the homepage counter. */
+/** The public aggregate used by the production Sites counter, with an optional override. */
 export function downloadCountsUrl(
   env: BaseEnv = processEnv(),
 ): string | undefined {
-  return envValue(env, "DOWNLOAD_COUNTS_URL");
+  return envValue(env, "DOWNLOAD_COUNTS_URL") ?? DEFAULT_DOWNLOAD_COUNTS_URL;
 }
 
 /** Unset uses the static installer CDN without identity or referral attribution. */

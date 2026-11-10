@@ -1,3 +1,4 @@
+import { DEFAULT_DOWNLOAD_COUNTS_URL } from "../bases";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -80,13 +81,21 @@ describe("formatDownloads", () => {
 });
 
 describe("loadDownloadsLabel", () => {
-  it("shows the source's static label when DOWNLOAD_COUNTS_URL is unset", async () => {
+  it("reads the production aggregate when DOWNLOAD_COUNTS_URL is unset", async () => {
     vi.stubEnv("DOWNLOAD_COUNTS_URL", "");
-    const fetchSpy = vi.fn();
+    const fetchSpy = ok({
+      values: [
+        ["Windows", 300_000],
+        ["Mac", 150_500],
+      ],
+    });
     vi.stubGlobal("fetch", fetchSpy);
 
-    await expect(loadDownloadsLabel()).resolves.toBe(DOWNLOADS_FALLBACK_LABEL);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(loadDownloadsLabel()).resolves.toBe("+450K");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      DEFAULT_DOWNLOAD_COUNTS_URL,
+      expect.any(Object),
+    );
   });
 
   it("formats the configured endpoint's total and serves it from the memo", async () => {
