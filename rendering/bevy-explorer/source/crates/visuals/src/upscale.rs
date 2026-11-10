@@ -149,7 +149,7 @@ fn spawn_compositor(
 /// Below scale 1, sizes the scene target for the window and render scale and points the primary
 /// camera and the compositor's material at it. At scale 1, points the primary camera at the
 /// window and shrinks the scene target to 1x1. The UI goes to whichever camera draws the window.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_scene_target(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
