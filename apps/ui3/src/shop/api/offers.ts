@@ -2,7 +2,7 @@ import type { OfferSource } from "../detail/offers";
 import { sameAsset } from "@shop/model/asset";
 import { decodePurchaseOffer } from "@shop/model/wire";
 import { ENDPOINTS } from "@shop/api/endpoints";
-import type { ShopClient } from "./shop";
+import type { ShopClient } from "@shop/api/shop";
 
 /** The node quotes each line in request order; prices and eligibility never come from the cart. */
 export function purchaseOfferSource(client: ShopClient): OfferSource {

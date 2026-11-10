@@ -4,7 +4,7 @@
 // a quiet "Updated N ago".
 
 import Button from "../../../atoms/Button";
-import { coarseDuration, needsNotice, type Freshness } from "../freshness";
+import { coarseDuration, needsNotice, type Freshness } from "@shop/discovery/freshness";
 import { t } from "@shop/discovery/intl";
 import Icon from "./Icon";
 import "./indexnotice.css";

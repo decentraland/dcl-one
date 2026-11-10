@@ -11,7 +11,7 @@ import { Link } from "react-router";
 import { useCart } from "../../cart/store";
 import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
-import { fetchCatalogByIds, fetchSuggestedItems, type SuggestedItem } from "../api";
+import { fetchCatalogByIds, fetchSuggestedItems, type SuggestedItem } from "@shop/discovery/api";
 import { t } from "@shop/discovery/intl";
 import { useRecentlyViewed } from "../lib/recently-viewed";
 import { REMOTE_FLAG, useRemoteFlag } from "../lib/remoteFlags";

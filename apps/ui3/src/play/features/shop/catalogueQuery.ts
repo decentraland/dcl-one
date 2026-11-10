@@ -5,8 +5,8 @@
 // catalogue; the card prices each row by the Shop's own rule (library/shop discovery/cardPrice).
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { fetchCatalogItems, fetchShopItems, type ShopSort } from '../../../shop/discovery/api'
-import { SUBCAT_MAP } from '../../../shop/discovery/lib/categories'
+import { fetchCatalogItems, fetchShopItems, type ShopSort } from '@shop/discovery/api'
+import { SUBCAT_MAP } from '@shop/discovery/lib/categories'
 // The design's ALL pill: the icon library's 3×3 `apps` grid (16px of 4px squares in the 26px slot).
 import allIcon from '../../assets/shop/all.svg'
 import hairIcon from '../../assets/category-icons/hair.png'

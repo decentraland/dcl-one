@@ -6,7 +6,6 @@
 // the payment rule offers a web3 wallet second, after credits.
 
 import { evmAddress, type EvmAddress } from "@shop/model/address";
-import { ethereumChainId } from "../checkout/chain/config";
 import { CHAIN, type ChainId } from "@shop/model/chain";
 
 export type LandNetwork = {
@@ -47,19 +46,8 @@ export const LAND_NETWORKS: Record<number, LandNetwork> = {
 /** The Rentals contract's EIP-712 domain (`Rentals`, version 1), as the signatures server verifies it. */
 export const RENTALS_DOMAIN = { name: "Rentals", version: "1" } as const;
 
-type ShopEnvWindow = Window & typeof globalThis & { __SHOP_ETHEREUM_CHAIN_ID__?: number };
-
-/**
- * The Ethereum network the Shop's LAND and NAME flows run on: the host's choice, else the Shop's own
- * (`ethereumChainId`: VITE_SHOP_ETHEREUM_CHAIN_ID, or Sepolia when the Shop settles on Amoy, mainnet otherwise).
- */
-export function landChainId(): ChainId {
-  const fromWindow = typeof window !== "undefined" ? (window as ShopEnvWindow).__SHOP_ETHEREUM_CHAIN_ID__ : undefined;
-  const chosen = fromWindow ?? ethereumChainId();
-  return LAND_NETWORKS[chosen] ? chosen : CHAIN.ETHEREUM;
-}
-
-export function landNetwork(chainId: ChainId = landChainId()): LandNetwork {
+/** The contracts on `chainId` (the host's choice: land/chain.ts `landChainId`). */
+export function landNetwork(chainId: ChainId): LandNetwork {
   const found = LAND_NETWORKS[chainId];
   if (!found) throw new RangeError(`LAND and NAMEs do not live on chain ${chainId}`);
   return found;

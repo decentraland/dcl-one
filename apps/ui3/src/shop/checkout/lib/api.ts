@@ -8,13 +8,13 @@
 // purchase rails, the receipts and the activity feed read. The shared `ui3/src/shop/lib/api.ts`
 // (Discovery's catalogue mappers) can re-export these under the same names.
 
-import { isShopApiError } from "../../api/client";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "@shop/model/money";
 import type { SaleRecord } from "../../history/activity";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./trade";
-import { fetchPrimaryListingForItem } from "../../detail/api";
+import { fetchPrimaryListingForItem } from "@shop/detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {

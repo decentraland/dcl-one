@@ -2,29 +2,34 @@
 // webapp/src/components/NamesPage/NamesPage.tsx (the ENS section of the browse), shop@94584a5c:app/src/lib/names.ts
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 // NAME reads: the DAO's banned-names list (explore's `/dcl-lists/banned-names`, not a Shop route),
-// NAMEs on resale (`/shop-api/v1/nfts?category=ens`, MANA only) and the account's own NAMEs.
+// NAMEs on resale (`/shop-api/v1/nfts?category=ens`, MANA only), the account's own NAMEs and a NAME's credits
+// quote. The host gives the node's base, the transport and the Shop client (names/reads.ts in the browser).
 
-import { catalystBase } from "../../data/catalyst/client";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
 import type { ProfileName } from "@catalyst-api/market/ProfileName";
-import { type ShopClient } from "../api/shop";
-import { parseManaInput } from "../market/lib/mana";
-import { shopClient } from "../api/host";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
+import { centsFromCredits, parseManaInput, type UsdCents } from "@shop/model/money";
+import type { MissingFact } from "@shop/model/settlement";
+import { NAME_PRICE_IN_WEI } from "./name";
 
 export type { NftResult };
 
-/** The banned-names list, lowercased. Upstream treats a failed read as "none banned" and lets the server decide. */
-export async function fetchBannedNames(opts: { base?: string; fetchImpl?: typeof fetch; signal?: AbortSignal } = {}): Promise<string[]> {
-  const doFetch = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
-  const res = await doFetch(`${catalystBase(opts.base)}/dcl-lists/banned-names`, { method: "POST", headers: { accept: "application/json" }, signal: opts.signal });
-  if (!res.ok) {
-    // The unread body is released, not left holding the connection; a stream that already failed can't be,
-    // and that mustn't replace the status.
-    void res.body?.cancel().catch(() => {});
-    throw new Error(`The banned-names list answered ${res.status}`);
-  }
-  const body = (await res.json()) as { data?: unknown };
+/** How a host reads a list from the node: the request as given, its status and body as text. */
+export type ListsTransport = (
+  url: string,
+  init: { method: "POST"; headers: Record<string, string>; signal?: AbortSignal },
+) => Promise<{ status: number; body: string }>;
+
+/**
+ * The banned-names list at `base` (the node, normalized by the host), lowercased. A non-2xx answer is an error. Upstream
+ * treats a failed read as "none banned" and lets the server decide.
+ */
+export async function fetchBannedNames(opts: { base: string; transport: ListsTransport; signal?: AbortSignal }): Promise<string[]> {
+  const res = await opts.transport(`${opts.base}/dcl-lists/banned-names`, { method: "POST", headers: { accept: "application/json" }, signal: opts.signal });
+  if (res.status < 200 || res.status >= 300) throw new Error(`The banned-names list answered ${res.status}`);
+  const body = JSON.parse(res.body) as { data?: unknown };
   return Array.isArray(body.data) ? body.data.filter((n): n is string => typeof n === "string").map((n) => n.toLowerCase()) : [];
 }
 
@@ -88,8 +93,8 @@ export function nameResaleQueryToSearch(q: NameResaleQuery): string {
 }
 
 /** NAMEs as the marketplace's ENS browse lists them: existing registrar tokens, most on resale. */
-export async function fetchNameResales(q: NameResaleQuery, opts: { client?: ShopClient; signal?: AbortSignal } = {}): Promise<{ results: NftResult[]; total: number }> {
-  const client = opts.client ?? shopClient();
+export async function fetchNameResales(q: NameResaleQuery, opts: { client: ShopClient; signal?: AbortSignal }): Promise<{ results: NftResult[]; total: number }> {
+  const { client } = opts;
   const query: Record<string, string | number | boolean> = {
     category: "ens",
     first: NAMES_PAGE_SIZE,
@@ -110,8 +115,8 @@ export async function fetchNameResales(q: NameResaleQuery, opts: { client?: Shop
 }
 
 /** The NAMEs an account owns (`/shop-api/v1/users/{address}/names`). */
-export async function fetchOwnedNames(address: string, opts: { client?: ShopClient; signal?: AbortSignal } = {}): Promise<ProfileName[]> {
-  const client = opts.client ?? shopClient();
+export async function fetchOwnedNames(address: string, opts: { client: ShopClient; signal?: AbortSignal }): Promise<ProfileName[]> {
+  const { client } = opts;
   const body = await client.market.userAssets<{ data?: { elements?: ProfileName[] } } | { elements?: ProfileName[] }>(
     address,
     "names",
@@ -126,4 +131,19 @@ export async function fetchOwnedNames(address: string, opts: { client?: ShopClie
 export function nameOf(result: NftResult): string {
   const data = result.nft.data as { ens?: { subdomain?: string } };
   return data.ens?.subdomain ?? result.nft.name;
+}
+
+/** The credits price of 100 MANA in cents (whole credits), or the reason it cannot be given. */
+export async function quoteNameCredits(client: ShopClient, signal?: AbortSignal): Promise<{ quoted: UsdCents } | { missing: MissingFact }> {
+  try {
+    const body = await client.credits.quotes({ amounts: [NAME_PRICE_IN_WEI] }, { signal });
+    const raw = body?.amounts?.[0];
+    const credits = raw != null && /^[0-9]+$/.test(raw) ? Number(raw) : null;
+    const cents = credits !== null && credits > 0 ? centsFromCredits(credits) : null;
+    return cents !== null ? { quoted: cents } : { missing: "manaUsdRate" };
+  } catch (e) {
+    if ((e as { name?: string } | null)?.name === "AbortError") throw e;
+    if (isShopApiError(e) || e instanceof Error) return { missing: "manaUsdRate" };
+    throw e;
+  }
 }

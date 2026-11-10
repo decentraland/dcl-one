@@ -1,10 +1,10 @@
 // from: shop@94584a5c:app/src/lib/urn.ts
 // Item URNs for the preview, and the Catalyst that holds a URN list's content. The v2 node serves
 // its own content, so the peer is the node (the host's base) unless the host names one per network
-// (the browser host reads `window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`: api/host.ts).
+// (the browser host, ui3's api/host.ts, reads `window.__SHOP_PEERS__ = { amoy: "https://peer.decentraland.zone" }`).
 
-import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
-import { CHAIN } from "@shop/model/chain";
+import type { CatalogItem } from "../../discovery/lib/catalogItem";
+import { CHAIN } from "../../model/chain";
 
 export type UrnNetwork = "matic" | "amoy";
 

@@ -10,7 +10,7 @@
 // (lib/remoteFlags.ts). How the two combine is lib/rolloutFlags.ts.
 
 import { remoteFlag } from "./lib/remoteFlags";
-import { declaredOr, resolveShopFlags, type HostShopFlags, type ShopFlags } from "./lib/rolloutFlags";
+import { declaredOr, resolveShopFlags, type HostShopFlags, type ShopFlags } from "@shop/discovery/lib/rolloutFlags";
 
 export type { HostShopFlags, ShopFlags };
 

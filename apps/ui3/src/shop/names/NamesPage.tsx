@@ -12,16 +12,17 @@ import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { creditsCeil } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { presentPayment } from "@shop/payment/present";
 import { useLandWallet } from "../land/useLandWallet";
-import { fetchBannedNames } from "./api";
+import { quoteNameCredits } from "./api";
+import { readBannedNames } from "./reads";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
 import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
 import { useOfferSource } from "../detail/offers";
-import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, quoteNameCredits, seamNameOffer, type NameOfferSource } from "./offer";
+import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, seamNameOffer, type NameOfferSource } from "./offer";
 import { takeNameResume } from "./resume";
 import { shopClient } from "../api/host";
 import "./names.css";
@@ -135,7 +136,7 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
 
   useEffect(() => {
     const ctrl = new AbortController();
-    (loadBanned ? loadBanned(ctrl.signal) : fetchBannedNames({ signal: ctrl.signal })).then(
+    (loadBanned ? loadBanned(ctrl.signal) : readBannedNames(ctrl.signal)).then(
       (list) => setBanned(new Set(list)),
       () => setBanned(new Set()),
     );

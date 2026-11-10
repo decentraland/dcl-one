@@ -3,7 +3,7 @@
 // the client is configured must leave every one of these as it is.
 import { describe, expect, it } from "vitest";
 import { createShopApi, isShopApiError } from "./client";
-import { ENDPOINTS } from "@shop/api/endpoints";
+import { ENDPOINTS } from "./endpoints";
 import type { ShopSigner, ShopTransport, TransportRequest } from "./signer";
 
 function recorder(): { transport: ShopTransport; log: TransportRequest[] } {
