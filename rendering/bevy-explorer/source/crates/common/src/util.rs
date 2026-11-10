@@ -686,8 +686,9 @@ pub fn prompt_origin(url: &str) -> Option<String> {
 
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
 /// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
-/// IETF protocol assignments, reserved, multicast, unique-local/link-local v6, unspecified, and IPv6
-/// addresses that carry a forbidden IPv4 address (see [`embedded_ipv4`]).
+/// IETF protocol assignments, reserved, multicast, unique-local/link-local/site-local v6,
+/// Teredo, benchmarking and documentation ranges, unspecified, and IPv6 addresses that carry a
+/// forbidden IPv4 address (see [`embedded_ipv4`]).
 pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
     match ip {
@@ -721,6 +722,15 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
                 || (seg[0] & 0xffc0) == 0xfe80
                 // local-use NAT64 64:ff9b:1::/48; where the IPv4 address sits is site-chosen
                 || seg[..3] == [0x64, 0xff9b, 1]
+                // Teredo 2001::/32, whatever client address it carries
+                || seg[..2] == [0x2001, 0]
+                // benchmarking 2001:2::/48
+                || seg[..3] == [0x2001, 2, 0]
+                // documentation 2001:db8::/32 and 3fff::/20
+                || seg[..2] == [0x2001, 0xdb8]
+                || (seg[0] & 0xfff0) == 0x3ff0
+                // deprecated site-local fec0::/10
+                || (seg[0] & 0xffc0) == 0xfec0
         }
     }
 }
@@ -980,6 +990,16 @@ mod tests {
             "2002:a00:5::1",
             "2002:a9fe:a9fe::",
             "2002:c0a8:101::1",
+            // Teredo, here with an obfuscated loopback client
+            "2001:0:4136:e378:8000:63bf:80ff:fffe",
+            "2001::1",
+            // benchmarking, documentation, site-local
+            "2001:2::1",
+            "2001:db8::1",
+            "3fff::1",
+            "3fff:fff::1",
+            "fec0::1",
+            "feff::1",
         ] {
             let ip: std::net::IpAddr = address.parse().unwrap();
             assert!(is_forbidden_ip(&ip), "{address} must be forbidden");
@@ -996,6 +1016,11 @@ mod tests {
             "::808:808",
             "2002:808:808::1",
             "2001:4860:4860::8888",
+            "2001:1::1",
+            "2001:2:1::1",
+            "2001:db9::1",
+            "4000::1",
+            "2a00:1450::1",
         ] {
             let ip: std::net::IpAddr = address.parse().unwrap();
             assert!(!is_forbidden_ip(&ip), "{address} is public");

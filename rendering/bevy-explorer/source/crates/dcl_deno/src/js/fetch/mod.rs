@@ -537,9 +537,11 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
 /// Shared base for every scene http client: connect timeout, native TLS, UA, and the
 /// resolver that refuses any non-public address at connect time, so the address that was
 /// checked is the address that is dialled. `allow_private` (preview or a native system
-/// scene) widens this to the local network but never to link-local / metadata.
+/// scene) widens this to the local network but never to link-local / metadata. System proxy
+/// variables are ignored: a proxy would resolve and dial the target outside that resolver.
 fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
     platform::http_client_builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(5))
         .use_native_tls()
         .user_agent("DCLExplorer/0.1")

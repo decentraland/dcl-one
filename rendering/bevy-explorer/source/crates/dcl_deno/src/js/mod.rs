@@ -1050,4 +1050,71 @@ mod tests {
     fn client_follows_redirects() {
         assert_eq!(fetch_redirect_outcome(false), "200 arrived");
     }
+
+    const PROXY_CHILD: &str = "DCL_DENO_PROXY_CHILD";
+
+    /// Scene requests ignore the system proxy variables: a proxy resolves the target itself,
+    /// out of reach of the scene address policy. Runs in a child process, so the variables
+    /// never reach the clients other tests build.
+    #[test]
+    fn scene_fetch_ignores_system_proxy_variables() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        if std::env::var_os(PROXY_CHILD).is_some() {
+            assert_eq!(fetch_redirect_outcome(false), "200 arrived");
+            return;
+        }
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+        let proxied = Arc::new(AtomicUsize::new(0));
+        let counter = proxied.clone();
+        std::thread::spawn(move || {
+            for stream in proxy.incoming() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut stream = stream.unwrap();
+                let _ = stream.read(&mut [0u8; 4096]);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nproxied",
+                );
+            }
+        });
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "js::tests::scene_fetch_ignores_system_proxy_variables",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROXY_CHILD, "1")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy");
+        for name in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            child.env(name, &proxy_url);
+        }
+        let output = child.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{}:\n{stdout}\n{stderr}",
+            output.status
+        );
+        assert_eq!(
+            proxied.load(Ordering::SeqCst),
+            0,
+            "a scene request went through the proxy"
+        );
+    }
 }
