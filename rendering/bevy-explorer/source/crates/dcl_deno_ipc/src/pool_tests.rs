@@ -265,8 +265,11 @@ async fn per_scene_placement_gives_each_scene_its_own_host() {
     let _scenes = place(&pool, &responses, [1, 2, 3]);
 
     let mut started = HashSet::new();
+    let mut fake_hosts = Vec::new();
     for _ in 0..3 {
-        started.insert(next_host(&mut launched).await.0);
+        let (scene, host) = next_host(&mut launched).await;
+        started.insert(scene);
+        fake_hosts.push(host);
     }
     assert_eq!(started, [1, 2, 3].map(scene_id).into());
     eventually(|| {
