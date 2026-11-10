@@ -76,6 +76,8 @@ struct Scene {
 async fn make_scene(signer: &PrivateKeySigner, files: &[&[u8]], entity_type: &str) -> Scene {
     // These fixtures share a database: random parcels can overwrite another
     // test's scene while its upload is still pending. Reserve each parcel once.
+    // Keep y in -99..=-90, outside batch_deployer::tests::scene_at's
+    // -149..=-100 range in the same scratch database.
     static NEXT_PARCEL: AtomicUsize = AtomicUsize::new(0);
     let parcel = NEXT_PARCEL.fetch_add(1, Ordering::Relaxed);
     assert!(
@@ -83,7 +85,7 @@ async fn make_scene(signer: &PrivateKeySigner, files: &[&[u8]], entity_type: &st
         "partial-upload fixture parcel range exhausted"
     );
     let x = 100 + (parcel % 40) as i32;
-    let y = -140 - (parcel / 40) as i32;
+    let y = -90 - (parcel / 40) as i32;
     let pointers = vec![format!("{x},{y}")];
     let files: Vec<(String, Bytes)> = files
         .iter()
