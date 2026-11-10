@@ -171,8 +171,8 @@ every spec and closed with the sessions) to see a banned answer and a failed che
 `session.nativeArgs` is what starts that client, on an automation port of its own. On the web
 a service override stops the boot at the launch gate, so those scenarios are todos there.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
-their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
-adapter reported as a scene ban.
+their absence on an empty parcel. Against the stub, the standalone verifies that a refused scene
+unloads and that a successful recheck loads it again while the player stays on the parcel.
 
 ## Scenario map
 

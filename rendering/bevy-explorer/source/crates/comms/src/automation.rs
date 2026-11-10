@@ -22,6 +22,7 @@ use crate::{
     chat_marker_things,
     chat_reaction::chat_message_id,
     global_crdt::{process_transport_updates, ChatEvent, ForeignPlayer},
+    scene_messages::SceneMessageBus,
 };
 #[cfg(feature = "livekit")]
 use crate::{
@@ -42,6 +43,19 @@ pub struct CommsAutomationPlugin;
 
 impl Plugin for CommsAutomationPlugin {
     fn build(&self, app: &mut App) {
+        app.add_console_command::<SceneCommsState, _>(scene_comms_state)
+            .add_debug_section(DebugSection {
+                title: "Scene comms",
+                query: "/scene_comms_state",
+                fields: &[
+                    ("Topic subscriptions", "topicSubscriptions"),
+                    ("Queued topic messages", "queuedTopicMessages"),
+                    ("Banned sender drops", "bannedSenderDrops"),
+                    ("Filtered CRDT messages", "filteredInboundCrdt"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
         #[cfg(not(feature = "livekit"))]
         app.add_debug_section(DebugSection {
             title: "Voice chat",
@@ -78,6 +92,16 @@ impl Plugin for CommsAutomationPlugin {
                 actions: &[("Send nearby test message", "/chat Nearby Debug-panel-test")],
                 inputs: &[],
             });
+    }
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/scene_comms_state")]
+struct SceneCommsState;
+
+fn scene_comms_state(mut input: ConsoleCommand<SceneCommsState>, bus: Res<SceneMessageBus>) {
+    if let Some(Ok(_)) = input.take() {
+        input.reply_ok(bus.debug_state().to_string());
     }
 }
 

@@ -152,6 +152,8 @@ fn gen_sdk_components() -> Result<()> {
         "UpdateModelType",
         "VideoTracksActiveStreamsResponse",
         "VideoTracksActiveStreamsData",
+        "ConsumeMessagesResponse",
+        "ConsumeMessages",
     ];
 
     for component in serde_components {

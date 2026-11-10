@@ -105,8 +105,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   of the scene adapter, read from its status and body (the gatekeeper's 403 for a platform or
   scene ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats
   any 401 or 403 as forbidden access; a platform-scoped refusal also marks the platform ban. The
-  player is not moved out of a scene that refused them, as there. Other players' scene bans and
-  the admins come from the room's metadata and count only while the room is connected, as there.
+  player stays on the parcel when a scene or world ban prevents admission. Explorer unloads
+  the refused scene and periodically retries admission. Other players' scene bans and the
+  admins come from the room's metadata.
+- **Scene topics share the scene message budget.** The existing 30,000-byte payload limit applies
+  to topics, including their topic header. A scene can subscribe to 128 topics and buffer 1024
+  messages across them. A full inbox evicts its oldest message. Each topic can publish ten
+  messages per second within the scene's existing per-tick budget.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

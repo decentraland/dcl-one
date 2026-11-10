@@ -9,6 +9,7 @@ use self::interface::CrdtStore;
 
 pub mod crdt;
 pub mod interface;
+pub mod scene_topic;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SceneId(pub Entity);
@@ -164,7 +165,10 @@ impl SceneResponseSender {
 pub enum CommsMessageType {
     String = 1,
     Binary = 2,
+    Topic = 3,
 }
+
+pub const MAX_COMMS_MESSAGE_BYTES: usize = 30_000;
 
 #[cfg(test)]
 mod rpc_calls_tests {

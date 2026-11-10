@@ -173,8 +173,7 @@ async fn connect_to_room(
     Room::connect(&address, &token, options).await
 }
 
-/// Parses the scene room's metadata into its moderation lists. Unreadable metadata keeps the
-/// lists the room had, or gives it empty ones.
+/// A bad update retains known bans but cannot extend a previous admin grant.
 fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
     match crate::SceneRoomModeration::from_metadata(metadata) {
         Ok(moderation) => {
@@ -186,10 +185,15 @@ fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: 
             commands.entity(entity).try_insert(moderation);
         }
         Err(err) => {
-            warn!("scene room metadata unreadable ({err:?}): {metadata}");
+            warn!("scene room metadata unreadable ({err:?})");
             commands
                 .entity(entity)
                 .try_insert_if_new(crate::SceneRoomModeration::default());
+            commands.queue(move |world: &mut World| {
+                if let Some(mut moderation) = world.get_mut::<crate::SceneRoomModeration>(entity) {
+                    moderation.scene_admins.clear();
+                }
+            });
         }
     }
 }
@@ -252,6 +256,8 @@ fn process_room_events(
                             // a server has no "connected in another tab" UX: mark the room
                             // terminal so the headless supervisor reaps it and re-mints
                             commands.entity(entity).try_insert(ServerRoomTerminal);
+                        } else if scene_room && reason == DisconnectReason::ParticipantRemoved {
+                            commands.entity(entity).try_insert(crate::SceneRoomRemoved);
                         } else {
                             commands.set_state(ConnectionAvailability::Unavailable);
                         }
@@ -644,7 +650,14 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
 
 fn try_reconnect(
     mut commands: Commands,
-    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>)>,
+    rooms: Populated<
+        Entity,
+        (
+            With<Disconnected>,
+            Without<RoomPaused>,
+            Without<crate::SceneRoomRemoved>,
+        ),
+    >,
 ) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints

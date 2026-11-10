@@ -26,7 +26,10 @@ use common::{
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
 };
-use comms::global_crdt::{CrdtContexts, GlobalCrdtState};
+use comms::{
+    global_crdt::{CrdtContexts, GlobalCrdtState},
+    SceneAdmission,
+};
 use dcl_component::{
     proto_components::sdk::components::{PbMainCamera, PbRealmInfo, PbVisibilityComponent},
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
@@ -1603,6 +1606,9 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    admission: Res<SceneAdmission>,
+    realm: Res<CurrentRealm>,
+    wallet: Res<wallet::Wallet>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
@@ -1686,6 +1692,16 @@ pub fn process_scene_lifecycle(
             None
         }
     }));
+
+    if !server_mode() && !preview_mode.is_preview && !realm.is_local() {
+        if let Some(banned) = wallet
+            .address()
+            .and_then(|address| admission.banned_scene(&realm.about_url, address))
+        {
+            required_scene_ids.retain(|scene, _| scene.0 != banned || portable_ids.contains(scene));
+            keep_scene_ids.retain(|scene| scene.0 != banned || portable_ids.contains(scene));
+        }
+    }
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

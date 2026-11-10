@@ -15,6 +15,9 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<CurrentRealm>();
+    world.init_resource::<comms::SceneAdmission>();
+    world.init_resource::<wallet::Wallet>();
     world.insert_resource(SceneLoadDistance {
         load: 20.0,
         unload: 10.0,
@@ -91,6 +94,44 @@ fn loading_current_scene_defers_other_scenes() {
 
     assert!(world.resource::<CurrentSceneLoading>().0);
     assert!(spawned_hashes(&world).is_empty());
+}
+
+#[test]
+fn scene_ban_unloads_only_the_matching_scene_until_admitted() {
+    let mut world = lifecycle_world();
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    world.insert_resource(wallet);
+    world.insert_resource(CurrentRealm::default());
+    let current = spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    world.insert_resource(
+        comms::SceneAdmission::from_refusal(
+            403,
+            Some("User is banned from this scene"),
+            false,
+            "current",
+        )
+        .for_session("", address),
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(current).is_err());
+    assert!(!world.resource::<CurrentSceneLoading>().0);
+    assert_eq!(spawned_hashes(&world), vec!["neighbour"]);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+
+    world.insert_resource(comms::SceneAdmission::allowed("current"));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
 }
 
 #[test]

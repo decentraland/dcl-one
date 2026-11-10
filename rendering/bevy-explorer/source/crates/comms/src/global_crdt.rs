@@ -9,17 +9,17 @@ use bevy::{
 };
 use bimap::BiMap;
 use common::{
-    rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
+    rpc::{RpcCallEvent, RpcStreamSender},
     structs::{
-        AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        AudioDecoderError, CurrentRealm, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent,
+        EmoteLifecycleSource, EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage,
+        PointAtSync, PreviewMode, SceneDrivenAnimationRequest,
     },
-    util::ModifyComponentExt,
+    util::{is_loopback_url, ModifyComponentExt},
 };
-use serde_json::json;
 use system_bridge::{SystemApi, VoiceMessage};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use wallet::Wallet;
 
 use dcl_component::{
     proto_components::{
@@ -32,12 +32,12 @@ use dcl_component::{
 use dcl_types::{
     crdt::{append_component, delete_entity, put_component},
     interface::{CrdtStore, CrdtType},
-    CommsMessageType,
 };
 
 use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
-    Transport,
+    scene_messages::{peer_trust, SceneMessageBus},
+    SceneRoom, SceneRoomModeration, Transport, TransportType,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -88,6 +88,7 @@ pub struct DiscardPlayerUpdates(pub bool);
 impl Plugin for GlobalCrdtPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DiscardPlayerUpdates>();
+        app.init_resource::<SceneMessageBus>();
 
         // the shared context: the client's single player view, which every transport and
         // scene resolves to unless a room-specific context exists for its hash. An
@@ -823,27 +824,25 @@ pub fn process_transport_updates(
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
     ),
-    mut string_senders: Local<HashMap<String, RpcEventSender>>,
-    mut binary_senders: Local<HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    mut scene_messages: ResMut<SceneMessageBus>,
+    (entities, local_wallet, preview, realm): (
+        Query<Entity>,
+        Option<Res<Wallet>>,
+        Option<Res<PreviewMode>>,
+        Option<Res<CurrentRealm>>,
+    ),
     mut subscribers: EventReader<RpcCallEvent>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports): (Res<DiscardPlayerUpdates>, Query<(), With<Transport>>),
+    (discard_player_updates, transports): (
+        Res<DiscardPlayerUpdates>,
+        Query<(&Transport, Option<&SceneRoom>, Option<&SceneRoomModeration>)>,
+    ),
 ) {
-    // gather any event receivers
-    for ev in subscribers.read() {
-        match (&ev.origin, &ev.call) {
-            (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeMessageBus { sender }) => {
-                string_senders.insert(hash.to_string(), sender.clone());
-            }
-            (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeBinaryBus { sender }) => {
-                binary_senders.insert(hash.to_string(), sender.clone());
-            }
-            _ => (),
-        }
-    }
-    string_senders.retain(|_, s| !s.is_closed());
-    binary_senders.retain(|_, s| !s.is_closed());
+    scene_messages.update_subscriptions(subscribers.read(), |entity| entities.contains(entity));
+    let local_address = local_wallet.as_deref().and_then(Wallet::address);
+    let legacy_preview = preview.is_some_and(|mode| mode.is_preview)
+        || realm.is_some_and(|realm| realm.is_local() && is_loopback_url(&realm.about_url));
 
     // forget per-player state for despawned players (cheap unless a map outgrew the live set)
     let live_players = players.iter().len();
@@ -868,13 +867,14 @@ pub fn process_transport_updates(
                     }
                     // queued before its transport was despawned: registering a dead transport
                     // would hold the player forever, as nothing can remove it again
-                    if !transports.contains(update.transport_id) {
+                    let Ok((transport, room, moderation)) = transports.get(update.transport_id)
+                    else {
                         debug!(
                             "dropping update from {} on despawned transport {}",
                             update.address, update.transport_id
                         );
                         continue;
-                    }
+                    };
                     // create/update timestamp/transport_id on the foreign player
                     let (entity, scene_id, audio_channel) =
                         if let Some((entity, scene_id, channel)) =
@@ -1011,24 +1011,24 @@ pub fn process_transport_updates(
                             }
                         }
                         PlayerMessage::PlayerData(Message::Scene(scene)) => {
-                            let address = format!("{:#x}", update.address);
-                            if let Some(room_hash) = &state.room {
-                                // a client may only address the scene owning this context's
-                                // room — rejects bus injection via a forged scene_id
-                                if scene.scene_id != *room_hash {
-                                    debug!(
-                                        "dropping cross-room bus message from {address}: declared scene {} != room {room_hash}",
-                                        scene.scene_id
-                                    );
-                                    continue;
-                                }
+                            let bound =
+                                matches_scene_room(room, state.room.as_deref(), &scene.scene_id);
+                            // Preview hosts can still reply on the shared WebSocket room.
+                            let legacy = legacy_preview
+                                && room.is_none()
+                                && state.room.is_none()
+                                && transport.transport_type == TransportType::WebsocketRoom;
+                            if transport.context == context_entity && (bound || legacy) {
+                                scene_messages.receive(
+                                    scene,
+                                    format!("{:#x}", update.address),
+                                    if transport.transport_type == TransportType::Livekit {
+                                        peer_trust(moderation, update.address, local_address)
+                                    } else {
+                                        Some(false)
+                                    },
+                                );
                             }
-                            process_messagebus(
-                                scene,
-                                address,
-                                &mut string_senders,
-                                &mut binary_senders,
-                            );
                         }
                         PlayerMessage::PlayerData(Message::Voice(_)) => (),
                         PlayerMessage::Movement {
@@ -1165,24 +1165,16 @@ pub fn process_transport_updates(
 
                     match update.message {
                         Message::Scene(scene) => {
-                            // same cross-room guard as the Player arm: the message may only
-                            // address the scene owning this context's room
-                            if let Some(room_hash) = &state.room {
-                                if scene.scene_id != *room_hash {
-                                    debug!(
-                                        "dropping cross-room message from {}: declared scene {} != room {room_hash}",
-                                        update.address, scene.scene_id
-                                    );
-                                    continue;
-                                }
+                            let Ok((transport, room, _)) = transports.get(update.transport_id)
+                            else {
+                                continue;
+                            };
+                            if transport.transport_type == TransportType::Livekit
+                                && transport.context == context_entity
+                                && matches_scene_room(room, state.room.as_deref(), &scene.scene_id)
+                            {
+                                scene_messages.receive(scene, update.address, Some(true));
                             }
-
-                            process_messagebus(
-                                scene,
-                                update.address,
-                                &mut string_senders,
-                                &mut binary_senders,
-                            );
                         }
                         // a server resolving a guest profile asks the guest directly — the
                         // only source there is. The request handler reads the requested
@@ -1322,52 +1314,8 @@ fn resolve_remote_anim(
     })
 }
 
-fn process_messagebus(
-    mut scene: rfc4::Scene,
-    address: String,
-    string_senders: &mut HashMap<String, RpcStreamSender<String>>,
-    binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
-) {
-    if scene.data.is_empty() {
-        warn!("empty scene message");
-        return;
-    }
-
-    let comms_type = match *scene.data.first().unwrap() {
-        c if c == CommsMessageType::String as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::String
-        }
-        c if c == CommsMessageType::Binary as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::Binary
-        }
-        _ => CommsMessageType::String,
-    };
-
-    debug!(
-        "messagebus received from {} to scene {}: [{:?}] `{:?}`",
-        address, scene.scene_id, comms_type, scene.data
-    );
-
-    match comms_type {
-        CommsMessageType::String => {
-            if let Some(sender) = string_senders.get(&scene.scene_id) {
-                let _ = sender.send(
-                    json!({
-                        "message": String::from_utf8(scene.data).unwrap_or_default(),
-                        "sender": address,
-                    })
-                    .to_string(),
-                );
-            }
-        }
-        CommsMessageType::Binary => {
-            if let Some(sender) = binary_senders.get(&scene.scene_id) {
-                let _ = sender.send((address, scene.data));
-            }
-        }
-    }
+fn matches_scene_room(room: Option<&SceneRoom>, context: Option<&str>, scene_id: &str) -> bool {
+    room.is_some_and(|room| room.0 == scene_id) && context.is_none_or(|hash| hash == scene_id)
 }
 
 fn despawn_players(
@@ -1528,6 +1476,7 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::rpc::{RpcCall, RpcEventSender, RpcOrigin};
 
     #[test]
     fn peer_emote_urns_are_bounded() {
@@ -1585,6 +1534,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<DiscardPlayerUpdates>();
+        app.init_resource::<SceneMessageBus>();
         app.add_event::<RpcCallEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<PlayerPositionEvent>();
@@ -1633,6 +1583,67 @@ mod tests {
             .iter(app.world())
             .map(|player| player.transports.clone())
             .collect()
+    }
+
+    #[test]
+    fn scene_delivery_requires_the_matching_transport_and_applies_its_ban_list() {
+        let (mut app, context) = presence_app();
+        let local_scene = app.world_mut().spawn_empty().id();
+        let (sender, mut received) = RpcEventSender::channel();
+        let room = spawn_transport(&mut app, context);
+        let other_room = spawn_transport(&mut app, context);
+        app.world_mut()
+            .get_mut::<Transport>(room)
+            .unwrap()
+            .transport_type = TransportType::Livekit;
+        let banned = Address::repeat_byte(1);
+        let allowed = Address::repeat_byte(2);
+        let mut metadata = SceneRoomModeration::default();
+        metadata.banned_addresses.insert(banned);
+        app.world_mut()
+            .entity_mut(room)
+            .insert((SceneRoom("scene".to_owned()), metadata));
+        app.world_mut()
+            .entity_mut(other_room)
+            .insert(SceneRoom("other-scene".to_owned()));
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: local_scene,
+                hash: Arc::from("scene"),
+            },
+            call: RpcCall::SubscribeMessageBus { sender },
+        });
+
+        let inbound = app
+            .world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender();
+        for (transport_id, address, data) in [
+            (room, allowed, b"\x01allowed".as_slice()),
+            (room, banned, b"\x01banned"),
+            (other_room, allowed, b"\x01other room"),
+        ] {
+            inbound
+                .try_send(
+                    PlayerUpdate {
+                        transport_id,
+                        address,
+                        message: PlayerMessage::PlayerData(Message::Scene(rfc4::Scene {
+                            scene_id: "scene".to_owned(),
+                            data: data.to_vec(),
+                        })),
+                    }
+                    .into(),
+                )
+                .unwrap();
+        }
+        app.update();
+
+        let message: serde_json::Value =
+            serde_json::from_str(&received.try_recv().unwrap()).unwrap();
+        assert_eq!(message["message"], "allowed");
+        assert!(received.try_recv().is_err());
     }
 
     #[test]

@@ -459,19 +459,32 @@ pub fn relay_pump() -> u32 {
                     }
                 }
                 // immediate calls go one at a time: nothing more is pulled until the engine
-                // answers (or drops) this one. readFile is the only one.
+                // answers (or drops) this one.
                 Ok(ToEngine::Response(
-                    response @ SceneResponse::ImmediateRpcCall(RpcCall::ReadFile { .. }),
+                    response @ SceneResponse::ImmediateRpcCall(
+                        RpcCall::ReadFile { .. }
+                        | RpcCall::SetTopicSubscription { .. }
+                        | RpcCall::ConsumeTopicMessages { .. },
+                    ),
                 )) => {
-                    let SceneResponse::ImmediateRpcCall(RpcCall::ReadFile {
-                        response: RpcResultSender::Remote { id, .. },
-                        ..
-                    }) = &response
-                    else {
-                        relay.end("immediate call without a reply channel");
-                        break;
+                    let id = match &response {
+                        SceneResponse::ImmediateRpcCall(RpcCall::ReadFile {
+                            response: RpcResultSender::Remote { id, .. },
+                            ..
+                        })
+                        | SceneResponse::ImmediateRpcCall(RpcCall::SetTopicSubscription {
+                            response: RpcResultSender::Remote { id, .. },
+                            ..
+                        })
+                        | SceneResponse::ImmediateRpcCall(RpcCall::ConsumeTopicMessages {
+                            response: RpcResultSender::Remote { id, .. },
+                            ..
+                        }) => *id,
+                        _ => {
+                            relay.end("immediate call without a reply channel");
+                            break;
+                        }
                     };
-                    let id = *id;
                     if relay.forward(response) {
                         relay.awaiting_reply = Some(id);
                     }

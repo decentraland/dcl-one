@@ -1,9 +1,9 @@
 use bevy::{math::Vec3Swizzles, prelude::*};
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
-    structs::{AvatarDynamicState, PermissionType, PrimaryUser, ReturnedToWorld},
+    structs::{AvatarDynamicState, CurrentRealm, PermissionType, PrimaryUser, ReturnedToWorld},
 };
-use comms::global_crdt::ForeignPlayer;
+use comms::{global_crdt::ForeignPlayer, SceneAdmission};
 use ipfs::{ChangeRealmEvent, RealmInitialLocation};
 use rand::{seq::SliceRandom, Rng};
 use scene_runner::{
@@ -146,6 +146,8 @@ pub fn handle_out_of_world(
     live_scenes: Res<LiveScenes>,
     foreign_players: Query<&GlobalTransform, With<ForeignPlayer>>,
     wallet: Res<Wallet>,
+    admission: Res<SceneAdmission>,
+    realm: Res<CurrentRealm>,
     mut returned: EventWriter<ReturnedToWorld>,
 ) {
     let Ok((player, mut t)) = player.single_mut() else {
@@ -154,10 +156,10 @@ pub fn handle_out_of_world(
 
     debug!("out of world!");
 
-    if wallet.address().is_none() {
+    let Some(address) = wallet.address() else {
         debug!("waiting for connection");
         return;
-    }
+    };
 
     let parcel = (t.translation.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
         .floor()
@@ -178,6 +180,12 @@ pub fn handle_out_of_world(
             return;
         }
     };
+
+    if admission.banned_scene(&realm.about_url, address) == Some(hash.as_str()) {
+        commands.entity(player).remove::<OutOfWorld>();
+        returned.write(ReturnedToWorld::SceneReady);
+        return;
+    }
 
     let Some(scene) = live_scenes.scenes.get(hash) else {
         debug!("scene resolved but not spawned");
@@ -352,6 +360,8 @@ mod tests {
         let mut wallet = Wallet::default();
         wallet.finalize_as_guest();
         world.insert_resource(wallet);
+        world.init_resource::<SceneAdmission>();
+        world.init_resource::<CurrentRealm>();
         world.init_resource::<Events<ReturnedToWorld>>();
         let player = world
             .spawn((
@@ -370,5 +380,46 @@ mod tests {
             .copied()
             .collect::<Vec<_>>();
         assert_eq!(returned, vec![ReturnedToWorld::SceneLoadFailed]);
+    }
+
+    #[test]
+    fn a_banned_scene_allows_arrival_without_loading_it() {
+        let mut world = World::new();
+        let mut pointers = ScenePointers::default();
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "scene".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+        world.init_resource::<LiveScenes>();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([1; 32]);
+        world.insert_resource(
+            SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "scene",
+            )
+            .for_session("", wallet.address().unwrap()),
+        );
+        world.insert_resource(wallet);
+        world.init_resource::<CurrentRealm>();
+        world.init_resource::<Events<ReturnedToWorld>>();
+        let player = world
+            .spawn((
+                PrimaryUser::default(),
+                OutOfWorld,
+                Transform::from_xyz(8.0, 0.0, -8.0),
+            ))
+            .id();
+
+        world.run_system_once(handle_out_of_world).unwrap();
+
+        assert!(!world.entity(player).contains::<OutOfWorld>());
+        assert!(world.resource::<LiveScenes>().scenes.is_empty());
     }
 }

@@ -44,6 +44,7 @@ impl Plugin for WebsocketRoomPlugin {
 
 #[derive(Event)]
 pub struct StartWsRoom {
+    pub entity: Entity,
     pub address: String,
     /// crdt context this room's transport feeds
     pub context: Entity,
@@ -64,27 +65,27 @@ pub fn start_ws_room(
     mut room_events: EventReader<StartWsRoom>,
     current_profile: Res<CurrentUserProfile>,
 ) {
-    if let Some(ev) = room_events.read().last() {
+    for ev in room_events.read() {
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
+            continue;
+        };
         info!("starting ws-room protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
         // never announce an edit still deploying
-        let Some(current_profile) = current_profile.peer_profile() else {
-            return;
-        };
+        if let Some(current_profile) = current_profile.peer_profile() {
+            let response = rfc4::Packet {
+                message: Some(rfc4::packet::Message::ProfileVersion(
+                    rfc4::AnnounceProfileVersion {
+                        profile_version: current_profile.version,
+                    },
+                )),
+                protocol_version: 100,
+            };
+            let _ = sender.try_send(NetworkMessage::reliable(&response));
+        }
 
-        // queue a profile version message
-        let response = rfc4::Packet {
-            message: Some(rfc4::packet::Message::ProfileVersion(
-                rfc4::AnnounceProfileVersion {
-                    profile_version: current_profile.version,
-                },
-            )),
-            protocol_version: 100,
-        };
-        let _ = sender.try_send(NetworkMessage::reliable(&response));
-
-        commands.spawn((
+        entity.try_insert((
             Transport {
                 transport_type: TransportType::WebsocketRoom,
                 sender,
