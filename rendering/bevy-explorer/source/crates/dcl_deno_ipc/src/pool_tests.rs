@@ -623,6 +623,29 @@ async fn per_scene_hosts_start_with_a_filtered_environment() {
 }
 
 #[tokio::test]
+async fn a_sandboxed_shared_host_starts_with_the_filtered_environment() {
+    let (pool, mut launched, _, _) = pool_with(HostOptions {
+        placement: Placement::Shared,
+        sandbox: SandboxMode::On,
+        ..Default::default()
+    });
+    let pool = Arc::new(pool);
+    std::thread::scope(|scope| scope.spawn(|| pool.start()).join().unwrap()).unwrap();
+
+    let host = launched.try_recv().unwrap();
+
+    let env = host.command.env.as_ref().expect("a filtered environment");
+    for (name, _) in env {
+        assert!(
+            PER_SCENE_HOST_ENV.iter().any(|allowed| name == allowed),
+            "{name:?}"
+        );
+    }
+    assert!(!env.iter().any(|(name, _)| name == "HOME"));
+    assert_eq!(host.command.args[1..], ["--sandbox", "on"]);
+}
+
+#[tokio::test]
 async fn an_ended_host_loses_only_its_scene_and_counts_as_lost() {
     let (pool, mut launched, _) = pool(Placement::PerScene);
     let (responses, mut receiver) = scene_response_channel();
@@ -1051,4 +1074,38 @@ async fn capture_host_log(bytes: Vec<u8>) -> (Vec<String>, Vec<String>) {
         .cloned()
         .collect();
     (logged, events)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn only_the_launched_host_s_own_connection_is_taken() {
+    use interprocess::local_socket::{
+        tokio::Stream, traits::tokio::Stream as _, GenericFilePath, ToFsName,
+    };
+    let endpoint = ipc_socket_name();
+    let command = HostCommand {
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), "sleep 2".into()],
+        env: None,
+    };
+    let launching = tokio::spawn(ProcessLauncher.launch(endpoint.clone(), command));
+
+    // another process of the same user reaches the endpoint first
+    let mut impostor = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let name = endpoint.as_str().to_fs_name::<GenericFilePath>().unwrap();
+            if let Ok(stream) = Stream::connect(name).await {
+                break stream;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(TIMEOUT, impostor.read(&mut byte)).await;
+    assert!(matches!(read, Ok(Ok(0)) | Ok(Err(_))), "{read:?}");
+    let launched = launching.await.unwrap();
+    assert!(launched.is_err_and(|e| e.to_string().contains("exited before connecting")));
 }

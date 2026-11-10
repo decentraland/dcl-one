@@ -34,7 +34,7 @@ interprocess = { version = "2.0", features = ["tokio"] }
 rmp-serde = "1.3"
 sysinfo = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]

@@ -11,6 +11,8 @@ const FIOSETOWN: libc::c_ulong = 0x8901;
 pub struct Targets {
     loopback: TcpListener,
     other: OtherProcess,
+    // none where the kernel has no System V IPC
+    shared_memory: Option<SharedMemory>,
 }
 
 impl Targets {
@@ -18,7 +20,41 @@ impl Targets {
         Ok(Targets {
             loopback: TcpListener::bind("127.0.0.1:0")?,
             other: OtherProcess::start()?,
+            shared_memory: SharedMemory::create().ok(),
         })
+    }
+}
+
+/// A System V segment made before the sandbox, as any process of the IPC namespace could. Marked
+/// for removal at once, so it goes when this process does; Linux still lets it be attached.
+struct SharedMemory {
+    id: libc::c_int,
+    address: *mut libc::c_void,
+}
+
+impl SharedMemory {
+    fn create() -> io::Result<Self> {
+        // SAFETY: plain syscalls; the segment is private to this process until removed.
+        unsafe {
+            let id = libc::shmget(libc::IPC_PRIVATE, 4096, libc::IPC_CREAT | 0o600);
+            if id < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let address = libc::shmat(id, std::ptr::null(), 0);
+            libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
+            if address as isize == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(SharedMemory { id, address })
+        }
+    }
+}
+
+impl Drop for SharedMemory {
+    fn drop(&mut self) {
+        // SAFETY: detaches the mapping `create` attached; refused under the sandbox, and the
+        // segment goes with the process anyway.
+        unsafe { libc::shmdt(self.address) };
     }
 }
 
@@ -84,6 +120,8 @@ pub fn run(targets: &Targets) -> Report {
         cannot_open_home: cannot_open_home(),
         cannot_read_other_process: refused(fs::read(format!("/proc/{other}/status"))),
         cannot_open_unix_socket: refused(UnixDatagram::unbound()) && refused(UnixStream::pair()),
+        cannot_use_sysv_ipc: cannot_use_sysv_ipc(targets.shared_memory.as_ref()),
+        cannot_open_other_inet_protocol: cannot_open_other_inet_protocol(),
         cannot_open_non_route_netlink: cannot_open_non_route_netlink(),
         // SAFETY: signal 0 only checks permission.
         cannot_signal_other_process: last_call_denied(unsafe { libc::kill(other, 0) }.into()),
@@ -189,8 +227,55 @@ fn cannot_create_temp_file() -> bool {
     }
 }
 
+/// Holds without a home directory to open: `HOME` unset, or naming nothing.
 fn cannot_open_home() -> bool {
-    std::env::var_os("HOME").is_some_and(|home| refused(fs::read_dir(home)))
+    std::env::var_os("HOME").is_none_or(|home| match fs::read_dir(home) {
+        Ok(_) => false,
+        Err(error) => denied(&error) || error.kind() == ErrorKind::NotFound,
+    })
+}
+
+fn cannot_use_sysv_ipc(shared_memory: Option<&SharedMemory>) -> bool {
+    // SAFETY: plain syscalls; whatever they attach or create is detached or removed again.
+    unsafe {
+        let attach = shared_memory.is_none_or(|shared_memory| {
+            let address = libc::shmat(shared_memory.id, std::ptr::null(), libc::SHM_RDONLY);
+            if address as isize == -1 {
+                return denied(&io::Error::last_os_error());
+            }
+            libc::shmdt(address);
+            false
+        });
+        let queue = libc::msgget(libc::IPC_PRIVATE, libc::IPC_CREAT | 0o600);
+        let queue_denied = last_call_denied(queue.into());
+        if queue >= 0 {
+            libc::msgctl(queue, libc::IPC_RMID, std::ptr::null_mut());
+        }
+        let semaphores = libc::semget(libc::IPC_PRIVATE, 1, libc::IPC_CREAT | 0o600);
+        let semaphores_denied = last_call_denied(semaphores.into());
+        if semaphores >= 0 {
+            libc::semctl(semaphores, 0, libc::IPC_RMID);
+        }
+        attach && queue_denied && semaphores_denied
+    }
+}
+
+/// Raw sockets fail without a capability anyway; SCTP needs none.
+fn cannot_open_other_inet_protocol() -> bool {
+    // SAFETY: a plain syscall; a socket it returns is closed.
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_INET,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+            libc::IPPROTO_SCTP,
+        )
+    };
+    if fd >= 0 {
+        // SAFETY: the descriptor was just returned.
+        unsafe { libc::close(fd) };
+        return false;
+    }
+    denied(&io::Error::last_os_error())
 }
 
 fn cannot_signal_process_group() -> bool {

@@ -124,8 +124,8 @@ struct Args {
     scene_host_memory_mb: Option<u64>,
 
     /// What each scene host applies to itself before it takes a scene, on Linux: `on` applies
-    /// what the kernel offers, `require` ends a host that is not sandboxed; absent = require with
-    /// --orchestrated on Linux, off otherwise
+    /// what the kernel offers and ends a host that cannot apply it at all, `require` ends a host
+    /// that is not sandboxed; absent = require with --orchestrated on Linux, off otherwise
     #[arg(long, value_enum, value_name = "mode", help_heading = HEADLESS)]
     scene_host_sandbox: Option<SceneHostSandbox>,
 
@@ -422,15 +422,19 @@ fn main() -> AppExit {
             SceneHosts::Shared => 0,
             SceneHosts::PerScene => args.scene_host_spares.unwrap_or(1),
         },
-        memory_cap: args.scene_host_memory_mb.map(|mib| mib * 1024 * 1024),
+        memory_cap: args.scene_host_memory_mb.map(|mib| {
+            mib.checked_mul(1024 * 1024)
+                .unwrap_or_else(|| usage_error("--scene-host-memory-mb is too large"))
+        }),
         sandbox,
     });
-    if let Err(e) = &started {
+    if let Err(e) = started {
         if e.is::<SandboxRefused>() {
             usage_error(format!("the scene host failed to start: {e:#}"));
         }
+        eprintln!("the scene host failed to start: {e:#}");
+        std::process::exit(1);
     }
-    started.unwrap();
 
     println!(
         "[headless] realm={} location={} preview={} server_mode={} tick_hz={}",

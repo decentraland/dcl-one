@@ -59,6 +59,35 @@ impl Host {
             next_id: 1,
         }));
         let (responses_sx, responses) = scene_response_channel();
+        Self::with_responses(
+            reader,
+            writer,
+            new_scene_sx,
+            scenes,
+            responses_sx,
+            responses,
+            ended,
+        )
+    }
+
+    /// A second host whose scenes respond into `first`'s channel, as every scene does in the
+    /// engine; its scene ids start after `first`'s.
+    fn connect_sharing_responses_with(first: &Host) -> Self {
+        let mut host = Self::connect();
+        host.responses_sx = first.responses_sx.clone();
+        host.next_entity = 1000;
+        host
+    }
+
+    fn with_responses(
+        reader: ReadHalf<DuplexStream>,
+        writer: WriteHalf<DuplexStream>,
+        new_scene_sx: UnboundedSender<NewSceneCommand>,
+        scenes: Arc<Mutex<HostScenes>>,
+        responses_sx: TaggedSceneResponseSender,
+        responses: SceneResponseReceiver,
+        ended: tokio::sync::oneshot::Receiver<()>,
+    ) -> Self {
         Self {
             reader,
             writer,
@@ -456,6 +485,169 @@ async fn reply_channels_over_the_limit_end_the_host_connection() {
     let (one_more, _receivers) = tick(1);
     host.send(&one_more).await;
 
+    assert!(host.connection_ends().await);
+}
+
+/// A tick of `count` subscriptions, and the scene-side ends of their channels.
+fn subscriptions(
+    scene: SceneId,
+    count: usize,
+) -> (SceneToEngine, Vec<common::rpc::RpcStreamReceiver<String>>) {
+    let (calls, receivers): (Vec<_>, Vec<_>) = (0..count).map(|_| subscription()).unzip();
+    let mut rpc_calls = RpcCalls::default();
+    rpc_calls.extend(calls);
+    let response = SceneResponse::Ok(
+        SceneCensus {
+            born: Default::default(),
+            died: Default::default(),
+        },
+        Default::default(),
+        SceneElapsedTime(0.0),
+        Vec::new(),
+        rpc_calls,
+    );
+    (SceneToEngine::SceneResponse(scene, response), receivers)
+}
+
+#[tokio::test]
+async fn reply_channels_the_engine_still_holds_count_after_the_host_closes_them() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (tick, _receivers) = subscriptions(scene, MAX_HOST_IPC_CHANNELS);
+    let first_id = SCENE_IPC_CONTEXT.with_borrow(|ctx| ctx.as_ref().unwrap().next_id) + 1;
+    host.send(&tick).await;
+    let (_, SceneResponse::Ok(.., held)) = host.delivered_response().await else {
+        panic!("expected the tick");
+    };
+
+    for id in first_id..first_id + MAX_HOST_IPC_CHANNELS as u64 {
+        host.send(&SceneToEngine::IpcMessage(id, IpcMessage::Closed))
+            .await;
+    }
+    let (one_more, _receivers) = subscriptions(scene, 1);
+    host.send(&one_more).await;
+
+    assert!(host.connection_ends().await);
+    let held = held.into_iter().collect::<Vec<_>>();
+    assert!(held.iter().all(|call| matches!(
+        call,
+        RpcCall::SubscribePlayerConnected { sender } if sender.is_closed()
+    )));
+}
+
+#[tokio::test]
+async fn a_reply_channel_the_engine_dropped_frees_its_place() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (tick, _receivers) = subscriptions(scene, MAX_HOST_IPC_CHANNELS);
+    host.send(&tick).await;
+    let (_, SceneResponse::Ok(.., held)) = host.delivered_response().await else {
+        panic!("expected the tick");
+    };
+
+    drop(held);
+    // the engine tells the host each channel it dropped
+    for _ in 0..MAX_HOST_IPC_CHANNELS {
+        assert!(matches!(
+            host.read().await,
+            EngineToScene::IpcMessage(_, IpcMessage::Closed)
+        ));
+    }
+    let (one_more, _receivers) = subscriptions(scene, 1);
+    host.send(&one_more).await;
+
+    assert!(matches!(
+        host.delivered_response().await,
+        (_, SceneResponse::Ok(..))
+    ));
+}
+
+#[tokio::test]
+async fn frames_over_the_engine_budget_end_the_host_that_reads_them() {
+    let budget = tokio::sync::Semaphore::new(3);
+    let frame = |len: usize| {
+        let mut bytes = (len as u64).to_le_bytes().to_vec();
+        bytes.resize(8 + len, 0);
+        bytes
+    };
+    let mut stream = std::io::Cursor::new([frame(1024), frame(1024)].concat());
+
+    let (_, first) = read_frame(&mut stream, &budget).await.unwrap().unwrap();
+    let second = read_frame(&mut stream, &budget).await;
+
+    assert_eq!(first.num_permits(), 2);
+    assert!(second.is_err());
+    drop(first);
+    let mut stream = std::io::Cursor::new(frame(1024));
+    assert!(read_frame(&mut stream, &budget).await.is_ok());
+}
+
+#[test]
+fn system_api_is_taken_only_while_the_system_scene_runs() {
+    let mut scenes = HostScenes::default();
+    let now = Instant::now();
+    let (system_api, _rx) = unbounded_channel();
+    scenes.start(1, scene_response_channel().0, Some(system_api), now);
+    assert!(scenes.system_api().is_some());
+
+    scenes.kill(1, now);
+
+    assert!(scenes.system_api().is_none());
+    assert!(scenes.responses(1, now).is_some());
+}
+
+#[tokio::test]
+async fn a_host_flooding_the_shared_response_channel_holds_back_only_itself() {
+    let mut flooding = Host::connect();
+    let mut other = Host::connect_sharing_responses_with(&flooding);
+    let (flooded, _) = flooding.start_scene(false).await;
+    let (waiting, _) = other.start_scene(false).await;
+    // more than the channel holds
+    let flood = 1200;
+
+    for marker in 0..flood {
+        flooding.respond(flooded, marker).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    other.respond(waiting, 7).await;
+
+    let mut flooded_delivered = 0;
+    let mut waiting_delivered = false;
+    while flooded_delivered < flood || !waiting_delivered {
+        match flooding.delivered().await {
+            (scene, _) if scene == waiting => waiting_delivered = true,
+            _ => flooded_delivered += 1,
+        }
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut flooding.ended)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_stops_reading_is_ended_and_a_removed_scene_counts_as_killed_at_once() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let renderer = host.renderer_channels.remove(&scene.0.to_bits()).unwrap();
+    // far more than the pipe holds, so the engine's writer waits on the host
+    for _ in 0..20_000 {
+        let _ = renderer.send(RendererResponse::GetCrdtSnapshot);
+    }
+
+    drop(renderer);
+
+    tokio::time::timeout(TIMEOUT, async {
+        while host.scenes.lock().unwrap().scenes[&scene.0.to_bits()]
+            .killed_at
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the kill was not recorded");
     assert!(host.connection_ends().await);
 }
 
