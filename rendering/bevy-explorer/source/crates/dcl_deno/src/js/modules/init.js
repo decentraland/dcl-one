@@ -12,7 +12,9 @@ const denoRef = Deno;
 // taken before the scene runs, on the paths that touch `denoRef`.
 import { primordials } from "ext:core/mod.js";
 const { ReflectApply, StringPrototypeCharCodeAt, StringPrototypeSlice } = primordials;
-const { op_eval_context: opEvalContext, op_require: opRequire } = denoRef.core.ops;
+const { op_require: opRequire } = denoRef.core.ops;
+// called indirectly, so it compiles in the global scope and returns the wrapper itself
+const globalEval = globalThis.eval;
 
 // The scene bundle is untrusted code that runs in THIS realm, so every global reachable
 // here is reachable from it -- including the raw ops table, which is the whole API surface
@@ -75,7 +77,7 @@ function require(moduleName) {
     // create a wrapper for the imported script
     source = stripHashbang(source);
     const head = "(function (exports, require, module, __filename, __dirname, Deno) {";
-    const foot = "\n})";
+    const foot = `\n})\n//# sourceURL=file://${moduleName}`;
     source = `${head}${source}${foot}`;
 
     // the scene bundle is the untrusted one; everything else here is ours. Hiding the
@@ -86,12 +88,7 @@ function require(moduleName) {
         sealRealm();
     }
 
-    // [result, null] or [null, [thrown, isNativeError, isCompileError]]
-    const evaluated = opEvalContext(source, "file://${moduleName}");
-    if (evaluated[1]) {
-        throw evaluated[1][0];
-    }
-    const wrapped = evaluated[0];
+    const wrapped = globalEval(source);
 
     // create minimal context for the execution
     var module = {

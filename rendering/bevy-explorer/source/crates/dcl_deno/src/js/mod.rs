@@ -827,8 +827,8 @@ mod tests {
         .unwrap();
     }
 
-    /// The server seal does not depend on built-ins scene code can replace: `require` hands
-    /// the internals to `~system/*` modules without passing them through any of them.
+    /// The server seal does not depend on built-ins or prototypes scene code can replace:
+    /// `require` hands the internals to `~system/*` modules without passing them through any.
     #[test]
     fn the_seal_holds_when_the_scene_replaces_builtins() {
         run_scene(
@@ -880,13 +880,30 @@ mod tests {
             wrap(String.prototype, "substring");
             wrap(RegExp.prototype, Symbol.replace);
             wrap(RegExp.prototype, "exec");
+            // index accessors: a setter sees each value stored at a missing index and keeps
+            // functions for itself, and a getter answers every read of a missing index
+            const substitute = function (...args) { check(this, args); };
+            for (const proto of [Array.prototype, Object.prototype]) {
+                for (const index of [0, 1]) {
+                    Object.defineProperty(proto, index, {
+                        get() { return substitute; },
+                        set(value) {
+                            check(this, [value]);
+                            if (typeof value !== "function") {
+                                Object.defineProperty(this, index, { value, writable: true, enumerable: true, configurable: true });
+                            }
+                        },
+                        configurable: true,
+                    });
+                }
+            }
 
             const engine = require("~system/EngineApi");
             const testing = require("~system/Testing");
+            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
             if (typeof engine.crdtSendToRenderer !== "function" || typeof testing.plan !== "function") {
                 throw new Error("a system module did not load");
             }
-            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
             if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
             "#,
         )
