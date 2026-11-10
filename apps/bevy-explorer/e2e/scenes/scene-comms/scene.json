@@ -1,0 +1,19 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "Scene comms",
+    "description": "Publishes and receives topic messages in a shared scene room"
+  },
+  "owner": "",
+  "contact": {
+    "name": "Decentraland",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": ["204,0"],
+    "base": "204,0"
+  }
+}

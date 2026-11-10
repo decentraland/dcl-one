@@ -13,6 +13,9 @@ pub mod preview;
 pub mod private_chat;
 pub mod profile;
 pub mod pulse;
+mod scene_crdt;
+pub mod scene_messages;
+mod scene_topics;
 pub mod signed_login;
 #[cfg(test)]
 mod test;
@@ -127,7 +130,7 @@ impl Plugin for CommsPlugin {
             Update,
             (
                 process_realm_change.run_if(not(resource_exists::<WorldHold>)),
-                connect_scene_room,
+                connect_scene_room.after(common::sets::SceneSets::PostLoop),
             ),
         );
 
@@ -493,7 +496,7 @@ pub fn broadcast<'a, B: Broadcast + Clone + 'static>(
 fn process_realm_change(
     mut commands: Commands,
     realm: Res<CurrentRealm>,
-    adapters: Query<Entity, With<Transport>>,
+    adapters: Query<Entity, (With<Transport>, Without<SceneRoom>)>,
     mut manager: AdapterManager,
     wallet: Res<Wallet>,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
@@ -544,6 +547,8 @@ fn process_realm_change(
 #[serde(rename_all = "camelCase")]
 pub struct SetCurrentScene {
     pub realm_name: String,
+    #[serde(skip)]
+    pub realm_about_url: String,
     pub scene_id: String,
 }
 
@@ -641,8 +646,57 @@ struct SceneRoomMint {
     result: Result<String, MintError>,
 }
 
+const SCENE_BAN_RECHECK_SECS: f64 = 5.0;
+
+#[derive(Default)]
+struct SceneRoomRequest {
+    scene: Option<SetCurrentScene>,
+    wallet: Option<Address>,
+    task: Option<Task<SceneRoomMint>>,
+    next_mint: Option<f64>,
+    rechecking: bool,
+}
+
+impl SceneRoomRequest {
+    fn retarget(
+        &mut self,
+        event: Option<&SetCurrentScene>,
+        realm: &str,
+        wallet: Option<Address>,
+        now: f64,
+    ) -> bool {
+        let mut changed = self.wallet != wallet;
+        self.wallet = wallet;
+        if let Some(event) = event {
+            let scene =
+                (!event.scene_id.is_empty() && event.realm_about_url == realm).then_some(event);
+            if self.scene.as_ref() != scene {
+                self.scene = scene.cloned();
+                changed = true;
+            }
+        } else if self
+            .scene
+            .as_ref()
+            .is_some_and(|scene| scene.realm_about_url != realm)
+        {
+            self.scene = None;
+            changed = true;
+        }
+
+        if changed {
+            self.task = None;
+            self.next_mint = self.scene.as_ref().map(|_| now);
+            self.rechecking = false;
+        }
+        changed
+    }
+}
+
 #[derive(Component)]
 pub struct SceneRoom(pub String);
+
+#[derive(Component)]
+pub(crate) struct SceneRoomRemoved;
 
 #[derive(Resource, Default)]
 pub struct SceneRoomConnection(pub Option<(SetCurrentScene, String, Entity)>);
@@ -678,7 +732,7 @@ pub struct SceneRoomAdapterOverride(pub Option<String>);
 fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,
-    mut gatekeeper_task: Local<Option<Task<SceneRoomMint>>>,
+    mut request: Local<SceneRoomRequest>,
     mut current: ResMut<SceneRoomConnection>,
     mut admission: ResMut<SceneAdmission>,
     mut scene: EventReader<SetCurrentScene>,
@@ -690,6 +744,8 @@ fn connect_scene_room(
     contexts: Query<Entity, With<global_crdt::GlobalCrdtState>>,
     current_realm: Res<CurrentRealm>,
     world_secret: Res<ipfs::world_access::WorldCommsSecret>,
+    time: Res<Time<bevy::time::Real>>,
+    scene_rooms: Query<(Option<&SceneRoomModeration>, Has<SceneRoomRemoved>), With<SceneRoom>>,
 ) {
     if disabled.0 {
         // orchestrated servers receive pre-minted adapters over the control channel and
@@ -697,26 +753,67 @@ fn connect_scene_room(
         scene.clear();
         return;
     }
-    if let Some(ev) = scene.read().last().cloned() {
-        if let Some((existing, room, entity)) = current.0.take() {
-            if existing == ev {
-                current.0 = Some((existing, room, entity));
-                return;
-            }
+    let address = wallet.address();
+    let now = time.elapsed_secs_f64();
+    if request.retarget(scene.read().last(), &current_realm.about_url, address, now) {
+        if let Some((existing, _, entity)) = current.0.take() {
             if let Ok(mut commands) = commands.get_entity(entity) {
                 commands.despawn();
             }
-            warn!("disconnected scene channel {ev:?}");
+            warn!("disconnected scene channel {existing:?}");
         }
-        if admission.scene_id() != Some(ev.scene_id.as_str()) {
-            admission.set_if_neq(SceneAdmission::unknown());
+        admission.set_if_neq(SceneAdmission::unknown());
+    }
+
+    let enforce_scene_bans =
+        !common::structs::server_mode() && !preview_mode.is_preview && !current_realm.is_local();
+    if current
+        .0
+        .as_ref()
+        .is_some_and(|(_, _, entity)| !scene_rooms.contains(*entity))
+    {
+        current.0 = None;
+        request.next_mint = Some(now + SCENE_BAN_RECHECK_SECS);
+        request.rechecking = enforce_scene_bans;
+    }
+    if let Some((scene, _, entity)) = current.0.as_ref() {
+        let Ok((moderation, removed)) = scene_rooms.get(*entity) else {
+            return;
+        };
+        if let Some((moderation, address)) = moderation.zip(address).filter(|_| enforce_scene_bans)
+        {
+            let was_banned = admission
+                .banned_scene(&scene.realm_about_url, address)
+                .is_some();
+            if moderation.banned_addresses.contains(&address) {
+                if !was_banned {
+                    admission.set_if_neq(
+                        SceneAdmission::from_room_ban(&scene.scene_id)
+                            .for_session(&scene.realm_about_url, address),
+                    );
+                }
+            } else if was_banned && !removed {
+                admission.set_if_neq(SceneAdmission::allowed(&scene.scene_id));
+            }
         }
+        if !removed {
+            return;
+        }
+        commands.entity(*entity).despawn();
+        current.0 = None;
+        request.next_mint = Some(now);
+        request.rechecking = enforce_scene_bans;
+    }
+
+    if request.next_mint.is_some_and(|retry_at| retry_at <= now) {
+        request.next_mint = None;
+        let Some(ev) = request.scene.clone() else {
+            return;
+        };
         if adapter_override.0.is_some() && !preview_mode.is_preview {
             warn_once!("DCL_SCENE_ROOM_ADAPTER is ignored outside preview mode");
         }
-        if ev.scene_id.is_empty() {
-            *gatekeeper_task = None;
-        } else if let Some(adapter) = adapter_override
+        if let Some(adapter) = adapter_override
             .0
             .clone()
             .filter(|_| preview_mode.is_preview)
@@ -726,7 +823,6 @@ fn connect_scene_room(
             // client context. ONLY livekit adapters, mirroring the orchestrated-server
             // gate: any other protocol (signed-login, ws-room, fixed-adapter recursion)
             // could make the engine sign a remote-chosen payload with its identity.
-            *gatekeeper_task = None;
             if !adapter.starts_with("livekit:") {
                 warn_once!("ignoring non-livekit scene room adapter override");
                 return;
@@ -742,7 +838,10 @@ fn connect_scene_room(
                 current.0 = Some((ev, adapter, ent));
             }
         } else {
-            let wallet = wallet.clone();
+            if address.is_none() {
+                return;
+            }
+            let wallet = wallet.snapshot();
             let preview = ev.scene_id.starts_with("b64-");
             // A world's scene rooms come from the worlds server itself, which applies the
             // world's access rule and takes the password the realm was entered with.
@@ -782,7 +881,7 @@ fn connect_scene_room(
                 serde_json::to_string(&ev).unwrap()
             };
             let is_world = world.is_some();
-            *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
+            request.task = Some(IoTaskPool::get().spawn_compat(async move {
                 let result = mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await;
                 SceneRoomMint {
                     scene: ev,
@@ -793,26 +892,47 @@ fn connect_scene_room(
         }
     }
 
-    if let Some(mut task) = gatekeeper_task.take() {
+    if let (Some(address), Some(mut task)) = (address, request.task.take()) {
         let Some(mint) = task.complete() else {
-            *gatekeeper_task = Some(task);
+            request.task = Some(task);
             return;
         };
+        let realm = &mint.scene.realm_about_url;
+        let was_banned = admission.banned_scene(realm, address).is_some();
         match mint.result {
             Err(MintError::Refused(refusal)) => {
                 warn!("scene room refused by the gatekeeper: {refusal}");
-                admission.set_if_neq(SceneAdmission::from_refusal(
+                let next = SceneAdmission::from_refusal(
                     refusal.status,
                     refusal.message.as_deref(),
                     mint.is_world,
                     &mint.scene.scene_id,
-                ));
+                );
+                if enforce_scene_bans {
+                    let next = next.for_session(realm, address);
+                    request.rechecking = next.banned_scene(realm, address).is_some()
+                        || (request.rechecking && next.view() == AdmissionView::Unknown);
+                    if request.rechecking {
+                        request.next_mint = Some(now + SCENE_BAN_RECHECK_SECS);
+                    }
+                    if !was_banned || next.view() != AdmissionView::Unknown {
+                        admission.set_if_neq(next);
+                    }
+                } else {
+                    admission.set_if_neq(next);
+                }
             }
             Err(MintError::Transport(e)) => {
                 warn!("failed to get scene room from gatekeeper: {e:#}");
-                admission.set_if_neq(SceneAdmission::unknown());
+                if request.rechecking {
+                    request.next_mint = Some(now + SCENE_BAN_RECHECK_SECS);
+                }
+                if !was_banned {
+                    admission.set_if_neq(SceneAdmission::unknown());
+                }
             }
             Ok(adapter) => {
+                request.rechecking = false;
                 let ev = mint.scene;
                 admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 // client-only (gatekeeper is disabled on servers): the client's scene
@@ -832,9 +952,45 @@ fn connect_scene_room(
     }
 }
 
+#[cfg(test)]
+#[test]
+fn scene_room_request_resets_on_scene_realm_and_wallet_changes() {
+    let mut request = SceneRoomRequest::default();
+    let current = SetCurrentScene {
+        realm_name: "realm".into(),
+        realm_about_url: "https://example.invalid/about".into(),
+        scene_id: "current".into(),
+    };
+    let first_wallet = Some(Address::repeat_byte(1));
+    let second_wallet = Some(Address::repeat_byte(2));
+    let realm = current.realm_about_url.as_str();
+
+    assert!(request.retarget(Some(&current), realm, first_wallet, 1.0));
+    assert_eq!(request.next_mint, Some(1.0));
+    request.rechecking = true;
+    assert!(!request.retarget(Some(&current), realm, first_wallet, 2.0));
+    assert!(request.rechecking);
+    assert!(request.retarget(None, realm, second_wallet, 3.0));
+    assert_eq!(request.next_mint, Some(3.0));
+    assert!(!request.rechecking);
+
+    let leave = SetCurrentScene {
+        scene_id: String::new(),
+        ..current.clone()
+    };
+    assert!(request.retarget(Some(&leave), realm, second_wallet, 4.0));
+    assert_eq!(request.next_mint, None);
+    assert!(request.retarget(Some(&current), realm, second_wallet, 5.0));
+    assert_eq!(request.next_mint, Some(5.0));
+
+    let new_realm = "https://another.invalid/about";
+    assert!(request.retarget(None, new_realm, second_wallet, 6.0));
+    assert_eq!(request.next_mint, None);
+    assert!(!request.retarget(Some(&current), new_realm, second_wallet, 7.0));
+}
+
 #[derive(SystemParam)]
 pub struct AdapterManager<'w, 's> {
-    #[cfg(feature = "livekit")]
     commands: Commands<'w, 's>,
     ws_room_events: EventWriter<'w, StartWsRoom>,
     #[cfg(feature = "livekit")]
@@ -867,10 +1023,13 @@ impl AdapterManager<'_, '_> {
 
         match protocol {
             "ws-room" => {
+                let entity = self.commands.spawn_empty().id();
                 self.ws_room_events.write(StartWsRoom {
+                    entity,
                     address: address.to_owned(),
                     context,
                 });
+                return Some(entity);
             }
             "signed-login" => {
                 self.signed_login_events.send(StartSignedLogin {

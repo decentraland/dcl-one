@@ -34,7 +34,9 @@ use comms::{
     global_crdt::{CrdtContexts, ForeignPlayer},
     preview::handle_preview_socket,
     profile::{CurrentUserProfile, ProfileManager, UserProfile},
-    NetworkMessage, NetworkMessageRecipient, SceneRoom, Transport,
+    scene_messages::{outgoing_scene_message, TopicPublishBudget},
+    NetworkMessage, NetworkMessageRecipient, SceneAdmission, SceneRoom, SceneRoomModeration,
+    Transport,
 };
 use console::DoAddConsoleCommand;
 use copypwasmta::{ClipboardContext, ClipboardProvider};
@@ -1658,9 +1660,18 @@ fn event_scene_ready(
 
 fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
-    transports: Query<(&Transport, Option<&SceneRoom>)>,
+    transports: Query<(&Transport, &SceneRoom, Option<&SceneRoomModeration>)>,
     scenes: Query<&RendererSceneContext>,
+    wallet: Res<Wallet>,
+    realm: Res<CurrentRealm>,
+    admission: Res<SceneAdmission>,
+    time: Res<Time<bevy::time::Real>>,
+    mut publish_budgets: Local<HashMap<Entity, TopicPublishBudget>>,
 ) {
+    publish_budgets.retain(|scene, _| scenes.contains(*scene));
+    let local_address = wallet.address();
+    let banned_scene =
+        local_address.and_then(|address| admission.banned_scene(&realm.about_url, address));
     for (scene, data, recipient) in events.read().filter_map(|c| match (&c.origin, &c.call) {
         (RpcOrigin::Scene { entity: scene, .. }, RpcCall::SendMessageBus { data, recipient }) => {
             Some((scene, data, recipient))
@@ -1671,40 +1682,41 @@ fn send_scene_messages(
             continue;
         };
         let hash = &ctx.hash;
-
-        debug!(
-            "messagebus sent from scene {}: {:?} (auth = {})",
-            &hash, data, ctx.authoritative_multiplayer
-        );
+        if banned_scene == Some(hash.as_ref()) {
+            continue;
+        }
+        let Some(data) = outgoing_scene_message(
+            data,
+            publish_budgets.entry(*scene).or_default(),
+            time.elapsed(),
+        ) else {
+            continue;
+        };
+        let is_topic = data[0] == dcl_types::CommsMessageType::Topic as u8;
         let message = rfc4::Packet {
             message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
                 scene_id: hash.to_string(),
-                data: data.clone(),
+                data,
             })),
             protocol_version: 100,
         };
 
-        let mut recipient = recipient
-            .map(NetworkMessageRecipient::Peer)
-            .unwrap_or(NetworkMessageRecipient::All);
+        let recipient = if is_topic {
+            NetworkMessageRecipient::All
+        } else if ctx.authoritative_multiplayer && !server_mode() {
+            NetworkMessageRecipient::AuthServer
+        } else {
+            recipient
+                .map(NetworkMessageRecipient::Peer)
+                .unwrap_or(NetworkMessageRecipient::All)
+        };
 
-        // A client routes authoritative-scene traffic to the auth server. WE are the
-        // auth server, so keep the scene's intended recipient (targeted peer or broadcast)
-        // — otherwise the server would address messages to itself and clients never receive them.
-        if ctx.authoritative_multiplayer && !server_mode() {
-            recipient = NetworkMessageRecipient::AuthServer;
-        }
-
-        for (transport, scene_room) in transports.iter() {
-            // Client (prod) path unchanged: send to any scene room. When serving, also
-            // require the room to belong to this scene so N scenes in one engine don't
-            // cross-talk (a server may hold several scene rooms; a client holds one).
-            let send = if server_mode() {
-                scene_room.is_some_and(|r| *r.0 == **hash)
-            } else {
-                scene_room.is_some()
-            };
-            if send {
+        for (transport, scene_room, moderation) in &transports {
+            if scene_room.0 == **hash
+                && !moderation.is_some_and(|state| {
+                    local_address.is_some_and(|address| state.banned_addresses.contains(&address))
+                })
+            {
                 let _ = transport
                     .sender
                     .try_send(NetworkMessage::targetted_reliable(&message, recipient));

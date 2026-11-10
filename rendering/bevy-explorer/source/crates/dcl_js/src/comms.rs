@@ -11,7 +11,7 @@ use dcl_types::{CommsMessageType, RpcCalls, SceneResourceCounters};
 
 use super::State;
 
-pub const MAX_COMMS_MESSAGE_BYTES: usize = 30_000;
+pub use dcl_types::MAX_COMMS_MESSAGE_BYTES;
 const MAX_NETWORK_MESSAGE_QUEUE: usize = 1024;
 pub const MAX_SEND_MESSAGES_PER_TICK: usize = 512;
 
@@ -22,7 +22,7 @@ pub struct CommsSendBudget {
     pub sent: usize,
 }
 
-fn try_spend_budget(state: &mut impl State) -> bool {
+pub(crate) fn try_spend_budget(state: &mut impl State) -> bool {
     if !state.has::<CommsSendBudget>() {
         state.put(CommsSendBudget::default());
     }

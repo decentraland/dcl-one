@@ -25,6 +25,7 @@ enum Admission {
         scope: BanScope,
         message: String,
         scene_id: String,
+        session: Option<(String, Address)>,
     },
 }
 
@@ -59,7 +60,7 @@ const WORLD_BANNED_PREFIX: &str = "You are banned from world";
 impl SceneAdmission {
     /// No answer for the current scene.
     pub fn unknown() -> Self {
-        Self(Admission::Unknown)
+        Self::default()
     }
 
     /// The gatekeeper minted the scene's room.
@@ -90,7 +91,42 @@ impl SceneAdmission {
             scope,
             message: message.trim_end_matches('.').to_owned(),
             scene_id: scene_id.to_owned(),
+            session: None,
         })
+    }
+
+    pub(crate) fn from_room_ban(scene_id: &str) -> Self {
+        Self(Admission::Refused {
+            scope: BanScope::Scene,
+            message: SCENE_BANNED.to_owned(),
+            scene_id: scene_id.to_owned(),
+            session: None,
+        })
+    }
+
+    pub fn for_session(mut self, realm_about_url: &str, address: Address) -> Self {
+        // The worlds adapter reports the same refusal for a world-wide ban and a scene ban.
+        // In either case the refusal applies to the scene whose adapter was requested.
+        if let Admission::Refused {
+            scope: BanScope::Scene | BanScope::World,
+            session,
+            ..
+        } = &mut self.0
+        {
+            *session = Some((realm_about_url.to_owned(), address));
+        }
+        self
+    }
+
+    pub fn banned_scene(&self, realm_about_url: &str, address: Address) -> Option<&str> {
+        match &self.0 {
+            Admission::Refused {
+                scene_id,
+                session: Some((realm, user)),
+                ..
+            } if realm == realm_about_url && *user == address => Some(scene_id),
+            _ => None,
+        }
     }
 
     pub fn view(&self) -> AdmissionView<'_> {
@@ -101,6 +137,7 @@ impl SceneAdmission {
                 scope,
                 message,
                 scene_id,
+                ..
             } => AdmissionView::Refused {
                 scope: *scope,
                 message,
@@ -161,6 +198,56 @@ impl SceneRoomModeration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_bans_apply_only_to_the_session_that_received_them() {
+        let realm = "https://example.invalid/about";
+        let address = Address::repeat_byte(1);
+        let ban = SceneAdmission::from_room_ban("scene-1").for_session(realm, address);
+
+        assert_eq!(ban.banned_scene(realm, address), Some("scene-1"));
+        assert_eq!(ban.banned_scene(realm, Address::repeat_byte(2)), None);
+        assert_eq!(
+            ban.banned_scene("https://another.invalid/about", address),
+            None
+        );
+        assert_eq!(
+            SceneAdmission::allowed("scene-1").banned_scene(realm, address),
+            None
+        );
+
+        let platform_ban =
+            SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "scene-1")
+                .for_session(realm, address);
+        assert_eq!(platform_ban.banned_scene(realm, address), None);
+    }
+
+    #[test]
+    fn world_adapter_refusal_applies_to_the_requested_scene_only() {
+        let realm = "https://example.invalid/world/example.dcl.eth/about";
+        let address = Address::repeat_byte(1);
+        let refusal = SceneAdmission::from_refusal(
+            401,
+            Some("You are banned from world \"example.dcl.eth\"."),
+            true,
+            "world-scene-1",
+        )
+        .for_session(realm, address);
+
+        assert!(matches!(
+            refusal.view(),
+            AdmissionView::Refused {
+                scope: BanScope::World,
+                ..
+            }
+        ));
+        assert_eq!(refusal.banned_scene(realm, address), Some("world-scene-1"));
+        assert_eq!(
+            refusal.banned_scene("https://another.invalid/about", address),
+            None
+        );
+        assert_eq!(refusal.banned_scene(realm, Address::repeat_byte(2)), None);
+    }
 
     #[test]
     fn a_refusal_names_its_scope_or_is_unknown() {

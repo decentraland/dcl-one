@@ -175,7 +175,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state`, `/ban_block_state [address]` (whether the local user is banned from the
+  `/voice_state`, `/scene_comms_state` (scene topic queues and inbound filtering),
+  `/ban_block_state [address]` (whether the local user is banned from the
   platform or refused by the current scene, whom they block or are blocked by, the scene room's
   banned and admin lists, and that address's standing; `/ban_block_refresh` re-checks the
   platform ban), `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the

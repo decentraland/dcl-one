@@ -1,13 +1,10 @@
-// The scene-ban half of the ban & block status service: the local user's admission to the
-// current scene's room and the room's banned and admin lists, as the engine reads them. Not an
-// explorer-automation fixture; unity-explorer learns a scene ban from the same refusal
-// (`ConnectiveRoom.OnForbiddenAccess`) and the lists from the same room metadata
-// (`RoomMetadataCurrentScene`), and what it then does with them is consumer work.
+// The scene room reports admission and moderation lists. A scene ban unloads the parcel scene
+// while the player remains in the world. A later successful admission restores the scene.
 //
 // | Scenario                                                   | Class            |
 // | a scene room reports its admission and moderation lists    | New              |
 // | leaving the scene clears the room state                    | New              |
-// | a refused scene adapter marks the player scene-banned      | New, native only |
+// | a refused scene unloads until the player is admitted again | New, native only |
 //
 // The refusal scenario starts its own standalone against a loopback gatekeeper stub
 // (`--comms-gatekeeper`); on the web a service override stops the boot at the launch gate.
@@ -59,21 +56,42 @@ scenario('leaving the scene clears the room state', async ({ explorer }) => {
 })
 
 scenario(
-  'a refused scene adapter marks the player scene-banned',
+  'a refused scene unloads until the player is admitted again',
   async ({ explorer }) => {
     assert.ok(stub)
     stub.sceneAdapter(refusal(403, 'User is banned from this scene'))
-    await explorer.teleport(...SCENE_PARCEL)
-    const state = await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.state === 'refused', {
-      timeoutMs: ROOM_TIMEOUT_MS,
-      what: 'the refusal to be reported'
-    })
-    assert.equal(state.sceneAdmission.scope, 'scene')
-    assert.equal(state.sceneAdmission.message, 'User is banned from this scene')
-    assert.equal(state.sceneRoom.state, 'not_connected')
-    // the player is not moved: Unity parity
-    const world = await explorer.worldState()
-    assert.ok(world.inWorld)
+    try {
+      await explorer.teleport(...SCENE_PARCEL)
+      const state = await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.state === 'refused', {
+        timeoutMs: ROOM_TIMEOUT_MS,
+        what: 'the refusal to be reported'
+      })
+      assert.equal(state.sceneAdmission.scope, 'scene')
+      assert.equal(state.sceneAdmission.message, 'User is banned from this scene')
+      assert.equal(state.sceneRoom.state, 'not_connected')
+
+      const loadingState = () => explorer.json<{ stage: string }>('/scene_loading_state')
+      const absent = 'Waiting for the parcel scene to load.'
+      await until(loadingState, (s) => s.stage === absent, {
+        timeoutMs: ROOM_TIMEOUT_MS,
+        what: 'the refused scene to unload'
+      })
+      assert.ok((await explorer.worldState()).inWorld)
+      await explorer.teleport(...SCENE_PARCEL)
+      assert.equal((await loadingState()).stage, absent)
+
+      stub.sceneAdapter({ status: 200, body: { adapter: 'offline:' } })
+      await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.state === 'allowed', {
+        timeoutMs: ROOM_TIMEOUT_MS,
+        what: 'a fresh admission to lift the scene ban'
+      })
+      await until(loadingState, (s) => s.stage === 'Running', {
+        timeoutMs: ROOM_TIMEOUT_MS,
+        what: 'the scene to load again on the same parcel'
+      })
+    } finally {
+      stub.sceneAdapter(refusal(503, 'stub has no adapter', { 'retry-after': '1' }))
+    }
   },
   native ? { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } } : { todo: 'web: a loopback service override stops at the launch gate' }
 )

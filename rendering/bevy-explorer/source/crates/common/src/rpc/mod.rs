@@ -370,6 +370,15 @@ pub enum RpcCall {
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },
+    SetTopicSubscription {
+        topic: String,
+        subscribed: bool,
+        response: RpcResultSender<()>,
+    },
+    ConsumeTopicMessages {
+        topic: String,
+        response: RpcResultSender<Vec<(String, String)>>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
