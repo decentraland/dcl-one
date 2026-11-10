@@ -1,4 +1,5 @@
 import { GeneralLeftArrow } from '../../../foundations/icons/general'
+import { BlogLink } from './BlogRouting'
 import { BlogShell } from './BlogShell'
 import { BLOG_HOME } from './blogModel'
 import styles from './BlogNotFound.module.css'
@@ -12,10 +13,10 @@ export function BlogNotFound({ slug }: BlogNotFoundProps) {
       <div className={styles.box}>
         <h1 className={styles.title}>Post not found</h1>
         <p className={styles.text}>We couldn’t find a blog post at “{slug}”.</p>
-        <a className={styles.link} href={BLOG_HOME}>
+        <BlogLink className={styles.link} href={BLOG_HOME}>
           <GeneralLeftArrow size={20} aria-hidden="true" />
           Back to the Blog
-        </a>
+        </BlogLink>
       </div>
     </BlogShell>
   )

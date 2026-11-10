@@ -52,6 +52,12 @@ export function browserCatalystBase(env: BaseEnv = processEnv()): string {
   return trimSlash(envValue(env, "PUBLIC_CATALYST_URL") ?? "");
 }
 
+/** An absolute URL of this site for a page's public address (canonical, share links): under
+ * PUBLIC_CATALYST_URL when set, else the request's origin. */
+export function publicPageUrl(request: Request, pathname: string, env: BaseEnv = processEnv()): string {
+  return `${browserCatalystBase(env) || new URL(request.url).origin}${pathname}`;
+}
+
 export function worldsUrl(override?: string, env: BaseEnv = processEnv()): string {
   return trimSlash(
     override ?? envValue(env, "WORLDS_URL") ?? `${catalystUrl(undefined, env)}${WORLDS_PREFIX}`,

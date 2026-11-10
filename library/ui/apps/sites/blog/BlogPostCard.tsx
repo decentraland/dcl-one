@@ -2,6 +2,7 @@
 import type { CSSProperties } from 'react'
 import { BlogAvatar } from './BlogAvatar'
 import { BlogBadge } from './BlogBadge'
+import { BlogLink } from './BlogRouting'
 import { blogPostHref, formatBlogDate, type BlogCard, type BlogRelatedCard } from './blogModel'
 import styles from './BlogPostCard.module.css'
 
@@ -28,9 +29,9 @@ export function BlogPostCard(props: BlogPostCardProps) {
           </p>
         ) : null}
         <h3 className={styles.title}>
-          <a className={styles.link} href={blogPostHref(post.slug)}>
+          <BlogLink className={styles.link} href={blogPostHref(post.slug)}>
             {post.title}
-          </a>
+          </BlogLink>
         </h3>
         <BlogBadge category={post.category} />
         {props.variant !== 'related' && props.post.author ? (

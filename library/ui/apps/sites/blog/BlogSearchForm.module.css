@@ -32,7 +32,7 @@
 
 .outline .field {
   padding: 11px var(--dcl-space-16);
-  border: 1px solid var(--dcl-neutrals-onix);
+  border: 1px solid var(--dcl-border-default);
 }
 
 .field:focus-within {

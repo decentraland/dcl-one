@@ -55,7 +55,7 @@
 .quote {
   margin: var(--dcl-space-16) 0;
   padding-left: var(--dcl-space-16);
-  border-left: 4px solid var(--dcl-neutrals-onix);
+  border-left: 4px solid var(--dcl-border-default);
   color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-heading-2);
   font-weight: 600;

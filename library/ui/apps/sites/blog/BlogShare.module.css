@@ -19,7 +19,7 @@
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid var(--dcl-neutrals-onix);
+  border: 1px solid var(--dcl-border-default);
   border-radius: var(--dcl-radius-full);
   background: var(--dcl-bg-surface);
   color: var(--dcl-text-primary);

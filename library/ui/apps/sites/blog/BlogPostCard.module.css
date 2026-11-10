@@ -4,7 +4,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  border: 1px solid var(--dcl-neutrals-onix);
+  border: 1px solid var(--dcl-border-default);
   border-radius: var(--dcl-radius-lg);
   background: var(--dcl-bg-surface);
 }
@@ -86,7 +86,7 @@
   width: 100%;
   margin: var(--dcl-space-4) 0 0;
   border: 0;
-  border-top: 1px solid var(--dcl-neutrals-onix);
+  border-top: 1px solid var(--dcl-border-default);
 }
 
 .author {

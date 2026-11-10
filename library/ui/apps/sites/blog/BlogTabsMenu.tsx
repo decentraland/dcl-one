@@ -1,4 +1,5 @@
 // TODO(figma-ds): replace with the generated Tabs component when the DCL UI library lands
+import { BlogLink } from './BlogRouting'
 import { BlogSearchForm } from './BlogSearchForm'
 import { blogCategoryHref, type BlogCategory, type BlogSort } from './blogModel'
 import styles from './BlogTabsMenu.module.css'
@@ -33,13 +34,13 @@ export function BlogTabsMenu({
             const active = tab.slug === activeCategory
             return (
               <li key={tab.slug || 'all'}>
-                <a
+                <BlogLink
                   className={active ? `${styles.tab} ${styles.active}` : styles.tab}
                   href={blogCategoryHref(tab.slug)}
                   aria-current={active ? current : undefined}
                 >
                   {tab.title}
-                </a>
+                </BlogLink>
               </li>
             )
           })}

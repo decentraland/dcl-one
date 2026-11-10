@@ -5,6 +5,7 @@ import { BlogAvatar } from './BlogAvatar'
 import { BlogBadge } from './BlogBadge'
 import { BlogPostCard } from './BlogPostCard'
 import { BlogRichText } from './BlogRichText'
+import { BlogLink } from './BlogRouting'
 import { BlogShare } from './BlogShare'
 import { BlogShell } from './BlogShell'
 import { BlogTabsMenu } from './BlogTabsMenu'
@@ -41,10 +42,10 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
         searchCategory=""
       />
       <article className={styles.article}>
-        <a className={styles.back} href={BLOG_HOME}>
+        <BlogLink className={styles.back} href={BLOG_HOME}>
           <GeneralLeftArrow size={20} aria-hidden="true" />
           Back to blog
-        </a>
+        </BlogLink>
         <p className={styles.meta}>
           <BlogBadge category={post.category} />
           <span>

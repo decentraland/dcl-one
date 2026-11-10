@@ -3,6 +3,7 @@ import { loader, meta } from "./blog._index";
 
 type Data = {
   posts: { slug: string; category: { slug: string } }[];
+  postCount: number;
   category: string;
   query: string;
   sort: string;
@@ -45,6 +46,19 @@ describe("blog index loader", () => {
   it("matches the query in title or description, case-insensitively", async () => {
     expect(slugs((await load("?q=BROWSER")).data)).toEqual(["explore-from-your-browser"]);
     expect(slugs((await load("?q=wearables")).data)).toEqual(["marketplace-credits-season-one"]);
+  });
+
+  it("matches the category title too, as the index always did", async () => {
+    const { data } = await load("?q=platform");
+    expect(slugs(data)).toEqual(["explore-from-your-browser", "whats-on-live-events-guide"]);
+    expect(data.posts.every((p) => p.category.slug === "platform")).toBe(true);
+    expect(slugs((await load("?q=ANNOUNCE")).data)).toEqual(["marketplace-credits-season-one"]);
+  });
+
+  it("counts the category's posts for telemetry, whatever the search", async () => {
+    expect((await load("?q=zzzz")).data.postCount).toBe(3);
+    expect((await load("?category=platform&q=zzzz")).data.postCount).toBe(2);
+    expect((await load("?category=nope")).data.postCount).toBe(0);
   });
 
   it("treats an empty or whitespace query as no search", async () => {

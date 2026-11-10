@@ -2,16 +2,11 @@
 import { useId } from 'react'
 import { BlogFeaturedCard } from './BlogFeaturedCard'
 import { BlogPostCard } from './BlogPostCard'
+import { BlogLink } from './BlogRouting'
 import { BlogSearchForm } from './BlogSearchForm'
 import { BlogShell } from './BlogShell'
 import { BlogTabsMenu } from './BlogTabsMenu'
-import {
-  BLOG_HOME,
-  newestBlogCard,
-  type BlogCard,
-  type BlogCategory,
-  type BlogSort
-} from './blogModel'
+import { BLOG_HOME, type BlogCard, type BlogCategory, type BlogSort } from './blogModel'
 import styles from './BlogIndexPage.module.css'
 
 export type BlogIndexPageProps = {
@@ -24,11 +19,10 @@ export type BlogIndexPageProps = {
   posts: readonly BlogCard[]
 }
 
-/** The blog index: hero, the newest matching post featured, then the rest in a grid. */
+/** The blog index: hero, the first matching post (in `sort` order) featured, then the rest in a grid. */
 export function BlogIndexPage({ categories, category, query, sort, posts }: BlogIndexPageProps) {
   const latestId = useId()
-  const featured = newestBlogCard(posts)
-  const rest = posts.filter((post) => post !== featured)
+  const [featured, ...rest] = posts
   const known = !category || categories.some((c) => c.slug === category)
   return (
     <BlogShell>
@@ -81,9 +75,9 @@ export function BlogIndexPage({ categories, category, query, sort, posts }: Blog
                 ? `Nothing matches “${query}”. Try another word or browse every article.`
                 : 'There are no articles in this category yet.'}
             </p>
-            <a className={styles.emptyLink} href={BLOG_HOME}>
+            <BlogLink className={styles.emptyLink} href={BLOG_HOME}>
               View all articles
-            </a>
+            </BlogLink>
           </div>
         )}
       </div>

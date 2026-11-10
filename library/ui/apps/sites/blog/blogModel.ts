@@ -31,7 +31,7 @@ export type BlogArticle = BlogCard & { body: readonly BlogBlock[] }
 
 export const BLOG_HOME = '/blog'
 
-/** The longest search the index reads; the loader trims to the same length. */
+/** The longest search the index reads; the input's maxLength and the loader's trim both use it. */
 export const BLOG_QUERY_MAX = 200
 
 export const blogPostHref = (slug: string) => `${BLOG_HOME}/${encodeURIComponent(slug)}`
@@ -47,18 +47,6 @@ export function formatBlogDate(iso: string): string {
   if (!m) return ''
   const month = MONTHS[Number(m[2]) - 1]
   return month ? `${month} ${m[3]}, ${m[1]}` : ''
-}
-
-/** The newest card by `publishedAt`; undated cards lose to dated ones, ties keep list order. */
-export function newestBlogCard<T extends Pick<BlogCard, 'publishedAt'>>(
-  cards: readonly T[]
-): T | undefined {
-  let best: T | undefined
-  for (const card of cards) {
-    if (!best || (card.publishedAt && (!best.publishedAt || card.publishedAt > best.publishedAt)))
-      best = card
-  }
-  return best
 }
 
 export type BlogShareLinks = { x: string; linkedin: string }

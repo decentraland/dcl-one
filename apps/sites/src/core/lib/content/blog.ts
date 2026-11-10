@@ -1,10 +1,12 @@
-export type BlogBlock =
-  | { type: "p"; content: string }
-  | { type: "h2"; content: string }
-  | { type: "h3"; content: string }
-  | { type: "h4"; content: string }
-  | { type: "quote"; content: string }
-  | { type: "ul"; items: string[] };
+import {
+  BLOG_QUERY_MAX,
+  type BlogArticle,
+  type BlogBlock,
+  type BlogRelatedCard,
+  type BlogSort,
+} from "@dcl/one-ui/apps/sites/blog/blogModel";
+
+export type { BlogBlock, BlogSort };
 
 type BlogCategory = { id: string; title: string; slug: string; url: string };
 
@@ -21,8 +23,6 @@ export type BlogPostCard = {
   author: string;
   hue: number;
 };
-
-export type BlogSort = "newest" | "oldest";
 
 export type BlogPost = {
   id: string;
@@ -210,8 +210,6 @@ export function parseBlogSort(value: string | null | undefined): BlogSort {
   return value === "oldest" ? "oldest" : "newest";
 }
 
-export const BLOG_QUERY_MAX = 200;
-
 /** `?q=` trimmed and capped; "" means no search. */
 export function parseBlogQuery(value: string | null | undefined): string {
   return (value ?? "").trim().slice(0, BLOG_QUERY_MAX);
@@ -231,7 +229,7 @@ export function sortBlogCards(cards: BlogPostCard[], sort: BlogSort): BlogPostCa
     .map(({ card }) => card);
 }
 
-/** The index listing: category filter, then a case-insensitive match of `query` in title or description, sorted. */
+/** The index listing: category filter, then a case-insensitive match of `query` in title, description or category title, sorted. */
 export function searchBlogPosts({
   category = "",
   query = "",
@@ -239,7 +237,11 @@ export function searchBlogPosts({
 }: { category?: string; query?: string; sort?: BlogSort }): BlogPostCard[] {
   const needle = query.trim().toLowerCase();
   const matches = blogPostCards(category).filter(
-    (p) => !needle || p.title.toLowerCase().includes(needle) || p.description.toLowerCase().includes(needle),
+    (p) =>
+      !needle ||
+      p.title.toLowerCase().includes(needle) ||
+      p.description.toLowerCase().includes(needle) ||
+      p.category.title.toLowerCase().includes(needle),
   );
   return sortBlogCards(matches, sort);
 }
@@ -248,7 +250,12 @@ export function findBlogPost(slug: string): BlogPost | null {
   return BLOG_POSTS.find((p) => p.slug === slug) ?? null;
 }
 
-export function relatedBlogPosts(post: BlogPost, limit = 3) {
+/** A post as the article page shows it. */
+export function blogArticle(post: BlogPost): BlogArticle {
+  return { ...toCard(post), body: post.body };
+}
+
+export function relatedBlogPosts(post: BlogPost, limit = 3): BlogRelatedCard[] {
   return BLOG_POSTS.filter(
     (p) => p.slug !== post.slug && p.category.slug === post.category.slug,
   )
@@ -256,14 +263,10 @@ export function relatedBlogPosts(post: BlogPost, limit = 3) {
     .filter((p, i, arr) => arr.findIndex((x) => x.slug === p.slug) === i)
     .slice(0, limit)
     .map((p) => ({
-      id: p.id,
       slug: p.slug,
       title: p.title,
-      publishedDate: p.publishedDate,
       publishedAt: blogDateToIso(p.publishedDate),
-      image: { url: "" },
-      category: { title: p.category.title, slug: p.category.slug, url: p.category.url },
-      url: `/blog/${p.slug}`,
+      category: { title: p.category.title, slug: p.category.slug },
       hue: p.hue,
     }));
 }

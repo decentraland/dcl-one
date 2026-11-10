@@ -5,8 +5,7 @@ import {
   blogInitials,
   blogPostHref,
   blogShareLinks,
-  formatBlogDate,
-  newestBlogCard
+  formatBlogDate
 } from './blogModel'
 
 describe('formatBlogDate', () => {
@@ -19,24 +18,6 @@ describe('formatBlogDate', () => {
     expect(formatBlogDate('JUL 2, 2026')).toBe('')
     expect(formatBlogDate('2026-13-01')).toBe('')
     expect(formatBlogDate('2026-00-01')).toBe('')
-  })
-})
-
-describe('newestBlogCard', () => {
-  it('picks the latest date, whatever the list order', () => {
-    const cards = [
-      { publishedAt: '2026-06-29' },
-      { publishedAt: '2026-07-02' },
-      { publishedAt: '2026-07-01' }
-    ]
-    expect(newestBlogCard(cards)).toBe(cards[1])
-  })
-
-  it('prefers a dated card over an undated one and returns undefined for no cards', () => {
-    const cards = [{ publishedAt: '' }, { publishedAt: '2020-01-01' }]
-    expect(newestBlogCard(cards)).toBe(cards[1])
-    expect(newestBlogCard([{ publishedAt: '' }])).toEqual({ publishedAt: '' })
-    expect(newestBlogCard([])).toBeUndefined()
   })
 })
 
