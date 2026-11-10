@@ -63,7 +63,7 @@ const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
 /// Model paths the glTF loader reads (and the meshopt pre-pass loader stands in for).
 #[cfg(feature = "meshopt-variants")]
 const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
-/// Every `format` the manifest schema (v1) may name, taken or not.
+/// Every `format` the manifest schema (v2) may name, taken or not.
 const SCHEMA_FORMATS: [&str; 5] = ["ktx2-bc7", "ktx2-bc1", "ktx2-bc5", "glb", "glb-meshopt"];
 const RECENT_FALLBACKS: usize = 20;
 

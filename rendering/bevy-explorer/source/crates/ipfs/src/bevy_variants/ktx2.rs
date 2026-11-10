@@ -78,6 +78,12 @@ pub fn bc_ktx2_to_dds(bytes: &[u8], format: BcFormat) -> Result<Vec<u8>, String>
     if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
         return Err(format!("{width}x{height} is outside 1..={MAX_DIMENSION}"));
     }
+    // wgpu refuses a BC texture whose base size is not whole 4x4 blocks, and on native that
+    // error is fatal, so such a file falls back to the original here; lower mips (2x1, 1x1)
+    // stay legal
+    if width % 4 != 0 || height % 4 != 0 {
+        return Err(format!("{width}x{height} is not whole 4x4 blocks"));
+    }
     if depth != 0 || layers != 0 || faces != 1 {
         return Err("not a single 2D texture".to_owned());
     }
@@ -288,6 +294,13 @@ pub(crate) mod tests {
         assert!(bc_ktx2_to_dds(&srgb, BcFormat::Bc7)
             .unwrap_err()
             .contains("vkFormat"));
+        // a level 0 that is not whole 4x4 blocks, on either axis
+        for (width, height) in [(6, 4), (8, 6), (3, 3)] {
+            let unaligned = ktx2(145, width, height, &[level0.clone()]);
+            assert!(bc_ktx2_to_dds(&unaligned, BcFormat::Bc7)
+                .unwrap_err()
+                .contains("whole 4x4 blocks"));
+        }
         // oversized, and more levels than the mip chain has
         let huge = ktx2(145, 16384, 4, &[level0.clone()]);
         assert!(bc_ktx2_to_dds(&huge, BcFormat::Bc7)

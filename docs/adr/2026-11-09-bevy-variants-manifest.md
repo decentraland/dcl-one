@@ -88,7 +88,10 @@ Formats:
 - `ktx2-bc7`, `ktx2-bc1`, `ktx2-bc5` (`kind: texture`): KTX2 with a BC payload
   (vkFormat BC7, BC1 or BC5 UNORM) and zstd supercompression, full mip chain,
   longest side at most 1024. The Explorer applies sRGB or linear from how the
-  texture is requested. BC1 is for fully opaque images, BC5 for images the
+  texture is requested. Level 0 must be whole 4×4 blocks (width and height
+  multiples of 4), because the GPU refuses anything else; a reader rejects such
+  a file and loads the original, so the generator pads, resizes or emits no
+  variant. Lower mips may be smaller than a block. BC1 is for fully opaque images, BC5 for images the
   entity's models use only as normal maps, BC7 otherwise. Images of two pixels
   or fewer a side get no variant. A creator UASTC KTX2 is transcoded block for
   block to BC7, one level, no resize or re-encode, so the variant is

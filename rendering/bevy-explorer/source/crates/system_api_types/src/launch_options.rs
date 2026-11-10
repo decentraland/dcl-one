@@ -101,9 +101,10 @@ pub struct ClientOptions {
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub imposter_source: Option<String>,
 
-    /// Base url of an abgen Bevy variants service (prototype); absent = off. Scene textures it
-    /// has GPU-ready variants of load as those variants, each checked against its content id;
-    /// anything else, or any failure, loads the original
+    /// Base url of an abgen Bevy variants service (prototype); absent = off. Textures and
+    /// models of scenes, wearables and emotes it has GPU-ready variants of load as those
+    /// variants, each checked against its content id; anything else, or any failure, loads the
+    /// original
     #[arg(long = "bevy-variants-url", value_name = "url", help_heading = SERVICES)]
     pub bevy_variants: Option<String>,
 
