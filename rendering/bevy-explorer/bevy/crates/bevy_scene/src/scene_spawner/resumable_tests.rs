@@ -243,9 +243,33 @@ fn an_unwritten_entity_despawned_by_others_mid_spawn_stays_gone_with_its_subtree
         app.update();
     }
 
-    // as a whole spawn would be with that entity despawned afterwards: no new one in its place
+    // as a whole spawn would be with that entity despawned afterwards: no new one in its place,
+    // and no dead id among the root's children
     assert!(is_ready(&app, instance));
     assert_eq!(nodes(&mut app), [0]);
+    let root = children(&app, parent)[0];
+    assert!(children(&app, root)
+        .iter()
+        .all(|child| app.world().get_entity(*child).is_ok()));
+}
+
+#[test]
+fn a_spawner_can_spawn_into_another_world() {
+    let mut first = app();
+    let mut second = app();
+    let first_scene = add_scene(&mut first, tree(0, 2));
+    let second_scene = add_scene(&mut second, tree(10, 2));
+    let mut spawner = SceneSpawner::default();
+    spawner.spawn(first_scene);
+    spawner.spawn_queued_scenes(first.world_mut()).unwrap();
+
+    spawner.set_spawn_deadline(Some(Instant::now()));
+    let instance = spawner.spawn(second_scene);
+    for _ in 0..3 {
+        spawner.spawn_queued_scenes(second.world_mut()).unwrap();
+    }
+
+    assert!(spawner.instance_is_ready(instance));
 }
 
 #[test]

@@ -7,6 +7,7 @@ use bevy_ecs::{
     hierarchy::{ChildOf, Children},
     query::QueryState,
     reflect::AppTypeRegistry,
+    relationship::RelationshipTarget,
     resource::Resource,
     world::{Mut, World, WorldId},
 };
@@ -85,7 +86,6 @@ impl InstanceId {
 /// which makes it ready. A partial
 /// instance's top-level entities are attached to its parent and kept [`Visibility::Hidden`] until
 /// it is complete. Without a deadline, instances are written whole, as stock Bevy writes them.
-/// A spawner keeps a query on the world it spawns into, so one spawner serves one [`World`].
 ///
 /// [`Visibility::Hidden`]: https://docs.rs/bevy/0.16.1/bevy/render/view/enum.Visibility.html
 #[derive(Default, Resource)]
@@ -104,8 +104,9 @@ pub struct SceneSpawner {
     spawn_deadline: Option<Instant>,
     /// The [`Scene`] instance the last run left part-written.
     scene_in_progress: Option<SceneInProgress>,
-    /// Finds the entities of the instance in progress that are ready to write.
-    marked: Option<Marked>,
+    /// Finds the entities of the instance in progress that are ready to write, in the world it
+    /// was built for: another world gets its own.
+    marked: Option<(WorldId, Marked)>,
     /// Instances spawned with [`Self::spawn_as_child_hidden`], not complete or revealed yet: once
     /// complete, their top-level entities stay hidden until revealed.
     keep_hidden: HashSet<InstanceId>,
@@ -359,6 +360,29 @@ impl SceneInProgress {
         for entity in self.entity_map.values() {
             if let Ok(entity) = world.get_entity_mut(*entity) {
                 entity.despawn();
+            }
+        }
+    }
+
+    /// Drops from the written entities' `Children` those despawned before they were written:
+    /// writes skip relationship hooks, so their parent still lists them.
+    fn prune_dead_children(&self, world: &mut World) {
+        for entity in self.entity_map.values() {
+            let Some(children) = world.get::<Children>(*entity) else {
+                continue;
+            };
+            let dead: Vec<Entity> = children
+                .to_vec()
+                .into_iter()
+                .filter(|child| world.get_entity(*child).is_err())
+                .collect();
+            if dead.is_empty() {
+                continue;
+            }
+            if let Some(mut children) = world.get_mut::<Children>(*entity) {
+                children
+                    .collection_mut_risky()
+                    .retain(|child| !dead.contains(child));
             }
         }
     }
@@ -819,7 +843,10 @@ impl SceneSpawner {
         let has_time = |wrote_any: bool| {
             !wrote_any || deadline.is_none_or(|deadline| Instant::now() < deadline)
         };
-        let mut marked = self.marked.take().unwrap_or_else(|| world.query_filtered());
+        let mut marked = match self.marked.take() {
+            Some((id, marked)) if id == world.id() => marked,
+            _ => world.query_filtered(),
+        };
         // one pass over the queue: instances whose scene is not loaded keep their place
         let mut queue: VecDeque<_> = core::mem::take(&mut self.scenes_to_spawn).into();
         let mut waiting = Vec::new();
@@ -881,6 +908,7 @@ impl SceneSpawner {
                 }
 
                 if progress.is_complete() {
+                    progress.prune_dead_children(world);
                     let SceneInProgress {
                         instance_id,
                         parent,
@@ -899,7 +927,7 @@ impl SceneSpawner {
             }
             Ok(())
         });
-        self.marked = Some(marked);
+        self.marked = Some((world.id(), marked));
         self.scenes_to_spawn = waiting.into_iter().chain(queue).collect();
         result
     }
