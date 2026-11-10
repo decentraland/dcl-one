@@ -41,13 +41,6 @@ use wallet::Wallet;
 
 pub struct SocialPlugin;
 
-/// The systems that move the social client's state: connecting and dropping the client and
-/// draining its updates.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SocialSystems {
-    ApplyUpdates,
-}
-
 impl Plugin for SocialPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         #[cfg(feature = "social")]
@@ -60,10 +53,8 @@ impl Plugin for SocialPlugin {
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(
-            PostUpdate,
-            (apply_social_updates, init_social_client).in_set(SocialSystems::ApplyUpdates),
-        );
+        app.add_systems(PostUpdate, apply_social_updates);
+        app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
             (

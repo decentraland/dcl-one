@@ -105,8 +105,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   fails open, as there, and the state says so instead of guessing); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
-  marks the platform ban, the endpoint's "not banned" does not lift it, and a later admission
-  does, back to unknown until the next check. The local user's scene ban is the refusal of the
+  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
+  stands. The local user's scene ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as

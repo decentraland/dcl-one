@@ -4,10 +4,9 @@
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::{App, Update},
+    app::{App, PostUpdate, Update},
     ecs::{
         change_detection::DetectChanges,
-        event::EventWriter,
         resource::Resource,
         schedule::IntoScheduleConfigs,
         system::{Local, Res, ResMut},
@@ -26,7 +25,7 @@ use console::DoAddConsoleCommand;
 use serde::{Deserialize, Serialize};
 use wallet::Wallet;
 
-use crate::BanBlockEvent;
+use crate::{AdmissionView, BanScope, SceneAdmission};
 
 /// Seconds between two checks of a wallet that has not changed.
 pub const RECHECK_SECS: f64 = 300.0;
@@ -102,6 +101,7 @@ struct BanStatusBody {
 impl PlatformBanInfo {
     /// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
     /// without its record is a ban whose record was withheld.
+    #[cfg(test)]
     pub fn from_json(body: &[u8]) -> Result<Option<Self>, String> {
         let envelope: BanStatusEnvelope =
             serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
@@ -175,54 +175,77 @@ impl PlatformBanStatus {
         }
     }
 
-    /// Records an answer. The event is returned only when the answer differs from the last one;
-    /// the same answer again only moves `checked_at`.
+    /// Records an answer; the same answer again only moves `checked_at`.
     pub fn apply_platform_ban(
         &mut self,
         ban: Option<PlatformBanInfo>,
         source: PlatformBanSource,
         checked_at: f64,
-    ) -> Vec<BanBlockEvent> {
-        let same = matches!(&self.state, PlatformBanState::Checked { ban: previous, .. } if *previous == ban);
+    ) {
         self.source = ban.is_some().then_some(source);
         self.state = PlatformBanState::Checked { ban, checked_at };
-        if same {
-            Vec::new()
-        } else {
-            vec![BanBlockEvent::PlatformBanChanged]
-        }
     }
 
     /// Records a failed check. A ban learnt from a scene-admission refusal is kept: a failed poll
     /// is no evidence against it.
-    pub fn platform_ban_check_failed(
-        &mut self,
-        error: String,
-        checked_at: f64,
-    ) -> Vec<BanBlockEvent> {
+    pub fn platform_ban_check_failed(&mut self, error: String, checked_at: f64) {
         if self.source() == Some(PlatformBanSource::SceneAdmissionRefusal) {
             warn!("[ban_block] platform ban check failed, keeping the refusal: {error}");
-            return Vec::new();
+            return;
         }
-        let was_failed = matches!(self.state, PlatformBanState::Failed { .. });
         self.state = PlatformBanState::Failed { error, checked_at };
         self.source = None;
-        if was_failed {
-            Vec::new()
-        } else {
-            vec![BanBlockEvent::PlatformBanChanged]
-        }
     }
 
     /// Forgets the answer.
-    pub fn reset_platform_ban(&mut self) -> Vec<BanBlockEvent> {
-        if self.state == PlatformBanState::Unknown {
-            return Vec::new();
-        }
+    pub fn reset_platform_ban(&mut self) {
         self.state = PlatformBanState::Unknown;
         self.source = None;
-        vec![BanBlockEvent::PlatformBanChanged]
     }
+}
+
+/// True while a ban learnt from a scene-admission refusal is the one known and the admission
+/// still shows that refusal: a "not banned" from the endpoint, which matches the address only,
+/// does not replace it then.
+fn refusal_outranks_not_banned(
+    source: Option<PlatformBanSource>,
+    admission: &SceneAdmission,
+) -> bool {
+    source == Some(PlatformBanSource::SceneAdmissionRefusal)
+        && matches!(
+            admission.view(),
+            AdmissionView::Refused {
+                scope: BanScope::Platform,
+                ..
+            }
+        )
+}
+
+/// Records a platform-scoped admission refusal as the platform ban while none is known.
+fn cross_feed_admission_refusal(
+    admission: Res<SceneAdmission>,
+    mut status: ResMut<PlatformBanStatus>,
+    time: Res<Time>,
+) {
+    if !admission.is_changed() {
+        return;
+    }
+    let AdmissionView::Refused {
+        scope: BanScope::Platform,
+        message,
+        ..
+    } = admission.view()
+    else {
+        return;
+    };
+    if status.ban().is_some() {
+        return;
+    }
+    status.apply_platform_ban(
+        Some(PlatformBanInfo::from_refusal(message)),
+        PlatformBanSource::SceneAdmissionRefusal,
+        time.elapsed_secs_f64(),
+    );
 }
 
 impl Default for PlatformBanStatus {
@@ -236,6 +259,7 @@ impl Default for PlatformBanStatus {
 #[command(name = "/ban_block_refresh")]
 struct BanBlockRefreshCommand;
 
+/// A check was asked for; repeated requests fold into the one pending check.
 #[derive(Resource, Default)]
 struct RefreshRequested(bool);
 
@@ -261,7 +285,8 @@ pub(crate) fn register(app: &mut App) {
         .add_systems(
             Update,
             check_platform_ban.run_if(|| !common::structs::server_mode()),
-        );
+        )
+        .add_systems(PostUpdate, cross_feed_admission_refusal);
 }
 
 /// Why a check gave no answer, with the delay the server asked for before the next one.
@@ -338,22 +363,25 @@ fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,
     realm: Option<Res<CurrentRealm>>,
+    admission: Res<SceneAdmission>,
     time: Res<Time>,
     mut refresh: ResMut<RefreshRequested>,
     mut schedule: Local<BanCheckSchedule>,
-    mut events: EventWriter<BanBlockEvent>,
 ) {
     let now = time.elapsed_secs_f64();
     if schedule.follow(wallet.address()) {
-        for event in status.reset_platform_ban() {
-            events.write(event);
-        }
+        status.reset_platform_ban();
     }
     let Some(address) = wallet.address() else {
         return;
     };
-    let triggered = std::mem::take(&mut refresh.0)
-        || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
+    // written only when set, so the resource is not marked changed every frame
+    let refresh_requested = refresh.0;
+    if refresh_requested {
+        refresh.0 = false;
+    }
+    let triggered =
+        refresh_requested || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
     if let Some(in_flight) = schedule.in_flight.as_mut() {
         let Some(result) = in_flight.task.complete() else {
@@ -363,7 +391,10 @@ fn check_platform_ban(
         let for_address = in_flight.address;
         schedule.in_flight = None;
         if for_address == address {
-            let changed = match result {
+            match result {
+                Ok(None) if refusal_outranks_not_banned(status.source(), &admission) => {
+                    info!("[ban_block] platform ban check: not banned, keeping the refusal");
+                }
                 Ok(ban) => {
                     info!(
                         "[ban_block] platform ban check: {}",
@@ -373,16 +404,13 @@ fn check_platform_ban(
                             "not banned"
                         }
                     );
-                    status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now)
+                    status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now);
                 }
                 Err(failure) => {
                     schedule.delay(failure.retry_after_secs);
                     warn!("[ban_block] platform ban check failed: {}", failure.error);
-                    status.platform_ban_check_failed(failure.error, now)
+                    status.platform_ban_check_failed(failure.error, now);
                 }
-            };
-            for event in changed {
-                events.write(event);
             }
         }
     }
@@ -488,45 +516,39 @@ mod tests {
         assert_eq!(unexplained, PlatformBanInfo::withheld("another match"));
     }
 
+    const PLATFORM_BANNED: &str = "Access denied, platform-banned user";
+
     #[test]
-    fn an_answer_is_an_event_only_when_it_differs() {
+    fn an_answer_is_recorded_with_its_source() {
         let mut status = PlatformBanStatus::new();
         assert_eq!(status.ban(), None);
-        assert_eq!(
-            status.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, 1.0),
-            vec![BanBlockEvent::PlatformBanChanged]
-        );
-        assert!(status
-            .apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, 2.0)
-            .is_empty());
+        status.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, 1.0);
         assert_eq!(status.ban(), None);
         assert_eq!(status.source(), None);
-        let ban = PlatformBanInfo::from_refusal("Access denied, platform-banned user");
-        assert_eq!(
-            status.apply_platform_ban(
-                Some(ban.clone()),
-                PlatformBanSource::SceneAdmissionRefusal,
-                3.0
-            ),
-            vec![BanBlockEvent::PlatformBanChanged]
+        assert!(matches!(
+            status.state(),
+            PlatformBanState::Checked { ban: None, .. }
+        ));
+        let ban = PlatformBanInfo::from_refusal(PLATFORM_BANNED);
+        status.apply_platform_ban(
+            Some(ban.clone()),
+            PlatformBanSource::SceneAdmissionRefusal,
+            3.0,
         );
         assert_eq!(status.ban(), Some(&ban));
         assert_eq!(
             status.source(),
             Some(PlatformBanSource::SceneAdmissionRefusal)
         );
+        status.reset_platform_ban();
+        assert_eq!(status.state(), &PlatformBanState::Unknown);
+        assert_eq!(status.source(), None);
     }
 
     #[test]
     fn a_failed_check_fails_open_but_keeps_a_refusal() {
         let mut status = PlatformBanStatus::new();
-        assert_eq!(
-            status.platform_ban_check_failed("status 500".into(), 1.0),
-            vec![BanBlockEvent::PlatformBanChanged]
-        );
-        assert!(status
-            .platform_ban_check_failed("status 500".into(), 2.0)
-            .is_empty());
+        status.platform_ban_check_failed("status 500".into(), 1.0);
         assert_eq!(status.ban(), None);
         assert!(matches!(status.state(), PlatformBanState::Failed { .. }));
 
@@ -536,16 +558,106 @@ mod tests {
             PlatformBanSource::SceneAdmissionRefusal,
             3.0,
         );
-        assert!(status
-            .platform_ban_check_failed("status 500".into(), 4.0)
-            .is_empty());
+        status.platform_ban_check_failed("status 500".into(), 4.0);
         assert_eq!(status.ban(), Some(&ban));
+    }
 
+    #[test]
+    fn a_not_banned_is_dropped_only_while_the_refusal_is_on_screen() {
+        let refusal = SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s");
+        let scene_ban =
+            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s");
+        let from_refusal = Some(PlatformBanSource::SceneAdmissionRefusal);
+        let from_endpoint = Some(PlatformBanSource::BanStatusEndpoint);
+        assert!(refusal_outranks_not_banned(from_refusal, &refusal));
+        assert!(!refusal_outranks_not_banned(
+            from_refusal,
+            &SceneAdmission::unknown()
+        ));
+        assert!(!refusal_outranks_not_banned(
+            from_refusal,
+            &SceneAdmission::allowed("s")
+        ));
+        assert!(!refusal_outranks_not_banned(from_refusal, &scene_ban));
+        assert!(!refusal_outranks_not_banned(from_endpoint, &refusal));
+        assert!(!refusal_outranks_not_banned(None, &refusal));
+    }
+
+    /// An app with the admission, the status and the clock, running the cross-feed.
+    fn cross_feed_app() -> bevy::app::App {
+        let mut app = bevy::app::App::new();
+        app.init_resource::<Time>()
+            .init_resource::<SceneAdmission>()
+            .insert_resource(PlatformBanStatus::new())
+            .add_systems(Update, cross_feed_admission_refusal);
+        app
+    }
+
+    fn set_admission(app: &mut bevy::app::App, admission: SceneAdmission) {
+        use bevy::ecs::change_detection::DetectChangesMut;
+        app.world_mut()
+            .resource_mut::<SceneAdmission>()
+            .set_if_neq(admission);
+        app.update();
+    }
+
+    #[test]
+    fn a_platform_refusal_marks_the_ban_while_none_is_known() {
+        let mut app = cross_feed_app();
+        app.update();
         assert_eq!(
-            status.reset_platform_ban(),
-            vec![BanBlockEvent::PlatformBanChanged]
+            app.world().resource::<PlatformBanStatus>().state(),
+            &PlatformBanState::Unknown
         );
-        assert!(status.reset_platform_ban().is_empty());
+        set_admission(
+            &mut app,
+            SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s"),
+        );
+        let status = app.world().resource::<PlatformBanStatus>();
+        assert_eq!(
+            status.ban().map(|b| b.reason.as_str()),
+            Some(PLATFORM_BANNED)
+        );
+        assert_eq!(
+            status.source(),
+            Some(PlatformBanSource::SceneAdmissionRefusal)
+        );
+        // a scene change makes the admission unknown: the ban stands
+        set_admission(&mut app, SceneAdmission::unknown());
+        assert!(app.world().resource::<PlatformBanStatus>().ban().is_some());
+        // a scene ban is not a platform ban
+        let mut app = cross_feed_app();
+        set_admission(
+            &mut app,
+            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s"),
+        );
+        assert_eq!(
+            app.world().resource::<PlatformBanStatus>().state(),
+            &PlatformBanState::Unknown
+        );
+    }
+
+    #[test]
+    fn a_ban_the_endpoint_reported_is_not_replaced_by_a_refusal() {
+        let mut app = cross_feed_app();
+        let record = PlatformBanInfo {
+            reason: "spam".into(),
+            ..PlatformBanInfo::from_refusal("")
+        };
+        app.world_mut()
+            .resource_mut::<PlatformBanStatus>()
+            .apply_platform_ban(
+                Some(record.clone()),
+                PlatformBanSource::BanStatusEndpoint,
+                1.0,
+            );
+        set_admission(
+            &mut app,
+            SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s"),
+        );
+        let status = app.world().resource::<PlatformBanStatus>();
+        assert_eq!(status.ban(), Some(&record));
+        assert_eq!(status.source(), Some(PlatformBanSource::BanStatusEndpoint));
     }
 
     #[test]

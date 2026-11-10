@@ -3,18 +3,18 @@
 //! A facade over the crates that produce each fact. Social blocks live in the social client,
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
 //! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
-//! system parameter; [`BanBlockEvent`] says when any of them changed.
+//! system parameter. There are no events of its own: each source carries Bevy's change
+//! detection (`SceneAdmission` and `PlatformBanStatus` as resources, `SceneRoomModeration` as a
+//! component) and the social client writes `SocialStateChanged`.
 
 mod debug;
-mod events;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::{App, Plugin, PostUpdate},
+    app::{App, Plugin},
     ecs::{
         query::Has,
-        schedule::IntoScheduleConfigs,
         system::{Query, Res, SystemParam},
     },
     platform::collections::HashSet,
@@ -24,28 +24,13 @@ use social::SocialClient;
 use wallet::Wallet;
 
 pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
-pub use events::BanBlockEvent;
 pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
 pub struct BanBlockPlugin;
 
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<BanBlockEvent>();
-        // without the social plugin there is no social update system to order after
-        if app.world().contains_resource::<SocialClient>() {
-            app.add_systems(
-                PostUpdate,
-                events::emit_ban_block_events.after(social::apply_social_updates),
-            );
-        } else {
-            app.add_systems(PostUpdate, events::emit_ban_block_events);
-        }
         platform_ban::register(app);
-        app.add_systems(
-            PostUpdate,
-            events::cross_feed_admission_refusal.before(events::emit_ban_block_events),
-        );
         debug::register(app);
     }
 }
