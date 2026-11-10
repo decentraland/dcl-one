@@ -6,10 +6,14 @@
 //!   writable path. Where the kernel supports it,
 //!   signals and abstract Unix sockets are also scoped to the sandbox.
 //! - seccomp denies starting programs, reaching other processes (ptrace, memory access, pidfds,
-//!   signals, signal ownership, limits, scheduling and memory policy of another pid), changing
-//!   file metadata, terminal input injection, new sockets other than IPv4, IPv6 and route netlink,
+//!   signals, signal ownership, limits, scheduling and memory policy of another pid, System V
+//!   IPC), changing file metadata, terminal input injection, new sockets other than TCP and UDP
+//!   over IPv4 and IPv6 and route netlink,
 //!   and kernel interfaces a scene runtime never needs. Threads, futexes and executable memory for
 //!   the JIT stay allowed.
+//!   seccomp is a deny list: the runtime's own syscalls change with glibc, V8 and tokio, so the
+//!   filter names what must not happen and allows the rest. Syscalls newer than the last one it was
+//!   reviewed against answer ENOSYS until someone reviews them.
 //!
 //! On other targets [`apply`] reports [`Landlock::Unsupported`], or fails for [`Mode::Require`],
 //! and [`Probe::run`] runs no check.
@@ -66,6 +70,8 @@ pub struct Report {
     pub cannot_open_home: bool,
     pub cannot_read_other_process: bool,
     pub cannot_open_unix_socket: bool,
+    pub cannot_use_sysv_ipc: bool,
+    pub cannot_open_other_inet_protocol: bool,
     pub cannot_open_non_route_netlink: bool,
     pub cannot_signal_other_process: bool,
     pub cannot_signal_process_group: bool,
@@ -96,6 +102,8 @@ impl Report {
             cannot_open_home,
             cannot_read_other_process,
             cannot_open_unix_socket,
+            cannot_use_sysv_ipc,
+            cannot_open_other_inet_protocol,
             cannot_open_non_route_netlink,
             cannot_signal_other_process,
             cannot_signal_process_group,
@@ -123,6 +131,8 @@ impl Report {
             cannot_open_home,
             cannot_read_other_process,
             cannot_open_unix_socket,
+            cannot_use_sysv_ipc,
+            cannot_open_other_inet_protocol,
             cannot_open_non_route_netlink,
             cannot_signal_other_process,
             cannot_signal_process_group,
