@@ -2,10 +2,10 @@
 // lock-digests: every tracked file under library/ui/figma is ported from decentraland/figma-design-system (FDS) or
 // adapted from it, and upstream.lock.json pins the sha256 of each one. This check fails on a tracked file whose
 // content differs from its pin, a pinned file that is no longer tracked, and a tracked file the lock does not pin,
-// so nothing here changes without a lock change, and a lock change needs a port verification record
+// so nothing here changes without a lock change, and a change to a port input needs a port verification record
 // (port-verification.mjs). Each file also records its FDS counterpart and, when it differs, the deviation codes that
-// explain why. It reads the index, so it judges what would be committed; an LFS pointer fails.
-// `--write` reseals the digests from the index and keeps counterparts and codes. Dependency-free; it needs no install and no capture.
+// explain why; each code in `deviationCodes` carries its own reason, keyed by a stable id in sorted order. It reads the index, so it judges what would be committed; an LFS pointer fails.
+// `--write` reseals the digests from the index, keeps counterparts and codes, and sorts the codes. Dependency-free; it needs no install and no capture.
 import { publicFoundationProblems } from './public-foundations.mjs'
 import { publicComponentsProblems } from './public-components.mjs'
 import { Buffer } from 'node:buffer'
@@ -44,8 +44,9 @@ const NOTE = /^[\w ,.;:()'/-]{1,160}$/
  * Validates the pinned table and returns `{ digests, problems }`: `digests` maps each pinned path to its sha256,
  * and `problems` lists deviation errors. Each entry is { sha256, fds: { path, sha256 } | null, deviation?, note? }.
  * An entry whose content differs from its FDS blob, or that has no FDS counterpart, must name one or more codes of
- * `deviationCodes`, each linked to the changes[] entry that gives the reason; the code `note` instead carries a
- * short per-file `note`, for a difference no code explains. An absent, empty or malformed table is an error, never
+ * `deviationCodes`, each mapped to the reason it stands for; the code `note` (mapped to null) instead carries a short
+ * per-file `note`, for a difference no code explains. Codes are kept in sorted order so that two branches adding
+ * different codes do not edit the same lines. An absent, empty or malformed table is an error, never
  * a pass.
  */
 export function pinnedFiles(lock) {
@@ -83,10 +84,22 @@ export function pinnedFiles(lock) {
       problems.push('the capture pin has no well-formed snapshot digest table')
   }
   const codes = source.deviationCodes ?? {}
-  const changes = Array.isArray(source.changes) ? source.changes : []
-  for (const [code, index] of Object.entries(codes))
-    if (code !== 'note' && (!Number.isInteger(index) || typeof changes[index] !== 'string'))
-      problems.push(`deviation code ${code} links to no changes[] entry`)
+  if (!codes || typeof codes !== 'object' || Array.isArray(codes))
+    throw new Error('upstream.lock.json has a malformed deviationCodes table')
+  for (const [code, reason] of Object.entries(codes))
+    if (
+      code === 'note'
+        ? reason !== null
+        : typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 4000
+    )
+      problems.push(
+        code === 'note'
+          ? 'deviation code note must map to null; each file carries its own note'
+          : `deviation code ${code} has no reason`
+      )
+  const codeNames = Object.keys(codes)
+  if (codeNames.some((code, index) => index > 0 && codeNames[index - 1] >= code))
+    problems.push('deviation codes are not in sorted order (lock-digests --write sorts them)')
   const digests = {}
   for (const [file, entry] of Object.entries(files)) {
     const fds = entry?.fds
@@ -195,6 +208,11 @@ export function main(argv, root = process.cwd()) {
             return [file, { ...kept, sha256: tracked[file], fds: kept.fds ?? null }]
           })
       )
+      const source = fdsSource(lock)
+      if (source.deviationCodes && typeof source.deviationCodes === 'object')
+        source.deviationCodes = Object.fromEntries(
+          Object.entries(source.deviationCodes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        )
       writeFileSync(lockFile, JSON.stringify(lock, null, 2) + '\n')
       process.stdout.write(`lock-digests: pinned ${Object.keys(tracked).length} files\n`)
       return 0
@@ -214,7 +232,7 @@ export function main(argv, root = process.cwd()) {
       mismatched.length + missing.length + unpinned.length + problems.length + publicProblems.length
     process.stdout.write(
       failed
-        ? `lock-digests: ${failed} files differ from upstream.lock.json. A port updates the lock (node library/ui/figma/lock-digests.mjs --write) and adds its port verification record.\n`
+        ? `lock-digests: ${failed} files differ from upstream.lock.json. A port updates the lock (node library/ui/figma/lock-digests.mjs --write) and, when a port input changed, its port verification record (port-verification.mjs).\n`
         : `lock-digests: ${Object.keys(tracked).length} files match upstream.lock.json\n`
     )
     return failed ? 1 : 0

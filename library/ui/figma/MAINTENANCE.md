@@ -38,7 +38,7 @@ The contract is the library's Code Connect template files, read statically (neve
 
 `dcl-figma sync`, `diff`, `check-mappings`, `review-manifest` and the MCP server read the capture offline, from the cache `pnpm figma fetch-source` builds from the commit of figma-design-system that `upstream.lock.json` pins (fail-closed: a missing, stale or edited cache stops every reader). Live Figma reads are for local inspection only (`diff --source rest`, the MCP read tools with `source: "rest"`, `figma_screenshot`, `probe`): they never write tracked files, `sync` refuses them, and nothing from them is stored in the tree. Capturing pages and ingesting chunks happen in figma-design-system. Every raster in the capture (artwork, image fills and icons) is stored without non-rendering metadata: tEXt, iTXt, zTXt, eXIf and tIME are dropped and the rendering and colour chunks are kept byte for byte. `figma/test/image-metadata.test.ts` fails on any such chunk in a file under library/ui/figma (the synthetic test capture included; the strip tests plant synthetic metadata at test time) or library/ui/components/assets, except the public files listed, each with a reason and an expiry, in `figma/image-metadata-allow.json`.
 
-Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthetic-snapshot/` (plain git, fake ids and names, described in its README), never the real one, so they run in public CI and a capture refresh cannot fail them. The checks against the real capture (`diff`, `check-mappings`, `review-manifest`, the NavBar bounds) run locally after `pnpm figma fetch-source`, and a port records their results in `library/ui/port-verification.json` (`port-verification.mjs`).
+Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthetic-snapshot/` (plain git, fake ids and names, described in its README), never the real one, so they run in public CI and a capture refresh cannot fail them. The checks against the real capture (`diff`, `check-mappings`, `review-manifest`, the NavBar bounds) run locally after `pnpm figma fetch-source`, and a change to a port input records their results in `library/ui/port-verification.json` (`port-verification.mjs`; tests, fixtures and Markdown are not port inputs).
 
 ## Refresh workflow
 
@@ -47,7 +47,7 @@ The capture is refreshed in figma-design-system, which owns it and documents how
 1. Bump the pin in `upstream.lock.json`, then `pnpm figma fetch-source --seal`.
 2. `pnpm figma diff` shows what would change (exit 1 if not empty), then `pnpm figma sync`.
 3. Run `sync` a second time: the diff must be empty (idempotency is tested).
-4. `node figma/lock-digests.mjs --write`, then run the real-capture checks and commit their record (`port-verification.mjs`).
+4. `node figma/lock-digests.mjs --write`, then run the real-capture checks and commit their record (`port-verification.mjs`). A deviation reason goes in `deviationCodes` under a new stable id; `--write` keeps the codes sorted.
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
 

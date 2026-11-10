@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// port-verification: a pull request that changes upstream.lock.json is a port from decentraland/figma-design-system
-// (FDS), and the checks that compare generated output with the real Figma capture cannot run in this public
-// repository: the capture lives in FDS. Such a pull request must carry library/ui/port-verification.json, written
-// after those checks ran locally against the pinned capture (`pnpm figma fetch-source`). This check passes when the
-// lock is unchanged from the base or absent at the head, and otherwise only when the record names this exact lock,
-// FDS commit and library/ui/figma tree and every required check passed. A lock change without a matching record fails; it is never
-// skipped. Dependency-free; it needs no install, no credential and no capture.
+// port-verification: the checks that compare generated output with the real Figma capture cannot run in this public
+// repository, because the capture lives in decentraland/figma-design-system (FDS). A pull request that changes a port
+// input must carry library/ui/port-verification.json, written after those checks ran locally against the pinned
+// capture (`pnpm figma fetch-source`). The port inputs are the FDS commit and capture pins, the capture digest table,
+// the public foundation and component tables, and the bytes of every tracked file under library/ui/figma except tests,
+// test fixtures and Markdown documentation, which none of the checks read. This check passes when the port inputs are
+// unchanged from the base or the head has no lock, and otherwise only when the record names exactly the head's port
+// inputs and every required check passed. A changed port input without a matching record fails; it is never skipped.
+// The record states what a local run reported: it is not an attestation, a proof that the checks ran, an independent
+// review or evidence of live Figma parity. Dependency-free; it needs no install, no credential and no capture.
+import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
@@ -15,6 +19,7 @@ import { fdsSource } from './lock-digests.mjs'
 const LOCK = 'library/ui/upstream.lock.json'
 const RECORD = 'library/ui/port-verification.json'
 const SCOPE = 'library/ui/figma'
+const SCHEMA = 2
 /** Every check a record must report as passed, against the capture pinned in the lock. */
 export const REQUIRED_CHECKS = [
   'fetch-source',
@@ -25,40 +30,92 @@ export const REQUIRED_CHECKS = [
   'navbar-bounds',
   'install'
 ]
-const RECORD_KEYS = ['schema', 'lockHash', 'fdsRevision', 'snapshotRevision', 'figmaTree', 'checks']
+const RECORD_KEYS = ['schema', 'portInputHash', 'fdsRevision', 'snapshotRevision', 'checks']
 const CHECK_KEYS = ['result', 'detail']
+const LFS_POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1\n')
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 /**
- * Validates a parsed record against the current lock bytes and library/ui/figma tree. Returns a list of problems;
- * empty means the record vouches for exactly this port. Free text is limited to a short `detail` per check, so a
+ * Whether a path under library/ui/figma is outside the port inputs: a test, a test fixture or Markdown documentation.
+ * No check against the capture reads them, and port-verification.test.ts fails when non-exempt code imports one.
+ */
+export function isRecordExempt(file) {
+  if (typeof file !== 'string' || !file.startsWith(`${SCOPE}/`)) return false
+  const relative = file.slice(SCOPE.length + 1)
+  return (
+    /\.md$/.test(relative) ||
+    /(?:^|\/)(?:test|__tests__|fixtures)\//.test(relative) ||
+    /\.(?:test|spec)\.[^/]+$/.test(relative)
+  )
+}
+
+/** JSON with object keys sorted at every level, so a hash does not depend on key order. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(',')}}`
+  return JSON.stringify(value ?? null)
+}
+
+/**
+ * The hash of the port inputs, from a parsed lock and the sha256 of every tracked file under library/ui/figma keyed by
+ * repository path. Exempt files are left out; the lock's provenance text (license, imported, changes, deviation codes,
+ * counterparts) is left out because lock-digests.mjs validates it and no check against the capture reads it.
+ */
+export function portInputHash(lock, files) {
+  const source = fdsSource(lock)
+  const digests = source.snapshot?.digests
+  if (!digests || typeof digests !== 'object' || Array.isArray(digests))
+    throw new Error('upstream.lock.json has no capture digest table')
+  const bound = Object.keys(files)
+    .filter((file) => !isRecordExempt(file))
+    .sort()
+    .map((file) => [file, files[file]])
+  if (bound.length === 0) throw new Error(`no port input is tracked under ${SCOPE}`)
+  return sha256(
+    canonical({
+      schema: SCHEMA,
+      fdsRevision: source.revision ?? null,
+      snapshotRevision: source.snapshot?.revision ?? null,
+      snapshotDigests: digests,
+      publicFoundations: lock.publicFoundations ?? null,
+      publicComponents: lock.publicComponents ?? null,
+      files: bound
+    })
+  )
+}
+
+/**
+ * Validates a parsed record against the head's lock and port input hash. Returns a list of problems; empty means the
+ * record reports passing checks for exactly these port inputs. Free text is limited to a short `detail` per check, so a
  * record cannot carry identifiers or names.
  */
-export function recordProblems(record, { lockBytes, figmaTree }) {
+export function recordProblems(record, { lock, inputHash }) {
   if (!record || typeof record !== 'object' || Array.isArray(record))
     return ['the record is not an object']
   const problems = []
   const keys = Object.keys(record)
   if (keys.length !== RECORD_KEYS.length || !RECORD_KEYS.every((key) => keys.includes(key)))
     problems.push(`the record must have exactly the keys ${RECORD_KEYS.join(', ')}`)
-  if (record.schema !== 1) problems.push('unsupported record schema')
-  if (record.lockHash !== sha256(lockBytes))
-    problems.push('the record is for another upstream.lock.json')
+  if (record.schema !== SCHEMA) problems.push('unsupported record schema')
+  if (record.portInputHash !== inputHash) problems.push('the record is for other port inputs')
   let revision
   let snapshotRevision
   try {
-    const source = fdsSource(JSON.parse(lockBytes.toString('utf8')))
+    const source = fdsSource(lock)
     revision = source.revision
     snapshotRevision = source.snapshot?.revision
   } catch (error) {
     problems.push(error instanceof Error ? error.message : String(error))
   }
-  if (record.fdsRevision !== revision)
+  if (typeof revision !== 'string' || record.fdsRevision !== revision)
     problems.push('the record is for another figma-design-system commit')
   if (typeof snapshotRevision !== 'string' || record.snapshotRevision !== snapshotRevision)
     problems.push('the record is for another figma-design-system capture commit')
-  if (record.figmaTree !== figmaTree) problems.push(`the record is for another ${SCOPE} tree`)
   const checks = record.checks
   if (!checks || typeof checks !== 'object' || Array.isArray(checks))
     problems.push('the record has no checks')
@@ -89,24 +146,62 @@ export function recordProblems(record, { lockBytes, figmaTree }) {
   return problems
 }
 
-const git = (root, args) => execFileSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28 })
+const git = (root, args, input) =>
+  execFileSync('git', ['-C', root, ...args], { maxBuffer: 1 << 30, input })
 
-/**
- * The lock as of `commit`, or undefined when that commit has none: a base before the library's introduction, or a
- * head branched before it. A name that is not a commit throws, so a typo never reads as "no lock".
- */
-function lockAt(root, commit, role) {
+function requireCommit(root, commit, role) {
   try {
     git(root, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`])
   } catch {
     throw new Error(`the ${role} ${commit} is not a commit in this checkout`)
   }
+}
+
+/**
+ * The lock as of `commit`, parsed, or undefined when that commit has none: a base before the library's introduction,
+ * or a head branched before it. A lock that is not valid JSON throws, so it never reads as "no lock".
+ */
+function lockAt(root, commit) {
   try {
     git(root, ['cat-file', '-e', `${commit}:${LOCK}`])
   } catch {
     return undefined
   }
-  return git(root, ['show', `${commit}:${LOCK}`])
+  try {
+    return JSON.parse(git(root, ['show', `${commit}:${LOCK}`]).toString('utf8'))
+  } catch {
+    throw new Error(`${LOCK} at ${commit} is not valid JSON`)
+  }
+}
+
+/** sha256 of every file `commit` tracks under the scope, keyed by repository path. An LFS pointer or submodule throws. */
+export function trackedFilesAt(root, commit) {
+  const entries = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', SCOPE])
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => {
+      const [meta, file] = entry.split('\t')
+      const [, type, oid] = meta.split(' ')
+      if (type !== 'blob') throw new Error(`${file} is not a file`)
+      return { file, oid }
+    })
+  if (entries.length === 0) return {}
+  const output = git(root, ['cat-file', '--batch'], entries.map(({ oid }) => oid).join('\n') + '\n')
+  const files = {}
+  let offset = 0
+  for (const { file, oid } of entries) {
+    const end = output.indexOf(0x0a, offset)
+    const [found, , size] = output.subarray(offset, end).toString('utf8').split(' ')
+    if (found !== oid) throw new Error('git returned an unexpected object')
+    const start = end + 1
+    const content = output.subarray(start, start + Number(size))
+    if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER))
+      throw new Error(`${file} is a Git LFS pointer; port inputs are plain git`)
+    files[file] = sha256(content)
+    offset = start + Number(size) + 1
+  }
+  return files
 }
 
 /** Command-line entry point. Returns the exit code. */
@@ -123,26 +218,34 @@ export function main(argv, root = process.cwd()) {
   }
   try {
     const top = git(root, ['rev-parse', '--show-toplevel']).toString().trim()
-    const before = lockAt(top, base, 'base')
-    const lockBytes = lockAt(top, head, 'head')
+    requireCommit(top, base, 'base')
+    requireCommit(top, head, 'head')
+    const lock = lockAt(top, head)
     // A head without the lock (a branch cut before the library existed, or one that removes it) carries no port.
-    if (!lockBytes) {
+    if (!lock) {
       process.stdout.write(
         'port-verification: no upstream.lock.json at this head; no port to verify\n'
       )
       return 0
     }
-    if (before && before.equals(lockBytes)) {
-      process.stdout.write(
-        'port-verification: upstream.lock.json is unchanged; no port to verify\n'
-      )
+    const inputHash = portInputHash(lock, trackedFilesAt(top, head))
+    const before = lockAt(top, base)
+    // A base whose port inputs cannot be hashed (a malformed or pre-capture lock) counts as changed, never as equal.
+    let baseHash
+    try {
+      baseHash = before && portInputHash(before, trackedFilesAt(top, base))
+    } catch {
+      baseHash = undefined
+    }
+    if (baseHash === inputHash) {
+      process.stdout.write('port-verification: the port inputs are unchanged; no port to verify\n')
       return 0
     }
     try {
       git(top, ['cat-file', '-e', `${head}:${RECORD}`])
     } catch {
       process.stdout.write(
-        `port-verification: upstream.lock.json changed, and ${RECORD} is not committed\n`
+        `port-verification: the port inputs changed, and ${RECORD} is not committed\n`
       )
       return 1
     }
@@ -153,14 +256,11 @@ export function main(argv, root = process.cwd()) {
       process.stdout.write(`port-verification: ${RECORD} is not committed valid JSON\n`)
       return 1
     }
-    const figmaTree = git(top, ['rev-parse', `${head}:${SCOPE}`])
-      .toString()
-      .trim()
-    const problems = recordProblems(record, { lockBytes, figmaTree })
+    const problems = recordProblems(record, { lock, inputHash })
     for (const problem of problems) process.stdout.write(`port-verification: ${problem}\n`)
     if (problems.length) return 1
     process.stdout.write(
-      'port-verification: the record vouches for this lock, FDS commit and tree\n'
+      'port-verification: the record reports passing checks for these port inputs\n'
     )
     return 0
   } catch (error) {
