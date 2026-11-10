@@ -35,6 +35,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const relative = (root, file) => path.relative(root, file).split(path.sep).join('/')
 const portable = (value) =>
   typeof value === 'string' &&
+  Buffer.from(value).toString() === value &&
   value.length > 0 &&
   !value.startsWith('/') &&
   !value.includes('\\') &&
@@ -42,7 +43,8 @@ const portable = (value) =>
   value.split('/').every((part) => part && part !== '.' && part !== '..')
 const shared = (file) =>
   !file.split('/').includes('node_modules') && SHARED.some((prefix) => file.startsWith(prefix))
-const sorted = (values) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+const sorted = (values) =>
+  [...values].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
 const git = (root, ...args) =>
   execFileSync('git', ['--no-replace-objects', '--literal-pathspecs', '-C', root, ...args], {
     maxBuffer: 1 << 28
@@ -133,6 +135,7 @@ export function rootInventory(paths) {
 function resolverControls(paths, inputs, physicalRoot) {
   const result = new Set()
   for (const file of inputs) {
+    if (!portable(file)) throw Error('Unsafe resolver input path: ' + file)
     let directory = path.posix.dirname(file)
     while (directory) {
       for (const name of ['package.json', 'tsconfig.json', 'jsconfig.json']) {
@@ -162,6 +165,8 @@ function regular(root, file) {
 function identity(root, file, paths, expectedLfs) {
   if (!paths.has(file)) throw Error('Missing or untracked shared import or control: ' + file)
   const bytes = regular(root, file)
+  if (bytes.subarray(0, 43).toString().startsWith('version https://git-lfs.github.com/spec/'))
+    throw Error('Unmaterialized shared input: ' + file)
   if (!hasGit(root) && expectedLfs) {
     if (sha256(bytes) !== expectedLfs.oid || bytes.length !== expectedLfs.size)
       throw Error('Unverified filtered-source LFS payload: ' + file)
@@ -187,6 +192,116 @@ function identity(root, file, paths, expectedLfs) {
 }
 
 /** Dev/native consumers read the same checked contract as CI, Nix and fingerprinting. */
+const namespaceExcluded = (name, kind) =>
+  ['node_modules', '.git', '.agent-work'].includes(name) ||
+  (kind === 'directory' &&
+    (name.startsWith('.consumer-foundations-') || name.startsWith('.consumer-ssr-')))
+function resolutionDirectoryPaths(files) {
+  const directories = new Set()
+  for (const file of files) {
+    const domain = SHARED.find((prefix) => file.startsWith(prefix))
+    if (!domain) throw Error('Unsupported resolution namespace source: ' + file)
+    let directory = path.posix.dirname(file)
+    for (;;) {
+      if (directory.split('/').some((part) => namespaceExcluded(part, 'directory')))
+        throw Error('Unsupported resolution namespace: ' + directory)
+      directories.add(directory)
+      if (directory === domain.slice(0, -1)) break
+      directory = path.posix.dirname(directory)
+    }
+  }
+  return sorted(directories)
+}
+function indexedNamespace(paths, directory) {
+  const entries = new Map()
+  for (const file of paths) {
+    if (!file.startsWith(directory + '/')) continue
+    const tail = file.slice(directory.length + 1),
+      name = tail.split('/')[0]
+    const kind = tail.includes('/') ? 'directory' : 'regular'
+    if (namespaceExcluded(name, kind)) continue
+    entries.set(name, kind)
+  }
+  return sorted(entries.keys()).map((name) => ({ name, kind: entries.get(name) }))
+}
+function physicalNamespace(root, directory) {
+  if (!portable(directory)) throw Error('Unsafe resolution directory: ' + directory)
+  let current = root
+  for (const part of directory.split('/')) {
+    current = path.join(current, part)
+    const entry = lstatSync(current)
+    if (entry.isSymbolicLink() || !entry.isDirectory())
+      throw Error('Unsafe resolution directory: ' + directory)
+  }
+  return readdirSync(current, { withFileTypes: true })
+    .filter(
+      (entry) => !namespaceExcluded(entry.name, entry.isDirectory() ? 'directory' : 'regular')
+    )
+    .map((entry) => {
+      if (
+        !portable(entry.name) ||
+        entry.name.includes('/') ||
+        entry.isSymbolicLink() ||
+        (!entry.isFile() && !entry.isDirectory())
+      )
+        throw Error('Unsafe resolution namespace entry: ' + directory + '/' + entry.name)
+      return { name: entry.name, kind: entry.isDirectory() ? 'directory' : 'regular' }
+    })
+    .sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)))
+}
+function namespaceSubset(actual, expected) {
+  return actual.every((entry) =>
+    expected.some((candidate) => candidate.name === entry.name && candidate.kind === entry.kind)
+  )
+}
+function validateResolutionDirectories(root, manifest, paths, strict) {
+  const expectedPaths = resolutionDirectoryPaths(manifest.files.map((entry) => entry.path))
+  if (
+    !Array.isArray(manifest.resolutionDirectories) ||
+    JSON.stringify(manifest.resolutionDirectories.map((entry) => entry?.path)) !==
+      JSON.stringify(expectedPaths)
+  )
+    throw Error('Invalid HUD resolution directory scope')
+  for (const directory of manifest.resolutionDirectories) {
+    if (
+      !directory ||
+      Object.keys(directory).sort().join(',') !== 'entries,path' ||
+      !Array.isArray(directory.entries)
+    )
+      throw Error('Invalid HUD resolution directory record')
+    const names = []
+    for (const entry of directory.entries) {
+      if (
+        !entry ||
+        Object.keys(entry).sort().join(',') !== 'kind,name' ||
+        !portable(entry.name) ||
+        entry.name.includes('/') ||
+        namespaceExcluded(entry.name, entry.kind) ||
+        !['regular', 'directory'].includes(entry.kind)
+      )
+        throw Error('Invalid HUD resolution namespace entry')
+      names.push(entry.name)
+    }
+    if (JSON.stringify(names) !== JSON.stringify(sorted(new Set(names))))
+      throw Error('Unsorted HUD resolution namespace')
+    if (!strict) continue
+    const physical = physicalNamespace(root, directory.path)
+    if (hasGit(root)) {
+      const indexed = indexedNamespace(paths, directory.path)
+      if (JSON.stringify(indexed) !== JSON.stringify(directory.entries))
+        throw Error(
+          'Stale HUD resolution namespace; run npm run gen:shared-inputs: ' + directory.path
+        )
+      if (JSON.stringify(physical) !== JSON.stringify(indexed))
+        throw Error(
+          'Untracked or missing HUD resolution namespace entry; repair inputs and run npm run gen:shared-inputs: ' +
+            directory.path
+        )
+    } else if (!namespaceSubset(physical, directory.entries))
+      throw Error('Unexpected filtered HUD resolution namespace entry: ' + directory.path)
+  }
+}
+
 export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
   if (!['strict', 'config'].includes(mode)) throw Error('Invalid HUD shared-input read mode')
   const strict = mode === 'strict'
@@ -194,8 +309,9 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
   rejectAutomaticPostcss(root)
   const manifest = JSON.parse(regular(root, MANIFEST).toString())
   if (
-    Object.keys(manifest).sort().join(',') !== 'controls,edges,files,roots,schema' ||
-    manifest.schema !== 1 ||
+    Object.keys(manifest).sort().join(',') !==
+      'controls,edges,files,resolutionDirectories,roots,schema' ||
+    manifest.schema !== 2 ||
     !Array.isArray(manifest.roots) ||
     !Array.isArray(manifest.controls) ||
     !Array.isArray(manifest.files) ||
@@ -222,7 +338,7 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
   if (strict) {
     for (const file of resolverControls(
       paths,
-      [...manifest.roots, ...manifest.files.map((entry) => entry.path)],
+      [...manifest.controls, ...manifest.files].map((entry) => entry.path),
       hasGit(root) ? undefined : root
     ))
       if (!declaredControls.has(file))
@@ -288,8 +404,12 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
       !seen.has(edge.to)
     )
       throw Error('Unbound HUD shared-input edge')
+  const edgeKeys = manifest.edges.map((edge) => [edge.from, edge.to, edge.kind].join('\0'))
+  if (JSON.stringify(edgeKeys) !== JSON.stringify(sorted(new Set(edgeKeys))))
+    throw Error('Unsorted or duplicate HUD shared-input edges')
   if (manifest.files.some((entry) => !shared(entry.path)))
     throw Error('HUD contract contains an unsupported shared domain')
+  validateResolutionDirectories(root, manifest, paths, strict)
   return manifest.files.map((entry) => path.join(root, entry.path))
 }
 
@@ -313,6 +433,12 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   const web = path.join(root, WEB),
     paths = sourceInventory(root, declaredInputs),
     roots = rootInventory(paths)
+  const beforeFilteredNamespaces = new Map(
+    (previous?.resolutionDirectories ?? []).map((entry) => [
+      entry.path,
+      physicalNamespace(root, entry.path)
+    ])
+  )
   const controls = new Set([...roots, ...CONTROL_PATHS])
   const candidates = [...paths].filter((file) => shared(file) || file.startsWith(OWNED_SOURCE))
   const resolverCandidates = resolverControls(paths, candidates, root)
@@ -510,7 +636,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                   if (id === 'vitest' || id.startsWith('~system/') || id.startsWith('node:'))
                     return true
                   const file = path.isAbsolute(id)
-                    ? id
+                    ? path.normalize(id)
                     : importer && id.startsWith('.')
                       ? path.resolve(path.dirname(importer), id)
                       : undefined
@@ -595,7 +721,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     else globalThis[GENERATING] = before
   }
   // Package scopes and compiler controls alongside reachable sources are resolver inputs.
-  for (const file of resolverControls(paths, [...files, ...roots])) controls.add(file)
+  for (const file of resolverControls(paths, [...files, ...controls])) controls.add(file)
   for (const file of controls) files.delete(file)
   const afterPaths = sourceInventory(root, declaredInputs)
   if (JSON.stringify(rootInventory(afterPaths)) !== JSON.stringify(roots))
@@ -606,15 +732,35 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     if (beforeInputs.get(file) !== sha256(regular(root, file)))
       throw Error('HUD input changed while resolving imports: ' + file)
   }
+  const resolutionDirectories = resolutionDirectoryPaths(files).map((directory) => {
+    const entries = hasGit(root)
+      ? indexedNamespace(paths, directory)
+      : previous.resolutionDirectories.find((entry) => entry.path === directory)?.entries
+    if (!entries) throw Error('Missing filtered resolution namespace: ' + directory)
+    const physical = physicalNamespace(root, directory)
+    if (hasGit(root)) {
+      if (
+        JSON.stringify(indexedNamespace(afterPaths, directory)) !== JSON.stringify(entries) ||
+        JSON.stringify(physical) !== JSON.stringify(entries)
+      )
+        throw Error('HUD resolution namespace changed or is untracked: ' + directory)
+    } else if (
+      !namespaceSubset(physical, entries) ||
+      JSON.stringify(physical) !== JSON.stringify(beforeFilteredNamespaces.get(directory))
+    )
+      throw Error('Filtered HUD resolution namespace changed: ' + directory)
+    return { path: directory, entries }
+  })
   const manifest = {
-    schema: 1,
+    schema: 2,
+    resolutionDirectories,
     controls: sorted(controls).map((file) => identity(root, file, paths, expectedLfs.get(file))),
     roots,
     files: sorted(files).map((file) => identity(root, file, paths, expectedLfs.get(file))),
     edges: [...edges.values()].sort((a, b) => {
       const left = [a.from, a.to, a.kind].join('\0'),
         right = [b.from, b.to, b.kind].join('\0')
-      return left < right ? -1 : left > right ? 1 : 0
+      return Buffer.compare(Buffer.from(left), Buffer.from(right))
     })
   }
   return Buffer.from(JSON.stringify(manifest, null, 2) + '\n')

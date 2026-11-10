@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -173,7 +175,9 @@ describe('the actual compiler and Vite shared-source contract', () => {
     assert(!removed.files.some((file) => file.path === 'library/shop/extra.ts'))
     assert.notDeepEqual(hashes(), after)
   })
-  it('ignores unrelated shared files and the unimported public root', async () => {
+  it('ignores unrelated existing shared-file bodies and the unimported public root', async () => {
+    put('library/shop/unused.ts', 'export const unused=0;')
+    git('add', 'library/shop/unused.ts')
     const first = await save(),
       before = hashes()
     put('library/ui/index.ts', 'export const NavBar="changed";')
@@ -383,6 +387,362 @@ describe('the actual compiler and Vite shared-source contract', () => {
         assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
       }
     )
+  for (const [source, directory] of [
+    [WEB + '/bridge-scene/src/owned.ts', WEB + '/bridge-scene'],
+    [
+      'rendering/bevy-explorer/source/deploy/web/owned.ts',
+      'rendering/bevy-explorer/source/deploy/web'
+    ]
+  ])
+    it(
+      'binds resolver ancestors of actually consumed non-root owned control ' + source,
+      async () => {
+        put(source, 'export const ownedValue=1;')
+        const importer = WEB + '/src/main.ts'
+        const relative = path.posix
+          .relative(path.posix.dirname(importer), source)
+          .replace(/\.ts$/, '')
+        put(importer, `import {ownedValue}from${JSON.stringify(relative)};export{ownedValue};`)
+        const scope = directory + '/package.json'
+        put(scope, '{"type":"module"}')
+        git('add', '.')
+        const first = await save()
+        assert(first.controls.some((entry) => entry.path === source))
+        assert(first.controls.some((entry) => entry.path === scope))
+        const original = readFileSync(path.join(root, MANIFEST))
+        put(scope, '{"type":"module","version":"2"}')
+        assert.throws(() => readSharedPaths(root), /Stale/)
+        assert.throws(hashes, /Stale/)
+        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
+        git('add', scope)
+        const updated = await save()
+        assert.notDeepEqual(updated, first)
+        const nearer = directory + '/jsconfig.json'
+        put(nearer, '{}')
+        git('add', nearer)
+        assert.throws(() => readSharedPaths(root), /New HUD resolver control/)
+        assert.throws(hashes, /New HUD resolver control/)
+        const refreshed = await save()
+        assert(refreshed.controls.some((entry) => entry.path === nearer))
+        assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), refreshed)
+      }
+    )
+  it('refuses every shared negative-manifest corpus case', async () => {
+    const nodeModule = 'library/shop/node_modules/fixture.ts'
+    put(nodeModule, 'export const dependency = 1')
+    git('add', '-f', nodeModule)
+    const lfsPayload = Buffer.concat([Buffer.from('wOF2'), Buffer.alloc(60)])
+    const lfsOid = createHash('sha256').update(lfsPayload).digest('hex')
+    const decimalPath = 'library/shop/decimal-lfs.woff2',
+      pointerPath = 'library/shop/pointer.woff2'
+    put(decimalPath, lfsPayload)
+    put(
+      pointerPath,
+      'version https://git-lfs.github.com/spec/v1\noid sha256:' + lfsOid + '\nsize 64\n'
+    )
+    const crlfPath = 'library/shop/pointer-crlf.woff2'
+    put(crlfPath, readFileSync(path.join(root, pointerPath)).toString().replaceAll('\n', '\r\n'))
+    git('add', crlfPath)
+    git('add', decimalPath, pointerPath)
+    const pointerBlob = git('hash-object', '-w', path.join(root, pointerPath)).toString().trim()
+    git('update-index', '--add', '--cacheinfo', '100644', pointerBlob, decimalPath)
+    const baseline = await save()
+    const cases = JSON.parse(
+      readFileSync(path.join(repository, 'tooling/tests/hud_manifest_invalid_cases.json'), 'utf8')
+    )
+    for (const scenario of cases) {
+      const manifest = JSON.parse(JSON.stringify(baseline)),
+        row = manifest.files[0]
+      switch (scenario.mutation) {
+        case 'null-lfs':
+          row.lfs = null
+          break
+        case 'extra-lfs-key':
+          row.lfs = { oid: row.sha256, size: 0, extra: true }
+          break
+        case 'unsafe-lfs-size':
+          row.lfs = { oid: row.sha256, size: 9007199254740992 }
+          break
+        case 'duplicate-groups':
+          manifest.files.push({ ...manifest.controls[0] })
+          break
+        case 'owned-file': {
+          const owned = manifest.controls.find((entry) => entry.path === WEB + '/src/main.ts')
+          manifest.controls = manifest.controls.filter((entry) => entry !== owned)
+          manifest.files.push(owned)
+          break
+        }
+        case 'node-modules-file':
+          manifest.files.push({
+            path: nodeModule,
+            sha256: createHash('sha256').update('export const dependency = 1').digest('hex')
+          })
+          break
+        case 'integral-decimal':
+        case 'fractional-lfs-size':
+        case 'boolean-lfs-size':
+        case 'unmaterialized-lfs':
+          manifest.schema = scenario.mutation === 'integral-decimal' ? 2.0 : 2
+          manifest.files.push({
+            path: scenario.mutation === 'unmaterialized-lfs' ? pointerPath : decimalPath,
+            sha256: lfsOid,
+            lfs: {
+              oid: lfsOid,
+              size:
+                scenario.mutation === 'fractional-lfs-size'
+                  ? 64.5
+                  : scenario.mutation === 'boolean-lfs-size'
+                    ? true
+                    : 64.0
+            }
+          })
+          break
+        case 'forged-pointer-raw-hash':
+        case 'forged-crlf-pointer-lfs':
+        case 'wrong-materialized-lfs-size': {
+          const target =
+            scenario.mutation === 'wrong-materialized-lfs-size'
+              ? decimalPath
+              : scenario.mutation === 'forged-crlf-pointer-lfs'
+                ? crlfPath
+                : pointerPath
+          const bytes = readFileSync(path.join(root, target)),
+            sha256 = createHash('sha256').update(bytes).digest('hex')
+          const entry = { path: target, sha256 }
+          if (scenario.mutation !== 'forged-pointer-raw-hash')
+            entry.lfs = {
+              oid: sha256,
+              size: scenario.mutation === 'wrong-materialized-lfs-size' ? 32 : bytes.length
+            }
+          manifest.files.push(entry)
+          break
+        }
+        case 'missing-resolution-scope':
+          manifest.resolutionDirectories = []
+          break
+        case 'extra-resolution-scope':
+          manifest.resolutionDirectories.push({ path: 'library/ui/unused', entries: [] })
+          break
+        case 'unsorted-namespace':
+          manifest.resolutionDirectories[0].entries.reverse()
+          break
+        case 'duplicate-namespace-name':
+          manifest.resolutionDirectories[0].entries.push({
+            ...manifest.resolutionDirectories[0].entries[0]
+          })
+          break
+        case 'unsafe-namespace-name':
+          manifest.resolutionDirectories[0].entries[0].name = '../escape'
+          break
+        case 'control-character-namespace-name':
+          manifest.resolutionDirectories[0].entries[0].name = 'bad\n\nfile'
+          break
+        case 'boolean-schema':
+          manifest.schema = true
+          break
+        case 'fractional-schema':
+          manifest.schema = 2.5
+          break
+        case 'invalid-namespace-kind':
+          manifest.resolutionDirectories[0].entries[0].kind = 'symlink'
+          break
+        case 'duplicate-edge':
+          manifest.edges.push({ ...manifest.edges[0] })
+          break
+        case 'unsorted-edges':
+          manifest.edges.reverse()
+          break
+        default:
+          assert.fail('Unknown shared corpus mutation: ' + scenario.mutation)
+      }
+      manifest.files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+      let bytes = JSON.stringify(manifest)
+      if (scenario.mutation === 'integral-decimal')
+        bytes = bytes.replace('"schema":2', '"schema":2.0').replace('"size":64', '"size":64.0')
+      put(MANIFEST, bytes)
+      if (scenario.valid) {
+        assert(readSharedPaths(root).length > 0)
+        hashes()
+      } else {
+        assert.throws(() => readSharedPaths(root), undefined, scenario.name)
+        assert.throws(hashes, undefined, scenario.name)
+      }
+    }
+    put(MANIFEST, JSON.stringify(baseline))
+    assert(readSharedPaths(root).length > 0)
+  })
+  it('externalizes only canonical engine outputs with Windows native and POSIX absolute module IDs', () => {
+    const source = readFileSync(path.join(here, 'shared-inputs.mjs'), 'utf8')
+    const callbackStart =
+      source.indexOf('options.external = (id, importer) => {') + 'options.external = '.length
+    const callbackEnd =
+      source.indexOf('\n                }', callbackStart) + '\n                }'.length
+    const rootsStart =
+      source.indexOf("const engineOutputs = ['pkg', 'pkg-scene'].map((name) =>") +
+      'const engineOutputs = '.length
+    const rootsEnd = source.indexOf('\n                options.external', rootsStart)
+    assert(
+      callbackStart > 'options.external = '.length &&
+        rootsEnd > rootsStart &&
+        callbackEnd > callbackStart
+    )
+    const root = 'C:\\repo'
+    const directories = new Function(
+      'path',
+      'root',
+      'return (' + source.slice(rootsStart, rootsEnd) + ')'
+    )(path.win32, root)
+    const external = new Function(
+      'path',
+      'engineOutputs',
+      'return (' + source.slice(callbackStart, callbackEnd) + ')'
+    )(path.win32, directories)
+    const importer = 'C:/repo/rendering/bevy-explorer/source/react-web/src/engine/client.ts'
+    for (const name of ['pkg', 'pkg-scene']) {
+      const native = path.win32.join(
+        root,
+        'rendering/bevy-explorer/source/deploy/web/engine',
+        name,
+        'module.js'
+      )
+      assert.equal(external(native, importer), true)
+      assert.equal(external(native.replaceAll('\\', '/'), importer), true)
+      assert.equal(
+        external(
+          path.win32.relative(path.win32.dirname(importer), native).replaceAll('\\', '/'),
+          importer
+        ),
+        true
+      )
+    }
+    assert.equal(
+      external(
+        'C:/repo/rendering/bevy-explorer/source/deploy/web/engine/pkg-extra/module.js',
+        importer
+      ),
+      false
+    )
+    assert.equal(external('C:/repo/library/ui/foundations/index.ts', importer), false)
+  })
+  it('refuses tracked and untracked sibling shadows until canonical resolution updates the namespace', async () => {
+    put('library/ui/foundations/foo/index.ts', 'export const shadow=73;')
+    put('library/ui/foundations/index.ts', "export{shadow}from'./foo';")
+    put(WEB + '/src/main.ts', "import{shadow}from'@dcl/one-ui/foundations';export{shadow};")
+    git('add', '.')
+    const original = await save(),
+      before = hashes(),
+      bytes = readFileSync(path.join(root, MANIFEST))
+    assert(original.files.some((entry) => entry.path === 'library/ui/foundations/foo/index.ts'))
+    put('library/ui/foundations/foo.ts', 'export const shadow=99;')
+    assert.throws(() => readSharedPaths(root), /Untracked/)
+    assert.throws(hashes, /Untracked/)
+    await assert.rejects(generateSharedInputs({ root }), /Untracked|namespace/)
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), bytes)
+    git('add', 'library/ui/foundations/foo.ts')
+    assert.throws(() => readSharedPaths(root), /Stale HUD resolution namespace/)
+    assert.throws(hashes, /Stale HUD resolution namespace/)
+    const updated = await save()
+    assert(updated.files.some((entry) => entry.path === 'library/ui/foundations/foo.ts'))
+    assert(!updated.files.some((entry) => entry.path === 'library/ui/foundations/foo/index.ts'))
+    assert.notDeepEqual(hashes(), before)
+    const after = hashes()
+    put('library/ui/foundations/foo/index.ts', 'export const shadow=123;')
+    git('add', 'library/ui/foundations/foo/index.ts')
+    assert.deepEqual(hashes(), after)
+    assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), updated)
+  })
+  it('migrates a checked schema1 Git source through real Vite config loading and repeats filtered schema2', async () => {
+    put('library/shop/unused-before-filter.ts', 'export const unused=1;')
+    put(
+      WEB + '/vite.shared.ts',
+      "import{readSharedPaths}from'./scripts/shared-inputs.mjs';export const paths=readSharedPaths(" +
+        JSON.stringify(root) +
+        ');'
+    )
+    const config = WEB + '/vite.config.ts'
+    put(config, "import './vite.shared';\n" + readFileSync(path.join(root, config), 'utf8'))
+    git('add', '.')
+    const first = await save(),
+      old = JSON.parse(JSON.stringify(first))
+    old.schema = 1
+    delete old.resolutionDirectories
+    put(MANIFEST, JSON.stringify(old))
+    git('add', MANIFEST)
+    assert.throws(() => readSharedPaths(root), /Invalid HUD shared-input contract/)
+    assert.throws(hashes, /Unsupported HUD input manifest schema/)
+    const migrated = await save()
+    assert.deepEqual(migrated, first)
+    rmSync(path.join(root, '.git'), { recursive: true, force: true })
+    rmSync(path.join(root, 'library/shop/unused-before-filter.ts'))
+    assert(readSharedPaths(root).length > 0)
+    assert.deepEqual(
+      JSON.parse(await generateSharedInputs({ root, filteredSource: true })),
+      migrated
+    )
+    put('library/shop/new-unlisted.ts', 'export const unexpected=1')
+    assert.throws(() => readSharedPaths(root), /Unexpected filtered/)
+    assert.throws(hashes, /Unexpected filtered/)
+  })
+  it('witnesses output-prefixed regular files but excludes only canonical output directories', async () => {
+    for (const name of ['A.ts', 'a-lower.ts', '_punct.ts', '中.ts', '\ue000.ts', '\u{10000}.ts'])
+      put('library/shop/' + name, 'export {}')
+    git('add', '.')
+    const initial = await save()
+    const names = initial.resolutionDirectories
+      .find((row) => row.path === 'library/shop')
+      .entries.map((entry) => entry.name)
+    assert.deepEqual(
+      names.filter((name) =>
+        ['A.ts', 'a-lower.ts', '_punct.ts', '中.ts', '\ue000.ts', '\u{10000}.ts'].includes(name)
+      ),
+      ['A.ts', '_punct.ts', 'a-lower.ts', '中.ts', '\ue000.ts', '\u{10000}.ts']
+    )
+    put('library/shop/.consumer-foundations-private/output.ts', 'canonical output')
+    assert(readSharedPaths(root).length > 0)
+    put('library/shop/.consumer-foundations-shadow.ts', 'export {}')
+    assert.throws(() => readSharedPaths(root), /Untracked/)
+    git('add', '-f', 'library/shop/.consumer-foundations-shadow.ts')
+    assert.throws(() => readSharedPaths(root), /Stale HUD resolution namespace/)
+    const updated = await save()
+    assert(
+      updated.resolutionDirectories
+        .find((row) => row.path === 'library/shop')
+        .entries.some(
+          (entry) => entry.name === '.consumer-foundations-shadow.ts' && entry.kind === 'regular'
+        )
+    )
+    const previous = readFileSync(path.join(root, MANIFEST))
+    symlinkSync(
+      path.join(root, 'library/shop/data.ts'),
+      path.join(root, 'library/shop/unsafe-alias.ts')
+    )
+    await assert.rejects(generateSharedInputs({ root }), /Unsafe resolution namespace|Untracked/)
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), previous)
+  })
+  it('rejects resealed CRLF pointer bytes before the filtered LFS fast path', async () => {
+    const file = 'library/shop/forged-pointer.woff2'
+    const pointer = Buffer.from(
+      [
+        'version https://git-lfs.github.com/spec/v1',
+        'oid sha256:' + 'a'.repeat(64),
+        'size 64',
+        ''
+      ].join('\r\n')
+    )
+    put(file, pointer)
+    git('add', file)
+    const manifest = await save()
+    const oid = createHash('sha256').update(pointer).digest('hex')
+    manifest.files.push({ path: file, sha256: oid, lfs: { oid, size: pointer.length } })
+    manifest.files.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
+    put(MANIFEST, JSON.stringify(manifest))
+    rmSync(path.join(root, '.git'), { recursive: true, force: true })
+    const previous = readFileSync(path.join(root, MANIFEST))
+    assert.throws(() => readSharedPaths(root), /Unmaterialized/)
+    assert.throws(hashes, /Unmaterialized/)
+    await assert.rejects(generateSharedInputs({ root, filteredSource: true }), /Unmaterialized/)
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), previous)
+  })
   it('binds actual imported Vite configuration dependencies and refuses their stale identities', async () => {
     const config = WEB + '/vite.config.ts'
     put(config, "import './config-helper.ts';\n" + readFileSync(path.join(root, config)))
@@ -582,8 +942,26 @@ describe('the actual compiler and Vite shared-source contract', () => {
       ),
       /Missing shared input .*run npm run gen:shared-inputs/
     )
+    assert.throws(
+      () =>
+        execFileSync(
+          'python3',
+          [
+            path.join(repository, 'tooling/hud_shared_inputs.py'),
+            '--root',
+            root,
+            '--newer-than',
+            path.join(root, 'native-stamp')
+          ],
+          { stdio: 'pipe' }
+        ),
+      (error) =>
+        error.status === 2 &&
+        error.stderr.toString().includes('npm --prefix ' + WEB + ' run gen:shared-inputs')
+    )
     const regenerated = await save()
     assert(regenerated.files.some((entry) => entry.path === 'library/ui/foundations/token-next.ts'))
+    assert(Object.hasOwn(hashes(), 'library/ui/foundations/token-next.ts'))
     assert(readSharedPaths(root).length > 0)
   })
   it('keeps malformed metadata and unsafe physical inputs closed in config mode despite owned-byte drift', async () => {

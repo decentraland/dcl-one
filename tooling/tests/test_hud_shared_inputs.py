@@ -1,5 +1,7 @@
 """Checked graph validation and historical bootstrap contracts."""
 import importlib.util
+import contextlib
+import io
 import os
 import shlex
 import time
@@ -10,7 +12,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from hud_manifest_fixture import seal, SHARED, WEB, MANIFEST
+from hud_manifest_fixture import seal, SHARED, WEB, MANIFEST, corpus_files, index_corpus_payload, corpus_manifest
 
 SPEC = importlib.util.spec_from_file_location('hud_inputs', Path(__file__).parents[1] / 'hud_shared_inputs.py')
 reader = importlib.util.module_from_spec(SPEC)
@@ -148,6 +150,7 @@ class CheckedGraphTests(unittest.TestCase):
         self.assertEqual(run().returncode, 0)
         self.assertFalse(calls.exists())
         self.write(WEB + 'src/main.ts', 'changed HUD without generation')
+        os.utime(self.root / (WEB + 'src/main.ts'), (time.time() + 60, time.time() + 60))
         self.assertEqual(run().returncode, 0)
         self.assertEqual(calls.read_text().strip(), 'bundle-native')
         calls.unlink()
@@ -248,6 +251,7 @@ class CheckedGraphTests(unittest.TestCase):
         seal(self.root)
         def record_control(data):
             data['files'] = [row for row in data['files'] if row['path'] != name]
+            data['controls'] = [row for row in data['controls'] if row['path'] != name]
             data['controls'].append({'path': name, 'sha256': reader.sha(b'{}')})
             data['controls'].sort(key=lambda row: row['path'])
         self.manifest(record_control)
@@ -340,7 +344,7 @@ class CheckedGraphTests(unittest.TestCase):
                 if failure == 'missing':
                     (self.root / MANIFEST).unlink()
                 elif failure == 'schema':
-                    self.manifest(lambda data: data.update(schema=2))
+                    self.manifest(lambda data: data.update(schema=1))
                 elif failure == 'malformed':
                     (self.root / MANIFEST).write_text('{invalid')
                 elif failure == 'stale':
@@ -464,9 +468,231 @@ class CheckedGraphTests(unittest.TestCase):
                 if valid:
                     self.assertEqual(expected, reader.input_hashes(checkout))
 
+    def test_shared_control_keeps_owned_engine_lane_classification(self):
+        name = ci.SOURCE + 'crates/system_api_types/runtime-table.ts'
+        self.write(name, 'export const version = 1')
+        self.manifest(lambda data: data['controls'].append({
+            'path': name, 'sha256': reader.sha((self.root / name).read_bytes())}))
+        self.manifest(lambda data: data['controls'].sort(key=lambda row: row['path']))
+        before = self.commit()
+        self.write(name, 'export const version = 2')
+        self.manifest(lambda data: [row.update(sha256=reader.sha((self.root / name).read_bytes()))
+                                    for row in data['controls'] if row['path'] == name])
+        head = self.commit()
+        with patch.object(ci, 'ROOT', self.root):
+            selected = ci.select(before, head)
+        self.assertTrue(all(selected[lane] for lane in (*ci.LANES, 'scenes')))
+
+    def test_unrelated_index_conflict_is_ignored_but_consumed_conflicts_never_execute(self):
+        def conflict(name):
+            entries = []
+            for stage in (1, 2, 3):
+                oid = subprocess.check_output(['git', 'hash-object', '-w', '--stdin'],
+                                              cwd=self.root, input=('stage' + str(stage)).encode()).decode().strip()
+                entries.append('100644 ' + oid + ' ' + str(stage) + '\t' + name + '\n')
+            subprocess.check_output(['git', 'update-index', '--index-info'], cwd=self.root,
+                                    input=('0 ' + '0' * 40 + '\t' + name + '\n' + ''.join(entries)).encode())
+        self.write('library/shop/model/unconsumed.ts', 'export {}')
+        seal(self.root)
+        self.commit()
+        source, calls, tools, recipe, env = self.native_recipe()
+        original = (self.root / MANIFEST).read_bytes()
+        conflict('apps/sites/unrelated.ts')
+        conflict('library/shop/model/unconsumed.ts')
+        reader.read_manifest(self.root)
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(calls.exists())
+        for name in (WEB + 'src/main.ts', WEB + 'package.json', SHARED[0]):
+            with self.subTest(path=name):
+                conflict(name)
+                with self.assertRaisesRegex(reader.ManifestError, 'Unmerged HUD input'):
+                    reader.read_manifest(self.root)
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(calls.exists())
+                self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+                self.git('add', name)
+
+    def test_all_strict_planners_refuse_malformed_head_with_regeneration_guidance(self):
+        before = self.git('rev-parse', 'HEAD')
+        self.manifest(lambda data: data.update(schema=99))
+        head = self.commit()
+        for planner in (ci.plan, ci.scenes_plan):
+            with self.subTest(planner=planner.__name__), patch.object(ci, 'ROOT', self.root):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    with self.assertRaises(ci._artifact.shared_inputs.ManifestError):
+                        planner('local', before, head, '') if planner is ci.plan else planner('local', before, head)
+                self.assertIn(reader.REGENERATE_COMMAND, errors.getvalue())
+                self.assertIn('Unsupported HUD input manifest schema', errors.getvalue())
+
+    def test_deleted_shared_input_remains_safe_abort_with_actionable_cli_guidance(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        original = (self.root / MANIFEST).read_bytes()
+        self.git('rm', SHARED[0])
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+        self.assertIn(reader.REGENERATE_COMMAND, result.stderr)
+        self.assertIn('Missing or untracked HUD input', result.stderr)
+        self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+
+    def test_shared_invalid_manifest_corpus_matches_the_producer_contract(self):
+        cases = json.loads((Path(__file__).with_name('hud_manifest_invalid_cases.json')).read_text())
+        node_module = 'library/shop/node_modules/fixture.ts'
+        self.write(node_module, 'export const dependency = 1')
+        lfs_files = corpus_files(self.root)
+        seal(self.root)
+        self.commit()
+        index_corpus_payload(self.root, lfs_files)
+        baseline = json.loads((self.root / MANIFEST).read_text())
+        for case in cases:
+            with self.subTest(case=case['name']):
+                data = corpus_manifest(baseline, case, self.root, lfs_files)
+                (self.root / MANIFEST).write_text(json.dumps(data))
+                if case['valid']:
+                    reader.read_manifest(self.root)
+                else:
+                    with self.assertRaises(reader.ManifestError):
+                        reader.read_manifest(self.root)
+        (self.root / MANIFEST).write_text(json.dumps(baseline))
+        reader.read_manifest(self.root)
+
+    def test_namespace_shadow_blocks_old_artifact_and_cache_until_regeneration_without_engine_churn(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        for name in ci._artifact.INPUTS:
+            self.write(name, 'synthetic producer input')
+        self.write(ci.SOURCE + 'src/lib.rs', 'fn main() {}')
+        old = 'library/ui/foundations/foo/index.ts'
+        new = 'library/ui/foundations/foo.ts'
+        self.write(old, 'export const shadow = 73')
+        seal(self.root, shared=(*SHARED, old))
+        before = self.commit()
+        assembled = ci._artifact.inputs(self.root)
+        engine = ci._artifact.engine_inputs(self.root)
+        original = (self.root / MANIFEST).read_bytes()
+        self.write(new, 'export const shadow = 99')
+        stale_head = self.commit()
+        with self.assertRaises(reader.StaleManifestError):
+            reader.read_manifest(self.root)
+        with self.assertRaises(ci._artifact.shared_inputs.StaleManifestError):
+            ci._artifact.inputs(self.root)
+        with patch.object(ci, 'ROOT', self.root):
+            with self.assertRaises(ci._artifact.shared_inputs.StaleManifestError):
+                ci.select(before, stale_head)
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+        calls.unlink()
+        seal(self.root, shared=(*SHARED, new))
+        head = self.commit()
+        self.assertNotEqual(assembled, ci._artifact.inputs(self.root))
+        self.assertEqual(engine, ci._artifact.engine_inputs(self.root))
+        with patch.object(ci, 'ROOT', self.root):
+            selected = ci.select(before, head)
+        self.assertTrue(selected['web'])
+        self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless')))
+        self.write('library/ui/foundations/untracked-shadow.ts', 'export {}')
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+
+    def test_schema1_base_bootstraps_but_schema1_head_refuses_with_a_migration_hint(self):
+        self.manifest(lambda data: (data.update(schema=1), data.pop('resolutionDirectories')))
+        old = self.commit()
+        seal(self.root)
+        current = self.commit()
+        with patch.object(ci, 'ROOT', self.root):
+            self.assertTrue(ci.select(old, current)['web'])
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                with self.assertRaises(ci._artifact.shared_inputs.ManifestError):
+                    ci.plan('local', current, old, '')
+            self.assertIn(reader.REGENERATE_COMMAND, errors.getvalue())
+
+    def test_oversized_json_integer_never_becomes_a_native_cache_miss(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        original = (self.root / MANIFEST).read_bytes()
+        for field in ('schema', 'lfs'):
+            with self.subTest(field=field):
+                data = json.loads(original)
+                if field == 'schema':
+                    data['schema'] = 10 ** 400
+                else:
+                    row = data['files'][0]
+                    row['lfs'] = {'oid': row['sha256'], 'size': 10 ** 400}
+                (self.root / MANIFEST).write_text(json.dumps(data))
+                with self.assertRaises(reader.ManifestError):
+                    reader.read_manifest(self.root)
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(calls.exists())
+                self.assertNotIn('OverflowError', result.stderr)
+        (self.root / MANIFEST).write_bytes(original)
+
+    def test_native_owned_body_edit_rebuilds_once_but_structure_and_unsafe_inputs_never_hit(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        stamp = source / 'target/.bundle-native-stamp'
+        name = WEB + 'src/main.ts'
+        original = (self.root / MANIFEST).read_bytes()
+        self.write(name, 'export {} // local body edit')
+        os.utime(self.root / name, (time.time() + 60, time.time() + 60))
+        run = lambda: subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(run().returncode, 0)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        calls.unlink()
+        os.utime(stamp, (time.time() + 90, time.time() + 90))
+        self.assertEqual(run().returncode, 0)
+        self.assertFalse(calls.exists())
+        with self.assertRaises(reader.StaleManifestError):
+            reader.read_manifest(self.root)
+        self.write(name, 'export {} // another local body edit')
+        os.utime(self.root / name, (time.time() + 120, time.time() + 120))
+        self.assertEqual(run().returncode, 0)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        calls.unlink()
+        os.utime(stamp, (time.time() + 150, time.time() + 150))
+        self.write(WEB + 'src/new.ts', 'export {}')
+        self.git('add', WEB + 'src/new.ts')
+        self.assertEqual(run().returncode, 0)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        calls.unlink()
+        (self.root / name).unlink()
+        (self.root / name).symlink_to(self.root / 'missing-target')
+        self.assertEqual(run().returncode, 2)
+        self.assertFalse(calls.exists())
+        self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+
+    def test_resealed_lf_and_crlf_pointer_payloads_never_reach_native_or_artifact_acceptance(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        baseline = json.loads((self.root / MANIFEST).read_text())
+        target = SHARED[0]
+        for newline in ('\n', '\r\n'):
+            for with_lfs in (False, True):
+                with self.subTest(newline=repr(newline), lfs=with_lfs):
+                    pointer = newline.join(('version https://git-lfs.github.com/spec/v1', 'oid sha256:' + 'a' * 64, 'size 64', '')).encode()
+                    (self.root / target).write_bytes(pointer)
+                    data = json.loads(json.dumps(baseline))
+                    row = next(row for row in data['files'] if row['path'] == target)
+                    row['sha256'] = reader.sha(pointer)
+                    if with_lfs:
+                        row['lfs'] = {'oid': row['sha256'], 'size': len(pointer)}
+                    (self.root / MANIFEST).write_text(json.dumps(data))
+                    original = (self.root / MANIFEST).read_bytes()
+                    with self.assertRaisesRegex(reader.ManifestError, 'Unmaterialized'):
+                        reader.read_manifest(self.root)
+                    with self.assertRaisesRegex(ci._artifact.shared_inputs.ManifestError, 'Unmaterialized'):
+                        ci._artifact.inputs(self.root)
+                    result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertFalse(calls.exists())
+                    self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+
     def test_unhashed_root_is_rejected(self):
-        self.manifest(lambda data: data.update(files=[row for row in data['files']
-                                                      if row['path'] != WEB + 'src/main.ts']))
+        self.manifest(lambda data: data.update(controls=[row for row in data['controls']
+                                                         if row['path'] != WEB + 'src/main.ts']))
         with self.assertRaisesRegex(reader.ManifestError, 'root missing'):
             reader.read_manifest(self.root)
 
@@ -498,7 +724,7 @@ class CheckedGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ManifestError, 'untracked'):
             reader.read_manifest(self.root)
 
-    def test_lfs_pointer_and_materialized_payload_have_one_identity(self):
+    def test_current_lfs_pointer_is_refused_and_historical_logical_identity_is_preserved(self):
         payload = 'wOF2 fixture'
         oid = reader.sha(payload.encode())
         self.write(SHARED[0], payload)
@@ -506,10 +732,14 @@ class CheckedGraphTests(unittest.TestCase):
         self.manifest(lambda data: data['files'][0].update(lfs={'oid': oid, 'size': len(payload)}))
         expected = reader.input_hashes(self.root)
         self.write(SHARED[0], f'version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {len(payload)}\n')
-        self.assertEqual(expected, reader.input_hashes(self.root))
+        revision = self.commit()
+        with self.assertRaisesRegex(reader.ManifestError, 'Unmaterialized'):
+            reader.input_hashes(self.root)
+        self.assertEqual(expected, reader.input_hashes(self.root, revision))
         self.write(SHARED[0], f'version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 1\n')
+        revision = self.commit()
         with self.assertRaisesRegex(reader.ManifestError, 'Stale'):
-            reader.read_manifest(self.root)
+            reader.read_manifest(self.root, revision)
 
 
 if __name__ == '__main__':

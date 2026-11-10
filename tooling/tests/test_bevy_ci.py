@@ -41,10 +41,34 @@ class WorkflowTest(unittest.TestCase):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
-                         'tooling/tests/hud_manifest_fixture.py'):
+                         'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
                 with self.subTest(event=event, path=name):
                     self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns))
         self.assertIn("-p 'test_hud_shared_inputs.py' -v", workflow)
+
+    def test_pure_nix_hud_corpus_runs_after_nix_install_and_before_heavy_builds(self):
+        workflow = (ci.ROOT / '.github/workflows/apis-sites-images.yml').read_text()
+        install = workflow.index('cachix/install-nix-action@')
+        corpus = workflow.index('run: python3 tooling/tests/check_hud_manifest_nix.py')
+        build = workflow.index('run: nix build')
+        self.assertLess(install, corpus)
+        self.assertLess(corpus, build)
+        for name in ('tooling/tests/check_hud_manifest_nix.py', 'tooling/tests/hud_manifest_invalid_cases.json',
+                     'tooling/tests/hud_manifest_fixture.py', 'infra/packages/hud-shared-inputs.nix',
+                     'infra/packages/hud-shared-inputs-corpus.nix'):
+            self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in ci.IMAGES_INPUTS), name)
+
+    def test_generator_suite_is_a_ci_gate_after_build_and_before_artifact_upload(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        job = workflow.split('  build-deploy-web:', 1)[1].split('  headless-packages:', 1)[0]
+        build = job.index('run: python3 ../../../apps/bevy-explorer/build-web.py')
+        tests = job.index('run: npm run test:shared-inputs --prefix react-web')
+        upload = job.index('- name: Upload the complete web app')
+        self.assertLess(build, tests)
+        self.assertLess(tests, upload)
+        test_step = job[job.rfind('- name:', 0, tests):job.index('- name:', tests)]
+        self.assertNotIn('continue-on-error', test_step)
+        self.assertNotIn('if:', test_step)
 
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -123,7 +147,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_reader_and_fixture_only_changes_select_the_web_lane(self):
         for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
-                     'tooling/tests/hud_manifest_fixture.py'):
+                     'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'reader input')

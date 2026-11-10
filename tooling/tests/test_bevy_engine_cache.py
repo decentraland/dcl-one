@@ -210,7 +210,7 @@ class EngineCacheTests(unittest.TestCase):
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
-        self.assertIn(('npm', 'run', 'test:shared-inputs', '--prefix', 'react-web'), calls)
+        self.assertNotIn(('npm', 'run', 'test:shared-inputs', '--prefix', 'react-web'), calls)
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
         self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)

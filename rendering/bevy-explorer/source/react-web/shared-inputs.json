@@ -1,5 +1,270 @@
 {
-  "schema": 1,
+  "schema": 2,
+  "resolutionDirectories": [
+    {
+      "path": "library/ui",
+      "entries": [
+        {
+          "name": ".gitignore",
+          "kind": "regular"
+        },
+        {
+          "name": ".prettierignore",
+          "kind": "regular"
+        },
+        {
+          "name": ".prettierrc.json",
+          "kind": "regular"
+        },
+        {
+          "name": "README.md",
+          "kind": "regular"
+        },
+        {
+          "name": "components",
+          "kind": "directory"
+        },
+        {
+          "name": "css-modules.d.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "eslint.config.js",
+          "kind": "regular"
+        },
+        {
+          "name": "figma",
+          "kind": "directory"
+        },
+        {
+          "name": "foundations",
+          "kind": "directory"
+        },
+        {
+          "name": "index.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "package.json",
+          "kind": "regular"
+        },
+        {
+          "name": "pnpm-lock.yaml",
+          "kind": "regular"
+        },
+        {
+          "name": "pnpm-workspace.yaml",
+          "kind": "regular"
+        },
+        {
+          "name": "port-verification.json",
+          "kind": "regular"
+        },
+        {
+          "name": "templates",
+          "kind": "directory"
+        },
+        {
+          "name": "test",
+          "kind": "directory"
+        },
+        {
+          "name": "tsconfig.json",
+          "kind": "regular"
+        },
+        {
+          "name": "tsconfig.runtime.json",
+          "kind": "regular"
+        },
+        {
+          "name": "upstream.lock.json",
+          "kind": "regular"
+        },
+        {
+          "name": "vitest.config.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations",
+      "entries": [
+        {
+          "name": "colors",
+          "kind": "directory"
+        },
+        {
+          "name": "foundations.css",
+          "kind": "regular"
+        },
+        {
+          "name": "icons",
+          "kind": "directory"
+        },
+        {
+          "name": "index.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "layout",
+          "kind": "directory"
+        },
+        {
+          "name": "source.json",
+          "kind": "regular"
+        },
+        {
+          "name": "spacing",
+          "kind": "directory"
+        },
+        {
+          "name": "theme.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "typography",
+          "kind": "directory"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations/colors",
+      "entries": [
+        {
+          "name": "colors.css",
+          "kind": "regular"
+        },
+        {
+          "name": "colors.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations/icons",
+      "entries": [
+        {
+          "name": "backpack.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "chat.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "component.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "editor.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "emotes.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "general.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "iconMeta.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "index.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "map.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "menus.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "navbar.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "notifications.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "profile.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "shop.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "social.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "types.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations/layout",
+      "entries": [
+        {
+          "name": "layout.css",
+          "kind": "regular"
+        },
+        {
+          "name": "layout.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations/spacing",
+      "entries": [
+        {
+          "name": "spacing.css",
+          "kind": "regular"
+        },
+        {
+          "name": "spacing.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/foundations/typography",
+      "entries": [
+        {
+          "name": "font-source.json",
+          "kind": "regular"
+        },
+        {
+          "name": "fonts",
+          "kind": "directory"
+        },
+        {
+          "name": "inter.css",
+          "kind": "regular"
+        },
+        {
+          "name": "text-styles.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "text-styles.module.css.d.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "typography.ts",
+          "kind": "regular"
+        }
+      ]
+    }
+  ],
   "controls": [
     {
       "path": "library/ui/foundations/typography/font-source.json",
@@ -30,12 +295,20 @@
       "sha256": "c3dde5bf9d513b85bc441a731faf69ccbe032666950d64203689f98b6c3b2434"
     },
     {
+      "path": "rendering/bevy-explorer/source/deploy/web/package.json",
+      "sha256": "9e140fa4fd45bd3275facf829056074d58fdd427121a35e2d0877c2d503b894e"
+    },
+    {
       "path": "rendering/bevy-explorer/source/deploy/web/preview_realm.js",
       "sha256": "f03bd837e1ad99448aaece086843f2493255473b24202bc14ec1b2b15aa25f37"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/app.html",
       "sha256": "a82ea107db8ccf8004e3ed3efb27b88c307452ba14713ba587d072718ed68bbb"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
+      "sha256": "9e8a700567b3e4f6ac8ca0fcf9c05736b58b6e8b17d3acd0842bd226a90d86e0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -110,6 +383,10 @@
       "sha256": "7c7db2b91fdf7f05597c8b64a6bb2c9c73a0f9a582d880906094782d12e867ad"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/tsconfig.json",
+      "sha256": "a95fce0fd69c88c6dc0e252b93c99fb3097965e34e125936af2a02111aed0810"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/index.html",
       "sha256": "166bbb9cb41c0b98dbbc970791ff2227f673814773947adab66ea3f22c887076"
     },
@@ -127,7 +404,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "d1e817a6c7823c68615b979fb1d87181b120a119dc99b59abfe6234457277f92"
+      "sha256": "80b745376cac327e0906fd05a3ca883e0d78cf871b59cb6684df42c845d0a632"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",

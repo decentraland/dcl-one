@@ -83,7 +83,6 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
         engine = prepare_engine(no_opt, engine_cache, shared_build, env)
         for installation in installations:
             installation.result()
-    run('npm', 'run', 'test:shared-inputs', '--prefix', 'react-web', env=env)
     run('node', './react-web/scripts/shared-inputs.mjs', '--check', env=env)
     metadata = SOURCE / 'target/sandbox-worker.meta.json'
     metadata.parent.mkdir(exist_ok=True)
