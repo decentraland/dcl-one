@@ -5,7 +5,7 @@ import connectionLostIcon from './connection-lost.png'
 import floorLight from './modal-light.png'
 import styles from './ConnectivityFeedback.module.css'
 
-const SCOPES: Record<string, string> = { realm: 'Realm room', scene: 'Scene room', private_chat: 'Private chat', voice: 'Voice room' }
+const SCOPES: Record<string, string> = { realm: 'Realm room', scene: 'Scene room', private_chat: 'Private chat' }
 const STATES: Record<string, string> = {
   denied: 'access denied', identity_conflict: 'this identity is connected elsewhere',
   invalid: 'connection settings are invalid', credentials_required: 'new credentials are required',

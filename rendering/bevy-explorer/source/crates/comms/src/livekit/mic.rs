@@ -86,8 +86,7 @@ impl Plugin for MicPlugin {
                 // Revocation runs even when permission or device availability was lost.
                 reconcile_publications,
             )
-                .chain()
-                .after(crate::voice_room::update_voice_room),
+                .chain(),
         );
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(OnEnter(MicrophoneState::Enabled), build_cpal_stream);
@@ -543,7 +542,6 @@ fn reconcile_publications(
         Has<crate::private_chat::PrivateChatRoom>,
         Has<super::room::Connected>,
     )>,
-    route: Res<crate::voice_room::ActiveVoiceRoom>,
     mic: Res<MicState>,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
@@ -559,10 +557,7 @@ fn reconcile_publications(
         rooms
             .get(room)
             .is_ok_and(|(proximity, private, connected)| {
-                enabled
-                    && connected
-                    && route.routing.allows(room, proximity, private)
-                    && can_publish_microphone(participant)
+                enabled && connected && proximity && !private && can_publish_microphone(participant)
             })
     };
 

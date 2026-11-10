@@ -183,13 +183,6 @@ pub enum SystemApi {
     SetMicEnabled(bool),
     /// Trusted HUD recovery request; terminal access decisions remain unchanged.
     RetryConnectivity,
-    /// Activate or replace the one on-demand voice session. Credentials stay engine-side.
-    SetVoiceRoom {
-        session: String,
-        adapter: String,
-        response: RpcResultSender<Result<(), String>>,
-    },
-    LeaveVoiceRoom,
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),
@@ -247,11 +240,7 @@ pub fn post_events(
 ) {
     while let Ok(ev) = bridge.receiver.try_recv() {
         let SystemApi::ConsoleCommand(cmd, args, sender) = ev else {
-            if matches!(&ev, SystemApi::SetVoiceRoom { .. }) {
-                debug!("system bridge: SetVoiceRoom (credentials redacted)");
-            } else {
-                debug!("system bridge: {ev:?}");
-            }
+            debug!("system bridge: {ev:?}");
             writer.write(ev);
             continue;
         };

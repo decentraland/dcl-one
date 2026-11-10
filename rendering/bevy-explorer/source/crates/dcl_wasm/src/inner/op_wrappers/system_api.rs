@@ -387,24 +387,6 @@ pub async fn op_set_mic_enabled(state: &WorkerContext, enabled: bool) {
 }
 
 #[wasm_bindgen]
-pub async fn op_set_voice_room(
-    state: &WorkerContext,
-    session: String,
-    adapter: String,
-) -> Result<(), WasmError> {
-    dcl_js::system_api::op_set_voice_room(state.rc(), session, adapter)
-        .await
-        .map_err(WasmError::from)
-}
-
-#[wasm_bindgen]
-pub async fn op_leave_voice_room(state: &WorkerContext) -> Result<(), WasmError> {
-    dcl_js::system_api::op_leave_voice_room(state.rc())
-        .await
-        .map_err(WasmError::from)
-}
-
-#[wasm_bindgen]
 pub async fn op_get_voice_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_voice_stream(state.rc()).await
 }

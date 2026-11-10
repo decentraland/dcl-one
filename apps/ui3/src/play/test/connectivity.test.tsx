@@ -118,8 +118,8 @@ describe('connectivity feedback', () => {
     expect(initial).not.toBeNull()
     await act(async () => vi.advanceTimersByTimeAsync(3000))
     expect(result.current.state).toBe(initial)
-    snapshot = { ...snapshot, rooms: [{ scope: 'voice', state: 'denied' }] }
+    snapshot = { ...snapshot, rooms: [{ scope: 'private_chat', state: 'denied' }] }
     await act(async () => vi.advanceTimersByTimeAsync(1000))
-    expect(result.current.state?.rooms).toEqual([{ scope: 'voice', state: 'denied' }])
+    expect(result.current.state?.rooms).toEqual([{ scope: 'private_chat', state: 'denied' }])
   })
 })

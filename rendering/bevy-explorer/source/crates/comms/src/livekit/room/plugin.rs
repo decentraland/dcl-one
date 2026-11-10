@@ -636,10 +636,7 @@ fn record_identity_conflict(
     recovery.failure = Some(FailureKind::IdentityConflict);
     if !matches!(
         scope.map(|scope| &scope.0),
-        Some(
-            common::access_status::AccessScope::Voice(_)
-                | common::access_status::AccessScope::PrivateChat
-        )
+        Some(common::access_status::AccessScope::PrivateChat)
     ) {
         commands.set_state(ConnectionAvailability::Unavailable);
     }
@@ -652,23 +649,21 @@ mod disconnect_tests {
 
     #[test]
     fn a_private_identity_conflict_stops_only_its_room() {
-        for scope in [AccessScope::Voice("call".into()), AccessScope::PrivateChat] {
-            let mut world = World::new();
-            world.init_resource::<NextState<ConnectionAvailability>>();
-            let mut recovery = RoomRecovery::default();
-            record_identity_conflict(
-                &mut world.commands(),
-                &mut recovery,
-                Some(&RoomAccessScope(scope)),
-            );
-            world.flush();
-            assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
-            assert!(!recovery.can_retry(60.0));
-            assert!(matches!(
-                world.resource::<NextState<ConnectionAvailability>>(),
-                NextState::Unchanged
-            ));
-        }
+        let mut world = World::new();
+        world.init_resource::<NextState<ConnectionAvailability>>();
+        let mut recovery = RoomRecovery::default();
+        record_identity_conflict(
+            &mut world.commands(),
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::PrivateChat)),
+        );
+        world.flush();
+        assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+        assert!(!recovery.can_retry(60.0));
+        assert!(matches!(
+            world.resource::<NextState<ConnectionAvailability>>(),
+            NextState::Unchanged
+        ));
     }
 
     #[test]

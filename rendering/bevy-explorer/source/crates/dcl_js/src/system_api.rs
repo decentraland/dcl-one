@@ -905,38 +905,6 @@ pub async fn op_set_mic_enabled(state: Rc<RefCell<impl State>>, enabled: bool) {
         .unwrap();
 }
 
-/// Available only to a scene holding the engine-issued SystemApi sender. Never log the adapter.
-pub async fn op_set_voice_room(
-    state: Rc<RefCell<impl State>>,
-    session: String,
-    adapter: String,
-) -> Result<(), anyhow::Error> {
-    let (response, result) = RpcResultSender::channel();
-    state
-        .borrow()
-        .try_borrow::<SuperUserScene>()
-        .ok_or_else(|| anyhow!("voice rooms require trusted system access"))?
-        .send(SystemApi::SetVoiceRoom {
-            session,
-            adapter,
-            response,
-        })
-        .map_err(|_| anyhow!("voice room service unavailable"))?;
-    result
-        .await
-        .map_err(|_| anyhow!("voice room service unavailable"))?
-        .map_err(|reason| anyhow!(reason))
-}
-
-pub async fn op_leave_voice_room(state: Rc<RefCell<impl State>>) -> Result<(), anyhow::Error> {
-    state
-        .borrow()
-        .try_borrow::<SuperUserScene>()
-        .ok_or_else(|| anyhow!("voice rooms require trusted system access"))?
-        .send(SystemApi::LeaveVoiceRoom)
-        .map_err(|_| anyhow!("voice room service unavailable"))
-}
-
 pub async fn op_get_mic_state(state: Rc<RefCell<impl State>>) -> Result<MicState, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
@@ -1504,74 +1472,6 @@ mod kernel_fetch_tests {
         let result = catch_unwind(AssertUnwindSafe(|| block_on(poll_once(fetch(&state)))));
         assert!(result.is_err());
         assert!(state.borrow().borrow::<RpcCalls>().is_empty());
-    }
-}
-
-#[cfg(test)]
-mod voice_room_tests {
-    use super::*;
-    use crate::test_state::TestState;
-    use futures_lite::future::{block_on, poll_once};
-
-    #[test]
-    fn untrusted_scene_cannot_activate_or_leave_voice() {
-        let state = Rc::new(RefCell::new(TestState::default()));
-        assert!(block_on(op_set_voice_room(
-            state.clone(),
-            "call".into(),
-            "secret".into()
-        ))
-        .is_err());
-        assert!(block_on(op_leave_voice_room(state)).is_err());
-    }
-
-    #[test]
-    fn trusted_activation_waits_for_engine_validation() {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut state = TestState::default();
-        state.put(SuperUserScene(sender));
-        let state = Rc::new(RefCell::new(state));
-        let mut activation = Box::pin(op_set_voice_room(
-            state.clone(),
-            "call".into(),
-            "adapter".into(),
-        ));
-        assert!(block_on(poll_once(&mut activation)).is_none());
-        let SystemApi::SetVoiceRoom {
-            session,
-            adapter,
-            response,
-        } = receiver.try_recv().unwrap()
-        else {
-            panic!("expected trusted voice activation");
-        };
-        assert_eq!(session, "call");
-        assert_eq!(adapter, "adapter");
-        response.send(Err("invalid or insecure room adapter".into()));
-        assert_eq!(
-            block_on(activation).unwrap_err().to_string(),
-            "invalid or insecure room adapter"
-        );
-        block_on(op_leave_voice_room(state)).unwrap();
-        assert!(matches!(
-            receiver.try_recv().unwrap(),
-            SystemApi::LeaveVoiceRoom
-        ));
-    }
-
-    #[test]
-    fn closed_channel_error_cannot_echo_credentials() {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        drop(receiver);
-        let mut state = TestState::default();
-        state.put(SuperUserScene(sender));
-        let error = block_on(op_set_voice_room(
-            Rc::new(RefCell::new(state)),
-            "call".into(),
-            "private-token".into(),
-        ))
-        .unwrap_err();
-        assert_eq!(error.to_string(), "voice room service unavailable");
     }
 }
 

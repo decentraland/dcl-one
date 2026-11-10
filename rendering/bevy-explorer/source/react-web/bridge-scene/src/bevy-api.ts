@@ -177,9 +177,6 @@ export type BevyApiInterface = {
   consoleCommand?: (cmd: string, args: string[]) => Promise<string>
   getMicState: () => Promise<MicState>
   setMicEnabled: (enabled: boolean) => void
-  /** Trusted session activation or credential replacement. Never send the adapter via console. */
-  setVoiceRoom: (session: string, adapter: string) => Promise<void>
-  leaveVoiceRoom: () => Promise<void>
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void

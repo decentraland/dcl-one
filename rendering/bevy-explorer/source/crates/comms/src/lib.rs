@@ -22,8 +22,6 @@ mod test;
 mod traffic;
 #[cfg(feature = "transport_debug")]
 mod transport_debug;
-#[cfg(feature = "livekit")]
-pub mod voice_room;
 pub mod websocket_room;
 
 use std::marker::PhantomData;
@@ -111,13 +109,7 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((
-            LivekitPlugin,
-            private_chat::PrivateChatPlugin,
-            voice_room::VoiceRoomPlugin,
-        ));
-        #[cfg(not(feature = "livekit"))]
-        app.add_systems(Update, reject_unavailable_voice_rooms);
+        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
         app.init_resource::<MicState>()
             .init_resource::<global_crdt::NearbyPanning>();
 
@@ -135,15 +127,6 @@ impl Plugin for CommsPlugin {
 
         #[cfg(feature = "transport_debug")]
         app.add_plugins(transport_debug::TransportDebugPlugin);
-    }
-}
-
-#[cfg(not(feature = "livekit"))]
-fn reject_unavailable_voice_rooms(mut events: EventReader<system_bridge::SystemApi>) {
-    for event in events.read() {
-        if let system_bridge::SystemApi::SetVoiceRoom { response, .. } = event {
-            response.send(Err("Voice rooms are unavailable in this build".to_owned()));
-        }
     }
 }
 
