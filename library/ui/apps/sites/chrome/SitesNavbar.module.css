@@ -1,0 +1,190 @@
+.tabList,
+.dropdown,
+.notificationList,
+.userLinks,
+.mobileList,
+.mobileItems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panelNote {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.notification {
+  position: relative;
+}
+
+/* An unread row carries source's ruby dot. */
+.unread::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: var(--dcl-space-12);
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-ruby);
+}
+
+.notificationLink {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  padding: var(--dcl-space-12) var(--dcl-space-32) var(--dcl-space-12) var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.notificationLink:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.notificationTitle {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+}
+
+.notificationBody {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.notificationTime {
+  composes: text626f64792f7873 from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+}
+
+.userHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  padding: 0 var(--dcl-space-16) var(--dcl-space-8);
+}
+
+.userName {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addressLabel {
+  composes: text626f64792f7873 from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+}
+
+.address {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
+.mana {
+  display: flex;
+  gap: var(--dcl-space-16);
+  padding-top: var(--dcl-space-8);
+}
+
+.manaRow {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
+.divider {
+  margin: var(--dcl-space-8) 0;
+  border: 0;
+  border-top: 1px solid var(--dcl-border-subtle);
+}
+
+.userLink,
+.logout {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: none;
+  color: var(--dcl-text-secondary-on-brand);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.userLink:hover {
+  background: var(--dcl-bg-hover);
+  color: var(--dcl-neutrals-white);
+}
+
+.logout:hover {
+  color: var(--dcl-brand-ruby);
+}
+
+.home:focus-visible,
+.tab:focus-visible,
+.dropdownItem:focus-visible,
+.mobileItem:focus-visible,
+.credits:focus-visible,
+.bell:focus-visible,
+.notificationLink:focus-visible,
+.avatar:focus-visible,
+.userLink:focus-visible,
+.logout:focus-visible,
+.hamburger:focus-visible,
+.mobileToggle:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* Read out, not shown (an unread notification's state); the same pattern as home/WhatsOn. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.generatedHost {
+  width: 100%;
+}
+
+.generatedRoot {
+  width: 100%;
+}
+
+/* Home owns the placement; the generated component keeps its source geometry. */
+.generatedLanding,
+.generatedOverlay {
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+}
+
+.generatedLanding {
+  position: fixed;
+}
+
+.generatedOverlay {
+  position: absolute;
+}
+
+.generatedTransparent {
+  background: transparent;
+  box-shadow: none;
+}

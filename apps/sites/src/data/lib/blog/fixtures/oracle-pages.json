@@ -1,0 +1,2252 @@
+{
+  "source": "decentraland/sites@cfdfa1a5 built with ?env=prod (BLOG_BASE_URL https://decentraland.org/blog), served on loopback, hydrated in Chrome/156.0.8078.81; CMS data from the public delivery API (cms-sample.json)",
+  "capturedAt": "2026-11-04T04:28:09.300Z",
+  "extractor": "the legal canonical algorithm plus src and alt (blog plan B0); region <main>",
+  "slice": "frame: the nodes up to and including the Facebook share link; railHeading and firstCard: the Related Articles heading and its first card (4 nodes); railNodes: the rail node count after the heading; the capture origin (loopback) of the share links is replaced by https://decentraland.org, the origin the source shares in production",
+  "pages": {
+    "about-decentraland/online-parties-and-live-music-in-decentraland": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/1PiKsFwntivpasa8NipkvX/a61da4e87640c9988a705218d5cbd64d/image9.png",
+          "alt": "Online Parties and Live Music in Decentraland",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Apr 06, 2026"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/about-decentraland",
+          "children": [
+            {
+              "text": "About Decentraland"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Online Parties and Live Music in Decentraland"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Hang out with people online in real time, from anywhere. Join weekly events in Decentraland—DJ sets, film screenings, and parties—where you can see who’s around, meet new faces, and spend time together."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Online%20Parties%20and%20Live%20Music%20in%20Decentraland&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fabout-decentraland%2Fonline-parties-and-live-music-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fabout-decentraland%2Fonline-parties-and-live-music-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/about-decentraland/decentraland-worlds-your-own-virtual-space",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/5F7oCnfZNRljfFh9qIrWEd/4ab9c920312b69b6a2d375aa59459328/Blog_hero_purple.png",
+              "alt": "Decentraland Worlds: Your Place Online",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Mar 07, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/about-decentraland",
+          "children": [
+            {
+              "text": "About Decentraland"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/about-decentraland/decentraland-worlds-your-own-virtual-space",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Decentraland Worlds: Your Place Online"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/get-paid-to-create-at-decentraland-music-festival-usd10k-in-awards-up-for": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/5M9oIVOIzdtqoRTXpoZYeF/a83528984236af4d2892b60756c3548b/open-call-music-festival-hero.png",
+          "alt": "Get Paid to Create at Decentraland Music Festival: $10K in Awards Up For Grabs",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Sep 07, 2025"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Get Paid to Create at Decentraland Music Festival: $10K in Awards Up For Grabs"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Join SUB/STREAM this Nov 19–22 and be part of a festival dedicated to stream-native artists."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Get%20Paid%20to%20Create%20at%20Decentraland%20Music%20Festival%3A%20%2410K%20in%20Awards%20Up%20For%20Grabs&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fget-paid-to-create-at-decentraland-music-festival-usd10k-in-awards-up-for",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fget-paid-to-create-at-decentraland-music-festival-usd10k-in-awards-up-for",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/decentralands-2024-recap": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/1Jl5QKaVsnYYsBm3G9x9b8/07c4e21f86b1f332c78f33b4fa81ddcc/Misc._Banners__768_x_384_px___4_.png",
+          "alt": "Decentraland’s 2024 Recap",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Jan 06, 2025"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Decentraland’s 2024 Recap"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Relive the highlights of Decentraland’s transformative 2024, from the launch of the groundbreaking new desktop client and major feature updates to in-person summits, and unforgettable events!"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Decentraland%E2%80%99s%202024%20Recap&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentralands-2024-recap",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentralands-2024-recap",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/decentraland-foundation-quarterly-update-q1-2024": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/6HfQS3zFr7efLgOXjNkVY5/166677db76b6476adbf75aaae1edd1a5/Q12024Update.jpg",
+          "alt": "Decentraland Foundation Quarterly Update: Q1 2024",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Apr 12, 2024"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Decentraland Foundation Quarterly Update: Q1 2024"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Dive into the latest updates from the first quarter of 2024—new product and feature releases, upcoming events, and more!"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Decentraland%20Foundation%20Quarterly%20Update%3A%20Q1%202024&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentraland-foundation-quarterly-update-q1-2024",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentraland-foundation-quarterly-update-q1-2024",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/the-ultimate-guide-to-metaverse-pride-2023": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/3SWWZDPahMngnLnM4z3jsu/55beec3279374c165d57f222f0332902/IMG_7957mopm2.webp",
+          "alt": "The Ultimate Guide to Metaverse Pride 2023",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Jun 20, 2023"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "The Ultimate Guide to Metaverse Pride 2023"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Metaverse Pride is coming next week! Prepare your favorite rainbow Wearables and dive into the Ultimate Guide to Metaverse Pride to start planning your schedule."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=The%20Ultimate%20Guide%20to%20Metaverse%20Pride%202023&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fthe-ultimate-guide-to-metaverse-pride-2023",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fthe-ultimate-guide-to-metaverse-pride-2023",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/mvfw23-recap": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/50eoSMDyjgUNQypO63RtAi/f74d2f287a39d76ab35973da95fc2ef0/ttegdrx.PNG",
+          "alt": "MVFW23 Recap",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Apr 05, 2023"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "MVFW23 Recap"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Numbers, highlights, wins, and learnings."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=MVFW23%20Recap&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fmvfw23-recap",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fmvfw23-recap",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/the-ultimate-guide-to-mvfw23-in-decentraland": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/1cSCQPepQ7kvHzyWXp9wgd/15dc3da89b025e051e12954b4a941306/image8.png",
+          "alt": "The Ultimate Guide to MVFW23 in Decentraland",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Mar 23, 2023"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "The Ultimate Guide to MVFW23 in Decentraland"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "March 28-31 brings four fabulous days of fashion shows, parties, shopping, panel talks, and amazing experiences to Decentraland—plan your MVFW itinerary with the Ultimate Guide."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=The%20Ultimate%20Guide%20to%20MVFW23%20in%20Decentraland&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fthe-ultimate-guide-to-mvfw23-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fthe-ultimate-guide-to-mvfw23-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/decentraland-quests-the-journey-begins": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/6aLfCuUMKXs3q4Czpd2Lkb/a4a9c5f69924845a9939072db9bb169a/banner_2021-08-23_quests-43a18010f172c5e4a137a0a2fa343f3b.jpg",
+          "alt": "Decentraland Quests – the journey begins",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Aug 23, 2021"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Decentraland Quests – the journey begins"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "The product of a brand new tool in the creator arsenal, quests have arrived in Decentraland!"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Decentraland%20Quests%20%E2%80%93%20the%20journey%20begins&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentraland-quests-the-journey-begins",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fdecentraland-quests-the-journey-begins",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "tutorials/servers-part-3": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/7KYiZFw13hGwpl7epM0Biq/abb546761721ceabaaedcf3b14825e3b/banner_2020-08-25_tutorials-8fd50aced5ac6b68693d88b68055687d.jpg",
+          "alt": "Servers Deep Dive Part 3: Using WebSockets",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Aug 25, 2020"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/tutorials",
+          "children": [
+            {
+              "text": "Tutorials"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Servers Deep Dive Part 3: Using WebSockets"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Master advanced tools for creating rich multiplayer experiences in Decentraland."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/nicoearnshaw",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/0MfZDmAQp1nHj909N7jyk/764623903f15f7f9ee3a1d76ddd02ed6/avatar_Nico_Earnshaw_nicoearnshaw.jpeg",
+              "alt": "Nico Earnshaw",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Nico Earnshaw"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Servers%20Deep%20Dive%20Part%203%3A%20Using%20WebSockets&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Ftutorials%2Fservers-part-3",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Ftutorials%2Fservers-part-3",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/tutorials/servers-part-2",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/42btyBmA0Qy0Cfk94lNwO8/24614af2f8dc2a53b259cad59e6f48f1/banner_2020-07-20_tutorials-8fd50aced5ac6b68693d88b68055687d.jpg",
+              "alt": "Servers Deep Dive Part 2: Launching a Server",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Jul 20, 2020"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/tutorials",
+          "children": [
+            {
+              "text": "Tutorials"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/tutorials/servers-part-2",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Servers Deep Dive Part 2: Launching a Server"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "announcements/collecting-rare-items-in-decentraland": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/5iq3UfiE9cBxOzcILD812N/5616cd87615a1c54e833b04fd6539a9a/banner_2019-11-18_banner-49dc553b7fc94c99c2359e469e76417c.png",
+          "alt": "Collecting rare items in Decentraland",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Nov 18, 2019"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "Collecting rare items in Decentraland"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "All you need to know about the value of items up for grabs in the Metaverse"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=Collecting%20rare%20items%20in%20Decentraland&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fcollecting-rare-items-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Fannouncements%2Fcollecting-rare-items-in-decentraland",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    },
+    "technology/landregistry-and-estateregistry": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/6kle9S4vxo10WDt4FFcy3b/78d62326f30cf02721d7382e3b158a86/banner_2019-06-14_technology-886c90c628d97ce699a0df6a05ed56b6.jpg",
+          "alt": "LANDRegistry and EstateRegistry Updates",
+          "children": []
+        },
+        {
+          "tag": "time",
+          "children": [
+            {
+              "text": "Jun 14, 2019"
+            }
+          ]
+        },
+        {
+          "text": "•"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/technology",
+          "children": [
+            {
+              "text": "Technology"
+            }
+          ]
+        },
+        {
+          "tag": "h1",
+          "children": [
+            {
+              "text": "LANDRegistry and EstateRegistry Updates"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Changes and improvements in Decentraland’s LAND and Estate smart contracts"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/author/decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2zWgW4kMYMAkHeYZBYLOs6/52102c8cf77a7d7ab589d1d65be67e3c/avatar_Decentraland_icon.png",
+              "alt": "Decentraland",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Decentraland"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Share"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "https://x.com/intent/post?text=LANDRegistry%20and%20EstateRegistry%20Updates&url=https%3A%2F%2Fdecentraland.org%2Fblog%2Ftechnology%2Flandregistry-and-estateregistry",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        },
+        {
+          "tag": "a",
+          "href": "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fdecentraland.org%2Fblog%2Ftechnology%2Flandregistry-and-estateregistry",
+          "target": "_blank",
+          "rel": "noopener noreferrer",
+          "children": []
+        }
+      ],
+      "railHeading": [
+        {
+          "tag": "h2",
+          "children": [
+            {
+              "text": "Related Articles"
+            }
+          ]
+        }
+      ],
+      "firstCard": [
+        {
+          "tag": "a",
+          "href": "/blog/technology/land-api-v2",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/6JaOIlgF8SUhUJOMiEjJHV/c304f03bb2306f38daa54e01fb1f772b/banner_2021-01-19_land-api-v2-38c72003b67f9a49645ea23823770901.jpg",
+              "alt": "Version 2.0 of the LAND API",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Jan 19, 2021"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/technology",
+          "children": [
+            {
+              "text": "Technology"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/technology/land-api-v2",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Version 2.0 of the LAND API"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "railNodes": 12
+    }
+  }
+}

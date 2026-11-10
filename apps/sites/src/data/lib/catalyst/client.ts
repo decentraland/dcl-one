@@ -1,5 +1,10 @@
 import type { AuthIdentity, SignedFetchMetadata } from "../auth/types";
-import { catalystUrl, publicWorldsUrl, worldsUrl } from "./bases";
+import {
+  catalystUrl,
+  developmentDiscoveryGetTarget,
+  publicWorldsUrl,
+  worldsUrl,
+} from "./bases";
 
 async function signedFetch(
   ...args: Parameters<typeof import("../auth/signer").signedFetch>
@@ -21,15 +26,22 @@ export class CatalystError extends Error {
   }
 }
 
-export async function errorFromResponse(res: Response, url: string): Promise<CatalystError> {
+export async function errorFromResponse(
+  res: Response,
+  url: string,
+): Promise<CatalystError> {
   let server: string | null = null;
   try {
-    const body = JSON.parse(await res.text()) as { message?: unknown; error?: unknown } | null;
+    const body = JSON.parse(await res.text()) as {
+      message?: unknown;
+      error?: unknown;
+    } | null;
     // `message` where a host still sends it; the places and events routes answer
     // the old services' `{ok, error, code}` envelope.
     const msg = typeof body?.message === "string" ? body.message : body?.error;
     if (typeof msg === "string" && msg.trim()) server = msg.trim();
   } catch {
+    // Non-JSON error bodies use the generic status message.
   }
   return server
     ? new CatalystError(server, url, res.status, true)
@@ -79,7 +91,10 @@ export type GetOptions = {
 
 type Fetched = { status: number; text: string };
 
-const inflightByRequest = new WeakMap<AbortSignal, Map<string, Promise<Fetched>>>();
+const inflightByRequest = new WeakMap<
+  AbortSignal,
+  Map<string, Promise<Fetched>>
+>();
 
 async function fetchText(
   url: string,
@@ -138,10 +153,14 @@ function fetchShared(
   return p;
 }
 
-export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T> {
-  const base = catalystBase(opts.base);
+export async function getJSON<T>(
+  path: string,
+  opts: GetOptions = {},
+): Promise<T> {
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${base}${cleanPath}${buildQuery(opts.query)}`;
+  const discovery = developmentDiscoveryGetTarget(cleanPath, opts);
+  const base = discovery?.base ?? catalystBase(opts.base);
+  const url = `${base}${discovery?.path ?? cleanPath}${buildQuery(opts.query)}`;
   const doFetch = opts.fetchImpl ?? fetch;
 
   const { status, text } = await fetchShared(
@@ -149,7 +168,10 @@ export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T
     {
       signal: opts.signal,
       cache: opts.cache ?? "no-store",
-      headers: { accept: "application/json", ...(opts.headers ?? {}) },
+      headers: discovery
+        ? { accept: "application/json" }
+        : { accept: "application/json", ...(opts.headers ?? {}) },
+      ...(discovery ? { method: "GET", credentials: "omit" as const } : {}),
     },
     doFetch,
     opts.signal,
@@ -237,7 +259,10 @@ export async function postJSON<T>(
     accept: "application/json",
     ...(opts.headers ?? {}),
   };
-  const init: RequestInit & { metadata?: SignedFetchMetadata; signPath?: string } = {
+  const init: RequestInit & {
+    metadata?: SignedFetchMetadata;
+    signPath?: string;
+  } = {
     method,
     headers,
     signal: opts.signal,

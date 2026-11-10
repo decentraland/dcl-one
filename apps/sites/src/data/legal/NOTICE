@@ -1,0 +1,9 @@
+The legal documents in this directory (brand.ts, content.ts, credits.ts, ethics.ts,
+privacy.ts, referral.ts, rewards.ts, security.ts, terms.ts) and the renderings in
+fixtures/ are ported verbatim from decentraland/sites
+(https://github.com/decentraland/sites) at revision
+cfdfa1a51216f9dc90c5b148686a95e7ee9c2862, src/pages/{brand,content,ethics,
+rewards-terms,credits-terms,security,privacy,referral-terms,terms}, as that revision
+renders them (production @dcl/sites 0.76.0 served the same text on 2026-11-03). That
+source is licensed under the Apache License 2.0; the license applies to these files.
+The text is legal content: change it only from a new source revision, never by hand.

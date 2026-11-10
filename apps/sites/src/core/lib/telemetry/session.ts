@@ -6,7 +6,9 @@ const WALLET_COOKIE = "dcl_wallet_verified";
 const WALLET_MAX_AGE = 60 * 60 * 24 * 30;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 
-export function parseCookies(header: string | null | undefined): Record<string, string> {
+export function parseCookies(
+  header: string | null | undefined,
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
   for (const part of header.split(";")) {
@@ -30,7 +32,8 @@ export function readSid(request: Request): string | null {
 }
 
 function sidSharedParent(): string | undefined {
-  const raw = typeof process !== "undefined" ? process.env?.SID_COOKIE_DOMAIN : undefined;
+  const raw =
+    typeof process !== "undefined" ? process.env?.SID_COOKIE_DOMAIN : undefined;
   const parent = raw?.trim().replace(/^\./, "").toLowerCase();
   return parent ? parent : undefined;
 }
@@ -44,7 +47,9 @@ export function sharedSidDomain(request: Request): string | undefined {
   } catch {
     return undefined;
   }
-  return hostname === parent || hostname.endsWith(`.${parent}`) ? parent : undefined;
+  return hostname === parent || hostname.endsWith(`.${parent}`)
+    ? parent
+    : undefined;
 }
 
 export function hasSplitSidCookie(request: Request): boolean {
@@ -60,20 +65,44 @@ export function hasSplitSidCookie(request: Request): boolean {
 
 export function createSid(): string {
   try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    if (
+      typeof crypto !== "undefined" &&
+      typeof crypto.randomUUID === "function"
+    ) {
       return crypto.randomUUID();
     }
-  } catch {
-  }
+  } catch {}
   let sid = "";
-  for (let i = 0; i < 32; i++) sid += Math.floor(Math.random() * 16).toString(16);
+  for (let i = 0; i < 32; i++)
+    sid += Math.floor(Math.random() * 16).toString(16);
   return sid;
 }
 
-export function ensureSid(request: Request): { sid: string; created: boolean } {
+function createRequestSid(request: Request): { sid: string; created: boolean } {
   const existing = readSid(request);
   if (existing) return { sid: existing, created: false };
   return { sid: createSid(), created: true };
+}
+
+const REQUEST_SESSION = Symbol("telemetry-session");
+type SessionRequest = Request & {
+  [REQUEST_SESSION]?: ReturnType<typeof createRequestSid>;
+};
+
+export function ensureSid(
+  request: Request,
+): ReturnType<typeof createRequestSid> {
+  const owner = request as SessionRequest;
+  const existing = owner[REQUEST_SESSION];
+  if (existing) return existing;
+  if (!Object.isExtensible(owner))
+    throw new Error("Telemetry sessions require an extensible Request.");
+  const session = createRequestSid(request);
+  Object.defineProperty(owner, REQUEST_SESSION, {
+    value: session,
+    enumerable: false,
+  });
+  return session;
 }
 
 export function serializeSidCookie(
@@ -136,7 +165,9 @@ export function sidLoader(request: Request) {
   const domain = sharedSidDomain(request);
   let headers: Headers | undefined;
   if (created) {
-    headers = new Headers({ "Set-Cookie": serializeSidCookie(sid, { domain }) });
+    headers = new Headers({
+      "Set-Cookie": serializeSidCookie(sid, { domain }),
+    });
   } else if (domain && hasSplitSidCookie(request)) {
     headers = new Headers();
     headers.append("Set-Cookie", serializeSidCookie(sid, { domain }));
@@ -147,7 +178,7 @@ export function sidLoader(request: Request) {
     wallet,
     userKey: wallet ?? sid,
     created,
-    wrap: <T,>(payload: T, init?: { status?: number }) =>
+    wrap: <T>(payload: T, init?: { status?: number }) =>
       data(payload, { status: init?.status, headers }),
   };
 }

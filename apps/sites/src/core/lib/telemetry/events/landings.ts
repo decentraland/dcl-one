@@ -160,8 +160,26 @@ export type LandingsEvents = {
   lp_hangout_signin_gate_viewed: Record<string, never>;
   lp_hangout_started: Record<string, never>;
   lp_hangout_step_completed: {
-    from: "cover" | "details" | "location" | "preview" | "review" | "schedule" | "signinGate" | "submitted" | "submitting";
-    to: "cover" | "details" | "location" | "preview" | "review" | "schedule" | "signinGate" | "submitted" | "submitting";
+    from:
+      | "cover"
+      | "details"
+      | "location"
+      | "preview"
+      | "review"
+      | "schedule"
+      | "signinGate"
+      | "submitted"
+      | "submitting";
+    to:
+      | "cover"
+      | "details"
+      | "location"
+      | "preview"
+      | "review"
+      | "schedule"
+      | "signinGate"
+      | "submitted"
+      | "submitting";
   };
   lp_hangout_submit_attempted: {
     location: "land" | "world";
@@ -204,11 +222,29 @@ export type LandingsEvents = {
     resolved: boolean;
   };
   lp_legal_section_clicked: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc:
+      | "brand"
+      | "content"
+      | "credits"
+      | "ethics"
+      | "privacy"
+      | "referral"
+      | "rewards"
+      | "security"
+      | "terms";
     section: string;
   };
   lp_legal_viewed: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc:
+      | "brand"
+      | "content"
+      | "credits"
+      | "ethics"
+      | "privacy"
+      | "referral"
+      | "rewards"
+      | "security"
+      | "terms";
   };
   lp_rsvp_cancelled: {
     count: number;
@@ -272,11 +308,22 @@ export type LandingsEvents = {
     upcoming_count: number;
   };
   report_category_set: {
-    reason: "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+    reason:
+      | "cheating"
+      | "harassment"
+      | "illegal_content"
+      | "impersonation"
+      | "scam_phishing";
   };
   report_completed: {
     evidence_count: number;
-    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+    reason:
+      | ""
+      | "cheating"
+      | "harassment"
+      | "illegal_content"
+      | "impersonation"
+      | "scam_phishing";
     report_id?: string;
   };
   report_details_set: {
@@ -292,7 +339,13 @@ export type LandingsEvents = {
   report_started: Record<string, never>;
   report_submit_started: {
     evidence_count: number;
-    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+    reason:
+      | ""
+      | "cheating"
+      | "harassment"
+      | "illegal_content"
+      | "impersonation"
+      | "scam_phishing";
   };
   report_target_set: {
     has_reporter: boolean;

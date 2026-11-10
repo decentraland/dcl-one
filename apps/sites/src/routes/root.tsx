@@ -11,12 +11,20 @@ import {
 } from "react-router";
 
 import "@ui/atoms/primitives.css";
+import "@dcl/one-ui/foundations.css";
+import { useDocumentLocale } from "@/features/locale/document-locale";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+
+import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
+import { sidLoader } from "@/core/lib/telemetry/session";
+import { resolveRequestLocale } from "@/features/locale/locales";
 
 import SignInModalHost from "@/features/components/auth/SignInModalHost";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
-import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
+import RoutePending, {
+  NAV_PENDING_SCRIPT,
+} from "@/features/components/chrome/RoutePending";
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
 import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
@@ -36,16 +44,22 @@ export async function loader({ request }: Route.LoaderArgs) {
   const magicApiKey = process.env.MAGIC_API_KEY || "";
   // The public Segment write key and the optional first-party proxy host
   // (core/lib/telemetry/track.ts); unset, the client's track() is a no-op.
-  const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
-  const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
-  const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
+  const segmentWriteKey =
+    process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
+  const segmentApiHost =
+    process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
+  const docsBase =
+    (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
   const catalystBase = browserCatalystBase();
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   const committee = wallet
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
-  return {
+  const session = sidLoader(request);
+  return session.wrap({
+    sid: session.sid,
+    locale: resolveRequestLocale(request),
     thirdwebClientId,
     walletConnectProjectId,
     magicApiKey,
@@ -56,7 +70,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     shopApiMode,
     wallet,
     committee,
-  };
+  });
 }
 
 export function shouldRevalidate({
@@ -81,13 +95,27 @@ export function shouldRevalidate({
 export function meta(_args: Route.MetaArgs) {
   return [
     { title: "Decentraland" },
-    { name: "description", content: "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop." },
+    {
+      name: "description",
+      content:
+        "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop.",
+    },
   ];
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const lang = useDocumentLocale();
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | {
+        thirdwebClientId?: string;
+        walletConnectProjectId?: string;
+        magicApiKey?: string;
+        segmentWriteKey?: string;
+        segmentApiHost?: string;
+        docsBase?: string;
+        catalystBase?: string;
+        shopApiMode?: string;
+      }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
@@ -101,11 +129,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
     ? `;window.__CATALYST_BASE__=${JSON.stringify(data.catalystBase).replace(/</g, "\\u003c")}`
     : "";
   // The Shop client's legacy-alias fallback (ui3/src/shop/api) while the node has not mounted /shop-api.
-  const shopApiMode = data?.shopApiMode === "legacy" ? `;window.__SHOP_API_MODE__="legacy"` : "";
+  const shopApiMode =
+    data?.shopApiMode === "legacy" ? `;window.__SHOP_API_MODE__="legacy"` : "";
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang="en" suppressHydrationWarning>
+    <html lang={lang} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -146,7 +175,8 @@ function installClientErrorReporter(): () => void {
   if (typeof window === "undefined") return () => {};
   // A browser under automation (headless probes, CDP-driven checks, test rigs) reports
   // its own environment, not the product, burying the real errors.
-  if ((navigator as Navigator & { webdriver?: boolean }).webdriver) return () => {};
+  if ((navigator as Navigator & { webdriver?: boolean }).webdriver)
+    return () => {};
 
   const seen = new Map<string, number>();
   let sent = 0;
@@ -193,7 +223,11 @@ function installClientErrorReporter(): () => void {
   const onError = (event: ErrorEvent) => {
     const err = event.error;
     if (err instanceof Error) {
-      report(err.name || "Error", err.message || event.message, err.stack ?? "");
+      report(
+        err.name || "Error",
+        err.message || event.message,
+        err.stack ?? "",
+      );
       return;
     }
     if (!event.message) return;
@@ -224,7 +258,11 @@ function installClientErrorReporter(): () => void {
     const el = t as HTMLImageElement & HTMLScriptElement & HTMLLinkElement;
     const src = el.currentSrc || el.src || el.href || "";
     if (!src) return;
-    report("ResourceError", `${t.tagName.toLowerCase()} failed to load: ${src}`.slice(0, 500), "");
+    report(
+      "ResourceError",
+      `${t.tagName.toLowerCase()} failed to load: ${src}`.slice(0, 500),
+      "",
+    );
   };
 
   const origError = console.error.bind(console);
@@ -256,9 +294,7 @@ export default function App() {
   // The @ui components read profiles and the like through react-query hooks
   // (ui3/src/data/hooks); one client per request on the server, one per page
   // in the browser, so SSR never shares a cache between visitors.
-  const [queryClient] = useState(
-    () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
-  );
+  const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
   useEffect(() => {
     appHydrated = true;
     document.documentElement.removeAttribute("data-nav-loading");
@@ -316,8 +352,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
             }),
             keepalive: true,
           }).catch(() => {});
-        } catch {
-        }
+        } catch {}
       }
       return;
     }
@@ -335,8 +370,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         }),
         keepalive: true,
       }).catch(() => {});
-    } catch {
-    }
+    } catch {}
   }, [isRouteError, routeStatus, name, message, stack]);
 
   if (isRouteError) {

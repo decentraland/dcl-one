@@ -1,0 +1,134 @@
+{
+  "source": "decentraland/sites@cfdfa1a5 components/blog/Search (sanitizeHighlight: DOMPurify 3.4.3, ALLOWED_TAGS em and mark, ALLOWED_ATTR none), production build served on loopback, Chrome/156.0.8078.81; each input answered as a search hit's highlighted title and description at the network layer, the rendered innerHTML read back (blog plan R5-2)",
+  "capturedAt": "2026-11-04T12:00:37.198Z",
+  "cases": [
+    {
+      "input": "plain <em>hit</em> text",
+      "html": "plain <em>hit</em> text"
+    },
+    {
+      "input": "<mark>marked</mark> and <em>em</em>",
+      "html": "<mark>marked</mark> and <em>em</em>"
+    },
+    {
+      "input": "<b>bold <em>hit</em></b> tail",
+      "html": "bold <em>hit</em> tail"
+    },
+    {
+      "input": "<div><span>x</span><em>y</em></div>",
+      "html": "x<em>y</em>"
+    },
+    {
+      "input": "<a href=\"javascript:alert(1)\">link <em>t</em></a>",
+      "html": "link <em>t</em>"
+    },
+    {
+      "input": "<script>alert(1)</script>after",
+      "html": "after"
+    },
+    {
+      "input": "<style>p{color:red}</style><em>s</em>",
+      "html": "<em>s</em>"
+    },
+    {
+      "input": "<noscript><em>n</em></noscript>after",
+      "html": "<em>n</em>after"
+    },
+    {
+      "input": "<textarea><em>t</em></textarea>after",
+      "html": "&lt;em&gt;t&lt;/em&gt;after"
+    },
+    {
+      "input": "<iframe src=\"https://example.org\"></iframe>frame text",
+      "html": "frame text"
+    },
+    {
+      "input": "<img src=x onerror=alert(1)>img",
+      "html": "img"
+    },
+    {
+      "input": "<em>outer <em>inner</em> rest</em>",
+      "html": "<em>outer <em>inner</em> rest</em>"
+    },
+    {
+      "input": "<em>unclosed text",
+      "html": "<em>unclosed text</em>"
+    },
+    {
+      "input": "text</em> stray close",
+      "html": "text stray close"
+    },
+    {
+      "input": "<em><mark>both</mark></em>",
+      "html": "<em><mark>both</mark></em>"
+    },
+    {
+      "input": "<em><b>in</b></em>",
+      "html": "<em>in</em>"
+    },
+    {
+      "input": "<em class=\"x\" onclick=\"y\" style=\"color:red\">attr</em>",
+      "html": "<em>attr</em>"
+    },
+    {
+      "input": "<mark data-a=\"1\" id=\"m\">m</mark>",
+      "html": "<mark data-a=\"1\">m</mark>"
+    },
+    {
+      "input": "Tom &amp; Jerry &lt;em&gt;not&lt;/em&gt;",
+      "html": "Tom &amp; Jerry &lt;em&gt;not&lt;/em&gt;"
+    },
+    {
+      "input": "&amp;lt;em&amp;gt;double&amp;lt;/em&amp;gt;",
+      "html": "&amp;lt;em&amp;gt;double&amp;lt;/em&amp;gt;"
+    },
+    {
+      "input": "&nbsp;&#39;&#x27;&quot;&copy;&unknown;",
+      "html": "&nbsp;''\"©&amp;unknown;"
+    },
+    {
+      "input": "a < b > c & d",
+      "html": "a &lt; b &gt; c &amp; d"
+    },
+    {
+      "input": "<EM>upper</EM> <Mark>mixed</Mark> <eM>eM</eM>",
+      "html": "<em>upper</em> <mark>mixed</mark> <em>eM</em>"
+    },
+    {
+      "input": "<!-- comment --><em>c</em>",
+      "html": "<em>c</em>"
+    },
+    {
+      "input": "<em></em>empty",
+      "html": "<em></em>empty"
+    },
+    {
+      "input": "<svg><em>s</em></svg>after",
+      "html": "<em>s</em>after"
+    },
+    {
+      "input": "<math><mi>x</mi></math><em>m</em>",
+      "html": "<em>m</em>"
+    },
+    {
+      "input": "<template><em>t</em></template>after",
+      "html": "after"
+    },
+    {
+      "input": "line\nbreak  <em>spaced</em>   out",
+      "html": "line\nbreak  <em>spaced</em>   out"
+    },
+    {
+      "input": "<em/>selfclosed",
+      "html": "<em>selfclosed</em>"
+    },
+    {
+      "input": "<em\nnewline>nl</em>",
+      "html": "<em>nl</em>"
+    },
+    {
+      "input": "<p>para <em>p</em></p><br>after",
+      "html": "para <em>p</em>after"
+    }
+  ]
+}

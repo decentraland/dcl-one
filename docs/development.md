@@ -22,16 +22,16 @@ Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. An occupied saved port fails startup.
 
-| `foundation-dev …` | Action |
-| --- | --- |
-| `status` | URLs, health, Pulse SPKI hash |
-| `wait --timeout 1800` | Wait for readiness |
-| `logs`, `restart <service>` | After lockfile changes restart `web-install`, then `sites` |
-| `up`, `down` | Start or attach, stop (`--postgres-only`) |
-| `profile mirror\|testnet\|offline` | Switch profile while stopped |
-| `service install\|uninstall` | Login service (WSL: `systemd=true`) |
-| `trades-snapshot <file>` | Snapshot for `FOUNDATION_DEV_TRADES_SNAPSHOT` |
-| `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL`, `FOUNDATION_DEV_STACK_PROFILE` |
+| `foundation-dev …`                 | Action                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `status`                           | URLs, health, Pulse SPKI hash                                                |
+| `wait --timeout 1800`              | Wait for readiness                                                           |
+| `logs`, `restart <service>`        | After lockfile changes restart `web-install`, then `sites`                   |
+| `up`, `down`                       | Start or attach, stop (`--postgres-only`)                                    |
+| `profile mirror\|testnet\|offline` | Switch profile while stopped                                                 |
+| `service install\|uninstall`       | Login service (WSL: `systemd=true`)                                          |
+| `trades-snapshot <file>`           | Snapshot for `FOUNDATION_DEV_TRADES_SNAPSHOT`                                |
+| `env`                              | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL`, `FOUNDATION_DEV_STACK_PROFILE` |
 
 Without this Chrome profile, `/play` logs `pulse: webtransport connect failed`
 and shows no other avatars:
@@ -53,6 +53,12 @@ and shows no other avatars:
 - Never delete `.cache/dev` to fix a migration failure.
 - Keep `settings.json` with the database; without it startup refuses to create credentials.
 - Use Linux for exact `en_US.utf8` collation comparisons.
+
+## Sites homepage discovery preview
+
+With the web dependencies installed, `VITE_SITES_DEV_PUBLIC_DISCOVERY=1 pnpm --dir apps/sites dev` enables read-only public events and places for the local homepage preview. It is off by default and only works in Vite's development mode. The existing clients send unauthenticated GET requests to the public events and places APIs; unsupported queries, explicit backend overrides, authenticated reads and writes retain the configured dcl-one backend. Failed reads show the actual empty or error state.
+
+Production builds ignore this flag and continue using `CATALYST_URL`. Authentication, profiles and other backend features still require the local stack.
 
 ## The web Explorer (`/play`)
 

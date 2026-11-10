@@ -37,6 +37,7 @@ export type Event = {
   coordinates: number[] | null;
   url: string | null;
   user_name: string | null;
+  user?: string | null;
   scene_name: string | null;
   estate_name: string | null;
   live: boolean;
@@ -77,7 +78,9 @@ function parseEvents(raw: unknown[]): (Event | null)[] {
   return out;
 }
 
-function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCategory {
+function toEventCategory(
+  c: z.infer<typeof EventCategoryRecordSchema>,
+): EventCategory {
   const en = c.i18n["en"];
   return {
     name: c.name,
@@ -153,32 +156,60 @@ async function fetchEventRows(
   }
   const payload = env.data.data;
   const rows = parseEvents(Array.isArray(payload) ? payload : payload.events);
-  return { rows, total: Array.isArray(payload) ? rows.length : payload.total, copy };
+  return {
+    rows,
+    total: Array.isArray(payload) ? rows.length : payload.total,
+    copy,
+  };
 }
 
 export async function fetchEvents(
   params: FetchEventsParams = {},
   opts: GetOptions = {},
-): Promise<{ data: Event[]; total: number; received?: number; invalidCount?: number; copy?: CopyStamp | null }> {
+): Promise<{
+  data: Event[];
+  total: number;
+  received?: number;
+  invalidCount?: number;
+  copy?: CopyStamp | null;
+}> {
   const { rows, total, copy } = await fetchEventRows(params, opts);
-  return { data: rows.filter((event) => event !== null), total, received: rows.length, invalidCount: rows.filter((event) => event === null).length, copy };
+  return {
+    data: rows.filter((event) => event !== null),
+    total,
+    received: rows.length,
+    invalidCount: rows.filter((event) => event === null).length,
+    copy,
+  };
 }
 
 /** Slice server slots before discarding malformed records so lookahead never leaks into this page. */
 export async function fetchEventPage(
   params: FetchEventsParams & { limit: number },
   opts: GetOptions = {},
-): Promise<{ data: Event[]; hasMore: boolean; invalidCount?: number; copy?: CopyStamp | null }> {
-  const { rows, copy } = await fetchEventRows({ ...params, limit: params.limit + 1 }, opts);
+): Promise<{
+  data: Event[];
+  hasMore: boolean;
+  invalidCount?: number;
+  copy?: CopyStamp | null;
+}> {
+  const { rows, copy } = await fetchEventRows(
+    { ...params, limit: params.limit + 1 },
+    opts,
+  );
   return {
     data: rows.slice(0, params.limit).filter((event) => event !== null),
     hasMore: rows.length > params.limit,
-    invalidCount: rows.slice(0, params.limit).filter((event) => event === null).length,
+    invalidCount: rows.slice(0, params.limit).filter((event) => event === null)
+      .length,
     copy,
   };
 }
 
-export async function fetchEvent(id: string, opts: GetOptions = {}): Promise<Event> {
+export async function fetchEvent(
+  id: string,
+  opts: GetOptions = {},
+): Promise<Event> {
   const raw = await getJSON<unknown>(
     eventsApiPath("get", "/api/events/{event_id}", { event_id: id }),
     opts,
@@ -321,7 +352,10 @@ export function toLiveNowCard(e: Event): LiveNowCard {
   return {
     id: e.id,
     title: e.name ?? "Untitled event",
-    users: e.connected_addresses ? new Set(e.connected_addresses.map((address) => address.toLowerCase())).size : null,
+    users: e.connected_addresses
+      ? new Set(e.connected_addresses.map((address) => address.toLowerCase()))
+          .size
+      : null,
     isEvent: true,
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
     hue: hueFor(e.id),
@@ -363,7 +397,11 @@ export function groupEventsByDay(
   days = 7,
   now = new Date(),
 ): { allDays: DayEvent[][]; dayLabels: string[] } {
-  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayStart = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
   const allDays: DayEvent[][] = Array.from({ length: days }, () => []);
   for (const e of events) {
     const iso = effectiveStartAt(e);
@@ -395,23 +433,43 @@ export function groupEventsByDay(
     if (i === 0) return "Today";
     if (i === 1) return "Tomorrow";
     return new Date(dayStart + i * DAY_MS)
-      .toLocaleDateString("en-US", { weekday: "short", day: "numeric", timeZone: "UTC" })
+      .toLocaleDateString("en-US", {
+        weekday: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      })
       .toUpperCase();
   });
   return { allDays, dayLabels };
 }
 
 /** Public cards, detail pages and calendar exports refer to the same next occurrence. */
-export function eventOccurrence(event: Pick<Event, "start_at" | "next_start_at" | "finish_at" | "next_finish_at" | "duration" | "recurrent">): { start: string | undefined; finish: string | undefined } {
+export function eventOccurrence(
+  event: Pick<
+    Event,
+    | "start_at"
+    | "next_start_at"
+    | "finish_at"
+    | "next_finish_at"
+    | "duration"
+    | "recurrent"
+  >,
+): { start: string | undefined; finish: string | undefined } {
   const start = event.next_start_at ?? event.start_at ?? undefined;
   const startTime = start ? Date.parse(start) : NaN;
-  const duration = event.duration ?? (!event.recurrent && event.finish_at && event.start_at
-    ? Date.parse(event.finish_at) - Date.parse(event.start_at)
-    : undefined);
-  const finish = event.next_finish_at && Date.parse(event.next_finish_at) > startTime
-    ? event.next_finish_at
-    : (Number.isFinite(startTime) && duration !== undefined && Number.isFinite(duration) && duration > 0
-    ? new Date(startTime + duration).toISOString()
-    : undefined);
+  const duration =
+    event.duration ??
+    (!event.recurrent && event.finish_at && event.start_at
+      ? Date.parse(event.finish_at) - Date.parse(event.start_at)
+      : undefined);
+  const finish =
+    event.next_finish_at && Date.parse(event.next_finish_at) > startTime
+      ? event.next_finish_at
+      : Number.isFinite(startTime) &&
+          duration !== undefined &&
+          Number.isFinite(duration) &&
+          duration > 0
+        ? new Date(startTime + duration).toISOString()
+        : undefined;
   return { start, finish };
 }

@@ -1,0 +1,242 @@
+/* Source Sites: #32134c (background-web-dark) under two edge glows. The glow is lavender at 60%
+   alpha over that base; brand-violet is the nearest opaque token (design token gap). */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--dcl-space-48) var(--dcl-space-16) var(--dcl-space-64);
+  background-color: var(--dcl-background-web-dark);
+  background-image:
+    radial-gradient(ellipse 48% 640px at 124% 50%, var(--dcl-brand-violet), transparent),
+    radial-gradient(ellipse 48% 640px at -6% -45%, var(--dcl-brand-violet), transparent);
+  color: var(--dcl-text-primary);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.title {
+  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: var(--dcl-space-16) 0 0;
+}
+
+/* Source is 18px on mobile and 24px from desktop, both weight 500 (no 500 text style). */
+.subtitle {
+  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: var(--dcl-space-8) 0 0;
+  color: var(--dcl-neutrals-pearl);
+}
+
+/* Cards are 394px wide in the design (the step screenshots' width), three across. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-24);
+  width: 100%;
+  max-width: calc(3 * 394px + 2 * var(--dcl-space-24));
+  margin: var(--dcl-space-48) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: 100%;
+  max-width: 394px;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--dcl-border-strong);
+  border-radius: var(--dcl-radius-xl);
+}
+
+/* breakpoints.desktop in foundations/layout (custom properties cannot be media conditions). */
+@media (min-width: 1024px) {
+  .root {
+    padding: var(--dcl-space-96) var(--dcl-space-24) var(--dcl-space-64);
+  }
+
+  .subtitle {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  /* One row per card part shared by all cards, so a longer translation grows every header and the
+     images stay aligned. */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto auto;
+    column-gap: var(--dcl-space-24);
+    row-gap: 0;
+    margin-top: var(--dcl-space-64);
+  }
+
+  .step {
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+    justify-self: center;
+  }
+}
+
+/* Source tints each header (pink, violet, deep purple) with a white sheen and a 4px left accent;
+   the tints and accents have no tokens, so these are the nearest brand tokens. */
+.stepHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-24);
+  background-color: var(--dcl-brand-purple-dark);
+  background-image: linear-gradient(
+    110.97deg,
+    var(--dcl-transparencies-white-20) 4.17%,
+    transparent 92.73%
+  );
+  box-shadow: inset 4px 0 0 0 var(--dcl-brand-purple);
+}
+
+/* The third step's deeper tint. */
+.stepHeaderDeep {
+  background-color: var(--dcl-background-web-dark);
+}
+
+/* Highlight geometry is measured on source Sites' 394px-wide step screenshots, not a UI scale:
+   it scales with the image (cqw of .media), so it has no token. */
+.media {
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 394 / 240;
+  background: var(--dcl-background-web-dark);
+}
+
+.image,
+.imageContain {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.imageContain {
+  object-fit: contain;
+}
+
+.highlight {
+  position: absolute;
+  left: var(--highlight-x);
+  top: var(--highlight-y);
+  display: grid;
+  place-items: center;
+  width: calc(220 / 394 * 100cqw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.glow {
+  grid-area: 1 / 1;
+  width: calc(76 / 220 * 100%);
+  aspect-ratio: 1;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-lavender);
+  filter: blur(calc(11.9 / 394 * 100cqw));
+  animation: highlight-pulse 2.1s infinite;
+}
+
+/* Above the glow, whose filter makes it a stacking context. */
+.highlightIcon {
+  position: relative;
+  grid-area: 1 / 1;
+  width: calc(30.52 / 394 * 100cqw);
+  aspect-ratio: 1;
+  border-radius: var(--dcl-radius-full);
+}
+
+@keyframes highlight-pulse {
+  50% {
+    filter: blur(calc(23.8 / 394 * 100cqw));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glow {
+    animation: none;
+  }
+}
+
+.stepLabel {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+}
+
+.stepTitle {
+  composes: text68656164696e672f32 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+}
+
+.stepText {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+}
+
+.footer {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-32);
+  padding: 0 var(--dcl-space-16);
+  text-align: center;
+}
+
+.footerLine {
+  margin: 0;
+}
+
+.footerLink {
+  color: var(--dcl-brand-ruby);
+}
+
+.footerLink:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-16);
+  background: var(--dcl-bg-backdrop);
+  color: var(--dcl-text-primary);
+}
+
+.overlayLabel {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-5);
+}
+
+.progress {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--dcl-space-64) * 5);
+  padding: 0 var(--dcl-layout-margin-x);
+  accent-color: var(--dcl-action-primary);
+}

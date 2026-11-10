@@ -77,6 +77,20 @@ const LANGUAGES: Language[] = [
 ];
 
 const LANG_STORAGE_KEY = "dcl:lang";
+// The language the localized Sites pages use, in storage and a cookie. This switcher reads and
+// writes it too, so moving between those pages and these keeps the choice; it shows only the three
+// languages it has, falling back to English for any other.
+const LOCALE_KEY = "dcl-locale";
+
+function readLocaleChoice(): string | null {
+  try {
+    const stored = window.localStorage.getItem(LOCALE_KEY);
+    if (stored) return stored;
+  } catch {
+  }
+  const cookie = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${LOCALE_KEY}=`));
+  return cookie ? cookie.slice(LOCALE_KEY.length + 1) : null;
+}
 
 function flagUrl(flag: string): string {
   return `/assets/twemoji-${flag}.svg`;
@@ -198,7 +212,7 @@ export default function SitesChrome({
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(LANG_STORAGE_KEY);
+      const saved = readLocaleChoice() ?? window.localStorage.getItem(LANG_STORAGE_KEY);
       const found = LANGUAGES.find((l) => l.code === saved);
       if (found) {
         setLang(found);
@@ -229,7 +243,9 @@ export default function SitesChrome({
     setLangOpen(false);
     try {
       window.localStorage.setItem(LANG_STORAGE_KEY, l.code);
+      window.localStorage.setItem(LOCALE_KEY, l.code);
       document.cookie = `lang=${l.code}; path=/; max-age=31536000; samesite=lax`;
+      document.cookie = `${LOCALE_KEY}=${l.code}; Path=/; SameSite=Lax; Max-Age=31536000${location.protocol === "https:" ? "; Secure" : ""}`;
     } catch {
     }
     document.documentElement.lang = l.code;

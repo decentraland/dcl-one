@@ -1,0 +1,33 @@
+/* The related rail (source components/blog/RelatedPost/RelatedPost.styled.ts) on the shared tokens.
+   Every value that is not the source's is a row in the blog gap table. */
+
+.section {
+  background-color: var(--dcl-bg-surface);
+  padding-top: var(--dcl-space-96);
+  padding-bottom: var(--dcl-space-96);
+  width: 100%;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  padding: 0 var(--dcl-space-16);
+  width: 100%;
+  max-width: 1095px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.title {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.rail {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: var(--dcl-space-32);
+}

@@ -11,6 +11,110 @@
     }
   },
   "events": {
+    "Click": {
+      "loose": false,
+      "props": {
+        "action": {
+          "kind": "string",
+          "optional": true
+        },
+        "card": {
+          "kind": "string",
+          "optional": true
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "clicked_at": {
+          "kind": "number",
+          "optional": true
+        },
+        "download_target": {
+          "kind": "enum-string",
+          "values": [
+            "app_store",
+            "desktop_installer",
+            "epic",
+            "google_play"
+          ],
+          "optional": true
+        },
+        "event": {
+          "kind": "string",
+          "optional": true
+        },
+        "href": {
+          "kind": "string",
+          "optional": true
+        },
+        "link": {
+          "kind": "string",
+          "optional": true
+        },
+        "mac_arch": {
+          "kind": "enum-string",
+          "values": [
+            "apple_silicon",
+            "intel",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "os": {
+          "kind": "string",
+          "optional": true
+        },
+        "place": {
+          "kind": "string",
+          "optional": false
+        },
+        "platform": {
+          "kind": "string",
+          "optional": true
+        },
+        "section": {
+          "kind": "string",
+          "optional": true
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": true
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": true
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
     "bd_create_collection_completed": {
       "loose": false,
       "props": {
@@ -2391,6 +2495,695 @@
         }
       }
     },
+    "download_failed": {
+      "loose": false,
+      "props": {
+        "anon_user_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": false
+        },
+        "auth_state": {
+          "kind": "enum-string",
+          "values": [
+            "anonymous",
+            "authenticated"
+          ],
+          "optional": false
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "download_target": {
+          "kind": "enum-string",
+          "values": [
+            "desktop_installer"
+          ],
+          "optional": false
+        },
+        "duration_ms": {
+          "kind": "number",
+          "optional": false
+        },
+        "failed_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "href": {
+          "kind": "string",
+          "optional": false
+        },
+        "mac_arch": {
+          "kind": "enum-string",
+          "values": [
+            "apple_silicon",
+            "intel",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "ms_since_click": {
+          "kind": "number",
+          "optional": true
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Windows",
+            "macOS"
+          ],
+          "optional": false
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "creator-hub-download-page",
+            "creator-hub-success-page",
+            "creators-hero",
+            "download-modal",
+            "download-page",
+            "download-success-footer",
+            "jump-in-already-user",
+            "jump-in-landing",
+            "landing-hero",
+            "landing-hero-epic",
+            "landing-hero-platform-switch",
+            "lets-play-landing",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "reason": {
+          "kind": "string",
+          "optional": false
+        },
+        "revisit": {
+          "kind": "number",
+          "optional": false
+        },
+        "started_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "download_funnel_exit": {
+      "loose": false,
+      "props": {
+        "anon_user_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": false
+        },
+        "auth_state": {
+          "kind": "enum-string",
+          "values": [
+            "anonymous",
+            "authenticated"
+          ],
+          "optional": false
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "download_failed_fired": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "download_started_fired": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "download_success_fired": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "ms_on_page": {
+          "kind": "number",
+          "optional": false
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Windows",
+            "macOS"
+          ],
+          "optional": false
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "creator-hub-download-page",
+            "creator-hub-success-page",
+            "creators-hero",
+            "download-modal",
+            "download-page",
+            "download-success-footer",
+            "jump-in-already-user",
+            "jump-in-landing",
+            "landing-hero",
+            "landing-hero-epic",
+            "landing-hero-platform-switch",
+            "lets-play-landing",
+            "unknown"
+          ],
+          "optional": false
+        },
+        "revisit": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "download_page_exit": {
+      "loose": false,
+      "props": {
+        "cta_clicked": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "ms_on_page": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "download_redirect_failed": {
+      "loose": false,
+      "props": {
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": true
+        },
+        "download_target": {
+          "kind": "string",
+          "optional": false
+        },
+        "os": {
+          "kind": "string",
+          "optional": false
+        },
+        "place": {
+          "kind": "string",
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "download_started": {
+      "loose": false,
+      "props": {
+        "anon_user_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": false
+        },
+        "auth_state": {
+          "kind": "enum-string",
+          "values": [
+            "anonymous",
+            "authenticated"
+          ],
+          "optional": false
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "download_target": {
+          "kind": "enum-string",
+          "values": [
+            "desktop_installer"
+          ],
+          "optional": false
+        },
+        "href": {
+          "kind": "string",
+          "optional": false
+        },
+        "mac_arch": {
+          "kind": "enum-string",
+          "values": [
+            "apple_silicon",
+            "intel",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "ms_since_click": {
+          "kind": "number",
+          "optional": true
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Windows",
+            "macOS"
+          ],
+          "optional": false
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "creator-hub-download-page",
+            "creator-hub-success-page",
+            "creators-hero",
+            "download-modal",
+            "download-page",
+            "download-success-footer",
+            "jump-in-already-user",
+            "jump-in-landing",
+            "landing-hero",
+            "landing-hero-epic",
+            "landing-hero-platform-switch",
+            "lets-play-landing",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "revisit": {
+          "kind": "number",
+          "optional": false
+        },
+        "started_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "download_success": {
+      "loose": false,
+      "props": {
+        "anon_user_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": false
+        },
+        "auth_state": {
+          "kind": "enum-string",
+          "values": [
+            "anonymous",
+            "authenticated"
+          ],
+          "optional": false
+        },
+        "bytes_transferred": {
+          "kind": "number",
+          "optional": true
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "delivery_mode": {
+          "kind": "enum-string",
+          "values": [
+            "anchor_fallback",
+            "anchor_native",
+            "streamed"
+          ],
+          "optional": false
+        },
+        "download_target": {
+          "kind": "enum-string",
+          "values": [
+            "desktop_installer"
+          ],
+          "optional": false
+        },
+        "duration_ms": {
+          "kind": "number",
+          "optional": false
+        },
+        "filename": {
+          "kind": "string",
+          "optional": false
+        },
+        "gateway_request_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "href": {
+          "kind": "string",
+          "optional": false
+        },
+        "mac_arch": {
+          "kind": "enum-string",
+          "values": [
+            "apple_silicon",
+            "intel",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "ms_since_click": {
+          "kind": "number",
+          "optional": true
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Windows",
+            "macOS"
+          ],
+          "optional": false
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "creator-hub-download-page",
+            "creator-hub-success-page",
+            "creators-hero",
+            "download-modal",
+            "download-page",
+            "download-success-footer",
+            "jump-in-already-user",
+            "jump-in-landing",
+            "landing-hero",
+            "landing-hero-epic",
+            "landing-hero-platform-switch",
+            "lets-play-landing",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "revisit": {
+          "kind": "number",
+          "optional": false
+        },
+        "started_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "succeeded_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "download_success_arrived": {
+      "loose": false,
+      "props": {
+        "arch": {
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
+          "optional": false
+        },
+        "auth_state": {
+          "kind": "enum-string",
+          "values": [
+            "anonymous",
+            "authenticated"
+          ],
+          "optional": false
+        },
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "download_target": {
+          "kind": "string",
+          "optional": false
+        },
+        "ms_since_click": {
+          "kind": "number",
+          "optional": true
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Windows",
+            "macOS"
+          ],
+          "optional": false
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "creator-hub-download-page",
+            "creator-hub-success-page",
+            "creators-hero",
+            "download-modal",
+            "download-page",
+            "download-success-footer",
+            "jump-in-already-user",
+            "jump-in-landing",
+            "landing-hero",
+            "landing-hero-epic",
+            "landing-hero-platform-switch",
+            "lets-play-landing",
+            "unknown"
+          ],
+          "optional": false
+        },
+        "revisit": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
     "ffw_shop_landing": {
       "loose": false,
       "props": {
@@ -2943,6 +3736,7 @@
           "values": [
             "brand",
             "content",
+            "credits",
             "ethics",
             "privacy",
             "referral",
@@ -2966,6 +3760,7 @@
           "values": [
             "brand",
             "content",
+            "credits",
             "ethics",
             "privacy",
             "referral",

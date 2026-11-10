@@ -1,0 +1,652 @@
+{
+  "source": "decentraland/sites@cfdfa1a5 built with ?env=prod, served on loopback, hydrated in Chrome/156.0.8078.81 (desktop viewport); live production CMS data at capture",
+  "capturedAt": "2026-11-04T04:28:09.300Z",
+  "slice": "frame: the nodes before the first post link; entries: the first 2 post entries (home and category: the hero, 5 nodes, then a card, 4 nodes; author: 2 cards; search: 2 result links); entryCount: post links in the capture",
+  "pages": {
+    "home": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        }
+      ],
+      "entries": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Free horror movie nights, a haunted Genesis Plaza and a Wearable contest with a 30,000 MANA prize pool. October 5 to November 2, on computer or phone."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/how-to-make-money-in-virtual-worlds-games-wearables-and-creator-opportunities-in-decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/LRlPrYzzVTZxXW9n9Zv6M/6e759645951c9cdb52c013167460873f/Make_Money.png",
+              "alt": "How to Make Money in Virtual Worlds: Games, Wearables and Creator Opportunities in Decentraland",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Sep 04, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/how-to-make-money-in-virtual-worlds-games-wearables-and-creator-opportunities-in-decentraland",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "How to Make Money in Virtual Worlds: Games, Wearables and Creator Opportunities in Decentraland"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "entryCount": 7
+    },
+    "category:announcements": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "h3",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "The latest news from Decentraland."
+            }
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/760gckxgmBstLrWqgvDAM2/d14b8d0fefd2e74169972e4b15e44fc6/Blog_hero.png",
+              "alt": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Oct 05, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/halloweeks-2026-one-night-of-halloween-was-never-going-to-be-enough",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Halloweeks 2026: One Night of Halloween Was Never Going to Be Enough"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Free horror movie nights, a haunted Genesis Plaza and a Wearable contest with a 30,000 MANA prize pool. October 5 to November 2, on computer or phone."
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/how-to-make-money-in-virtual-worlds-games-wearables-and-creator-opportunities-in-decentraland",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/LRlPrYzzVTZxXW9n9Zv6M/6e759645951c9cdb52c013167460873f/Make_Money.png",
+              "alt": "How to Make Money in Virtual Worlds: Games, Wearables and Creator Opportunities in Decentraland",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Sep 04, 2026"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/how-to-make-money-in-virtual-worlds-games-wearables-and-creator-opportunities-in-decentraland",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "How to Make Money in Virtual Worlds: Games, Wearables and Creator Opportunities in Decentraland"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "entryCount": 7
+    },
+    "author:abarmat": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "img",
+          "src": "https://images.ctfassets.net/ea2ybdmmn1kv/1nf1R0hyOliuQwpDvXchyw/93cab49d37489548748d690d8b2fbc18/avatar_Ariel_Barmat_abarmat.jpeg",
+          "alt": "Ariel Barmat",
+          "children": []
+        },
+        {
+          "tag": "h5",
+          "children": [
+            {
+              "text": "Ariel Barmat"
+            }
+          ]
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Tech entrepreneur. Enjoy building things and making them real. Love technology & science, fascinated about the secrets of the human mind."
+            }
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/introducing-the-decentraland-marketplace",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/1wGym7fMFOGbRSWrqwaWaR/da9e3f7d92747e0adc11da4aa9934e73/banner_2018-03-19_d8b4c7d509f8-8043456b6583d3c60ee7d802f6cbb6e8.jpg",
+              "alt": "Introducing the Decentraland Marketplace",
+              "children": []
+            }
+          ]
+        },
+        {
+          "text": "Mar 19, 2018"
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements",
+          "children": [
+            {
+              "text": "Announcements"
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/introducing-the-decentraland-marketplace",
+          "children": [
+            {
+              "tag": "h2",
+              "children": [
+                {
+                  "text": "Introducing the Decentraland Marketplace"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "entryCount": 1
+    },
+    "search:wearables": {
+      "frame": [
+        {
+          "tag": "ul",
+          "children": [
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog",
+                  "children": [
+                    {
+                      "text": "All articles"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/about-decentraland",
+                  "children": [
+                    {
+                      "text": "About Decentraland"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/announcements",
+                  "children": [
+                    {
+                      "text": "Announcements"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "li",
+              "children": [
+                {
+                  "tag": "a",
+                  "href": "/blog/community-highlights",
+                  "children": [
+                    {
+                      "text": "Community Highlights"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "input",
+          "children": []
+        },
+        {
+          "tag": "p",
+          "children": [
+            {
+              "text": "Search results for “wearables”"
+            }
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "tag": "a",
+          "href": "/blog/announcements/all-about-wearables",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://cms-images.decentraland.org/ea2ybdmmn1kv/2UgQpPusGb3IoQ1cgwP8MV/e76b3e129abe5a778a28be40f8e98c32/Header.png",
+              "alt": "",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "About "
+                },
+                {
+                  "tag": "em",
+                  "children": [
+                    {
+                      "text": "Wearables"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "Enter an out-of-this-world "
+                },
+                {
+                  "tag": "em",
+                  "children": [
+                    {
+                      "text": "Wearable"
+                    }
+                  ]
+                },
+                {
+                  "text": " contest with a special perk + a prize pool of 15k MANA and prepare ... month of "
+                },
+                {
+                  "tag": "em",
+                  "children": [
+                    {
+                      "text": "Wearable"
+                    }
+                  ]
+                },
+                {
+                  "text": " X Spaces, Creator Spotlights, and more"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "a",
+          "href": "/blog/announcements/a-new-wearable-category-handwear",
+          "children": [
+            {
+              "tag": "img",
+              "src": "https://images.ctfassets.net/ea2ybdmmn1kv/2aWn6wSbwGg28pj0HLjMfv/51ceb8607a9bdfdd2e3ae407e08bcf49/HandwearBanner.webp",
+              "alt": "",
+              "children": []
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "tag": "em",
+                  "children": [
+                    {
+                      "text": "Wearable"
+                    }
+                  ]
+                },
+                {
+                  "text": " Category: Handwear"
+                }
+              ]
+            },
+            {
+              "tag": "p",
+              "children": [
+                {
+                  "text": "your hands together—a new "
+                },
+                {
+                  "tag": "em",
+                  "children": [
+                    {
+                      "text": "Wearable"
+                    }
+                  ]
+                },
+                {
+                  "text": " category has just hit Decentraland’s market thanks to a joint initiative from"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "entryCount": 10
+    }
+  }
+}

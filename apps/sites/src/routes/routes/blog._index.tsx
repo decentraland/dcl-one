@@ -1,68 +1,32 @@
-import { useEffect, useRef } from "react";
-
-import StBlogHome from "@ui/web/pages/StBlogHome";
-import { blogCategories } from "@ui/data/blogCategories";
-import "@ui/web/pages/stbloghome.css";
-
-import { blogPostCards, type BlogPostCard } from "@/core/lib/content/blog";
+// /blog: the latest posts (blog plan B1, R7). Owner decision O6: the mock ?category= filter is not
+// carried over.
+import { BlogErrorBoundary, blogHeaders } from "../lib/blog-page";
+import {
+  BlogHome,
+  homeClientLoader,
+  homeLoader,
+  type HomeData,
+} from "../lib/blog-home";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
-import { pageLoader } from "@/core/lib/telemetry/page-loader";
-import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/blog._index";
-import type { StoryId } from "@/core/lib/telemetry/story-id";
 
-const STORY: StoryId = "misc/blog";
+// Agents asking for markdown (Accept: text/markdown, ?format=md) get the first page as markdown.
+export const handle = {
+  agentMarkdown: "blogIndex",
+} satisfies AgentMarkdownHandle;
 
-export function meta() {
-  return [{ title: "Decentraland Blog" }, { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." }];
-}
+export const loader = ({ request }: Route.LoaderArgs) =>
+  homeLoader({ request });
 
-export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHandle;
+export const clientLoader = homeClientLoader;
 
-const FALLBACK: PageDefaults = {
-  variant: "index_grid",
-};
-
-export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const { sid, wrap } = await pageLoader(request,  FALLBACK);
-
-  const category = url.searchParams.get("category") ?? "";
-  const posts = blogPostCards(category);
-
-  return wrap({ sid, posts, category });
-}
-
-type LoaderData = {
-  sid: string;
-  posts: BlogPostCard[];
-  category: string;
-};
+export const meta = () => [];
 
 export default function BlogIndexRoute({ loaderData }: Route.ComponentProps) {
-  const { sid, posts, category } = loaderData as LoaderData;
-
-  const viewed = useRef(false);
-  useEffect(() => {
-    if (viewed.current) return;
-    viewed.current = true;
-    track("lp_blog_viewed", { post_count: posts.length }, { sid, story: STORY });
-  }, [sid, posts.length]);
-
-  function onPostClick(e: React.MouseEvent<HTMLDivElement>) {
-    const anchor = (e.target as HTMLElement).closest("a");
-    if (!anchor) return;
-    const href = anchor.getAttribute("href") ?? "";
-    const m = /^\/blog\/([^/]+)$/.exec(href);
-    if (!m) return;
-    track("lp_blog_post_clicked", { slug: m[1] }, { sid, story: STORY });
-  }
-
-  return (
-    <div className="blog-index-route" onClickCapture={onPostClick}>
-      <StBlogHome posts={posts} categories={blogCategories(category)} />
-    </div>
-  );
+  return <BlogHome data={loaderData as HomeData} />;
 }
+
+export const ErrorBoundary = BlogErrorBoundary;
+
+export const headers = blogHeaders;

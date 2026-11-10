@@ -4,6 +4,7 @@ import { playUrl } from "../bases";
 import type { Event } from "../places/events";
 import { eventOccurrence, formatEventTime } from "../places/events";
 import type { Place } from "../schema";
+import { eventDetailHref } from "@/core/lib/router/event-href";
 
 const LinkSchema = z.object({
   label: z.string(),
@@ -19,7 +20,10 @@ const HeroSchema = z.object({
   kicker: z.string(),
   title: z.string(),
   subtitle: z.string(),
-  downloads: z.string().nullish().transform((v) => v ?? null),
+  downloads: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
   downloadsLabel: z.string(),
   cta: z.object({
     desktop: CtaTargetSchema,
@@ -36,22 +40,37 @@ const EventRailItemSchema = z.object({
   title: z.string(),
   when: z.string(),
   live: z.boolean(),
-  image: z.string().nullish().transform((v) => v ?? null),
+  image: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 const HotspotRailItemSchema = z.object({
   id: z.string(),
   title: z.string(),
-  online: z.number().nullish().transform((v) => v ?? null),
-  image: z.string().nullish().transform((v) => v ?? null),
+  online: z
+    .number()
+    .nullish()
+    .transform((v) => v ?? null),
+  image: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
   href: z.string(),
 });
 
 const RitualRailItemSchema = z.object({
   id: z.string(),
   title: z.string(),
-  day: z.string().nullish().transform((v) => v ?? null),
-  image: z.string().nullish().transform((v) => v ?? null),
+  day: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
+  image: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
   href: z.string(),
 });
 
@@ -68,7 +87,10 @@ const HomeContentSchema = z.object({
   rails: z.array(RailSchema),
   comeHangOut: z.object({
     title: z.string(),
-    downloads: z.string().nullish().transform((v) => v ?? null),
+    downloads: z
+      .string()
+      .nullish()
+      .transform((v) => v ?? null),
     downloadsLabel: z.string(),
   }),
 });
@@ -124,9 +146,9 @@ export function eventToRitualItem(e: Event): RitualRailItem {
   return {
     id: e.id,
     title: e.name ?? "Untitled event",
-    day: day == null ? null : WEEKDAY_NAMES[day] ?? null,
+    day: day == null ? null : (WEEKDAY_NAMES[day] ?? null),
     image: e.image ?? null,
-    href: `/whats-on/${encodeURIComponent(e.id)}`,
+    href: eventDetailHref(e.id),
   };
 }
 
@@ -140,7 +162,10 @@ export function placeToHotspotItem(p: Place): HotspotRailItem {
   };
 }
 
-export function withLiveEvents(content: HomeContent, live: Event[]): HomeContent {
+export function withLiveEvents(
+  content: HomeContent,
+  live: Event[],
+): HomeContent {
   if (!live.length) return content;
   const items = live.map(eventToRailItem);
   return {
@@ -213,14 +238,18 @@ export function heroEventCards(content: HomeContent) {
   }));
 }
 
-export function hotspotCards(content: HomeContent): HotspotRailItem[] | undefined {
+export function hotspotCards(
+  content: HomeContent,
+): HotspotRailItem[] | undefined {
   const rail = content.rails.find((r) => r.kind === "hotspots");
   if (!rail) return undefined;
   const items = hotspotItems(rail);
   return items.length ? items : undefined;
 }
 
-export function ritualCards(content: HomeContent): RitualRailItem[] | undefined {
+export function ritualCards(
+  content: HomeContent,
+): RitualRailItem[] | undefined {
   const rail = content.rails.find((r) => r.kind === "rituals");
   if (!rail) return undefined;
   const items = ritualItems(rail);

@@ -1,0 +1,124 @@
+/* Source Sites' theatre scene under a purple wash: #2a0c43 (desktop, from the left) and #380169
+   (mobile, from the top), with no tokens; background-web-dark and brand-purple-dark are the nearest. */
+.root {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--dcl-layout-section-gap);
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: var(--dcl-layout-section-padding-y) var(--dcl-layout-margin-x);
+  background:
+    linear-gradient(180deg, var(--dcl-brand-purple-dark) 16.82%, transparent 76.7%),
+    url('../assets/download_background.webp') center / cover,
+    var(--dcl-background-web-dark);
+  color: var(--dcl-text-primary);
+}
+
+/* The compact Sites header's row on phones (`reserveHeaderRow`): its 48px logo is the row's height. */
+.headerRow {
+  grid-column: 1 / -1;
+  height: var(--dcl-space-48);
+}
+
+/* breakpoints.desktop in foundations/layout (custom properties cannot be media conditions).
+   Source centers the options on the whole viewport, with the header and Jump In laid over it, and
+   indents them 212px at 1440; 64 + 96 + 48 is the nearest token sum. */
+@media (min-width: 1024px) {
+  .root {
+    grid-template-rows: 1fr;
+    background:
+      linear-gradient(270deg, transparent 13.9%, var(--dcl-background-web-dark) 86.65%),
+      url('../assets/download_background.webp') center / cover,
+      var(--dcl-background-web-dark);
+  }
+
+  .withPreview {
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+
+  .headerRow {
+    display: none;
+  }
+
+  .content {
+    padding-left: calc(var(--dcl-space-96) + var(--dcl-space-48));
+  }
+
+  .jumpIn {
+    position: absolute;
+    bottom: 10%;
+    left: calc(var(--dcl-layout-margin-x) + var(--dcl-space-96) + var(--dcl-space-48));
+  }
+}
+
+/* The options sit in the middle of the space below the header. */
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--dcl-space-24);
+}
+
+.jumpIn {
+  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+.preTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-4);
+}
+
+.check {
+  color: var(--dcl-feedback-success);
+}
+
+/* The title carries its own line break, as in source. */
+.title {
+  composes: text68656164696e672f786c from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  white-space: pre-line;
+}
+
+/* Narrow screens: the title stays at the top over the scene and the store action sits in a bar at
+   the bottom of the first screen. Source's bar is #130119 → #320524, with no tokens; neutrals-shadow and
+   background-web-dark are the nearest. */
+.contentTop {
+  justify-content: flex-start;
+}
+
+.storeBar {
+  display: flex;
+  align-self: end;
+  justify-content: center;
+  margin: 0 calc(-1 * var(--dcl-layout-margin-x)) calc(-1 * var(--dcl-layout-section-padding-y));
+  padding: var(--dcl-space-24);
+  background: linear-gradient(
+    100.12deg,
+    var(--dcl-neutrals-shadow),
+    var(--dcl-background-web-dark)
+  );
+}
+
+/* Below breakpoints.desktop the narrow layout replaces the wide one; from it, the reverse. */
+@media not all and (min-width: 1024px) {
+  .wideOnly {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .narrowOnly {
+    display: none;
+  }
+}
+
+.preview {
+  min-height: calc(var(--dcl-space-96) * 5);
+}

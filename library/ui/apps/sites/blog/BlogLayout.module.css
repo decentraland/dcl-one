@@ -1,0 +1,123 @@
+/* The blog frame and sub-navigation (source components/blog/BlogLayout.styled.ts and
+   BlogNavigation/BlogNavigation.styled.ts) on the shared tokens and breakpoints. The navbar offset
+   is the Sites chrome's. Every value that is not the source's is a row in the blog gap table. */
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  color: var(--dcl-text-primary);
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: 1064px;
+  margin: 0 auto;
+  padding: var(--dcl-space-48) var(--dcl-space-16) var(--dcl-space-16);
+  box-sizing: border-box;
+}
+
+@media (min-width: 1024px) {
+  .content {
+    padding: var(--dcl-space-48) 0 var(--dcl-space-16);
+  }
+}
+
+.navBar {
+  width: 100%;
+  padding-top: var(--dcl-space-16);
+  border-bottom: 1px solid var(--dcl-border-subtle);
+  display: flex;
+}
+
+.navWrapper {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--dcl-space-24);
+}
+
+.navCategories {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  padding-bottom: var(--dcl-space-8);
+}
+
+@media (min-width: 1536px) {
+  .navBar {
+    height: var(--dcl-space-96);
+    box-sizing: border-box;
+  }
+
+  .navWrapper {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .navCategories {
+    width: auto;
+    padding-bottom: 0;
+  }
+}
+
+.navList {
+  display: flex;
+  flex-direction: row;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 210px;
+}
+
+.navItem {
+  margin-right: var(--dcl-space-32);
+  white-space: nowrap;
+}
+
+.navLink {
+  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--dcl-space-64);
+  padding: 0;
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.navLink[aria-current='page'] {
+  font-weight: 700;
+}
+
+.navLink::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background-color: var(--dcl-action-primary);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.navLink[aria-current='page']::after,
+.navLink:hover::after {
+  opacity: 1;
+}
+
+.navLink:focus-visible {
+  outline: 2px solid var(--dcl-action-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navLink::after {
+    transition: none;
+  }
+}

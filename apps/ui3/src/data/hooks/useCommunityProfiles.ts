@@ -22,7 +22,7 @@ export async function fetchCommunityProfiles(addresses: string[], opts: RequestO
       }
       for (const avatar of avatars) {
         const address = asAddress(avatar.ethAddress) ?? asAddress(avatar.userId);
-        if (address) profiles[address] = { name: memberName(avatar.name ?? ""), picture: profileFaceUrl(avatar), claimed: avatar.hasClaimedName };
+        if (address) profiles[address] = { name: memberName(avatar.name ?? ""), picture: profileFaceUrl(avatar, opts), claimed: avatar.hasClaimedName };
       }
     }
   }

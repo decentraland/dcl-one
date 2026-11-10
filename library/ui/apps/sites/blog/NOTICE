@@ -1,0 +1,10 @@
+The blog UI in this directory follows decentraland/sites
+(https://github.com/decentraland/sites) at revision
+cfdfa1a51216f9dc90c5b148686a95e7ee9c2862, src/components/Blog (RichText: RichText.tsx,
+RichText.renderers.tsx, RichText.helpers.ts, RichText.styled.ts, TwitterEmbed.tsx): its markup,
+link and embed rules and style values. That source is licensed under the Apache License 2.0
+(../assets/LICENSE).
+
+The default element and mark rendering it reproduces (paragraphs, headings, lists, quote, rule,
+table, bold, italic, underline, code) is that of @contentful/rich-text-react-renderer, which the
+source uses; no code of that package is included here.

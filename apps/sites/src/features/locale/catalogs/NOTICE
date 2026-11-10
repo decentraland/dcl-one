@@ -1,0 +1,5 @@
+The catalogs in this directory are copied verbatim from decentraland/sites
+(https://github.com/decentraland/sites) at revision
+cfdfa1a51216f9dc90c5b148686a95e7ee9c2862, src/intl/*.json, restricted to the keys
+listed in keys.json. That source is licensed under the Apache License 2.0; the
+license applies to these files. Regenerate with scripts/import-locale-catalogs.mts.

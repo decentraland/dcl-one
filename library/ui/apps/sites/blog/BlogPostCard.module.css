@@ -1,0 +1,149 @@
+/* A post card (source components/blog/PostCard/PostCard.styled.ts and shared/PostCard.styled.ts) on
+   the shared tokens and breakpoints. Every value that is not the source's is a row in the blog gap
+   table; the literals here are the enumerated ones (shadow geometry, transition timing). */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: var(--dcl-space-48);
+  position: relative;
+}
+
+@media (min-width: 768px) {
+  .card {
+    width: calc((100% - var(--dcl-space-24)) / 2);
+  }
+}
+
+@media (min-width: 1024px) {
+  .card {
+    width: calc((100% - (var(--dcl-space-32) * 2)) / 3);
+    margin-right: var(--dcl-space-32);
+  }
+
+  .card:nth-of-type(3n) {
+    margin-right: 0;
+  }
+}
+
+.gridCard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  position: relative;
+}
+
+.imageLink {
+  display: block;
+}
+
+.image {
+  display: block;
+  object-fit: cover;
+  box-shadow: 0 2px 4px 0 var(--dcl-transparencies-black-20);
+  border-radius: var(--dcl-radius-xs);
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  margin-bottom: var(--dcl-space-12);
+  transition:
+    transform 250ms ease,
+    box-shadow 250ms ease;
+}
+
+.imageLink:hover > .image {
+  transform: translate(0, calc(var(--dcl-space-4) * -1));
+  box-shadow: 0 10px 20px 0 var(--dcl-transparencies-black-10);
+}
+
+.date {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  margin-right: var(--dcl-space-16);
+  color: var(--dcl-text-primary);
+}
+
+.category {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  font-weight: 400;
+  color: var(--dcl-neutrals-silver);
+  text-decoration: none;
+  transition: color 250ms ease;
+}
+
+.category:hover {
+  color: var(--dcl-neutrals-cloudy-sky);
+}
+
+.titleLink {
+  display: block;
+  padding-top: var(--dcl-space-8);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.title {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.imageLink:focus-visible,
+.category:focus-visible,
+.titleLink:focus-visible {
+  outline: 2px solid var(--dcl-action-primary);
+  outline-offset: 2px;
+}
+
+.bone {
+  background: var(--dcl-transparencies-white-10);
+  border-radius: var(--dcl-radius-xs);
+  animation: pulse 2s ease-in-out 0.5s infinite;
+}
+
+.boneImage {
+  aspect-ratio: 2 / 1;
+  margin-bottom: var(--dcl-space-12);
+}
+
+.boneMeta {
+  display: flex;
+  justify-content: space-between;
+}
+
+.boneShort,
+.boneLine {
+  height: var(--dcl-space-16);
+  margin: var(--dcl-space-4) 0;
+}
+
+.boneShort {
+  width: var(--dcl-space-96);
+}
+
+.boneLine {
+  width: 100%;
+}
+
+.boneLineShort {
+  width: 80%;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bone {
+    animation: none;
+  }
+
+  .image {
+    transition: none;
+  }
+}

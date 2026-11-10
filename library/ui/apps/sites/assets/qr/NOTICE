@@ -1,0 +1,5 @@
+The files in this directory are copied byte for byte from decentraland/ui2
+(https://github.com/decentraland/ui2) at revision
+2cca0cf3d6058514004c3823e3e7bbaa9b40f22c (v3.23.5), src/Assets/<name>. That
+source is licensed under the Apache License 2.0 (LICENSE in this directory);
+the license applies to these files. dcl-logo-qr.svg is a Decentraland mark.

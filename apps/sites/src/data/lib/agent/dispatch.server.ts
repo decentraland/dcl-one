@@ -1,6 +1,10 @@
+import type { DehydratedState, InfiniteData } from "@tanstack/react-query";
+import type { BlogPost, BlogPage } from "../blog/types";
+import { blogArticleToMarkdown } from "./blog-richtext";
 import type { EntryContext } from "react-router";
 
-import { LEGAL_DOCS } from "@ui/data/legalPageConfig";
+import { LEGAL_DOCS, resolveLegalKey } from "../../legal";
+import { toAgentLegalDoc } from "../../legal/agent";
 
 import {
   blogIndexToMarkdown,
@@ -14,57 +18,91 @@ import {
   profileToMarkdown,
   shopPageToMarkdown,
   whatsOnToMarkdown,
-  type AgentLegalDoc,
   type AgentMarkdownKey,
 } from "./markdown";
 
-const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = {
-  blogIndex: (data) => {
-    const d = data as { posts?: Parameters<typeof blogIndexToMarkdown>[0] } | undefined;
-    return blogIndexToMarkdown(d?.posts ?? []);
-  },
-  blogPost: (data) => {
-    const d = data as { post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
-    return d?.post ? blogPostToMarkdown(d.post) : null;
-  },
-  legalDoc: (data) => {
-    const d = data as { doc?: string } | undefined;
-    const doc = d?.doc ? (LEGAL_DOCS as Record<string, AgentLegalDoc>)[d.doc] : undefined;
-    return doc ? legalDocToMarkdown(doc) : null;
-  },
-  placesIndex: (data) => {
-    const d = data as { places?: Parameters<typeof placesIndexToMarkdown>[0] } | undefined;
-    return placesIndexToMarkdown(d?.places ?? []);
-  },
-  placeDetail: (data) => {
-    const d = data as { place?: Parameters<typeof placeToMarkdown>[0] | null } | undefined;
-    return d?.place ? placeToMarkdown(d.place) : null;
-  },
-  whatsOn: (data) => {
-    const d = data as Parameters<typeof whatsOnToMarkdown>[0] | undefined;
-    return d ? whatsOnToMarkdown(d) : null;
-  },
-  eventDetail: (data) => {
-    const d = data as { event?: Parameters<typeof eventDetailToMarkdown>[0] | null } | undefined;
-    return d?.event ? eventDetailToMarkdown(d.event) : null;
-  },
-  shopPage: (data) => {
-    const d = data as Parameters<typeof shopPageToMarkdown>[0] | null | undefined;
-    return d?.seo ? shopPageToMarkdown(d) : null;
-  },
-  profileDetail: (data) => {
-    const d = data as { profile?: Parameters<typeof profileToMarkdown>[0] | null } | undefined;
-    return d?.profile ? profileToMarkdown(d.profile) : null;
-  },
-  discover: (data) => {
-    const d = data as { content?: Parameters<typeof discoverToMarkdown>[0] | null } | undefined;
-    return d?.content ? discoverToMarkdown(d.content) : null;
-  },
-  communityDetail: (data) => {
-    const d = data as { detail?: Parameters<typeof communityToMarkdown>[0] | null } | undefined;
-    return d?.detail && d.detail.source === "live" ? communityToMarkdown(d.detail) : null;
-  },
-};
+const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> =
+  {
+    blogIndex: (data) => {
+      const d = data as
+        | {
+            posts?: Parameters<typeof blogIndexToMarkdown>[0];
+            dehydratedState?: DehydratedState;
+          }
+        | undefined;
+      const list = d?.dehydratedState?.queries.find(
+        (query) => query.queryKey[0] === "blog" && query.queryKey[1] === "list",
+      )?.state.data as InfiniteData<BlogPage> | undefined;
+      if (list)
+        return blogIndexToMarkdown(list.pages.flatMap((page) => page.items));
+      return blogIndexToMarkdown(d?.posts ?? []);
+    },
+    blogArticle: (data) => {
+      const d = data as
+        { publicBase?: string; dehydratedState?: DehydratedState } | undefined;
+      const post = d?.dehydratedState?.queries.find(
+        (query) => query.queryKey[0] === "blog" && query.queryKey[1] === "post",
+      )?.state.data as BlogPost | undefined;
+      return post
+        ? blogArticleToMarkdown(post, `${d?.publicBase ?? ""}/blog`)
+        : null;
+    },
+    blogPost: (data) => {
+      const d = data as
+        { post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
+      return d?.post ? blogPostToMarkdown(d.post) : null;
+    },
+    legalDoc: (data) => {
+      const d = data as { doc?: string } | undefined;
+      const key = d?.doc ? resolveLegalKey(d.doc) : null;
+      return key ? legalDocToMarkdown(toAgentLegalDoc(LEGAL_DOCS[key])) : null;
+    },
+    placesIndex: (data) => {
+      const d = data as
+        { places?: Parameters<typeof placesIndexToMarkdown>[0] } | undefined;
+      return placesIndexToMarkdown(d?.places ?? []);
+    },
+    placeDetail: (data) => {
+      const d = data as
+        { place?: Parameters<typeof placeToMarkdown>[0] | null } | undefined;
+      return d?.place ? placeToMarkdown(d.place) : null;
+    },
+    whatsOn: (data) => {
+      const d = data as Parameters<typeof whatsOnToMarkdown>[0] | undefined;
+      return d ? whatsOnToMarkdown(d) : null;
+    },
+    eventDetail: (data) => {
+      const d = data as
+        | { event?: Parameters<typeof eventDetailToMarkdown>[0] | null }
+        | undefined;
+      return d?.event ? eventDetailToMarkdown(d.event) : null;
+    },
+    shopPage: (data) => {
+      const d = data as
+        Parameters<typeof shopPageToMarkdown>[0] | null | undefined;
+      return d?.seo ? shopPageToMarkdown(d) : null;
+    },
+    profileDetail: (data) => {
+      const d = data as
+        | { profile?: Parameters<typeof profileToMarkdown>[0] | null }
+        | undefined;
+      return d?.profile ? profileToMarkdown(d.profile) : null;
+    },
+    discover: (data) => {
+      const d = data as
+        | { content?: Parameters<typeof discoverToMarkdown>[0] | null }
+        | undefined;
+      return d?.content ? discoverToMarkdown(d.content) : null;
+    },
+    communityDetail: (data) => {
+      const d = data as
+        | { detail?: Parameters<typeof communityToMarkdown>[0] | null }
+        | undefined;
+      return d?.detail && d.detail.source === "live"
+        ? communityToMarkdown(d.detail)
+        : null;
+    },
+  };
 
 type MatchLike = { route: { id: string; handle?: unknown } };
 
@@ -79,7 +117,8 @@ export function renderAgentMarkdown(
 
   for (let i = matches.length - 1; i >= 0; i--) {
     const route = matches[i].route;
-    const handle = route.handle as { agentMarkdown?: AgentMarkdownKey } | undefined;
+    const handle = route.handle as
+      { agentMarkdown?: AgentMarkdownKey } | undefined;
     const key = handle?.agentMarkdown;
     if (!key) continue;
 

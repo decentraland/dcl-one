@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import { fetchCommunityProfiles, useCommunityProfiles } from "./useCommunityProfiles";
 
 const first = "0x1111111111111111111111111111111111111111";
@@ -51,3 +51,38 @@ test("reads every profile of a batch even when one carries a null birthdate or a
   expect(profiles[second]?.name).toBe("Second member");
   expect(profiles["0x3333333333333333333333333333333333333333"]).toBeUndefined();
 });
+
+describe.each([undefined, "https://profiles.example"])(
+  "when reading profile faces with base %s",
+  (base) => {
+    let fetchImpl: typeof fetch;
+    beforeEach(() => {
+      fetchImpl = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              {
+                avatars: [
+                  {
+                    ethAddress: first,
+                    name: "Profile",
+                    avatar: { snapshots: { face256: "profilehash" } },
+                  },
+                ],
+              },
+            ]),
+          ),
+      ) as typeof fetch;
+    });
+    it("should use the same node for the lookup and the resulting content face", async () => {
+      const profiles = await fetchCommunityProfiles([first], {
+        ...(base ? { base } : {}),
+        fetchImpl,
+      });
+      const requested = String(vi.mocked(fetchImpl).mock.calls[0]?.[0]);
+      expect(profiles[first]?.picture).toBe(
+        requested.replace("/lambdas/profiles", "/content/contents/profilehash"),
+      );
+    });
+  },
+);

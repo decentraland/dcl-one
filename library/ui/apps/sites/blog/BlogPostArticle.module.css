@@ -1,0 +1,170 @@
+/* One post (source pages/blog/PostPage.styled.ts and components/blog/PostHeader/PostHeader.styled.ts)
+   on the shared tokens. Every value that is not the source's is a row in the blog gap table. */
+
+.article {
+  max-width: 768px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.hero {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--dcl-radius-lg);
+  margin-bottom: var(--dcl-space-48);
+  object-fit: cover;
+  background-color: var(--dcl-bg-surface);
+}
+
+.header {
+  margin-bottom: var(--dcl-space-48);
+}
+
+.meta {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  font-weight: 400;
+  color: var(--dcl-text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.separator {
+  color: var(--dcl-text-secondary);
+}
+
+.categoryLink {
+  color: var(--dcl-neutrals-silver);
+  text-decoration: none;
+}
+
+.categoryLink:hover {
+  text-decoration: underline;
+}
+
+.titleBox {
+  margin-top: var(--dcl-space-12);
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.subtitle {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: var(--dcl-space-8) 0 0;
+  color: var(--dcl-text-primary);
+}
+
+.authorRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--dcl-space-48);
+}
+
+.authorLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  text-decoration: none;
+  color: var(--dcl-text-primary);
+}
+
+.avatar {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  border-radius: var(--dcl-radius-full);
+  object-fit: cover;
+  background-color: var(--dcl-bg-page);
+}
+
+.authorName {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.share {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.shareLabel {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  font-weight: 400;
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.shareLink {
+  display: inline-flex;
+  align-items: center;
+  color: var(--dcl-text-secondary);
+  text-decoration: none;
+}
+
+.shareLink:hover {
+  color: var(--dcl-text-primary);
+}
+
+.categoryLink:focus-visible,
+.authorLink:focus-visible,
+.shareLink:focus-visible {
+  outline: 2px solid var(--dcl-action-primary);
+  outline-offset: 2px;
+}
+
+.bone {
+  background: var(--dcl-transparencies-white-10);
+  border-radius: var(--dcl-radius-xs);
+  animation: pulse 2s ease-in-out 0.5s infinite;
+}
+
+.boneHero {
+  aspect-ratio: 1200 / 630;
+  border-radius: var(--dcl-radius-lg);
+  margin-bottom: var(--dcl-space-48);
+}
+
+.boneMeta {
+  width: var(--dcl-space-96);
+  height: var(--dcl-space-12);
+}
+
+.boneTitle {
+  width: 80%;
+  height: var(--dcl-space-32);
+  margin-top: var(--dcl-space-12);
+}
+
+.boneLine {
+  width: 100%;
+  height: var(--dcl-space-16);
+  margin-top: var(--dcl-space-12);
+}
+
+.boneLineShort {
+  width: 60%;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bone {
+    animation: none;
+  }
+}

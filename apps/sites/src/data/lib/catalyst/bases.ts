@@ -34,17 +34,24 @@ function browserBase(): string | undefined {
 }
 
 /** The node the SSR process reads (server) or the page origin (browser). */
-export function catalystUrl(override?: string, env: BaseEnv = processEnv()): string {
+export function catalystUrl(
+  override?: string,
+  env: BaseEnv = processEnv(),
+): string {
   if (override) return trimSlash(override);
   if (typeof window === "undefined") {
     return trimSlash(envValue(env, "CATALYST_URL") ?? DEFAULT_CATALYST_URL);
   }
-  return trimSlash(browserBase() ?? envValue(env, "CATALYST_URL") ?? DEFAULT_CATALYST_URL);
+  return trimSlash(
+    browserBase() ?? envValue(env, "CATALYST_URL") ?? DEFAULT_CATALYST_URL,
+  );
 }
 
 /** The same node as browsers reach it: links, thumbnails, window.__CATALYST_BASE__. */
 export function publicCatalystUrl(env: BaseEnv = processEnv()): string {
-  return trimSlash(envValue(env, "PUBLIC_CATALYST_URL") ?? catalystUrl(undefined, env));
+  return trimSlash(
+    envValue(env, "PUBLIC_CATALYST_URL") ?? catalystUrl(undefined, env),
+  );
 }
 
 /** Set only when PUBLIC_CATALYST_URL differs from the page origin. */
@@ -52,9 +59,14 @@ export function browserCatalystBase(env: BaseEnv = processEnv()): string {
   return trimSlash(envValue(env, "PUBLIC_CATALYST_URL") ?? "");
 }
 
-export function worldsUrl(override?: string, env: BaseEnv = processEnv()): string {
+export function worldsUrl(
+  override?: string,
+  env: BaseEnv = processEnv(),
+): string {
   return trimSlash(
-    override ?? envValue(env, "WORLDS_URL") ?? `${catalystUrl(undefined, env)}${WORLDS_PREFIX}`,
+    override ??
+      envValue(env, "WORLDS_URL") ??
+      `${catalystUrl(undefined, env)}${WORLDS_PREFIX}`,
   );
 }
 
@@ -62,20 +74,31 @@ export function publicWorldsUrl(env: BaseEnv = processEnv()): string {
   return `${publicCatalystUrl(env)}${WORLDS_PREFIX}`;
 }
 
-export function worldsContentServerUrl(override?: string, env: BaseEnv = processEnv()): string {
+export function worldsContentServerUrl(
+  override?: string,
+  env: BaseEnv = processEnv(),
+): string {
   return trimSlash(
-    override ?? envValue(env, "WORLDS_CONTENT_SERVER_URL") ?? worldsUrl(undefined, env),
+    override ??
+      envValue(env, "WORLDS_CONTENT_SERVER_URL") ??
+      worldsUrl(undefined, env),
   );
 }
 
 export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
-    envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
+    envValue(env, "COMMUNITIES_URL") ??
+      `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
   );
 }
 
-export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {
-  return trimSlash(override ?? envValue(env, "CREATORS_DATA_URL") ?? DEFAULT_CREATORS_DATA_URL);
+export function creatorsDataUrl(
+  override?: string,
+  env: BaseEnv = processEnv(),
+): string {
+  return trimSlash(
+    override ?? envValue(env, "CREATORS_DATA_URL") ?? DEFAULT_CREATORS_DATA_URL,
+  );
 }
 
 /**
@@ -108,8 +131,88 @@ export function playUrl(
     params instanceof URLSearchParams
       ? params
       : new URLSearchParams(
-          Object.entries(params ?? {}).filter((kv): kv is [string, string] => kv[1] !== undefined),
+          Object.entries(params ?? {}).filter(
+            (kv): kv is [string, string] => kv[1] !== undefined,
+          ),
         );
   const qs = search.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/** The optional public download totals endpoint used by the homepage counter. */
+export function downloadCountsUrl(
+  env: BaseEnv = processEnv(),
+): string | undefined {
+  return envValue(env, "DOWNLOAD_COUNTS_URL");
+}
+
+/** Unset uses the static installer CDN without identity or referral attribution. */
+export function downloadGatewayUrl(
+  env: BaseEnv = processEnv(),
+): string | undefined {
+  const value = envValue(env, "DOWNLOAD_GATEWAY_URL");
+  return value ? trimSlash(value) : undefined;
+}
+
+/** Explicit local discovery reads only; production builds always retain the ONE backend. */
+export function developmentDiscoveryGetTarget(
+  path: string,
+  options: {
+    base?: string;
+    headers?: Record<string, string>;
+    query?: Record<string, unknown>;
+  } = {},
+): { base: string; path: string } | undefined {
+  const env = import.meta.env;
+  if (
+    env?.DEV !== true ||
+    env.MODE !== "development" ||
+    env.PROD !== false ||
+    env.VITE_SITES_DEV_PUBLIC_DISCOVERY !== "1" ||
+    options.base !== undefined ||
+    Object.keys(options.headers ?? {}).length > 0
+  )
+    return undefined;
+
+  const target =
+    path === "/events/v1/events"
+      ? {
+          base: "https://events.decentraland.org",
+          path: "/api/events",
+          query: [
+            "list",
+            "search",
+            "from",
+            "to",
+            "recurrent",
+            "with_connected_users",
+            "limit",
+            "offset",
+          ],
+        }
+      : path === "/places/api/places"
+        ? {
+            base: "https://places.decentraland.org",
+            path: "/api/places",
+            query: [
+              "limit",
+              "offset",
+              "order_by",
+              "with_realtime_active_users",
+            ],
+          }
+        : undefined;
+  if (!target) return undefined;
+  // Values omitted by buildQuery do not change a request. Every effective filter must be supported.
+  if (
+    Object.entries(options.query ?? {}).some(
+      ([key, value]) =>
+        value !== undefined &&
+        value !== null &&
+        value !== "" &&
+        !target.query.includes(key),
+    )
+  )
+    return undefined;
+  return { base: target.base, path: target.path };
 }

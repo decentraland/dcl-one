@@ -2,6 +2,12 @@ import { fetchEvents, type Event } from "../places/events";
 import { fetchMostActivePlaces } from "../places/index";
 import type { GetOptions } from "../client";
 import { ttlMemo } from "../../ttl-memo";
+import { loadDownloadsLabel } from "./download-counts.server";
+import {
+  buildWhatsOnCards,
+  withCreators,
+  type WhatsOnCard,
+} from "./events.server";
 import {
   eventToRitualItem,
   eventWeekday,
@@ -11,7 +17,6 @@ import {
   withLiveEvents,
   withRituals,
   type HomeContent,
-  type HotspotRailItem,
   type RitualRailItem,
 } from "./home";
 
@@ -20,6 +25,8 @@ const HOTSPOT_RAIL_LIMIT = 4;
 const RITUAL_RAIL_LIMIT = 5;
 const RITUAL_FETCH_LIMIT = 100;
 const EVENT_LISTS = ["highlight", "trending", "active"] as const;
+// Source Sites reads up to 20 live events to match against crowded scenes.
+const WHATS_ON_LIVE_LIMIT = 20;
 
 const HOME_CONTENT: HomeContent = {
   hero: {
@@ -48,7 +55,7 @@ const HOME_CONTENT: HomeContent = {
       id: "whatson",
       kind: "events",
       title: "Jump Into What's Happening",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
     {
@@ -62,7 +69,7 @@ const HOME_CONTENT: HomeContent = {
       id: "rituals",
       kind: "rituals",
       title: "Your Weekly Rituals",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
   ],
@@ -79,7 +86,16 @@ function loadHomeContent(): HomeContent {
 
 const HOME_TTL_MS = 60_000;
 
-type HomeData = { content: HomeContent; live: boolean; unreadable: string[] };
+type HomeData = {
+  content: HomeContent;
+  live: boolean;
+  /** Failed reads, including live-events; successful empty lists are readable. */
+  unreadable: string[];
+  /** The source Sites home's "What's on" cards. */
+  whatsOn: WhatsOnCard[];
+  /** The Explorer download counter, or the source's static label. */
+  downloadsLabel: string;
+};
 
 const homeMemo = ttlMemo({
   ttlMs: HOME_TTL_MS,
@@ -96,14 +112,25 @@ export function loadHome(opts: GetOptions = {}): Promise<HomeData> {
 async function loadHomeLive(opts: GetOptions): Promise<HomeData> {
   let content = loadHomeContent();
 
-  const [events, hotspots, rituals] = await Promise.all([
-    loadRailEvents(opts),
-    loadHotspots(opts),
-    loadRituals(opts),
-  ]);
+  const [events, places, rituals, liveEvents, downloadsLabel] =
+    await Promise.all([
+      loadRailEvents(opts),
+      fetchMostActivePlaces({ limit: HOTSPOT_RAIL_LIMIT }, opts).catch(
+        () => null,
+      ),
+      loadRituals(opts),
+      fetchEvents({ list: "live", limit: WHATS_ON_LIVE_LIMIT }, opts)
+        .then((r) => r.data)
+        .catch(() => null),
+      loadDownloadsLabel(),
+    ]);
+  const hotspots = places === null ? null : places.map(placeToHotspotItem);
+  const cards = buildWhatsOnCards(liveEvents ?? [], places ?? []);
+  const whatsOn = cards.length ? await withCreators(cards, opts) : cards;
 
   const unreadable: string[] = [];
   const live = (events?.length ?? 0) > 0;
+  if (liveEvents === null) unreadable.push("live-events");
   if (events === null) unreadable.push("events");
   else if (live) content = withLiveEvents(content, events);
 
@@ -120,7 +147,7 @@ async function loadHomeLive(opts: GetOptions): Promise<HomeData> {
     };
   }
 
-  return { content, live, unreadable };
+  return { content, live, unreadable, whatsOn, downloadsLabel };
 }
 
 async function loadRailEvents(opts: GetOptions): Promise<Event[] | null> {
@@ -133,14 +160,6 @@ async function loadRailEvents(opts: GetOptions): Promise<Event[] | null> {
   );
   if (results.every((events) => events === null)) return null;
   return results.find((events) => events !== null && events.length > 0) ?? [];
-}
-
-async function loadHotspots(opts: GetOptions): Promise<HotspotRailItem[] | null> {
-  const places = await fetchMostActivePlaces(
-    { limit: HOTSPOT_RAIL_LIMIT },
-    opts,
-  ).catch(() => null);
-  return places === null ? null : places.map(placeToHotspotItem);
 }
 
 async function loadRituals(opts: GetOptions): Promise<RitualRailItem[] | null> {

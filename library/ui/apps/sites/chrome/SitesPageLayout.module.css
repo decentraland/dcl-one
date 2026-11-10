@@ -1,0 +1,29 @@
+.root {
+  position: relative;
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+}
+
+.content:focus {
+  outline: none;
+}
+
+/* Off-screen until focused, then over the header. */
+.skip {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  position: absolute;
+  top: var(--dcl-space-8);
+  left: var(--dcl-space-8);
+  z-index: 20;
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-surface);
+  color: var(--dcl-text-primary);
+  transform: translateY(-200%);
+}
+
+.skip:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+  transform: none;
+}

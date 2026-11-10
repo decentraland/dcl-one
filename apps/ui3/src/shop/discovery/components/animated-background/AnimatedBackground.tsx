@@ -2,7 +2,7 @@
 //       writes it (quotes, no semicolons) so it diffs line for line against the original; here it also gives its
 //       context back on unmount and on a failed setup, and sizes the buffer in whole pixels.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import fallbackBackgroundUrl from './custom-welcome-background.webp'
 import overlayTextureUrl from './DCL_LogoPattern.png'
 import { FRAGMENT_SHADER, VERTEX_SHADER } from './shaders'
@@ -14,20 +14,44 @@ import styles from './AnimatedBackground.module.css'
 // thing shown when WebGL is unavailable or the user prefers reduced motion.
 export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTiling?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const contextRef = useRef<WebGLRenderingContext | null>(null)
+  const [reducedMotion, setReducedMotion] = useState(false)
   const animFrameRef = useRef<number>(0)
   // Read by the render loop each frame, so tiling changes apply live without rebuilding the GL state.
   const tilingRef = useRef(patternTiling)
   tilingRef.current = patternTiling
 
   useEffect(() => {
+    const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    const update = () => setReducedMotion(preference?.matches ?? false)
+    update()
+    preference?.addEventListener('change', update)
+    return () => preference?.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    return () => {
+      // StrictMode replays effects on the same connected canvas. Losing its context there makes
+      // the next setup fail; an actual unmount disconnects it before this microtask runs.
+      queueMicrotask(() => {
+        const gl = contextRef.current
+        if (canvas && !canvas.isConnected && gl && !gl.isContextLost()) gl.getExtension('WEBGL_lose_context')?.loseContext()
+      })
+    }
+  }, [])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    // Respect reduced motion — keep the static fallback, skip the animation loop entirely.
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    // Keep the fallback visible until a frame draws, including while motion is disabled.
+    canvas.style.opacity = '0'
+    if (reducedMotion || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false })
     if (!gl) return // fallback image stays visible
+    contextRef.current = gl
 
     // An opaque context that never draws would cover the still image: hide the canvas and give the context back.
     const giveUp = () => {
@@ -98,6 +122,7 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
       gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0)
 
       gl.drawArrays(gl.TRIANGLES, 0, 6)
+      canvas.style.opacity = '1'
 
       animFrameRef.current = requestAnimationFrame(render)
     }
@@ -122,11 +147,9 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
       gl.deleteShader(fs)
       gl.deleteBuffer(buffer)
       gl.deleteTexture(overlayTexture)
-      // Release the context itself, not only its objects: a tile that scrolls in and out mounts a fresh canvas each
-      // time, and browsers drop their OLDEST live context (here the avatar preview's) past about 16 of them.
-      gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.style.opacity = '0'
     }
-  }, [])
+  }, [reducedMotion])
 
   return (
     <div className={styles.root} aria-hidden>

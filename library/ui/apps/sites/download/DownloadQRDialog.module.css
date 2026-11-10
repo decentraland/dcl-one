@@ -1,0 +1,37 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+/* The code stays on white whatever the theme, so phone cameras read it. */
+.code {
+  position: relative;
+  padding: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-neutrals-white);
+}
+
+.qr {
+  display: block;
+  width: calc(var(--dcl-space-96) * 2);
+  height: calc(var(--dcl-space-96) * 2);
+}
+
+.logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--dcl-space-48);
+  height: var(--dcl-space-48);
+  transform: translate(-50%, -50%);
+}
+
+.downloads {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+}

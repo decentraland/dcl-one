@@ -1,11 +1,25 @@
-import type { BlogBlock, BlogPost, BlogPostCard } from "@/core/lib/content/blog";
+import type {
+  BlogBlock,
+  BlogPost,
+  BlogPostCard,
+} from "@/core/lib/content/blog";
 import type { Place } from "../catalyst/schema";
 import { playUrl } from "../catalyst/bases";
-import { eventOccurrence, eventCoords, formatEventWhen, type Event } from "../catalyst/places/events";
+import {
+  eventOccurrence,
+  eventCoords,
+  formatEventWhen,
+  type Event,
+} from "../catalyst/places/events";
 import type { ShopPageData } from "../shop/pages";
 import type { ProfileVM } from "../catalyst/social/profile";
 import type { CommunityDetail } from "../catalyst/social/communities";
-import { heroEventCards, hotspotCards, ritualCards, type HomeContent } from "../catalyst/landings/home";
+import {
+  heroEventCards,
+  hotspotCards,
+  ritualCards,
+  type HomeContent,
+} from "../catalyst/landings/home";
 
 export function wantsMarkdown(request: Request): boolean {
   let url: URL;
@@ -34,7 +48,10 @@ type MarkdownResponseInit = {
   headers?: HeadersInit;
 };
 
-export function markdownResponse(md: string, opts: MarkdownResponseInit = {}): Response {
+export function markdownResponse(
+  md: string,
+  opts: MarkdownResponseInit = {},
+): Response {
   const headers = new Headers(opts.headers);
   headers.set("Content-Type", "text/markdown; charset=utf-8");
   headers.set("x-markdown-tokens", String(estimateTokens(md)));
@@ -44,7 +61,15 @@ export function markdownResponse(md: string, opts: MarkdownResponseInit = {}): R
   return new Response(md, { status: opts.status ?? 200, headers });
 }
 
-const HEADING = ["", "# ", "## ", "### ", "#### ", "##### ", "###### "] as const;
+const HEADING = [
+  "",
+  "# ",
+  "## ",
+  "### ",
+  "#### ",
+  "##### ",
+  "###### ",
+] as const;
 
 function heading(level: number, text: string): string {
   const prefix = HEADING[Math.min(Math.max(level, 1), 6)];
@@ -70,7 +95,10 @@ function joinBlocks(blocks: Array<string | null | undefined>): string {
     .trim();
 }
 
-type ElementLike = { type?: unknown; props?: { href?: unknown; children?: unknown } };
+type ElementLike = {
+  type?: unknown;
+  props?: { href?: unknown; children?: unknown };
+};
 
 function isElementLike(node: unknown): node is ElementLike {
   return typeof node === "object" && node !== null && "props" in node;
@@ -126,14 +154,19 @@ export function blogPostToMarkdown(post: BlogPost): string {
   ]);
 }
 
-export function blogIndexToMarkdown(posts: BlogPostCard[]): string {
+export function blogIndexToMarkdown(
+  posts: (Pick<
+    BlogPostCard,
+    "title" | "description" | "category" | "publishedDate" | "slug"
+  > & { url?: string })[],
+): string {
   const list = posts ?? [];
   const entries = list.map((p) =>
     joinBlocks([
       heading(2, p.title),
       p.description ? clean(p.description) : "",
       joinInline([p.category?.title, p.publishedDate]),
-      `[Read more](/blog/${p.slug})`,
+      `[Read more](${p.url ?? `/blog/${p.slug}`})`,
     ]),
   );
 
@@ -170,7 +203,7 @@ type AgentLegalSection = {
 
 export type AgentLegalDoc = {
   title: string;
-  intro?: string;
+  intro?: string | AgentLegalBlock[];
   sections: AgentLegalSection[];
 };
 
@@ -178,8 +211,10 @@ function legalBlockToMarkdown(block: AgentLegalBlock): string {
   if (typeof block === "string") return clean(block);
 
   const type = block.type;
-  if (type === "h3") return heading(3, reactNodeToMarkdown(block.content ?? block.heading));
-  if (type === "h4") return heading(4, reactNodeToMarkdown(block.content ?? block.heading));
+  if (type === "h3")
+    return heading(3, reactNodeToMarkdown(block.content ?? block.heading));
+  if (type === "h4")
+    return heading(4, reactNodeToMarkdown(block.content ?? block.heading));
   if (type === "ul") {
     return bulletList((block.items ?? []).map(reactNodeToMarkdown));
   }
@@ -197,13 +232,18 @@ export function legalDocToMarkdown(doc: AgentLegalDoc): string {
 
   return joinBlocks([
     heading(1, doc.title),
-    doc.intro ? clean(doc.intro) : "",
+    typeof doc.intro === "string"
+      ? clean(doc.intro)
+      : joinBlocks((doc.intro ?? []).map(legalBlockToMarkdown)),
     ...sections,
   ]);
 }
 
 function placeCreator(place: Place): string {
-  return (place.contact_name || place.owner || "Decentraland").trim() || "Decentraland";
+  return (
+    (place.contact_name || place.owner || "Decentraland").trim() ||
+    "Decentraland"
+  );
 }
 
 function placeApproval(place: Place): string | null {
@@ -214,10 +254,18 @@ function placeApproval(place: Place): string | null {
 
 export function placeToMarkdown(place: Place): string {
   const facts: Array<[string, string | number | null | undefined]> = [
-    ["Type", place.world ? `World${place.world_name ? ` (${place.world_name})` : ""}` : "Genesis City"],
+    [
+      "Type",
+      place.world
+        ? `World${place.world_name ? ` (${place.world_name})` : ""}`
+        : "Genesis City",
+    ],
     ["Coordinates", place.base_position],
     ["Parcels", (place.positions ?? []).length || null],
-    ["Categories", (place.categories ?? []).length ? place.categories.join(", ") : null],
+    [
+      "Categories",
+      (place.categories ?? []).length ? place.categories.join(", ") : null,
+    ],
     ["Creator", placeCreator(place)],
     ["Visitors", place.user_count],
     ["Approval", placeApproval(place)],
@@ -283,7 +331,11 @@ type AgentWhatsOnData = {
 function eventLine(e: Event): string {
   const meta = inlineParts([
     e.live ? "LIVE" : formatEventWhen(eventOccurrence(e).start ?? null),
-    e.recurrent ? (e.recurrent_frequency ? clean(e.recurrent_frequency) : "recurring") : null,
+    e.recurrent
+      ? e.recurrent_frequency
+        ? clean(e.recurrent_frequency)
+        : "recurring"
+      : null,
     eventCoords(e),
     e.user_name || e.scene_name || null,
     (e.total_attendees ?? 0) > 0 ? `${e.total_attendees} attending` : null,
@@ -312,9 +364,12 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
     heading(1, "What's On in Decentraland"),
     `${live.length} live now, ${upcoming.length} upcoming.${note ? ` (${note})` : ""}`,
   ];
-  if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
-  if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));
-  if (!live.length && !upcoming.length) blocks.push("_No events right now. Check back soon._");
+  if (live.length)
+    blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
+  if (upcoming.length)
+    blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));
+  if (!live.length && !upcoming.length)
+    blocks.push("_No events right now. Check back soon._");
 
   return joinBlocks(blocks);
 }
@@ -327,7 +382,7 @@ export function eventDetailToMarkdown(e: Event): string {
     ["When", formatEventWhen(eventOccurrence(e).start ?? null)],
     ["Host", host],
     ["Location", eventCoords(e)],
-    ["Recurring", e.recurrent ? (e.recurrent_frequency || "yes") : null],
+    ["Recurring", e.recurrent ? e.recurrent_frequency || "yes" : null],
     ["Attendees", (e.total_attendees ?? 0) > 0 ? e.total_attendees : null],
     ["Live", e.live ? "yes" : null],
   ];
@@ -358,7 +413,8 @@ export function profileToMarkdown(p: ProfileVM): string {
   const info = (p.info ?? []).filter((f) => f.value);
   const links = (p.links ?? []).filter((l) => l.url);
 
-  const empty = !p.hasClaimedName && !p.bio && info.length === 0 && links.length === 0;
+  const empty =
+    !p.hasClaimedName && !p.bio && info.length === 0 && links.length === 0;
   if (empty) {
     return joinBlocks([
       heading(1, "Decentraland Profile"),
@@ -368,10 +424,16 @@ export function profileToMarkdown(p: ProfileVM): string {
   }
 
   const infoBlock = info.length
-    ? joinBlocks([heading(2, "Info"), info.map((f) => `- ${clean(f.label)}: ${clean(f.value)}`).join("\n")])
+    ? joinBlocks([
+        heading(2, "Info"),
+        info.map((f) => `- ${clean(f.label)}: ${clean(f.value)}`).join("\n"),
+      ])
     : "";
   const linksBlock = links.length
-    ? joinBlocks([heading(2, "Links"), links.map((l) => `- [${clean(l.title || l.url)}](${l.url})`).join("\n")])
+    ? joinBlocks([
+        heading(2, "Links"),
+        links.map((l) => `- [${clean(l.title || l.url)}](${l.url})`).join("\n"),
+      ])
     : "";
 
   return joinBlocks([
@@ -395,20 +457,31 @@ export function discoverToMarkdown(content: HomeContent): string {
   if (events.length)
     blocks.push(
       heading(2, "Events"),
-      events.map((e) => `- ${inlineParts([clean(e.title), e.cat, e.when, e.live ? "LIVE" : null])}`).join("\n"),
+      events
+        .map(
+          (e) =>
+            `- ${inlineParts([clean(e.title), e.cat, e.when, e.live ? "LIVE" : null])}`,
+        )
+        .join("\n"),
     );
   if (hotspots.length)
     blocks.push(
       heading(2, "Hotspots"),
       hotspots
-        .map((h) => `- ${h.href ? `[${clean(h.title)}](${h.href})` : clean(h.title)}${typeof h.online === "number" ? ` \u{2014} ${h.online} online` : ""}`)
+        .map(
+          (h) =>
+            `- ${h.href ? `[${clean(h.title)}](${h.href})` : clean(h.title)}${typeof h.online === "number" ? ` \u{2014} ${h.online} online` : ""}`,
+        )
         .join("\n"),
     );
   if (rituals.length)
     blocks.push(
       heading(2, "Rituals"),
       rituals
-        .map((r) => `- ${r.href ? `[${clean(r.title)}](${r.href})` : clean(r.title)}${r.day ? ` \u{2014} ${clean(r.day)}` : ""}`)
+        .map(
+          (r) =>
+            `- ${r.href ? `[${clean(r.title)}](${r.href})` : clean(r.title)}${r.day ? ` \u{2014} ${clean(r.day)}` : ""}`,
+        )
         .join("\n"),
     );
   return joinBlocks(blocks);
@@ -433,12 +506,19 @@ type ShopFacts = {
  * out: what an item costs, and in which currency, is the server's purchase offer, which the page shows.
  */
 export function shopPageToMarkdown(data: ShopPageData): string {
-  const read = (name: string) => data.queries.find(([key]) => key[0] === name)?.[1] as ShopFacts | null | undefined;
+  const read = (name: string) =>
+    data.queries.find(([key]) => key[0] === name)?.[1] as
+      ShopFacts | null | undefined;
   const meta = read("item-meta");
   const token = read("token");
   const collection = read("collection-meta");
   const facts: Array<[string, string | number | null | undefined]> = [
-    ["Collection", collection?.name ? `${collection.name}${collection.contractAddress ? ` (${collection.contractAddress})` : ""}` : null],
+    [
+      "Collection",
+      collection?.name
+        ? `${collection.name}${collection.contractAddress ? ` (${collection.contractAddress})` : ""}`
+        : null,
+    ],
     ["Creator", meta?.creator ?? collection?.creator],
     ["Category", token?.category ?? meta?.category],
     ["Rarity", token?.rarity ?? meta?.rarity],
@@ -479,7 +559,10 @@ export function communityToMarkdown(detail: CommunityDetail): string {
         heading(2, "Members"),
         members
           .slice(0, 50)
-          .map((m) => `- ${clean(m.name || m.memberAddress)}${m.role && m.role !== "none" ? ` (${m.role})` : ""}`)
+          .map(
+            (m) =>
+              `- ${clean(m.name || m.memberAddress)}${m.role && m.role !== "none" ? ` (${m.role})` : ""}`,
+          )
           .join("\n"),
       ])
     : "";
@@ -488,7 +571,10 @@ export function communityToMarkdown(detail: CommunityDetail): string {
     ? joinBlocks([
         heading(2, "Events"),
         events
-          .map((e) => `- ${inlineParts([clean(e.name), e.timeLabel, e.creatorName ? `by ${e.creatorName}` : null])}`)
+          .map(
+            (e) =>
+              `- ${inlineParts([clean(e.name), e.timeLabel, e.creatorName ? `by ${e.creatorName}` : null])}`,
+          )
           .join("\n"),
       ])
     : "";
@@ -503,6 +589,7 @@ export function communityToMarkdown(detail: CommunityDetail): string {
 }
 
 export type AgentMarkdownKey =
+  | "blogArticle"
   | "blogIndex"
   | "blogPost"
   | "legalDoc"

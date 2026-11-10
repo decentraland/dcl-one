@@ -1,3 +1,4 @@
+import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouteLoaderData } from "react-router";
@@ -11,10 +12,13 @@ import { catalystBase } from "@/data/lib/catalyst/client";
 import { openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
 
-export default function ChromeAuthBridge({ children }: { children: ReactNode }) {
+export default function ChromeAuthBridge({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const rootData = useRouteLoaderData("root") as
-    | { wallet?: string | null; committee?: boolean }
-    | undefined;
+    { wallet?: string | null; committee?: boolean } | undefined;
   const seedWallet = rootData?.wallet ?? "";
   const committee = rootData?.committee ?? false;
 
@@ -27,12 +31,20 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
   const effSignedIn = mounted ? isConnected : !!seedWallet;
   const effAddress = mounted ? (address ?? "") : seedWallet;
 
-  const { name, avatarUrl } = useProfileIdentity(effAddress || null, effSignedIn);
+  usePrivateQueryLifecycle(effSignedIn ? effAddress : null);
+
+  const { name, avatarUrl } = useProfileIdentity(
+    effAddress || null,
+    effSignedIn,
+  );
 
   const fetchNotifications = useCallback(async (): Promise<unknown> => {
-    const res = await signedFetch(`${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`, {
-      headers: { accept: "application/json" },
-    });
+    const res = await signedFetch(
+      `${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`,
+      {
+        headers: { accept: "application/json" },
+      },
+    );
     if (!res.ok) throw new Error(`Notifications returned ${res.status}`);
     return res.json() as Promise<unknown>;
   }, [signedFetch]);
@@ -49,8 +61,20 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
       ...hubAccountActions(disconnect),
       fetchNotifications,
     }),
-    [effSignedIn, effAddress, name, committee, avatarUrl, fetchNotifications, disconnect],
+    [
+      effSignedIn,
+      effAddress,
+      name,
+      committee,
+      avatarUrl,
+      fetchNotifications,
+      disconnect,
+    ],
   );
 
-  return <ChromeAuthContext.Provider value={value}>{children}</ChromeAuthContext.Provider>;
+  return (
+    <ChromeAuthContext.Provider value={value}>
+      {children}
+    </ChromeAuthContext.Provider>
+  );
 }
