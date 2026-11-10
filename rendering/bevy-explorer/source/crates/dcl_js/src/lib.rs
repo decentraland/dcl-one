@@ -4,6 +4,7 @@ use anyhow::anyhow;
 use bevy::log::debug;
 use common::structs::SceneJsFile;
 use common::structs::{CameraFov, GlobalCrdtStateUpdate, TimeOfDay};
+use common::util::AsH160;
 use dcl_component::{
     proto_components::sdk::components::PbPlayerIdentityData, DclReader, FromDclReader,
     SceneComponentId, SceneEntityId,
@@ -333,16 +334,16 @@ pub fn player_identity(state: &impl State) -> Result<PbPlayerIdentityData, anyho
         .map_err(|e| anyhow!(format!("{e:?}")))
 }
 
-/// The player address a scene's `localStorage` is partitioned by. An error on a scene server,
-/// which has no player, and until the player's identity has reached the scene.
+/// The player address a scene's `localStorage` is partitioned by, in lowercase. An error on a
+/// scene server, which has no player, and until the player's identity has reached the scene.
 pub fn storage_address(state: &impl State) -> Result<String, anyhow::Error> {
     if state.borrow::<CrdtContext>().is_server {
         anyhow::bail!("localStorage is not available on a scene server");
     }
     player_identity(state)
         .ok()
-        .map(|identity| identity.address)
-        .filter(|address| !address.is_empty())
+        .and_then(|identity| identity.address.as_h160())
+        .map(|address| format!("{address:#x}"))
         .ok_or_else(|| anyhow!("localStorage is not available until the player has signed in"))
 }
 
@@ -424,13 +425,23 @@ mod storage_address_tests {
 
     #[test]
     fn scene_storage_needs_a_signed_in_player_and_is_never_on_a_server() {
+        let address = "0xabcdef0000000000000000000000000000000001";
         assert_eq!(
-            storage_address(&state(false, Some("0xabc"))).unwrap(),
-            "0xabc"
+            storage_address(&state(false, Some(address))).unwrap(),
+            address
+        );
+        // however the profile spells it, a player has one partition
+        assert_eq!(
+            storage_address(&state(
+                false,
+                Some("0xAbCdEf0000000000000000000000000000000001")
+            ))
+            .unwrap(),
+            address
         );
         assert!(storage_address(&state(false, None)).is_err());
         assert!(storage_address(&state(false, Some(""))).is_err());
-        assert!(storage_address(&state(true, Some("0xabc"))).is_err());
+        assert!(storage_address(&state(true, Some(address))).is_err());
     }
 }
 
