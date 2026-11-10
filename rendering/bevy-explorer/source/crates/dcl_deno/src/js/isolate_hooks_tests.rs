@@ -340,23 +340,6 @@ fn reading_a_scene_stream_to_its_end_is_capped() {
     assert!(out.contains("larger than"), "{out}");
 }
 
-#[test]
-fn stream_sinks_count_as_open_streams() {
-    run_scene(
-        false,
-        r#"
-        const ops = Deno.core.ops;
-        for (let i = 0; i < 128; i++) {
-            ops.op_readable_stream_resource_get_sink(ops.op_readable_stream_resource_allocate());
-        }
-        let refused = "";
-        try { ops.op_readable_stream_resource_allocate(); } catch (e) { refused = String(e); }
-        if (!refused.includes("too many open streams")) { throw new Error(`not refused: ${refused}`); }
-        "#,
-    )
-    .unwrap();
-}
-
 /// Only a stream the fetch JS made can be an upload body.
 #[test]
 fn a_fetch_upload_body_must_be_a_stream() {

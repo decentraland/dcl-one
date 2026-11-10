@@ -40,6 +40,7 @@ impl Resource for FetchCancelHandle {
 }
 
 // DoS caps for the multi-tenant authoritative server, enforced only in is_server mode.
+// SERVER_MAX_BODY_BYTES bounds streamed request bodies too.
 const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const SERVER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -342,7 +343,18 @@ async fn send_request(
 
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
-        body.into_async_read().read_to_end(&mut buf).await?;
+        if is_server {
+            body.into_async_read()
+                .take(SERVER_MAX_BODY_BYTES + 1)
+                .read_to_end(&mut buf)
+                .await?;
+            if buf.len() as u64 > SERVER_MAX_BODY_BYTES {
+                bail!("request body exceeds {SERVER_MAX_BODY_BYTES} bytes ({url})");
+            }
+        } else {
+            // the client bounds neither request nor response bodies
+            body.into_async_read().read_to_end(&mut buf).await?;
+        }
         request.body(buf)
     } else if let Some(body) = body_bytes {
         request.body(body)

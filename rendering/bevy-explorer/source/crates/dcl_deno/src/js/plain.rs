@@ -8,10 +8,10 @@ use serde::de::DeserializeOwned;
 /// serde_v8 unwraps every property read, so a getter, proxy or `toString` that throws
 /// while it walks a value panics inside the op, which aborts the process. The copy is made
 /// with every read checked: own enumerable data properties only (no getter runs),
-/// null-prototype objects and arrays,
-/// and no symbols, boxed primitives, proxies, functions, or objects whose data lives in
-/// internal slots (`Date`, `Map`, `Set`, `RegExp`, ...). Buffers pass through uncopied
-/// and keep their prototype, so the decode itself still runs under `catch_unwind`.
+/// null-prototype objects and arrays, and no symbols, boxed primitives, proxies, functions, or
+/// objects whose data lives in internal slots (`Date`, `Map`, `Set`, `RegExp`, ...). Buffers
+/// are re-wrapped over the same memory with a null prototype, so no scene code runs while
+/// serde_v8 decodes; the decode still runs under `catch_unwind`.
 pub struct Plain<T>(pub T);
 
 #[derive(Debug, deno_error::JsError)]
@@ -37,13 +37,12 @@ impl<'a, T: DeserializeOwned> FromV8<'a> for Plain<T> {
         let copy = plain_copy(scope, value, 0, &mut budget)?;
         v8::tc_scope!(let scope, scope);
         quiet_decode_panics();
-        // a getter on a buffer's prototype can decode another op's argument meanwhile
-        let outer = DECODING.replace(true);
+        DECODING.set(true);
         // a panic here unwinds through serde_v8's Rust frames only; V8 has returned by then
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             serde_v8::from_v8(scope, copy)
         }));
-        DECODING.set(outer);
+        DECODING.set(false);
         decoded
             .map_err(|_| PlainError("reading the argument threw".to_owned()))?
             .map(Plain)
@@ -55,13 +54,17 @@ thread_local! {
     static DECODING: Cell<bool> = const { Cell::new(false) };
 }
 
-// a scene can trigger the caught decode panic at will, so it must not reach the log
+// a scene can trigger the caught decode panic at will, so it must not reach the log; any
+// other panic still does
 fn quiet_decode_panics() {
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            if !DECODING.get() {
+            let in_serde_v8 = info
+                .location()
+                .is_some_and(|location| location.file().contains("serde_v8"));
+            if !(DECODING.get() && in_serde_v8) {
                 previous(info);
             }
         }));
@@ -90,10 +93,15 @@ fn plain_copy<'s>(
         || value.is_number()
         || value.is_string()
         || value.is_big_int()
-        || value.is_array_buffer()
-        || value.is_array_buffer_view()
     {
         return Ok(value);
+    }
+    if value.is_array_buffer() || value.is_array_buffer_view() {
+        let copy = rewrap_buffer(scope, value).ok_or_else(|| unsupported(scope, value))?;
+        let null = v8::null(scope).into();
+        copy.set_prototype(scope, null)
+            .ok_or_else(|| PlainError("reading the argument threw".to_owned()))?;
+        return Ok(copy.into());
     }
     // boxed primitives convert by calling into JS
     if value.is_symbol()
@@ -204,6 +212,44 @@ fn slot_object_kind(value: &v8::Value) -> Option<&'static str> {
     ]
     .into_iter()
     .find_map(|(is, kind)| is.then_some(kind))
+}
+
+/// A new buffer or view of the same type over the same memory.
+fn rewrap_buffer<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    value: v8::Local<'s, v8::Value>,
+) -> Option<v8::Local<'s, v8::Object>> {
+    if let Ok(buffer) = v8::Local::<v8::ArrayBuffer>::try_from(value) {
+        let store = buffer.get_backing_store();
+        return Some(v8::ArrayBuffer::with_backing_store(scope, &store).into());
+    }
+    let view = v8::Local::<v8::ArrayBufferView>::try_from(value).ok()?;
+    let buffer = view.buffer(scope).filter(|buffer| !buffer.was_detached())?;
+    let offset = view.byte_offset();
+    macro_rules! same_type {
+        ($($ty:ident),*) => {$(
+            if let Ok(typed) = v8::Local::<v8::$ty>::try_from(value) {
+                return v8::$ty::new(scope, buffer, offset, typed.length()).map(Into::into);
+            }
+        )*};
+    }
+    same_type!(
+        Uint8Array,
+        Uint8ClampedArray,
+        Int8Array,
+        Uint16Array,
+        Int16Array,
+        Uint32Array,
+        Int32Array,
+        Float32Array,
+        Float64Array,
+        BigUint64Array,
+        BigInt64Array
+    );
+    if value.is_data_view() {
+        return Some(v8::DataView::new(scope, buffer, offset, view.byte_length()).into());
+    }
+    None
 }
 
 fn unsupported(scope: &mut v8::PinScope, value: v8::Local<v8::Value>) -> PlainError {

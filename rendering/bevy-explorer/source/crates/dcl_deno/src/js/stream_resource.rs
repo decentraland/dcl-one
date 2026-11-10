@@ -34,7 +34,9 @@ pub fn override_ops() -> Vec<OpDecl> {
 
 const MAX_BUFFERED_CHUNKS: usize = 1024;
 const MAX_BUFFERED_BYTES: usize = 64 * 1024;
-// streams and their sinks together; each buffers up to MAX_BUFFERED_BYTES
+// Streams and their sinks a runtime may hold. A reader preallocates at most 64 KiB per
+// stream; `op_read_all` keeps what it reads until the stream ends, at most
+// MAX_READ_ALL_BYTES for a stream a scene feeds.
 const MAX_OPEN_STREAMS: usize = 256;
 // a stream's producer is scene code, so reading one to its end stops here
 const MAX_READ_ALL_BYTES: usize = 64 * 1024 * 1024;
@@ -142,14 +144,14 @@ struct Completion {
     waker: Option<Waker>,
 }
 
-/// Counts a runtime's live stream resources.
+/// Counts a runtime's live stream resources and sinks.
 #[derive(Clone, Default)]
 struct OpenStreams(Rc<Cell<usize>>);
 
 struct OpenStream(OpenStreams);
 
 impl OpenStream {
-    fn open(state: &mut OpState) -> Result<Self, AnyError> {
+    fn take(state: &mut OpState) -> Result<Self, AnyError> {
         if !state.has::<OpenStreams>() {
             state.put(OpenStreams::default());
         }
@@ -180,7 +182,7 @@ struct ReadableStreamResource {
 
 impl ReadableStreamResource {
     fn add(state: &mut OpState, length: Option<u64>) -> Result<ResourceId, AnyError> {
-        let open = OpenStream::open(state)?;
+        let open = OpenStream::take(state)?;
         Ok(state.resource_table.add(Self {
             channel: Default::default(),
             read_queue: Default::default(),
@@ -242,7 +244,10 @@ impl Drop for ReadableStreamResource {
 }
 
 /// The producer's handle on a stream's channel.
-struct ReadableStreamSink(Rc<RefCell<Channel>>, #[allow(dead_code)] OpenStream);
+struct ReadableStreamSink {
+    channel: Rc<RefCell<Channel>>,
+    _open: OpenStream,
+}
 
 impl Resource for ReadableStreamSink {
     fn name(&self) -> Cow<'_, str> {
@@ -252,7 +257,7 @@ impl Resource for ReadableStreamSink {
 
 impl Drop for ReadableStreamSink {
     fn drop(&mut self) {
-        self.0.borrow_mut().close();
+        self.channel.borrow_mut().close();
     }
 }
 
@@ -260,7 +265,7 @@ fn sink_channel(state: &OpState, sink: ResourceId) -> Result<Rc<RefCell<Channel>
     Ok(state
         .resource_table
         .get::<ReadableStreamSink>(sink)?
-        .0
+        .channel
         .clone())
 }
 
@@ -290,8 +295,11 @@ fn op_readable_stream_resource_get_sink(
         .get::<ReadableStreamResource>(rid)?
         .channel
         .clone();
-    let open = OpenStream::open(state)?;
-    Ok(state.resource_table.add(ReadableStreamSink(channel, open)))
+    let open = OpenStream::take(state)?;
+    Ok(state.resource_table.add(ReadableStreamSink {
+        channel,
+        _open: open,
+    }))
 }
 
 #[op2]
