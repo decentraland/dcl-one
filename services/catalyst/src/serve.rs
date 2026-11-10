@@ -695,6 +695,16 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         max_gas_limit: config.economy.max_gas_limit,
         relayer_max_fee_per_gas_wei: config.economy.relayer_max_fee_per_gas_wei,
         trial_mode: config.shop.credits_trial_mode,
+        // The same list, parsed the same way, as the credits lane's (credits::Settings::parse).
+        trial_buyers: config
+            .shop
+            .credits_trial_mode
+            .then(|| {
+                shop::credits::trial::TrialBuyers::parse(
+                    config.shop.credits_trial_buyers.as_deref(),
+                )
+            })
+            .transpose()?,
         oz_relayer_url: Config::non_empty(&config.economy.oz_relayer_url),
         oz_relayer_id: Config::non_empty(&config.economy.oz_relayer_id),
         oz_relayer_api_key: Config::non_empty(&config.economy.oz_relayer_api_key),
