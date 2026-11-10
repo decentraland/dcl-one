@@ -283,3 +283,55 @@ fn a_primitive_and_its_new_material_appear_in_the_same_frame() {
     assert!(app.world().get::<Mesh3d>(primitives[2]).is_none());
     assert!(material_handle(&app, primitives[2]).is_none());
 }
+
+fn marked(app: &App, entity: Entity) -> Option<bevy::ecs::component::Tick> {
+    app.world()
+        .entity(entity)
+        .get_ref::<PendingMaterial>()
+        .map(|marker| marker.last_changed())
+}
+
+#[test]
+fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
+    let (mut app, root) = material_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let entities = spawn_materials(&mut app, root, 0..3);
+    app.update();
+    let waiting_entities: Vec<_> = entities
+        .iter()
+        .copied()
+        .filter(|e| app.world().get::<PendingMaterial>(*e).is_some())
+        .collect();
+    assert_eq!(waiting_entities.len(), 2);
+    let before: Vec<_> = waiting_entities.iter().map(|e| marked(&app, *e)).collect();
+
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    // one goes as the frame's first; the other is not touched again
+    assert_eq!(created(&app, &waiting_entities), 1);
+    let still_waiting = waiting_entities
+        .iter()
+        .position(|e| material_handle(&app, *e).is_none())
+        .unwrap();
+    assert_eq!(
+        marked(&app, waiting_entities[still_waiting]),
+        before[still_waiting]
+    );
+}
+
+#[test]
+fn a_material_waiting_for_its_primitive_is_left_alone() {
+    let (mut app, root) = material_app();
+    let entity = app
+        .world_mut()
+        .spawn((container(root), material(1), PendingPrimitive))
+        .id();
+    app.update();
+    let before = marked(&app, entity);
+    assert!(before.is_some());
+
+    app.update();
+
+    assert_eq!(marked(&app, entity), before);
+}

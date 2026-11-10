@@ -82,6 +82,11 @@ impl Gate<'_> {
         true
     }
 
+    /// Once it has refused an item this run: the rest wait as they are, untouched, in order.
+    pub fn is_spent(&self) -> bool {
+        self.bounded && self.deferred > 0
+    }
+
     /// Logs the run under target `instantiation_budget` when it deferred anything.
     pub fn report(&self, consumer: &'static str) {
         if self.deferred > 0 {

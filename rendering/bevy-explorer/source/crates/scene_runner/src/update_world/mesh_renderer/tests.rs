@@ -331,3 +331,38 @@ fn a_waiting_primitive_whose_scene_has_no_context_is_dropped() {
 
     assert!(app.world().get::<PendingPrimitive>(entity).is_none());
 }
+
+#[test]
+fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
+    let (mut app, root) = test_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let boxes = spawn_boxes(&mut app, root, 3);
+    app.update();
+    let waiting_boxes: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|e| app.world().get::<PendingPrimitive>(*e).is_some())
+        .collect();
+    assert_eq!(waiting_boxes.len(), 2);
+    let marked = |app: &App, entity: Entity| {
+        app.world()
+            .entity(entity)
+            .get_ref::<PendingPrimitive>()
+            .map(|marker| marker.last_changed())
+    };
+    let before: Vec<_> = waiting_boxes.iter().map(|e| marked(&app, *e)).collect();
+
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    // one goes as the frame's first; the other is not touched again
+    assert_eq!(attached(&app, &waiting_boxes), 1);
+    let still_waiting = waiting_boxes
+        .iter()
+        .position(|e| app.world().get::<Mesh3d>(*e).is_none())
+        .unwrap();
+    assert_eq!(
+        marked(&app, waiting_boxes[still_waiting]),
+        before[still_waiting]
+    );
+}

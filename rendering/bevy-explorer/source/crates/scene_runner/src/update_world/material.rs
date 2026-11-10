@@ -598,9 +598,12 @@ pub fn update_materials(
         // rewrites it every frame) is created as before. A prepaid one came with its primitive.
         let first = mat.is_added() || pending || prepaid;
         let gated = first && !prepaid;
-        if gated && primitive_pending {
-            // admitted together with its primitive, which pays for both
-            commands.entity(ent).try_insert(PendingMaterial);
+        // one waiting for its primitive is admitted with it, which pays for both; once the slice
+        // is spent, what waits stays as it is, untouched, and what is new joins it
+        if gated && (primitive_pending || gate.is_spent()) {
+            if !pending {
+                commands.entity(ent).try_insert(PendingMaterial);
+            }
             continue;
         }
 
@@ -620,7 +623,9 @@ pub fn update_materials(
         let (material, shadow_caster) = match cached_data {
             Some(data) => {
                 if gated && !gate.admit(MATERIAL_COST) {
-                    commands.entity(ent).try_insert(PendingMaterial);
+                    if !pending {
+                        commands.entity(ent).try_insert(PendingMaterial);
+                    }
                     continue;
                 }
                 data
@@ -648,7 +653,7 @@ pub fn update_materials(
                                 commands
                                     .entity(ent)
                                     .try_insert(RetryMaterial(Vec::default()));
-                                if first {
+                                if first && !pending {
                                     commands.entity(ent).try_insert(PendingMaterial);
                                 }
                                 continue;
@@ -693,7 +698,7 @@ pub fn update_materials(
                         commands
                             .entity(ent)
                             .try_insert(RetryMaterial(Vec::default()));
-                        if first {
+                        if first && !pending {
                             commands.entity(ent).try_insert(PendingMaterial);
                         }
                         continue;
@@ -717,7 +722,9 @@ pub fn update_materials(
                 let can_cache = source.is_none() && cursor.is_none();
 
                 if gated && !gate.admit(NEW_MATERIAL_COST) {
-                    commands.entity(ent).try_insert(PendingMaterial);
+                    if !pending {
+                        commands.entity(ent).try_insert(PendingMaterial);
+                    }
                     continue;
                 }
                 if let Some(new_base) = resolved_base {

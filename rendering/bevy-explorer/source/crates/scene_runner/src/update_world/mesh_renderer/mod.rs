@@ -233,6 +233,7 @@ type PrimitiveData = (
     Option<&'static MeshMaterial3dLoading>,
     Option<&'static Mesh3d>,
     Has<PbMaterialComponent>,
+    Has<PendingPrimitive>,
 );
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -272,8 +273,17 @@ pub fn update_mesh(
         maybe_material_loading,
         maybe_existing_mesh,
         has_material,
+        pending,
     ) in pending_primitives.iter().chain(new_primitives.iter())
     {
+        // the slice is spent: what waits stays as it is, untouched, and what is new joins it
+        if maybe_existing_mesh.is_none() && gate.is_spent() {
+            if !pending {
+                commands.entity(ent).try_insert(PendingPrimitive);
+            }
+            continue;
+        }
+
         commands.entity(ent).remove::<RetryMeshDefinition>();
 
         let mut gltf_mesh = match prim {
@@ -309,7 +319,9 @@ pub fn update_mesh(
                 cost += NEW_MATERIAL_COST;
             }
             if !gate.admit(cost) {
-                commands.entity(ent).try_insert(PendingPrimitive);
+                if !pending {
+                    commands.entity(ent).try_insert(PendingPrimitive);
+                }
                 continue;
             }
             commands.entity(ent).remove::<PendingPrimitive>();

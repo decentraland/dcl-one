@@ -176,3 +176,22 @@ fn charges_past_the_slice_leave_an_expired_slice() {
 
     assert!(processing.expect("a processing deadline") <= after);
 }
+
+#[test]
+fn a_gate_is_spent_once_it_refuses() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().0 = ms(10);
+
+    let spent = world
+        .run_system_once(|mut budget: InstantiationBudget| {
+            let mut gate = budget.gate();
+            let before = gate.is_spent();
+            gate.admit(ms(1));
+            let after_the_first = gate.is_spent();
+            gate.admit(ms(1));
+            (before, after_the_first, gate.is_spent())
+        })
+        .unwrap();
+
+    assert_eq!(spent, (false, false, true));
+}
