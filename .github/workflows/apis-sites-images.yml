@@ -233,16 +233,34 @@ jobs:
         env:
           PLAY_ALLOW_UNOPTIMIZED: ${{ github.event_name == 'pull_request' && '1' || '0' }}
         run: |
-          # One evaluation and one build graph: the APIs image is archived while Sites
-          # compiles, and the two archives load into Docker side by side.
-          images=$(nix build --impure 'git+file:.?lfs=1#image-apis' 'git+file:.?lfs=1#image-sites' --no-link --print-out-paths -L)
-          for image in $images; do
-            cp -L "$image" ".cache/images/${image##*-foundation-}"
-          done
-          docker load --input .cache/images/apis.tar.gz &
-          apis_load=$!
-          docker load --input .cache/images/sites.tar.gz
-          wait "$apis_load"
+          set -o pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # Pull requests publish nothing: the layers stream straight into Docker, with no
+            # archive to compress, copy back or upload.
+            streams=$(nix build --impure 'git+file:.?lfs=1#image-apis-stream' 'git+file:.?lfs=1#image-sites-stream' --no-link --print-out-paths -L)
+            for stream in $streams; do
+              case $stream in
+                *-foundation-apis) apis=$stream ;;
+                *-foundation-sites) sites=$stream ;;
+              esac
+            done
+            : "${apis:?no APIs image stream}" "${sites:?no Sites image stream}"
+            "$apis" | docker load &
+            apis_load=$!
+            "$sites" | docker load
+            wait "$apis_load"
+          else
+            # One evaluation and one build graph: the APIs image is archived while Sites
+            # compiles, and the two archives load into Docker side by side.
+            images=$(nix build --impure 'git+file:.?lfs=1#image-apis' 'git+file:.?lfs=1#image-sites' --no-link --print-out-paths -L)
+            for image in $images; do
+              cp -L "$image" ".cache/images/${image##*-foundation-}"
+            done
+            docker load --input .cache/images/apis.tar.gz &
+            apis_load=$!
+            docker load --input .cache/images/sites.tar.gz
+            wait "$apis_load"
+          fi
           df -h /
       - name: Test the exact images before publication
         run: python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
@@ -333,6 +351,7 @@ jobs:
           path: .cache/sites-app-nix
           key: ${{ steps.cache-keys.outputs.sites-app-key }}
       - name: Upload tested images
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: apis-sites-images-${{ matrix.arch }}

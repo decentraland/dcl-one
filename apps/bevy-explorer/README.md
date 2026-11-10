@@ -14,7 +14,8 @@ CI uses `build-web.py --shared-build`: Cargo compiles the engine and scene runti
 then the lockfile-matched wasm-bindgen emits two separate modules. `install-web-tools.py`
 checks the release archives' SHA-256 and the binding generator's version against Cargo.lock.
 Optimized builds retain the release compilation settings and run wasm-opt. Unoptimized PR
-builds use 16 codegen units; the larger modules trade download size for compilation speed.
+builds use 16 codegen units; the larger modules trade download size for compilation speed, and
+they skip the wasm target cache, which main's optimized builds fill with 1-unit artifacts.
 Linux web CI takes protoc, clang 21, pkg-config and ALSA/udev development outputs from
 the flake's cached `bevy-web-tools` package and installs no apt build dependencies. Its
 pkg-config search path points to that package. Native Linux packaging retains distribution
@@ -179,7 +180,7 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 | Package | Published by | Contents |
 | --- | --- | --- |
-| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, web job | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
+| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job, from the web job's tested artifact | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
 | `@dcl-regenesislabs/bevy-headless-server` + `-darwin-arm64`, `-darwin-x64`, `-linux-x64`, `-win32-x64` | `bevy-explorer-headless.yml`, `publish` job | Launcher, engine and `dcl_deno_ipc` sidecar |
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a

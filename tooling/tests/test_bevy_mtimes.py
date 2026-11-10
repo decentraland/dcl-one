@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import time
@@ -27,6 +28,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.write(mtimes.TREE + '/crates/bevy_scene/src/lib.rs', 'pub fn spawn() {}\n')
         self.write(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs', 'pub fn world() {}\n')
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'fn main() {}\n')
+        self.write('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() {}\n')
         self.commit()
         self.target = self.root / 'rendering/bevy-explorer/source/target'
         self.profiles = [self.target / 'ci-test', self.target / 'x86_64-unknown-linux-gnu' / 'release']
@@ -65,7 +67,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.set_mtime(scene, 1_700_000_000 * SECOND + 750_000_000)
         mtimes.record(self.root, self.target)
         self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (3, 0))
+        self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
         self.assertEqual(self.mtime(scene), 1_700_000_000 * SECOND)
 
     def test_changed_files_keep_their_checkout_time(self):
@@ -75,7 +77,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.write(scene, 'pub fn spawn_sliced() {}\n')
         self.commit()
         now = self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (2, 1))
+        self.assertEqual(mtimes.restore(self.root, self.target), (3, 1))
         self.assertEqual(self.mtime(scene), now)
         self.assertEqual(self.mtime(ecs), 1_700_000_000 * SECOND)
 
@@ -94,7 +96,7 @@ class BevyMtimesTest(unittest.TestCase):
 
     def test_restore_without_a_manifest_changes_nothing(self):
         now = self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (0, 3))
+        self.assertEqual(mtimes.restore(self.root, self.target), (0, 4))
         self.assertEqual(self.mtime(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs'), now)
 
     def test_unchanged_engine_sources_keep_their_cached_time(self):
@@ -115,14 +117,27 @@ class BevyMtimesTest(unittest.TestCase):
         self.write(proto, 'message Changed {}\n')
         self.commit()
         now = self.checkout_now()
-        self.assertEqual(mtimes.restore(self.root, self.target), (2, 2))
+        self.assertEqual(mtimes.restore(self.root, self.target), (3, 2))
         self.assertEqual(self.mtime(engine), now)
         self.assertEqual(self.mtime(proto), now)
 
-    def test_the_manifest_survives_rust_cache_pruning(self):
-        # rust-cache keeps a .fingerprint entry only if its name, up to the last '-', is a
-        # dependency's package name; `bevy` is one.
-        self.assertEqual(mtimes.MANIFEST.rsplit('-', 1)[0], 'bevy')
+    def test_unchanged_vendored_enet_sources_keep_their_cached_time(self):
+        source = 'library/vendor/rusty_enet/src/lib.rs'
+        self.set_mtime(source, 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        self.checkout_now()
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
+
+    def test_the_manifest_survives_the_native_cache_pruning(self):
+        # tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>.
+        spec = importlib.util.spec_from_file_location('bevy_target_cache', Path(__file__).parents[1] / 'bevy-target-cache.py')
+        cache = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cache)
+        if shutil.which('cargo') is None:
+            self.skipTest('cargo reads the workspace members')
+        names, _ = cache.workspace()
+        self.assertFalse(cache.owned(mtimes.MANIFEST, names))
 
 
 if __name__ == '__main__':

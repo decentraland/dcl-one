@@ -862,15 +862,18 @@ class PlayImportTests(unittest.TestCase):
         job = workflow[workflow.index('\n  build-deploy-web:\n') + 1:]
         job = re.split(r'\n  [a-z][\w-]*:\n', job)[0]
         self.assertIn(f'\n    name: {play.PRODUCER}\n', job)
+        def step_end(start):
+            following = job.find('      - name:', start + 1)
+            return following if following != -1 else job.index('\n    defaults:\n', start)
         tested = job.index('      - name: Build and test the local web app\n')
         upload = job.index(f'      - name: {play.UPLOAD_STEP}\n')
-        end = job.index('      - name:', upload + 1)
+        end = step_end(upload)
         self.assertLess(tested, upload)
         self.assertIn('          path: apps/bevy-explorer/dist/web/\n', job[upload:end])
         # Upload success must imply every earlier step passed.
         self.assertNotIn('continue-on-error', job[:end])
         for step in (tested, upload):
-            self.assertIsNone(re.search(r'\n {8}if:', job[step:job.index('      - name:', step + 1)]))
+            self.assertIsNone(re.search(r'\n {8}if:', job[step:step_end(step)]))
 
     def test_github_digest_and_producer_sha_are_verified_before_install(self):
         archive = self.root / 'good.zip'

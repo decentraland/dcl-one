@@ -11,6 +11,7 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-target-cache.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -44,6 +45,7 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-target-cache.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -160,6 +162,7 @@ jobs:
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
       CEF_EXPORT_VERSION: 139.8.0+139.0.40
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
@@ -174,15 +177,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
-      - name: Prepare the pinned native toolchain for caching
-        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-          workspaces: rendering/bevy-explorer/source -> target
-          key: bevy-explorer-native-ci-test
-      - name: Restore the vendored Bevy's cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         if: runner.os == 'Linux'
         uses: ./.github/actions/bevy-explorer-tools
@@ -259,6 +253,26 @@ jobs:
             echo "CEF_PATH=$HOME/.local/share/cef" >> "$GITHUB_ENV"
           fi
           if [ "$RUNNER_OS" = "Linux" ]; then echo "LD_LIBRARY_PATH=$HOME/.local/share/cef:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"; fi
+      # The cache key reads the environment the tool steps exported: CC and CXX, PKG_CONFIG_PATH,
+      # CEF_PATH. Restored before them, a cache whose fingerprints name the previous paths would
+      # match exactly, never be saved again, and every run would rebuild the native build scripts
+      # and their dependents.
+      - name: Identify the native build cache
+        id: target-cache-key
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" key --lane test
+      - name: Restore the native build cache
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
+          restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
       - name: Restore the Windows compiler cache tool
         id: compiler-cache-tool
@@ -359,6 +373,19 @@ jobs:
             rendering/bevy-explorer/source/target/sccache-stats.json
           if-no-files-found: ignore
           retention-days: 7
+      - name: Prune the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+      - name: Save the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -371,6 +398,8 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-headless-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
@@ -385,15 +414,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
-      - name: Prepare the pinned native toolchain for caching
-        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: bevy-explorer-headless-linux-x64
-          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-          workspaces: rendering/bevy-explorer/source -> target
-      - name: Restore the vendored Bevy's cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install build dependencies
@@ -403,6 +423,23 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         uses: ./.github/actions/bevy-explorer-clang
+      # After the tool steps: the key reads the environment they export (see the Test Suite).
+      - name: Identify the native build cache
+        id: target-cache-key
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" key --lane headless
+      - name: Restore the native build cache
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
+          restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
       - name: Record the vendored Bevy's file times for the cache
@@ -480,6 +517,19 @@ jobs:
           path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
           if-no-files-found: error
           retention-days: 14
+      - name: Prune the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+      - name: Save the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -510,27 +560,25 @@ jobs:
     if: needs.changes.outputs.clippy == 'true'
     name: Clippy
     runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
+        # Check artifacts and the restored cache take a fraction of the runner's free space;
+        # removing the SDKs takes a minute.
         if: runner.os == 'Linux'
         working-directory: .
         run: |-
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
           df -h /
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
       - run: rustup component add clippy
-      - name: Prepare the pinned native toolchain for caching
-        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-          workspaces: rendering/bevy-explorer/source -> target
-          key: bevy-explorer-native
-      - name: Restore the vendored Bevy's cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
@@ -541,10 +589,40 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         uses: ./.github/actions/bevy-explorer-clang
+      # After the tool steps: the key reads the environment they export (see the Test Suite).
+      - name: Identify the native build cache
+        id: target-cache-key
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" key --lane clippy
+      - name: Restore the native build cache
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
+          restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - run: cargo clippy --locked -- -D warnings
         shell: bash
       - name: Record the vendored Bevy's file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      - name: Prune the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+      - name: Save the native build cache
+        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -588,7 +666,6 @@ jobs:
       # nothing measures a PR's, so PR builds skip wasm-opt.
       BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
     permissions:
-      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -641,8 +718,10 @@ jobs:
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      # Main saves optimised builds (codegen-units 1). An unoptimised PR build compiles at 16
+      # units, which changes every crate's hash, so that cache would serve it nothing.
       - name: Restore wasm target cache
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         id: wasm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -655,7 +734,7 @@ jobs:
             'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/bevy/**') }}
           restore-keys: bevy-explorer-web-
       - name: Restore the vendored Bevy's cached file times
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
@@ -668,7 +747,7 @@ jobs:
       - name: Build and test the local web app
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
       - name: Record the vendored Bevy's file times for the cache
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
@@ -696,8 +775,53 @@ jobs:
           if-no-files-found: error
           # Sites reuses matching tested main builds without recompiling the engine.
           retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
-      # From here on, upstream's publish steps: the version is stamped into the working tree's
-      # deploy/web and the page is rebuilt for its versioned CDN base. Nothing is committed.
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+      - changes
+  publish-web:
+    name: Web package and preview
+    # The npm package and the PR preview, off the web producer's path: the images job, Sites'
+    # imports and the benchmark wait for the tested web app, not for its publication.
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-publish-web-${{ github.ref }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            rendering/bevy-explorer/source/react-web/package-lock.json
+            rendering/bevy-explorer/source/react-web/bridge-scene/package-lock.json
+      - name: Download the tested web app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bevy-explorer-web-${{ github.sha }}
+          path: ${{ runner.temp }}/web-app
+      - name: Place the compiled engine and its bindings
+        # What build-web.py generated: the two WASM packages into deploy/web/engine and the
+        # TypeScript bindings the HUD imports, which play-artifact.py packed as bindings/.
+        run: |
+          rm -rf deploy/web/engine/pkg deploy/web/engine/pkg-scene react-web/src/engine/generated
+          cp -R "$RUNNER_TEMP/web-app/engine/pkg" "$RUNNER_TEMP/web-app/engine/pkg-scene" deploy/web/engine/
+          cp -R "$RUNNER_TEMP/web-app/bindings" react-web/src/engine/generated
+      - name: Install the HUD and bridge scene dependencies
+        run: |
+          npm ci --prefix react-web
+          npm ci --prefix react-web/bridge-scene
+      # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
+      # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:
@@ -721,7 +845,9 @@ jobs:
           DEBUG: pw:browser  # Chrome's own output, timestamped
         run: CHROME_BIN="$(command -v google-chrome)" dbus-run-session -- npm run test:scene-fetch --prefix react-web
       - name: Export the compiled bridge scene for the CDN
+        # The web job linted and tested the scene; its compiled bin/ is not part of the artifact.
         run: |
+          npx --no sdk-commands build --production
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
@@ -758,10 +884,11 @@ jobs:
       run:
         working-directory: rendering/bevy-explorer/source
         shell: bash
-    timeout-minutes: 100
+    timeout-minutes: 30
     needs:
       - source
       - changes
+      - build-deploy-web
   headless-packages:
     name: Headless packages
     needs: [source, changes]
