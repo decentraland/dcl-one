@@ -3,12 +3,13 @@
   width: 100%;
   overflow: hidden;
   padding-top: var(--dcl-space-24);
+  touch-action: pan-y;
+  cursor: grab;
 }
 
 /* The current slide in the middle; its neighbours overflow at the sides, clipped by the section. */
 .track {
   display: flex;
-  touch-action: pan-y;
   user-select: none;
   align-items: center;
   --carousel-slide-width: calc(100% - var(--dcl-space-32));
@@ -20,13 +21,12 @@
         (var(--carousel-slide-width) + var(--carousel-gap)) + var(--carousel-drag)
     )
   );
-  cursor: grab;
   will-change: transform;
 }
 .track[data-animated='true'] {
   transition: transform 0.4s ease;
 }
-.track:active {
+.carousel[data-dragging='true'] {
   cursor: grabbing;
 }
 

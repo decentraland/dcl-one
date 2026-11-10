@@ -18,6 +18,7 @@
 }
 
 .link {
+  cursor: inherit;
   display: block;
   height: 100%;
 }

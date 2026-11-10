@@ -203,10 +203,11 @@ describe('WeeklyRituals', () => {
       expect(onCardClick).toHaveBeenCalledWith(expect.objectContaining({ id: 'career-mondays' }))
     })
 
-    it('should capture a mouse drag so a release outside the track still ends it', () => {
+    it('should capture a mouse drag on the whole carousel so an outside release still ends it', () => {
       renderRituals()
       const setPointerCapture = vi.fn()
-      track().setPointerCapture = setPointerCapture
+      const carousel = screen.getByRole('group', { name: 'Your Weekly Rituals' })
+      carousel.setPointerCapture = setPointerCapture
 
       fireEvent.pointerDown(track(), {
         clientX: 300,
@@ -223,8 +224,8 @@ describe('WeeklyRituals', () => {
         pointerId: 7
       })
       expect(setPointerCapture).toHaveBeenCalledWith(7)
-      // With the pointer captured, the release is delivered to the track wherever it happens.
-      fireEvent.pointerUp(track(), {
+      // Capture delivers the release to the owning hit area wherever it happens.
+      fireEvent.pointerUp(carousel, {
         clientX: -40,
         clientY: 110,
         pointerType: 'mouse',
@@ -243,7 +244,7 @@ describe('WeeklyRituals', () => {
         path.resolve(import.meta.dirname, '../shared/Carousel.module.css'),
         'utf8'
       )
-      expect(css).toMatch(/\.track \{[^}]*touch-action: pan-y;/)
+      expect(css).toMatch(/\.carousel \{[^}]*touch-action: pan-y;/)
     })
   })
 

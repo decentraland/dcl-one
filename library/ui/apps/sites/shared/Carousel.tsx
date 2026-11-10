@@ -146,7 +146,14 @@ function Carousel<T>({
   }, [current, position])
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
+    if (
+      event.button !== 0 ||
+      (event.target instanceof Element &&
+        event.target.closest(
+          'button, input, select, textarea, [role="button"], [contenteditable="true"]'
+        ))
+    )
+      return
     drag.current = { x: event.clientX, y: event.clientY }
     dragged.current = false
     setAnimated(false)
@@ -200,6 +207,17 @@ function Carousel<T>({
       role="group"
       aria-roledescription="carousel"
       aria-labelledby={labelledBy}
+      data-dragging={dragging}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => {
+        drag.current = null
+        dragged.current = false
+        setDragging(false)
+        setDragOffset(0)
+      }}
+      onClickCapture={onClickCapture}
       onKeyDown={onKeyDown}
       onPointerEnter={(event) => {
         if (event.pointerType !== 'touch') setHovered(true)
@@ -216,16 +234,6 @@ function Carousel<T>({
         style={
           { '--carousel-position': position, '--carousel-drag': `${dragOffset}px` } as CSSProperties
         }
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          drag.current = null
-          dragged.current = false
-          setDragging(false)
-          setDragOffset(0)
-        }}
-        onClickCapture={onClickCapture}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget) settle()
         }}

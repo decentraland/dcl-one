@@ -126,6 +126,46 @@ describe('Carousel', () => {
     })
   })
 
+  describe('when a desktop drag starts beside an inert slide', () => {
+    it('should advance while leaving the decorative clones inert', async () => {
+      const user = userEvent.setup()
+      renderCarousel(['a', 'b', 'c'])
+      const carousel = screen.getByRole('group', { name: 'Clips' })
+      await user.pointer([
+        { keys: '[MouseLeft>]', target: carousel, coords: { x: 220, y: 300 } },
+        { target: carousel, coords: { x: 80, y: 305 } },
+        { keys: '[/MouseLeft]', target: carousel, coords: { x: 80, y: 305 } }
+      ])
+      expect(screen.getByRole('group', { name: 'Slide 2 of 3' })).toBeInTheDocument()
+      expect(document.querySelector('[data-peek]')?.parentElement).toHaveAttribute('inert')
+    })
+    it('should keep the current slide during a vertical gesture', async () => {
+      const user = userEvent.setup()
+      renderCarousel(['a', 'b'])
+      const carousel = screen.getByRole('group', { name: 'Clips' })
+      await user.pointer([
+        { keys: '[MouseLeft>]', target: carousel, coords: { x: 220, y: 100 } },
+        { target: carousel, coords: { x: 215, y: 240 } },
+        { keys: '[/MouseLeft]', target: carousel, coords: { x: 215, y: 240 } }
+      ])
+      expect(screen.getByRole('group', { name: 'Slide 1 of 2' })).toBeInTheDocument()
+    })
+    it('should keep navigation buttons separate from drag handles', async () => {
+      const user = userEvent.setup()
+      renderCarousel(['a', 'b'])
+      const carousel = screen.getByRole('group', { name: 'Clips' })
+      const button = screen.getByRole('button', { name: 'Next slide' })
+      await user.pointer([
+        { keys: '[MouseLeft>]', target: button, coords: { x: 220, y: 100 } },
+        { target: carousel, coords: { x: 80, y: 105 } },
+        { keys: '[/MouseLeft]', target: carousel, coords: { x: 80, y: 105 } }
+      ])
+      expect(screen.getByRole('group', { name: 'Slide 1 of 2' })).toBeInTheDocument()
+      await user.click(button)
+      expect(screen.getByRole('group', { name: 'Slide 2 of 2' })).toBeInTheDocument()
+    })
+  })
+
   describe('when it has one item', () => {
     it('should show it alone, without peeks, arrows or dots', () => {
       const { container } = renderCarousel(['a'])
