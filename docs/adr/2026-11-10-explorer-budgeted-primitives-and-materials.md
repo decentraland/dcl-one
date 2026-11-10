@@ -15,7 +15,8 @@ materials in `Update`, `SceneSets::PostLoop`:
 
 Both do every changed entity in the frame it arrives. A scene that adds many primitives or
 materials in one tick costs one long frame: on a release build at 60 fps, 1,000 boxes with a new
-material each made a 37 ms frame, and 5,000 made a 145 ms frame and a 110 ms one (*Consequences*).
+material each made a 37 ms frame, and 5,000 a 128 ms frame (medians of three runs; one run had a
+145 ms frame and then a 110 ms one; *Consequences*).
 
 unity-explorer gates the same work with its frame-time budget, per item, and retries the rest
 next frame:
@@ -77,7 +78,10 @@ ends that much earlier for spawning and glTF processing.
 - **Waiting is a marker on the entity.** `PendingPrimitive` and `PendingMaterial` are sparse-set
   components, so marking moves no table rows. Each system queries its pending entities first,
   then its usual changed ones without the marker, in one loop: what waited goes first, and new
-  arrivals cannot starve it. Removals are handled before that loop and drop the marker; so does
+  arrivals cannot starve it. Once a run has refused an item, its remaining first meshes and
+  materials wait as they are, untouched: no resolving and no marker written again, so a backlog
+  costs nothing outside the charges, and admission stays in order. Removals are handled before
+  that loop and drop the marker; so does
   every path that gives up on an item (no scene context, a glTF mesh the resolver rejects).
   A refused material leaves no new components: `BaseMaterial`, `MaterialSource` and the texture
   camera's cursor are inserted once it is admitted.
@@ -134,12 +138,14 @@ frame time above the run's median + 3 ms over the 2 s after it.
 Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 26.8 ms.
 
 - Every 1,000 wave now peaks at the transforms-only wave, which is the scene's own CRDT work and
-  outside this change. Its excess falls too, not only spreads: smaller batches cost less per item.
-- The 5,000 wave: the base had a 145 ms frame and a 110 ms one; this change spreads it over about
-  20 frames of 22–34 ms. After the wave both builds settle at about 20 ms a frame (12,000 entities
-  drawn), so those frames are 2–14 ms over it, against the 4 ms charged. The cost per item grows
-  with the number of entities in the scene, and the constants, measured with 1,000, underestimate
-  it there by about two times.
+  outside this change. For the waves with materials or meshes of their own the excess falls too,
+  not only spreads: smaller batches cost less per item. The no-material wave's rose from 5.3 to
+  8.8 ms, within the spread between runs.
+- The 5,000 wave: in one base run it made a 145 ms frame and a 110 ms one; this change spreads it
+  over about 20 frames of 22–34 ms. After the wave both builds settle at about 20 ms a frame
+  (12,000 entities drawn), so those frames are 2–14 ms over it, against the 4 ms charged. The
+  cost per item grows with the number of entities in the scene, and the constants, measured with
+  1,000, underestimate it there by about two times.
 - Only primitives deferred: every material of the scene came with its primitive.
 
 **What else follows:**
