@@ -4,7 +4,7 @@ use deno_core::{
     anyhow, error::AnyError, futures::FutureExt, op2, url::form_urlencoded, v8, JsBuffer, OpDecl,
     OpState, ToJsBuffer,
 };
-use deno_web::{BlobStore, InMemoryBlobPart};
+use deno_web::{BlobStore, InMemoryBlobPart, TimersPermission};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -37,6 +37,7 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_blob_remove_part(),
         op_blob_create_object_url(),
         op_encoding_encode_into(),
+        op_now(),
         // deno_net: registered because deno_fetch's JS imports its TLS module, never used.
         op_net_listen_tcp(),
         op_net_listen_udp(),
@@ -465,6 +466,22 @@ fn op_encoding_encode_into(
     ) as u32;
     out_buf[0] = nchars as u32;
     Ok(())
+}
+
+/// performance.now: writes whole seconds and nanoseconds as two native-endian u32s. The
+/// original writes them through the buffer's pointer, which a scene can misalign.
+#[op2(fast)]
+fn op_now(state: &mut OpState, #[buffer] buf: &mut [u8]) {
+    if buf.len() < 8 {
+        return;
+    }
+    let elapsed = state.borrow::<std::time::Instant>().elapsed();
+    let mut nanos = elapsed.subsec_nanos();
+    if !state.borrow_mut::<super::fetch::TP>().allow_hrtime() {
+        nanos -= nanos % 2_000_000;
+    }
+    buf[..4].copy_from_slice(&(elapsed.as_secs() as u32).to_ne_bytes());
+    buf[4..8].copy_from_slice(&nanos.to_ne_bytes());
 }
 
 fn refused() -> AnyError {

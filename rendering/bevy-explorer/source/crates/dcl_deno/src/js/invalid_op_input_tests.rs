@@ -324,6 +324,10 @@ struct Upload {
 /// POSTs the `body` that `setup` declares to a loopback server, which reads it by its
 /// `Content-Length` and answers with the byte count and sum.
 fn upload(setup: &str) -> Upload {
+    upload_from(false, setup)
+}
+
+fn upload_from(is_server: bool, setup: &str) -> Upload {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
 
@@ -367,7 +371,7 @@ fn upload(setup: &str) -> Upload {
             "title".into(),
             false,
             true,
-            false,
+            is_server,
         ));
         state.put(dcl_types::SceneResourceCounters::default());
         state.put(dcl_types::RpcCalls::default());
@@ -417,6 +421,12 @@ fn upload(setup: &str) -> Upload {
         }
         evaluated.await.unwrap();
     });
+    if !server.is_finished() {
+        // nothing reached the server; release its accept
+        if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+            let _ = stream.write_all(b"\r\n");
+        }
+    }
     let (content_length, body) = server.join().unwrap();
     let left_a_stream = state
         .borrow()
@@ -465,6 +475,67 @@ fn a_large_blob_upload_keeps_its_content_length() {
     assert!(!upload.left_a_stream, "the upload left a stream resource behind");
 }
 
+/// A server scene's streamed upload is bounded like its response bodies.
+#[test]
+fn a_server_scene_upload_is_capped() {
+    let stream = |chunks: usize| {
+        format!(
+            r#"
+            let left = {chunks};
+            const body = new ReadableStream({{
+                pull(controller) {{
+                    if (left-- > 0) {{ controller.enqueue(new Uint8Array(1024 * 1024).fill(1)); }} else {{ controller.close(); }}
+                }},
+            }});
+            "#
+        )
+    };
+    let sent = upload_from(true, &stream(3));
+    assert_eq!(sent.outcome, format!("{0} {0}", 3 * 1024 * 1024));
+    let refused = upload_from(true, &stream(11));
+    assert!(refused.outcome.contains("exceeds"), "{}", refused.outcome);
+    assert_eq!(refused.content_length, None, "the server received a request");
+    assert!(!refused.left_a_stream, "the upload left a stream resource behind");
+}
+
+/// Buffers reach serde_v8 without their prototype, so no scene getter runs while an op
+/// argument is decoded.
+#[test]
+fn buffer_arguments_run_no_scene_code() {
+    run_scene(
+        false,
+        r#"
+        const ran = [];
+        for (const key of ["tests", "start", "len"]) {
+            Object.defineProperty(Object.prototype, key, { get() { ran.push(key); return undefined; }, configurable: true });
+        }
+        for (const value of [new Uint8Array(4), new Float64Array(2), new ArrayBuffer(8), new DataView(new ArrayBuffer(4))]) {
+            try { Deno.core.ops.op_log_test_plan(value); } catch {}
+            try { Deno.core.ops.op_blob_slice_part("x", value); } catch {}
+        }
+        if (ran.length > 0) { throw new Error(`scene getters ran: ${ran}`); }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn performance_now_takes_a_misaligned_buffer() {
+    run_scene(
+        false,
+        r#"
+        const bytes = new Uint8Array(9);
+        Deno.core.ops.op_now(bytes.subarray(1));
+        const [seconds, nanos] = new Uint32Array(bytes.slice(1).buffer);
+        if (nanos % 2000000 !== 0 || nanos >= 1e9 || seconds > 60) {
+            throw new Error(`op_now wrote ${seconds} ${nanos}`);
+        }
+        if (!(performance.now() >= 0)) { throw new Error("performance.now broke"); }
+        "#,
+    )
+    .unwrap();
+}
+
 #[test]
 fn open_streams_are_capped_per_runtime() {
     run_scene(
@@ -472,11 +543,18 @@ fn open_streams_are_capped_per_runtime() {
         r#"
         const ops = Deno.core.ops;
         const rids = [];
-        for (let i = 0; i < 256; i++) { rids.push(ops.op_readable_stream_resource_allocate()); }
-        let refused = "";
-        try { ops.op_readable_stream_resource_allocate_sized(1); } catch (e) { refused = String(e); }
-        if (!refused.includes("too many open streams")) { throw new Error(`not refused: ${refused}`); }
-        Deno.core.close(rids.pop());
+        for (let i = 0; i < 255; i++) { rids.push(ops.op_readable_stream_resource_allocate()); }
+        // sinks count too
+        const sink = ops.op_readable_stream_resource_get_sink(rids[0]);
+        for (const call of [
+            () => ops.op_readable_stream_resource_allocate_sized(1),
+            () => ops.op_readable_stream_resource_get_sink(rids[1]),
+        ]) {
+            let refused = "";
+            try { call(); } catch (e) { refused = String(e); }
+            if (!refused.includes("too many open streams")) { throw new Error(`not refused: ${refused}`); }
+        }
+        ops.op_readable_stream_resource_close(sink);
         ops.op_readable_stream_resource_allocate_sized(1);
         "#,
     )
@@ -493,7 +571,7 @@ const SWEEP_SKIPPED: &[(&str, &str)] = &[(
 /// must return, throw or settle a promise: a panic or exit in any op takes the shared
 /// sidecar, and every scene in it, down. Set `DCL_OP_SWEEP_TRACE=1` to log each call
 /// before it is made, which names the op when one aborts the test process.
-fn sweep_client_ops(super_user: bool) {
+fn sweep_ops(super_user: bool, is_server: bool) {
     let kill_flag = dcl_js::KillFlag::default();
     let (mut runtime, _) = create_runtime(false, super_user, "op-sweep", false, kill_flag.clone());
     let (scene_sx, _scene_rx) = dcl_types::scene_response_channel();
@@ -599,9 +677,9 @@ fn sweep_client_ops(super_user: bool) {
     dcl_js::init_state(
         &mut *state.borrow_mut(),
         Default::default(),
-        context(false),
+        context(is_server),
         "op-sweep".to_owned(),
-        SceneJsFile(Arc::new(sweep)),
+        SceneJsFile(Arc::new(sweep.clone())),
         Default::default(),
         dcl_types::SceneResponseSender::new(SceneId::DUMMY, scene_sx),
         renderer_rx,
@@ -610,14 +688,21 @@ fn sweep_client_ops(super_user: bool) {
         Default::default(),
         kill_flag,
     );
+    let sweep_source = sweep;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     rt.block_on(async {
-        runtime
-            .execute_script("<sweep>", ascii_str!("require(\"~scene.js\")"))
-            .unwrap();
+        // the server seals `~scene.js` away from the ops table, so there the sweep runs as a
+        // plain script with the same ops
+        if is_server {
+            runtime.execute_script("<sweep>", sweep_source).unwrap();
+        } else {
+            runtime
+                .execute_script("<sweep>", ascii_str!("require(\"~scene.js\")"))
+                .unwrap();
+        }
         // let async ops settle; ops that wait on an absent renderer or a permission stay pending
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while let Ok(result) =
@@ -629,8 +714,31 @@ fn sweep_client_ops(super_user: bool) {
             }
         }
     });
+    // async ops still settle after the sweep
+    {
+        let _runtime = rt.enter();
+        runtime
+            .execute_script(
+                "<after>",
+                ascii_str!("globalThis.__after = 'pending'; Deno.core.ops.op_void_async().then(() => { __after = 'settled'; });"),
+            )
+            .unwrap();
+    }
+    for _ in 0..100 {
+        rt.block_on(async {
+            let _ = tokio::time::timeout(
+                Duration::from_millis(50),
+                runtime.run_event_loop(Default::default()),
+            )
+            .await;
+        });
+        if eval_string(&mut runtime, "String(globalThis.__after)") == "settled" {
+            break;
+        }
+    }
+    assert_eq!(eval_string(&mut runtime, "String(globalThis.__after)"), "settled");
     let summary = eval_string(&mut runtime, "JSON.stringify(globalThis.__sweep)");
-    eprintln!("op sweep (super_user: {super_user}): {summary}");
+    eprintln!("op sweep (super_user: {super_user}, is_server: {is_server}): {summary}");
     let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(summary["done"], true, "the sweep did not finish: {summary}");
     assert!(
@@ -652,10 +760,15 @@ fn sweep_client_ops(super_user: bool) {
 
 #[test]
 fn every_client_op_survives_junk_arguments() {
-    sweep_client_ops(false);
+    sweep_ops(false, false);
 }
 
 #[test]
 fn every_system_scene_op_survives_junk_arguments() {
-    sweep_client_ops(true);
+    sweep_ops(true, false);
+}
+
+#[test]
+fn every_server_scene_op_survives_junk_arguments() {
+    sweep_ops(false, true);
 }
