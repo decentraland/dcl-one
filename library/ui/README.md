@@ -33,7 +33,7 @@ cd library/ui
 git lfs pull --include "library/ui/foundations/typography/fonts/*.woff2"
 pnpm install --frozen-lockfile
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
-node figma/lock-digests.mjs  # ported tooling and public foundations match their pinned bytes and origins
+node figma/lock-digests.mjs  # ported tooling, foundations and installed components match pinned bytes and origins
 pnpm review                  # Review gallery on http://localhost:6019/dcl-ui-review/
 pnpm review:build --base <BASE>  # static Review; BASE is / (default), ./, or an absolute nested prefix
 pnpm review:check-build      # the built gallery navigates and renders in Chromium
@@ -94,3 +94,5 @@ This tree ships the pinned `9c6dfbe6` capture. Reported live differences in colo
 ### Regenerate foundations
 
 Maintainers run `pnpm figma fetch-source` to materialize the pinned cache, then `pnpm figma install foundations`. This single install boundary regenerates the five families and `source.json`, preserves maintained CSS and licensed assets, and refuses unverified input or dirty targets. For an isolated reproduction, use `pnpm figma install foundations --out ../.agent-work/figma-install/proof/foundations`. Repeating installation makes no changes.
+
+The same command installs the internal and public names in `components/promotion.json`: `pnpm figma install components`. The `components` list controls public visibility; `internal` names are installed without a Figma mapping or a package export. The installer refuses duplicate or unknown names, binds configuration, registry, locked runtime, generator modules, the committed retirement ledger and dependency files before planning, then rechecks those inputs before its atomic publication. An empty registry installs only its name list and generation record, removing retired component and runtime files through the same transaction. Use `--out ../.agent-work/figma-install/proof/components` for a private reproduction. Component installation writes `generation.json` from the emitted plan, and the public component table in the lock pins those bytes and their origins. The offline guard checks byte and module consistency, not live design parity. Structural resolver checks refuse additional package scopes and local dependency lookup roots without requiring installed packages. The installer additionally checks dependency resolution against the sanctioned UI installation before publication; installed dependency contents remain trusted execution inputs, and these checks do not sandbox initial module evaluation. Stylesheet declarations use the same CSS Modules parser as the build, including composed styles, escaped selectors, global selectors and animation exports. NavBar remains internal and its source and semantic-data holds are unchanged.

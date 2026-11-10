@@ -133,6 +133,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   waiting to authenticate, 32 per address, so the excess is refused (codes 8 and 7), and the 10 s
   floor would send every refused client back together again. The Pulse server's documentation
   calls jitter mandatory for those codes.
+- **Scene raycasts are capped only outside the scenes the player is in.** The system scene, every
+  portable and the scenes the player stands in run all their raycasts every frame, with no cap;
+  every other scene shares a tenth of the target frame (1.67 ms at 60 fps, 0.69 ms at 144),
+  nearest scene first, and what does not fit waits for a later frame. unity-explorer instead caps
+  the current scene at 3 ms and runs no other scene's raycasts. We differ because scenes drive
+  frame-sensitive logic from ray results: `movement-scene`, the default avatar movement driver,
+  runs its ground and wall checks on continuous `RS_AVATAR` rays, and for it a slower frame is
+  better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
+  part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag

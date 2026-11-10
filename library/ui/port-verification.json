@@ -1,37 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "69027f87101b0fbe8ac82af10f7de168a1d09a2f49d0d4cb94d606df5ad56daa",
+  "lockHash": "f8d27a5030b279e44c1e691710efdf9399bce7117fb0c1f297e2b9d99587d5e6",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "dbffc0195e2a82e9d511dfc6d91c3a8254a27343",
+  "figmaTree": "bf56735a9eabfba846d59790e93e35a090efcc00",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
+      "detail": "Verified existing 544 cache files against the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "run on this tree: 440 files match the lock, every difference names a code"
+      "detail": "450 tooling pins, 39 foundation origins and 10 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
-      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
+      "detail": "Fresh check passes with 0 public mappings for the internal NavBar"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components and 561 variants"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
+      "detail": "Fresh gallery build passes 19 bounds checks, source control holds remain"
     },
     "install": {
       "result": "pass",
-      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
+      "detail": "Private and canonical installs reproduce 39 foundation and 10 component files with no-op repeats"
     }
   }
 }

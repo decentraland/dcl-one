@@ -209,6 +209,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
+  entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
+  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
+  lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
+  uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
+  capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go
+  to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
+  and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
+  has the options, replies and diagnoses.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
