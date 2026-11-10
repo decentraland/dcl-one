@@ -142,9 +142,12 @@ export function pinnedFiles(lock) {
  * text is not the file, and pinning it would vouch for content nobody hashed.
  */
 export function blobDigests(root, listing) {
-  return Object.fromEntries(
-    Object.entries(readBlobs(root, listing)).map(([file, content]) => [file, sha256(content)])
-  )
+  return digestsOf(readBlobs(root, listing))
+}
+
+/** sha256 of each blob's bytes, keyed like `blobs`. */
+export function digestsOf(blobs) {
+  return Object.fromEntries(Object.entries(blobs).map(([file, content]) => [file, sha256(content)]))
 }
 
 /** The bytes of each blob in `listing`, keyed by repository path, with the same refusals as blobDigests. */

@@ -496,7 +496,18 @@ describe('when deciding which files are port inputs', () => {
     ["new URL('helpers.spec.mjs', import.meta.url)", 'a bare spec basename'],
     ["path.join(dir, 'payload.SPEC.json')", 'a bare spec basename in another case'],
     ["path.join(root, 'fixtures', 'x.json')", 'a bare directory segment'],
-    ["path.join(root, 'Fixtures', 'x.json')", 'a directory segment in another case'],
+    ["path.join(root, 'Fixtures/x.json')", 'a path-like directory segment in another case'],
+    [
+      'new URL(`./test/${name}.json`, import.meta.url)',
+      'an interpolated template into a test root'
+    ],
+    ['readFileSync(`${here}/test/data.json`)', 'an interpolated template with a test segment'],
+    ["x.replace(/'/g, ''); read('./test/a.json')", 'a literal after a regex with a quote'],
+    ["join(here, 'review/test')", 'a test root with no leading dot or trailing slash'],
+    ["'library/ui/figma/test'", 'a repository path to a test root'],
+    ["import.meta.glob('./**/*.ts')", 'a code glob that also loads tests'],
+    ["@import './test/x.css';", 'a CSS import'],
+    ['<script src="../test/main.tsx"></script>', 'an HTML script'],
     ['readFile(`notes/README.md`)', 'a Markdown name in a template literal'],
     ["import notes from './notes.md?raw'", 'a Markdown import with a query'],
     ["import a from './a.md#top'", 'a Markdown import with a fragment'],
@@ -507,17 +518,63 @@ describe('when deciding which files are port inputs', () => {
   })
 
   it('should not flag literals that only look like words', () => {
-    const code = "const label = 'testing'; const re = /test/; run('./src/a.ts'); log('mdx')"
+    const code = [
+      "const label = 'testing'; const re = /test/; run('./src/a.ts'); log('mdx')",
+      "const title = 'Test'; const size = 'spacing.md'; const sizes = 'sm,md,lg'",
+      "const hint = 'see docs/ui-standards.md'; const open = '/*'; const close = '*/'"
+    ].join('\n')
     expect(exemptReferences('library/ui/figma/tool.mjs', code)).toEqual([])
   })
 
-  it('should refuse a validator that imports anything beyond its two bound modules', () => {
+  it('should flag the basename of a tracked exempt Markdown file, and only that one', () => {
+    const blobs = {
+      'library/ui/figma/agent-kit/skills/x/SKILL.md': Buffer.from('# x\n'),
+      'library/ui/figma/tool.mjs': Buffer.from("read(join(dir, 'SKILL.md')); read('NOTES.md')\n")
+    }
+    expect(scanProblems(blobs)).toEqual([
+      'library/ui/figma/tool.mjs names the exempt path "SKILL.md"'
+    ])
+  })
+
+  it('should scan the Figma tooling config, styles and markup, not other JSON', () => {
+    const blobs = {
+      'library/ui/figma/figma.config.json': Buffer.from(
+        '{ "snapshotLock": "./test/fixtures/lock.json" }'
+      ),
+      'library/ui/figma/review/a.css': Buffer.from("@import './../test/x.css';"),
+      'library/ui/figma/tsconfig.json': Buffer.from('{ "exclude": ["test/fixtures"] }')
+    }
+    expect(scanProblems(blobs)).toEqual([
+      'library/ui/figma/figma.config.json names the exempt path "./test/fixtures/lock.json"',
+      'library/ui/figma/review/a.css names the exempt path "./../test/x.css"'
+    ])
+  })
+
+  it('should refuse a validator that loads code or reads an exempt path some other way', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    const problems = (code: string) => scanProblems({ [self]: Buffer.from(code) })
+    expect(problems('const r = await import(`./test/rule.mjs`)\n')).toContain(
+      `${self} imports ./test/rule.mjs`
+    )
+    expect(problems('const req = createRequire(import.meta.url)\n')).toContain(
+      `${self} loads modules with require`
+    )
+    expect(problems("readFileSync(new URL('./test/roots.json', import.meta.url))\n")).toContain(
+      `${self} names the exempt path "./test/roots.json"`
+    )
+    expect(problems("const TEST_ROOTS = ['test/', 'review/test/']\n")).toEqual([])
+  })
+
+  it('should refuse a validator that imports anything beyond its two bound modules and four built-ins', () => {
     const self = 'library/ui/figma/port-verification.mjs'
     const ok = "import { a } from './lock-digests.mjs'\nimport path from 'node:path'\n"
     expect(scanProblems({ [self]: Buffer.from(ok) })).toEqual([])
     expect(
       scanProblems({ [self]: Buffer.from(ok + "import { roots } from './test/rule.mjs'\n") })
-    ).toEqual([`${self} imports ./test/rule.mjs`])
+    ).toEqual([
+      `${self} imports ./test/rule.mjs`,
+      `${self} names the exempt path "./test/rule.mjs"`
+    ])
     expect(scanProblems({ [self]: Buffer.from("const r = await import('./rule.mjs')\n") })).toEqual(
       [`${self} imports ./rule.mjs`]
     )
@@ -543,6 +600,24 @@ describe('when printing the port input hash', () => {
 
     expect(main(['--print-hash'], repo)).toBe(0)
     expect(out.trim()).toBe(expected)
+  })
+
+  it('should exit non-zero instead of printing text for a head with no lock', async () => {
+    await rm(path.join(repo, LOCK))
+    commit('no lock')
+
+    expect(main(['--print-hash'], repo)).toBe(1)
+    expect(out).toContain('there is no hash to print')
+  })
+
+  it.each([
+    [['--print-hash', 'junk', '--head']],
+    [['--base', 'HEAD', 'junk']],
+    [['--head']],
+    [['--print-hash', '--print-hash']],
+    [['--base', 'HEAD', '--base', 'HEAD']]
+  ])('should refuse the arguments %j', (argv) => {
+    expect(main(argv, repo)).toBe(2)
   })
 
   it('should refuse --print-hash together with --base', () => {
