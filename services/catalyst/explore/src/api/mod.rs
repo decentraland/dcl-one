@@ -1,7 +1,7 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the asset-bundle registry reads as a cached upstream
-//! reader ([`registry`]), and four mirrors with a local overlay and a
+//! ([`realm_provider`]), the local asset-bundle registry gateway
+//! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
 //! api.decentraland.org tile grid behind `map.png` ([`map`]), plus the
@@ -67,8 +67,7 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// asset-bundle registry: `POST {registry}/entities/active`, `/profiles`, ...;
-    /// empty reads none.
+    /// Local abgen runtime for Registry conversion reads; empty returns 503.
     pub registry: String,
     /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
     pub map: String,
@@ -81,7 +80,6 @@ impl Sources {
     pub const DEFAULT_LISTS: &str = "https://dcl-lists.decentraland.org";
     pub const DEFAULT_DENYLIST: &str = "https://config.decentraland.org/denylist.json";
     pub const DEFAULT_FEATURE_FLAGS: &str = "https://feature-flags.decentraland.org/explorer.json";
-    pub const DEFAULT_REGISTRY: &str = "https://asset-bundle-registry.decentraland.org";
     pub const DEFAULT_MAP: &str = "https://api.decentraland.org";
     pub const DEFAULT_AB_CDN: &str = ab_cdn::DEFAULT_UPSTREAM;
 
@@ -90,7 +88,7 @@ impl Sources {
             lists: Self::DEFAULT_LISTS.into(),
             denylist: Self::DEFAULT_DENYLIST.into(),
             feature_flags: Self::DEFAULT_FEATURE_FLAGS.into(),
-            registry: Self::DEFAULT_REGISTRY.into(),
+            registry: String::new(),
             map: Self::DEFAULT_MAP.into(),
             ab_cdn: Self::DEFAULT_AB_CDN.into(),
         }
@@ -107,7 +105,10 @@ impl Sources {
                 &config.explore.explorer_feature_flags_source_url,
                 String::new(),
             ),
-            registry: value_or(&config.explore.explorer_registry_source_url, String::new()),
+            registry: value_or(
+                &config.explore.explorer_registry_source_url,
+                Config::non_empty(&config.admin.abgen_admin_url).unwrap_or_default(),
+            ),
             map: value_or(&config.explore.explorer_map_source_url, String::new()),
             ab_cdn: value_or(
                 config.ab_cdn.abgen_upstream_ab_cdn.as_deref().unwrap_or(""),
@@ -160,7 +161,7 @@ pub struct Settings {
     /// one of them is a mirror feeding itself.
     pub own_hosts: Vec<String>,
     /// `EXPLORER_MIRRORS_ENABLED`: whether `spawn_jobs` starts the four
-    /// mirrors. The sources are validated either way (the registry reader
+    /// mirrors. The sources are validated either way (the Registry gateway
     /// uses its on demand).
     pub mirrors_enabled: bool,
     /// What the LAND/Estate metadata's `image` points at (`MAP_IMAGE_BASE_URL`;
@@ -372,6 +373,10 @@ impl Settings {
             if source.is_empty() {
                 continue;
             }
+            if name == "EXPLORER_REGISTRY_SOURCE_URL" {
+                registry::backend_url(source)?;
+                continue;
+            }
             let parsed = self
                 .guarded_url(source)
                 .with_context(|| format!("{name}={source}"))?;
@@ -465,7 +470,6 @@ pub struct State {
     /// Sync status and public URLs for the realm doc; the profiles reader's
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
-    pub registry: registry::Cache,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
     pub flags: feature_flags::Snapshot,
@@ -512,7 +516,6 @@ impl State {
             pool,
             http,
             content,
-            registry: registry::Cache::new(),
             denylist: Arc::default(),
             flags: feature_flags::Snapshot::default(),
             map: map::MapState::new(),

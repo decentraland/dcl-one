@@ -135,12 +135,12 @@ pub struct ExploreConfig {
     #[arg(long, env = "EXPLORE_CORS_ORIGINS", value_delimiter = ',')]
     pub explore_cors_origins: Vec<String>,
 
-    // explore/api: the explorer boot surface (realm provider, asset-bundle
-    // registry reader, dcl-lists, denylist, feature flags, atlas map).
+    // explore/api: the explorer boot surface (realm provider,
+    // local Registry gateway, dcl-lists, denylist, feature flags, atlas map).
     /// Run the four explorer mirrors (lists, denylist, feature flags, tile
     /// grid) against the `EXPLORER_*_SOURCE_URL` sources; off, the routes
-    /// serve what the database holds and the registry reader still reads
-    /// `EXPLORER_REGISTRY_SOURCE_URL` on demand (when set).
+    /// serve what the database holds. The local Registry gateway remains available
+    /// independently when its backend is configured.
     #[arg(long, env = "EXPLORER_MIRRORS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub explorer_mirrors_enabled: bool,
 
@@ -167,9 +167,8 @@ pub struct ExploreConfig {
     #[arg(long, env = "EXPLORER_FEATURE_FLAGS_SOURCE_URL", default_value = "")]
     pub explorer_feature_flags_source_url: String,
 
-    /// The asset-bundle registry `/asset-bundle-registry/entities/*` and
-    /// `/profiles*` read through; empty reads none (no bundle state, empty
-    /// answers).
+    /// Local abgen backend for Registry conversion operations, without caching.
+    /// Defaults to ABGEN_ADMIN_URL; unset returns 503. Profiles use Catalyst directly.
     #[arg(long, env = "EXPLORER_REGISTRY_SOURCE_URL", default_value = "")]
     pub explorer_registry_source_url: String,
 
