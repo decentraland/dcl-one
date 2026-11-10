@@ -1,6 +1,6 @@
 use bevy::{
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
-    pbr::RenderMeshInstances,
+    pbr::{CascadeShadowConfig, RenderMeshInstances},
     prelude::*,
     render::{
         batching::gpu_preprocessing::GpuPreprocessingSupport,
@@ -8,14 +8,16 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{
+    sun_shadow_bias, AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay, SUN_SHADOW_MAP_SIZE,
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
-    CloudCover,
+    CloudCover, ShadowBiasOverride,
 };
 
 const fn toggle(
@@ -56,6 +58,7 @@ pub(super) fn register(app: &mut App) {
     .add_console_command::<LandscapeCommand, _>(landscape_command)
     .add_console_command::<SkyState, _>(sky_state)
     .add_console_command::<RenderView, _>(render_view)
+    .add_console_command::<SunShadows, _>(sun_shadows)
     .add_preview_debug_inputs(DebugSection {
         title: "Landscape",
         query: "/landscape",
@@ -69,6 +72,40 @@ pub(super) fn register(app: &mut App) {
             toggle("Ground", "ground", "/landscape ground {value}"),
             toggle("Trees", "trees", "/landscape trees {value}"),
             toggle("Parcel grass", "grass", "/landscape grass {value}"),
+        ],
+    })
+    .add_debug_section(DebugSection {
+        title: "Sun shadows",
+        query: "/sun_shadows",
+        fields: &[
+            ("Shadow quality", "quality"),
+            ("Shadow distance (m)", "distance"),
+            ("Shadow map size (texels)", "mapSize"),
+            ("Cascade far bounds (m)", "cascades"),
+            ("Bias overridden", "overridden"),
+            (
+                "Shadow quality bias (depth m / normal texels)",
+                "presetBias",
+            ),
+        ],
+        actions: &[("Restore quality bias", "/shadowbias --reset")],
+        inputs: &[
+            slider(
+                "Depth bias (m)",
+                "depthBias",
+                "/shadowbias --depth {value}",
+                0.0,
+                1.0,
+                0.005,
+            ),
+            slider(
+                "Normal bias (texels)",
+                "normalBias",
+                "/shadowbias --normal {value}",
+                0.0,
+                10.0,
+                0.05,
+            ),
         ],
     })
     .add_debug_section(DebugSection {
@@ -221,6 +258,35 @@ fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Re
     if let Some(Ok(_)) = cmd.take() {
         cmd.reply_ok(json!({"hour":time.time / 3600., "cover":(clouds.cover - 0.2) / 0.5, "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());
+    }
+}
+
+/// Read the sun's effective shadow quality, cascades and biases.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/sun_shadows")]
+struct SunShadows;
+
+fn sun_shadows(
+    mut cmd: ConsoleCommand<SunShadows>,
+    config: Res<AppConfig>,
+    bias: Res<ShadowBiasOverride>,
+    sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+) {
+    if let Some(Ok(_)) = cmd.take() {
+        let preset = sun_shadow_bias(config.graphics.shadow_settings);
+        let (depth, normal) = bias.0.unwrap_or(preset);
+        // every sun layer shares one config; read the first that casts shadows
+        let cascades = sun
+            .iter()
+            .find(|(light, _)| light.shadows_enabled)
+            .map(|(_, cascades)| cascades.bounds.clone());
+        cmd.reply_ok(
+            json!({"quality":format!("{:?}", config.graphics.shadow_settings),
+            "distance":config.graphics.shadow_distance, "mapSize":SUN_SHADOW_MAP_SIZE,
+            "cascades":cascades, "overridden":bias.0.is_some(), "presetBias":[preset.0, preset.1],
+            "depthBias":depth, "normalBias":normal})
+            .to_string(),
+        );
     }
 }
 

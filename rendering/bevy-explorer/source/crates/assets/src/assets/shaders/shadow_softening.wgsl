@@ -3,20 +3,14 @@
 // this module must not import view bindings: importing such a module breaks the override
 // ("can't find function shadows::fetch_directional_shadow for redirection"), so callers pass in
 // the shadow distance and the camera distance.
-//
-// unity: URP's main light shadow fade, transcribed from com.unity.render-pipelines.universal:
-// ShadowUtils.GetScaleAndBiasForLinearDistanceFade (Runtime/ShadowUtils.cs), fed the squared
-// shadow distance by MainLightShadowCasterPass.cs, and GetMainLightShadowFade and
-// MixRealtimeAndBakedShadows (ShaderLibrary/Shadows.hlsl).
 
-/// unity: UniversalRenderPipeline - High.asset m_CascadeBorder. URP fades from
-/// `(1 - border) * distance` to the shadow distance, linear in squared camera distance, whatever
-/// the cascade count.
+/// The fraction of the shadow distance the fade spans: shadows fade from `(1 - border) * distance`
+/// to the shadow distance, linear in squared camera distance, whatever the cascade count, so the
+/// shadow ends without a hard edge.
 const CASCADE_BORDER: f32 = 0.7053232;
 
-/// How much of the sun a shadow blocks: 1 is full (Unity's sun, `m_Strength` 1), 0 is none.
-/// Unity's Trilight ambient fills its shadows in; ours is darker, so shadows block 0.65 of the
-/// sun until that ambient lands (see decisions.md).
+/// How much of the sun a shadow blocks: 1 is full, 0 is none. Below 1 so the ambient light we
+/// have now does not leave shadows near black (see decisions.md).
 const SHADOW_OPACITY: f32 = 0.65;
 
 // Soften a directional shadow value from `shadows::fetch_directional_shadow` and fade it to lit

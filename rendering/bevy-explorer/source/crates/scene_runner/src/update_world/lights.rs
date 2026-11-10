@@ -54,6 +54,9 @@ impl Plugin for LightsPlugin {
                 ("SDK lights", "count"),
                 ("Visible SDK lights", "visible"),
                 ("Active shadow casters", "casters"),
+                ("Shadow caster slots", "casterSlots"),
+                ("Shadow caster range from the player (m)", "casterRange"),
+                ("Nearest caster distance (m)", "nearestCaster"),
             ],
             actions: &[],
             inputs: &[
@@ -102,8 +105,9 @@ impl Plugin for LightsPlugin {
 struct LightSwitches {
     lights: bool,
     shadows: bool,
-    /// Lets point lights take shadow caster slots too. Off by default: Unity gives scene shadows
-    /// to spot lights only, so this is a comparison aid for testers, not a setting.
+    /// Lets point lights take shadow caster slots too. Off by default: a point light's shadow
+    /// renders six faces, so scene shadows go to spot lights; this is a tester's aid, not a
+    /// setting.
     point_shadows: bool,
 }
 
@@ -135,21 +139,40 @@ fn set_light_switch(mut cmd: ConsoleCommand<SetLightSwitch>, mut switches: ResMu
 fn light_command(
     mut cmd: ConsoleCommand<LightCommand>,
     switches: Res<LightSwitches>,
-    lights: Query<(&Visibility, Option<&PointLight>, Option<&SpotLight>), With<LightEntity>>,
+    config: Res<AppConfig>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    lights: Query<
+        (
+            &Visibility,
+            &GlobalTransform,
+            Option<&PointLight>,
+            Option<&SpotLight>,
+        ),
+        With<LightEntity>,
+    >,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
+    let player = player.single().ok().map(GlobalTransform::translation);
     let mut visible = 0;
     let mut casters = 0;
-    for (vis, point, spot) in &lights {
+    let mut nearest: Option<f32> = None;
+    for (vis, gt, point, spot) in &lights {
         if *vis != Visibility::Hidden {
             visible += 1;
             if point.is_some_and(|l| l.shadows_enabled) || spot.is_some_and(|l| l.shadows_enabled) {
                 casters += 1;
+                if let Some(player) = player {
+                    let distance = (gt.translation() - player).length();
+                    nearest = Some(nearest.map_or(distance, |n| n.min(distance)));
+                }
             }
         }
     }
     cmd.reply_ok(serde_json::json!({"lights": switches.lights, "shadows": switches.shadows, "pointShadows":switches.point_shadows,
-        "count":lights.iter().len(), "visible":visible, "casters":casters}).to_string());
+        "count":lights.iter().len(), "visible":visible, "casters":casters,
+        "casterSlots":config.graphics.shadow_caster_count, "casterRange":SPOT_SHADOW_MAX_DISTANCE,
+        "nearestCaster":nearest,
+        "unavailable": {"nearestCaster": "no light casts a shadow"}}).to_string());
 }
 
 #[derive(Component, Debug, Default)]
@@ -565,7 +588,7 @@ pub enum LightKind {
     Spot,
 }
 
-/// Entities to give shadows, Unity's LightSourceCullingSystem: spot lights only (point lights
+/// Entities to give shadows: spot lights only (point lights
 /// too with `point_lights`), within SPOT_SHADOW_MAX_DISTANCE of the player, nearest first, at
 /// most `max`.
 pub fn shadow_caster_slots(

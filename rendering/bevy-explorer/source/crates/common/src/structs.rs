@@ -1000,17 +1000,17 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
-    /// unity's Medium: one soft cascade
+    /// one soft cascade
     Low,
-    /// unity's High: four soft cascades
+    /// four soft cascades
     High,
 }
 
-/// unity: Assets/Rendering/UniversalRenderPipeline - High.asset, m_Cascade4Split
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
 pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
-/// unity: QualityPresetsAsset.asset MainShadowResolution (Medium, High)
+/// The sun's shadow map size in texels, per cascade.
 pub const SUN_SHADOW_MAP_SIZE: usize = 1024;
-/// unity: Quality Settings.asset dynamicLights, SpotLightsLods first tier
+/// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
 
@@ -1047,13 +1047,12 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
 /// bevy's default directional depth bias, a world length: the constant floor under the
 /// per-cascade normal bias
 pub const SUN_SHADOW_DEPTH_BIAS: f32 = 0.02;
-/// URP's soft shadow kernel radius, by which `ShadowUtils.GetShadowBias` scales the bias of soft
-/// shadows
+/// The soft shadow filter's kernel radius in texels: the bias must clear the whole kernel, so it
+/// scales the per-texel bias
 const SOFT_SHADOW_KERNEL_RADIUS: f32 = 2.5;
 
 /// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality.
-/// unity: `QualityPresetsAsset.asset` DepthBias 1.75 (Medium) and 1.56 (High) texels of each
-/// cascade, times the soft kernel radius. bevy's depth bias is one world length for every
+/// 1.75 (Low) and 1.56 (High) texels of each cascade, times the soft kernel radius. bevy's depth bias is one world length for every
 /// cascade, so those texels go to its normal bias, the bias bevy scales by each cascade's texel;
 /// the depth bias stays bevy's small default. A depth bias sized from the widest cascade instead
 /// over-biased the near cascades and still let the soft filter's wide kernel shade the ground with
@@ -1989,8 +1988,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sun_shadow_bias_is_unitys_texels() {
-        // Unity's texels times the soft kernel radius, per cascade texel through the normal bias;
+    fn sun_shadow_bias_scales_with_cascade_texels() {
+        // texels times the soft kernel radius, per cascade texel through the normal bias;
         // the depth bias is bevy's small floor, whatever the quality
         assert_eq!(
             sun_shadow_bias(ShadowSetting::Low),
@@ -2004,7 +2003,7 @@ mod tests {
     }
 
     #[test]
-    fn sun_cascades_follow_unity_splits() {
+    fn sun_cascades_split_the_shadow_distance() {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
         assert_eq!(high.minimum_distance, MIN_CASCADE);

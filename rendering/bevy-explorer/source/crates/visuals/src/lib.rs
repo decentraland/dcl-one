@@ -456,13 +456,38 @@ fn shadow_console_command(
 #[derive(Resource, Default)]
 pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
 
-/// set the sun shadow depth bias (world length) and normal bias (texels); no arguments restores
-/// the preset's
+/// Set the sun shadow depth bias (world length) or normal bias (shadow map texels), keeping the
+/// other at its current value; `--reset` restores the shadow quality's biases.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/shadowbias")]
 struct ShadowBiasConsoleCommand {
+    #[arg(long)]
+    depth: Option<f32>,
+    #[arg(long)]
+    normal: Option<f32>,
+    #[arg(long, conflicts_with_all = ["depth", "normal"])]
+    reset: bool,
+}
+
+/// The override after a `/shadowbias` command, or an error for a negative bias.
+fn next_shadow_bias(
+    current: Option<(f32, f32)>,
+    preset: (f32, f32),
     depth: Option<f32>,
     normal: Option<f32>,
+    reset: bool,
+) -> Result<Option<(f32, f32)>, &'static str> {
+    if reset {
+        return Ok(None);
+    }
+    if depth.is_some_and(|d| d < 0.0) || normal.is_some_and(|n| n < 0.0) {
+        return Err("shadow biases cannot be negative");
+    }
+    if depth.is_none() && normal.is_none() {
+        return Ok(current);
+    }
+    let (d, n) = current.unwrap_or(preset);
+    Ok(Some((depth.unwrap_or(d), normal.unwrap_or(n))))
 }
 
 fn shadow_bias_console_command(
@@ -472,14 +497,20 @@ fn shadow_bias_console_command(
 ) {
     if let Some(Ok(command)) = input.take() {
         let preset = sun_shadow_bias(setting.graphics.shadow_settings);
-        bias.0 = command
-            .depth
-            .map(|depth| (depth, command.normal.unwrap_or(preset.1)));
-        let (depth, normal) = bias.0.unwrap_or(preset);
-        input.reply_ok(format!(
-            "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
-            preset.0, preset.1
-        ));
+        match next_shadow_bias(bias.0, preset, command.depth, command.normal, command.reset) {
+            Ok(next) => {
+                // only write when it changes, so a query does not rewrite the lights
+                if bias.0 != next {
+                    bias.0 = next;
+                }
+                let (depth, normal) = next.unwrap_or(preset);
+                input.reply_ok(format!(
+                    "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
+                    preset.0, preset.1
+                ));
+            }
+            Err(error) => input.reply_failed(error),
+        }
     }
 }
 
@@ -866,5 +897,34 @@ fn bloom_console_command(
         };
         bloom.intensity = command.intensity;
         input.reply_ok(format!("bloom intensity: {}", command.intensity));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_shadow_bias;
+
+    #[test]
+    fn shadow_bias_flags_change_one_bias_at_a_time() {
+        let preset = (0.02, 4.375);
+        // one flag keeps the other bias, from the preset or from an earlier override
+        assert_eq!(
+            next_shadow_bias(None, preset, Some(0.05), None, false),
+            Ok(Some((0.05, 4.375)))
+        );
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 4.375)), preset, None, Some(1.0), false),
+            Ok(Some((0.05, 1.0)))
+        );
+        // no flag only reports; reset drops the override
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 1.0)), preset, None, None, false),
+            Ok(Some((0.05, 1.0)))
+        );
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 1.0)), preset, None, None, true),
+            Ok(None)
+        );
+        assert!(next_shadow_bias(None, preset, Some(-0.1), None, false).is_err());
     }
 }

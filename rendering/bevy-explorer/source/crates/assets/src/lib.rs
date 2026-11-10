@@ -39,12 +39,12 @@ mod test {
     }
 
     #[test]
-    fn shadow_fade_matches_urp() {
+    fn shadow_fade_and_opacity() {
         for expression in [
             "const CASCADE_BORDER: f32 = 0.7053232;",
             "let fade_near = (1.0 - CASCADE_BORDER) * far;",
             "saturate((dist2 - fade_near * fade_near) / (far * far - fade_near * fade_near))",
-            // shadows block 0.65 of the sun until Unity's ambient lands (decisions.md)
+            // shadows block 0.65 of the sun (decisions.md)
             "const SHADOW_OPACITY: f32 = 0.65;",
             "let softened = mix(1.0, base, SHADOW_OPACITY);",
             "return mix(softened, 1.0, fade);",

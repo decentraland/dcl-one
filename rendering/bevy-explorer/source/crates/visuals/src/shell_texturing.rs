@@ -714,8 +714,8 @@ impl<B: Bundle + Clone> SpawnableList<ChildOf> for ParcelGrassShellSpawnList<B> 
 mod test {
     use super::*;
 
-    /// Every shader that lights a surface fades the sun shadow out towards the shadow distance,
-    /// as URP does. One without the override cuts the shadow off hard at the distance, and
+    /// Every shader that lights a surface fades the sun shadow out towards the shadow distance.
+    /// One without the override cuts the shadow off hard at the distance, and
     /// receivers side by side (ground and grass, a face and its body) disagree.
     #[test]
     fn every_lit_shader_fades_the_sun_shadow() {
