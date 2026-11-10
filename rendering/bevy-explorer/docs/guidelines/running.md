@@ -130,8 +130,8 @@ For the distributable, run `make web` in repository-root `apps/bevy-explorer`
 does not start a dev server. `make web-dev` skips wasm optimization. Import the artifact
 with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web` from the
 repository root, then follow the root README to run Sites. Sites serves it under `/play`
-with its own HUD, `apps/ui3/src/play`; see `rendering/bevy-explorer/README.md` for how that
-copy tracks `react-web`. Full DevTools logging needs DevTools open before the page loads.
+with its HUD host, `apps/ui3/src/play`, which runs the same shared HUD as `react-web`; see
+`rendering/bevy-explorer/README.md` for what each host keeps. Full DevTools logging needs DevTools open before the page loads.
 The engine console lives in the app iframe.
 
 ## Headless
