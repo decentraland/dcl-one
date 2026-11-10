@@ -66,6 +66,10 @@ pub const DISABLED_OPS: &[&str] = &[
     "op_broadcast_free",
     "op_broadcast_send",
     "op_broadcast_recv",
+    // CompressionStream is not installed for scenes, and decompression output is unbounded
+    "op_compression_new",
+    "op_compression_write",
+    "op_compression_finish",
 ];
 
 #[op2(fast)]
@@ -233,32 +237,25 @@ fn op_eval_context<'s>(
         false,
         None,
     );
-    let out = v8::Array::new(scope, 2);
     let null: v8::Local<v8::Value> = v8::null(scope).into();
     v8::tc_scope!(let scope, scope);
     let (result, is_compile_error) = match v8::Script::compile(scope, source, Some(&origin)) {
         Some(script) => (script.run(scope), false),
         None => (None, true),
     };
+    // arrays built from their elements, so no setter scene code put on Array.prototype runs
     if let Some(result) = result {
-        out.set_index(scope, 0, result);
-        out.set_index(scope, 1, null);
-        return Ok(out.into());
+        return Ok(v8::Array::new_with_elements(scope, &[result, null]).into());
     }
     if scope.has_terminated() {
         scope.rethrow();
         return Ok(null);
     }
     let thrown = scope.exception().unwrap_or(null);
-    let error = v8::Array::new(scope, 3);
-    error.set_index(scope, 0, thrown);
-    let is_native_error = v8::Boolean::new(scope, thrown.is_native_error());
-    error.set_index(scope, 1, is_native_error.into());
-    let is_compile_error = v8::Boolean::new(scope, is_compile_error);
-    error.set_index(scope, 2, is_compile_error.into());
-    out.set_index(scope, 0, null);
-    out.set_index(scope, 1, error.into());
-    Ok(out.into())
+    let is_native_error = v8::Boolean::new(scope, thrown.is_native_error()).into();
+    let is_compile_error = v8::Boolean::new(scope, is_compile_error).into();
+    let error = v8::Array::new_with_elements(scope, &[thrown, is_native_error, is_compile_error]);
+    Ok(v8::Array::new_with_elements(scope, &[null, error.into()]).into())
 }
 
 // MessageChannel is not installed for scenes, and the original deserializes its message
@@ -434,6 +431,21 @@ struct SliceOptions {
     len: usize,
 }
 
+/// Parts are freed only after V8 collects their Blobs, and V8 does not see their bytes: report
+/// them, and when the store is full collect now, so the parts the scene dropped are freed by
+/// its next turn.
+fn account_blob_memory<T>(
+    scope: &mut v8::PinScope,
+    store: &CappedBlobStore,
+    inserted: Result<T, AnyError>,
+) -> Result<T, AnyError> {
+    scope.adjust_amount_of_external_allocated_memory(store.take_external_change());
+    if inserted.is_err() {
+        scope.low_memory_notification();
+    }
+    inserted
+}
+
 fn capped_store(state: &OpState) -> Result<Arc<CappedBlobStore>, AnyError> {
     state
         .try_borrow::<Arc<CappedBlobStore>>()
@@ -443,11 +455,16 @@ fn capped_store(state: &OpState) -> Result<Arc<CappedBlobStore>, AnyError> {
 
 #[op2]
 #[string]
-fn op_blob_create_part(state: &mut OpState, #[buffer] data: JsBuffer) -> Result<String, OpError> {
+fn op_blob_create_part(
+    scope: &mut v8::PinScope,
+    state: &mut OpState,
+    #[buffer] data: JsBuffer,
+) -> Result<String, OpError> {
     let store = capped_store(state)?;
     let id = store.try_insert_with(data.len(), || {
         Arc::new(InMemoryBlobPart::from(data.to_vec()))
-    })?;
+    });
+    let id = account_blob_memory(scope, &store, id)?;
     Ok(id.to_string())
 }
 
@@ -459,19 +476,24 @@ struct ClonedPart {
 
 #[op2]
 #[serde]
-fn op_blob_clone_part(state: &mut OpState, #[string] id: &str) -> Result<ClonedPart, OpError> {
+fn op_blob_clone_part(
+    scope: &mut v8::PinScope,
+    state: &mut OpState,
+    #[string] id: &str,
+) -> Result<ClonedPart, OpError> {
     let store = capped_store(state)?;
     let part = store
         .get_part(&blob_part_id(id)?)
         .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
     let size = part.size();
-    let uuid = store.try_insert_shared(part)?.to_string();
+    let uuid = account_blob_memory(scope, &store, store.try_insert_shared(part))?.to_string();
     Ok(ClonedPart { uuid, size })
 }
 
 #[op2]
 #[string]
 fn op_blob_slice_part(
+    scope: &mut v8::PinScope,
     state: &mut OpState,
     #[string] id: &str,
     #[scoped] options: Plain<SliceOptions>,
@@ -489,8 +511,8 @@ fn op_blob_slice_part(
         .ok_or_else(|| anyhow::anyhow!("Blob part is not in memory"))?;
     let id = store.try_insert_with(len, || {
         Arc::new(InMemoryBlobPart::from(bytes[start..start + len].to_vec()))
-    })?;
-    Ok(id.to_string())
+    });
+    Ok(account_blob_memory(scope, &store, id)?.to_string())
 }
 
 #[op2]

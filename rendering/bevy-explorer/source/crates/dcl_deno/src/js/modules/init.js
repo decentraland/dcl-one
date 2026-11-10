@@ -10,6 +10,12 @@ import { internals } from "ext:core/mod.js";
 // reference, and it hands it out only to `~system/*` modules -- never to scene code.
 const denoRef = Deno;
 
+// Scene code can replace any built-in it can reach, so `require` uses only these copies,
+// taken before the scene runs, on the paths that touch `denoRef`.
+import { primordials } from "ext:core/mod.js";
+const { ReflectApply, StringPrototypeCharCodeAt, StringPrototypeSlice } = primordials;
+const { op_eval_context: opEvalContext, op_require: opRequire } = denoRef.core.ops;
+
 // The scene bundle is untrusted code that runs in THIS realm, so every global reachable
 // here is reachable from it -- including the raw ops table, which is the whole API surface
 // with none of the checks the `~system/*` wrappers apply. Drop the routes to it just
@@ -46,14 +52,32 @@ function sealRealm() {
 // note that decentraland examples use ESM syntax which deno_core does support,
 // so i haven't gone very deep into making full support work.
 // this is a very simplified version of the deno_std/node `createRequire` implementation.
+// Drops a leading `#!` line, which is only valid at the very start of a script.
+function stripHashbang(source) {
+    if (StringPrototypeCharCodeAt(source, 0) !== 0x23 || StringPrototypeCharCodeAt(source, 1) !== 0x21) {
+        return source;
+    }
+    for (let i = 2; i < source.length; i++) {
+        const c = StringPrototypeCharCodeAt(source, i);
+        if (c === 0x0a) {
+            return StringPrototypeSlice(source, i + 1);
+        }
+        if (c === 0x0d || c === 0x2028 || c === 0x2029) {
+            return source;
+        }
+    }
+    return source;
+}
+
 function require(moduleName) {
+    moduleName = `${moduleName}`;
     // dynamically load the module source
-    var source = denoRef.core.ops.op_require(moduleName);
+    var source = opRequire(moduleName);
 
     // create a wrapper for the imported script
-    source = source.replace(/^#!.*?\n/, "");
-    const head = "(function (exports, require, module, __filename, __dirname, Deno) { (function (exports, require, module, __filename, __dirname, Deno) {";
-    const foot = "\n}).call(this, exports, require, module, __filename, __dirname, Deno); })";
+    source = stripHashbang(source);
+    const head = "(function (exports, require, module, __filename, __dirname, Deno) {";
+    const foot = "\n})";
     source = `${head}${source}${foot}`;
 
     // the scene bundle is the untrusted one; everything else here is ours. Hiding the
@@ -64,10 +88,12 @@ function require(moduleName) {
         sealRealm();
     }
 
-    const [wrapped, err] = denoRef.core.evalContext(source, "file://${moduleName}");
-    if (err) {
-        throw err.thrown;
+    // [result, null] or [null, [thrown, isNativeError, isCompileError]]
+    const evaluated = opEvalContext(source, `file://${moduleName}`);
+    if (evaluated[1]) {
+        throw evaluated[1][0];
     }
+    const wrapped = evaluated[0];
 
     // create minimal context for the execution
     var module = {
@@ -75,15 +101,14 @@ function require(moduleName) {
     };
     // call the script
     // note: `require` function base path would need to be updated for proper support
-    wrapped.call(
-        module.exports,             // this
-        module.exports,             // exports
-        require,                    // require
-        module,                     // module
-        moduleName.substring(1),    // __filename
-        moduleName.substring(0, 1), // __dirname
-        hideInternals ? undefined : denoRef // Deno
-    );
+    ReflectApply(wrapped, module.exports, [
+        module.exports,                      // exports
+        require,                             // require
+        module,                              // module
+        StringPrototypeSlice(moduleName, 1),    // __filename
+        StringPrototypeSlice(moduleName, 0, 1), // __dirname
+        hideInternals ? undefined : denoRef, // Deno
+    ]);
 
     return module.exports;
 }
@@ -253,7 +278,7 @@ Object.defineProperties(dateTimeFormat, {
         get() {
             let bound = boundFormats.get(this);
             if (bound === undefined) {
-                const format = nativeFormat.call(this);
+                const format = ReflectApply(nativeFormat, this, []);
                 bound = (date) => format(orNow(date));
                 boundFormats.set(this, bound);
             }
@@ -263,7 +288,7 @@ Object.defineProperties(dateTimeFormat, {
     },
     formatToParts: {
         value: function formatToParts(date) {
-            return nativeFormatToParts.call(this, orNow(date));
+            return ReflectApply(nativeFormatToParts, this, [orNow(date)]);
         },
         writable: true,
         configurable: true,
@@ -281,18 +306,23 @@ if (typeof Temporal === "object") {
     const toPlainTime = ZonedDateTime.toPlainTime;
     const instant = () => fromEpochMilliseconds(coarseNow());
     const zoned = (timeZone) =>
-        toZonedDateTimeISO.call(instant(), timeZone === undefined ? timeZoneId() : timeZone);
+        ReflectApply(toZonedDateTimeISO, instant(), [timeZone === undefined ? timeZoneId() : timeZone]);
     const methods = {
         instant,
         zonedDateTimeISO: zoned,
-        plainDateTimeISO: (timeZone) => toPlainDateTime.call(zoned(timeZone)),
-        plainDateISO: (timeZone) => toPlainDate.call(zoned(timeZone)),
-        plainTimeISO: (timeZone) => toPlainTime.call(zoned(timeZone)),
+        plainDateTimeISO: (timeZone) => ReflectApply(toPlainDateTime, zoned(timeZone), []),
+        plainDateISO: (timeZone) => ReflectApply(toPlainDate, zoned(timeZone), []),
+        plainTimeISO: (timeZone) => ReflectApply(toPlainTime, zoned(timeZone), []),
     };
     for (const [name, method] of Object.entries(methods)) {
         Object.defineProperty(Now, name, { value: method, writable: true, configurable: true });
     }
 }
+
+// deno_core's wasm streaming handler needs a JS callback the runtime never registers, and
+// scenes have no use for streaming compilation.
+delete WebAssembly.compileStreaming;
+delete WebAssembly.instantiateStreaming;
 
 // Native super-user bridge transport. The web super-user scene gets a real BroadcastChannel from the
 // browser; native deno has none, so expose one backed by host ops (op_bridge_to_page + the page->scene

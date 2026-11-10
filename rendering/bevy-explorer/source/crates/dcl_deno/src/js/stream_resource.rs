@@ -28,13 +28,16 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_readable_stream_resource_write_error(),
         op_readable_stream_resource_close(),
         op_readable_stream_resource_await_close(),
+        op_read_all(),
     ]
 }
 
 const MAX_BUFFERED_CHUNKS: usize = 1024;
 const MAX_BUFFERED_BYTES: usize = 64 * 1024;
-// a pending `op_read_all` holds up to 64 KiB of native memory per stream
+// streams and their sinks together; each buffers up to MAX_BUFFERED_BYTES
 const MAX_OPEN_STREAMS: usize = 256;
+// a stream's producer is scene code, so reading one to its end stops here
+const MAX_READ_ALL_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 struct Channel {
@@ -145,6 +148,20 @@ struct OpenStreams(Rc<Cell<usize>>);
 
 struct OpenStream(OpenStreams);
 
+impl OpenStream {
+    fn open(state: &mut OpState) -> Result<Self, AnyError> {
+        if !state.has::<OpenStreams>() {
+            state.put(OpenStreams::default());
+        }
+        let open = state.borrow::<OpenStreams>().clone();
+        if open.0.get() >= MAX_OPEN_STREAMS {
+            return Err(type_error("too many open streams"));
+        }
+        open.0.set(open.0.get() + 1);
+        Ok(Self(open))
+    }
+}
+
 impl Drop for OpenStream {
     fn drop(&mut self) {
         let count = &self.0 .0;
@@ -163,21 +180,14 @@ struct ReadableStreamResource {
 
 impl ReadableStreamResource {
     fn add(state: &mut OpState, length: Option<u64>) -> Result<ResourceId, AnyError> {
-        if !state.has::<OpenStreams>() {
-            state.put(OpenStreams::default());
-        }
-        let open = state.borrow::<OpenStreams>().clone();
-        if open.0.get() >= MAX_OPEN_STREAMS {
-            return Err(type_error("too many open streams"));
-        }
-        open.0.set(open.0.get() + 1);
+        let open = OpenStream::open(state)?;
         Ok(state.resource_table.add(Self {
             channel: Default::default(),
             read_queue: Default::default(),
             cancel_handle: Default::default(),
             completion: Default::default(),
             length,
-            _open: OpenStream(open),
+            _open: open,
         }))
     }
 
@@ -232,7 +242,7 @@ impl Drop for ReadableStreamResource {
 }
 
 /// The producer's handle on a stream's channel.
-struct ReadableStreamSink(Rc<RefCell<Channel>>);
+struct ReadableStreamSink(Rc<RefCell<Channel>>, #[allow(dead_code)] OpenStream);
 
 impl Resource for ReadableStreamSink {
     fn name(&self) -> Cow<'_, str> {
@@ -280,7 +290,8 @@ fn op_readable_stream_resource_get_sink(
         .get::<ReadableStreamResource>(rid)?
         .channel
         .clone();
-    Ok(state.resource_table.add(ReadableStreamSink(channel)))
+    let open = OpenStream::open(state)?;
+    Ok(state.resource_table.add(ReadableStreamSink(channel, open)))
 }
 
 #[op2]
@@ -352,4 +363,41 @@ fn op_readable_stream_resource_await_close(
             Poll::Pending
         }
     })
+}
+
+/// Takes the stream the fetch JS made for an upload body; any other resource is refused.
+pub(crate) fn take_upload(
+    state: &mut OpState,
+    rid: ResourceId,
+) -> Result<Rc<dyn Resource>, AnyError> {
+    Ok(state.resource_table.take::<ReadableStreamResource>(rid)?)
+}
+
+/// deno_core's `op_read_all`, stopping a scene-fed stream at [`MAX_READ_ALL_BYTES`]. Other
+/// resources it reads, such as fetch response bodies, are already in memory.
+#[op2]
+#[buffer]
+async fn op_read_all(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: ResourceId,
+) -> Result<Vec<u8>, OpError> {
+    let (resource, cap) = {
+        let state = state.borrow();
+        let cap = match state.resource_table.get::<ReadableStreamResource>(rid) {
+            Ok(_) => MAX_READ_ALL_BYTES,
+            Err(_) => usize::MAX,
+        };
+        (state.resource_table.get_any(rid)?, cap)
+    };
+    let mut out = Vec::new();
+    loop {
+        let chunk = resource.clone().read(64 * 1024).await?;
+        if chunk.is_empty() {
+            return Ok(out);
+        }
+        if out.len().saturating_add(chunk.len()) > cap {
+            return Err(type_error(format!("stream is larger than {cap} bytes")).into());
+        }
+        out.extend_from_slice(&chunk);
+    }
 }

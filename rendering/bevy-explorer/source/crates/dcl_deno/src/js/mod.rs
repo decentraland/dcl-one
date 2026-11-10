@@ -34,16 +34,45 @@ pub mod fetch;
 mod hardened_ops;
 #[cfg(feature = "inspect")]
 pub mod inspector;
+mod isolate_hooks;
 pub mod op_wrappers;
 mod plain;
 mod sources;
 mod stream_resource;
 pub mod websocket;
 
+/// What one scene's isolate may hold. Every scene runs in its own isolate on its own thread
+/// in a shared sidecar, so these bound one scene and keep a runaway or hostile scene from
+/// taking the process, and every other scene, down with it.
+#[derive(Clone, Copy)]
+pub(crate) struct SceneMemory {
+    /// The V8 heap; past it the scene is terminated.
+    pub heap: usize,
+    /// ArrayBuffer backing stores, which live outside the heap; past it an allocation fails,
+    /// and V8 may end the scene as it does at the heap cap.
+    pub array_buffers: usize,
+}
+
+impl SceneMemory {
+    pub const DEFAULT: Self = Self {
+        heap: 512 * 1024 * 1024,
+        array_buffers: 512 * 1024 * 1024,
+    };
+}
+
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
     kill_flag: KillFlag,
+) -> (JsRuntime, Option<InspectorServer>) {
+    create_runtime_with(inspect, super_user, kill_flag, SceneMemory::DEFAULT)
+}
+
+pub(crate) fn create_runtime_with(
+    inspect: bool,
+    super_user: bool,
+    kill_flag: KillFlag,
+    memory: SceneMemory,
 ) -> (JsRuntime, Option<InspectorServer>) {
     #[cfg(test)]
     crate::test_platform();
@@ -139,11 +168,11 @@ pub fn create_runtime(
         ..Default::default()
     };
 
-    // Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so
-    // a cap here bounds ONE scene's memory and stops a single runaway/hostile scene from
-    // OOM-killing the shared sidecar (and every co-tenant scene with it). The near-limit
-    // callback below terminates just that isolate instead of aborting the process.
-    const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+    // The heap cap's near-limit callback below terminates just this isolate instead of
+    // aborting the process. Memory that ops hold natively (Blob parts, stream buffers, fetch
+    // bodies) is bounded by their own caps.
+    let (array_buffer_allocator, array_buffers) =
+        isolate_hooks::array_buffer_allocator(memory.array_buffers);
 
     // create runtime
     #[allow(unused_mut)]
@@ -151,16 +180,20 @@ pub fn create_runtime(
         extensions: vec![webidl, web, fetch_ext, ext],
         inspector: inspect,
         create_params: Some(
-            deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
+            deno_core::v8::CreateParams::default()
+                .heap_limits(0, memory.heap)
+                .array_buffer_allocator(array_buffer_allocator.make_shared()),
         ),
         ..Default::default()
     });
+    isolate_hooks::install(runtime.v8_isolate());
 
     {
         let state = runtime.op_state();
         let mut state = state.borrow_mut();
         state.put(hardened_ops::take_timer_origin());
         state.put(blob_store);
+        state.put(array_buffers);
     }
 
     {
@@ -192,10 +225,13 @@ pub fn create_runtime(
     {
         let terminate_handle = runtime.v8_isolate().thread_safe_handle();
         let granted = std::sync::atomic::AtomicBool::new(false);
+        let heap_cap = memory.heap;
         runtime.add_near_heap_limit_callback(move |current, _initial| {
             let first_trip = !granted.swap(true, std::sync::atomic::Ordering::SeqCst);
             if first_trip {
-                bevy::prelude::error!("scene exceeded its {MAX_SCENE_HEAP_BYTES}-byte heap cap; terminating the scene isolate");
+                bevy::prelude::error!(
+                    "scene exceeded its {heap_cap}-byte heap cap; terminating the scene isolate"
+                );
             }
             // termination alone only unwinds the current js: the heap stays rooted by the
             // scene globals and the scene loop keeps ticking through uncaught errors, so it
@@ -203,14 +239,15 @@ pub fn create_runtime(
             // drops the runtime and actually releases the heap.
             kill_flag.kill();
             terminate_handle.terminate_execution();
-            if first_trip {
-                // one-time margin so the termination unwind can run rather than hard-aborting
-                current + 8 * 1024 * 1024
-            } else {
-                // kill already latched: stop re-granting, so a scene that keeps allocating
-                // through termination can't ratchet the cap upward on every callback
-                current
-            }
+            // Each trip grants room for the allocation in flight, so termination can run
+            // instead of V8 aborting on it, up to a ceiling the scene cannot raise. A single
+            // allocation larger than the room left under the ceiling still aborts.
+            const TRIP_MARGIN: usize = 128 * 1024 * 1024;
+            let ceiling = heap_cap.saturating_mul(2);
+            current
+                .saturating_add(TRIP_MARGIN)
+                .min(ceiling)
+                .max(current)
         });
     }
 
@@ -696,6 +733,9 @@ mod tests {
     mod runtime_surface {
         include!("runtime_surface_tests.rs");
     }
+    mod isolate_hooks {
+        include!("isolate_hooks_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
@@ -876,6 +916,72 @@ mod tests {
             if (typeof require("~system/Runtime").readFile !== "function") {
                 throw new Error("Runtime did not load");
             }
+            "#,
+        )
+        .unwrap();
+    }
+
+    /// The server seal does not depend on built-ins scene code can replace: `require` hands
+    /// the internals to `~system/*` modules without passing them through any of them.
+    #[test]
+    fn the_seal_holds_when_the_scene_replaces_builtins() {
+        run_scene(
+            true,
+            r#"
+            const RA = Reflect.apply;
+            const reached = [];
+            const internal = (v) => {
+                if (v === null || (typeof v !== "object" && typeof v !== "function")) { return false; }
+                return "core" in v || "ops" in v
+                    || (typeof v.name === "string" && v.name.startsWith("op_"));
+            };
+            const check = (self, args) => {
+                if (internal(self)) { reached.push("this"); }
+                for (let i = 0; i < args.length; i++) {
+                    if (internal(args[i])) { reached.push(`argument ${i}`); }
+                }
+            };
+            const wrap = (target, key) => {
+                const original = target[key];
+                target[key] = function (...args) {
+                    check(this, args);
+                    return RA(original, this, args);
+                };
+            };
+            const bind = Function.prototype.bind;
+            Function.prototype.call = function (self, ...args) {
+                check(self, args);
+                return RA(this, self, args);
+            };
+            Function.prototype.apply = function (self, args) {
+                check(self, args || []);
+                return RA(this, self, args || []);
+            };
+            Function.prototype.bind = function (self, ...args) {
+                check(self, args);
+                return RA(bind, this, [self].concat(args));
+            };
+            Reflect.apply = function (f, self, args) {
+                check(self, args);
+                return RA(f, self, args);
+            };
+            const iterator = Array.prototype[Symbol.iterator];
+            Array.prototype[Symbol.iterator] = function () {
+                check(this, this);
+                return RA(iterator, this, []);
+            };
+            wrap(String.prototype, "replace");
+            wrap(String.prototype, "substring");
+            wrap(RegExp.prototype, Symbol.replace);
+            wrap(RegExp.prototype, "exec");
+
+            const engine = require("~system/EngineApi");
+            const testing = require("~system/Testing");
+            if (typeof engine.crdtSendToRenderer !== "function" || typeof testing.plan !== "function") {
+                throw new Error("a system module did not load");
+            }
+            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
+            if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
             "#,
         )
         .unwrap();

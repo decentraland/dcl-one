@@ -120,7 +120,7 @@ pub fn op_fetch(
         (false, _, _) => (None, None),
         (true, Some(data), _) => (Some(data.to_vec()), None),
         (true, None, Some(rid)) => {
-            let body = state.resource_table.take_any(rid)?;
+            let body = crate::js::stream_resource::take_upload(state, rid)?;
             (None, Some(ResourceToBodyAdapter::new(body)))
         }
         (true, None, None) => return Err(type_error("missing fetch body").into()),

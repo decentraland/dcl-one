@@ -2,17 +2,18 @@ use super::{context, create_runtime, fetch_outcome, recording_redirect_servers, 
 use deno_core::JsRuntime;
 use std::time::{Duration, Instant};
 
-static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
+thread_local! {
+    // a scene's ops and timers run on its own thread, as in the sidecar
+    static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap()
-});
+        .unwrap();
+}
 
 /// Scripts run inside a tokio runtime, as in the scene thread: timers schedule on it.
 fn eval(runtime: &mut JsRuntime, script: String) -> Result<String, String> {
-    let _guard = RT.enter();
+    let handle = RT.with(|rt| rt.handle().clone());
+    let _guard = handle.enter();
     let value = runtime
         .execute_script("<test>", script)
         .map_err(|e| e.to_string())?;
@@ -34,13 +35,13 @@ fn client_runtime() -> JsRuntime {
 }
 
 fn run_event_loop(runtime: &mut JsRuntime) {
-    RT.block_on(async {
+    RT.with(|rt| rt.block_on(async {
         tokio::time::timeout(
             Duration::from_secs(5),
             runtime.run_event_loop(Default::default()),
         )
         .await
-    })
+    }))
     .expect("event loop did not settle")
     .unwrap();
 }

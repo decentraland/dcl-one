@@ -26,6 +26,8 @@ struct Parts {
     /// How many ids hold each distinct part, keyed by its address.
     holders: HashMap<usize, usize>,
     bytes: usize,
+    /// `bytes` as last reported to V8.
+    reported: usize,
 }
 
 fn address(part: &Part) -> usize {
@@ -80,6 +82,14 @@ impl CappedBlobStore {
             return Err(full(&parts, self.cap));
         }
         Ok(parts.insert(part()))
+    }
+
+    /// The change in stored bytes since the last call, for V8's external memory count.
+    pub fn take_external_change(&self) -> i64 {
+        let mut parts = self.parts();
+        let change = parts.bytes as i64 - parts.reported as i64;
+        parts.reported = parts.bytes;
+        change
     }
 
     /// Stores `part` under another id; it counts against the cap only if it is not stored yet.
