@@ -9,14 +9,15 @@
 use axum::Json;
 use axum::http::{
     StatusCode,
-    header::{CONNECTION, RETRY_AFTER},
+    header::{CONNECTION, CONTENT_TYPE, RETRY_AFTER},
 };
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
 use crate::shared::identity::AuthorityNotEstablished;
 
-use super::js_json::AjvError;
+use super::js::JsString;
+use super::js_json::{AjvError, write_js_string};
 
 pub use crate::comms::worlds_envelope::SIGNED_FETCH_MESSAGE;
 
@@ -78,7 +79,7 @@ pub enum ApiError {
     /// the ajv errors).
     #[error("{message}")]
     InvalidBody {
-        message: String,
+        message: JsString,
         data: Option<Vec<AjvError>>,
     },
 
@@ -212,12 +213,16 @@ impl IntoResponse for ApiError {
                 return (status, Json(body)).into_response();
             }
             ApiError::InvalidBody { message, data } => {
-                let body = ValidatorBody {
-                    ok: false,
-                    message,
-                    data: data.as_deref(),
-                };
-                return (status, Json(body)).into_response();
+                // Written by hand: V8's message can hold a lone surrogate,
+                // which `JSON.stringify` escapes and a Rust string cannot.
+                let mut body = String::from(r#"{"ok":false,"message":"#);
+                write_js_string(&mut body, &message.units());
+                if let Some(data) = data {
+                    body.push_str(r#","data":"#);
+                    body.push_str(&serde_json::to_string(data).unwrap_or_else(|_| "[]".into()));
+                }
+                body.push('}');
+                return (status, [(CONTENT_TYPE, "application/json")], body).into_response();
             }
             ApiError::Unavailable(m) | ApiError::Misconfigured(m) => {
                 ErrorBody::labeled("Service Unavailable", m)
@@ -323,6 +328,14 @@ mod tests {
             body_of(resp).await,
             json!({ "ok": false, "message": "Unexpected end of JSON input" })
         );
+        let resp = ApiError::InvalidBody {
+            message: JsString::from_units(vec![0x27, 0xd83d, 0x27]),
+            data: None,
+        }
+        .into_response();
+        assert_eq!(resp.headers()[CONTENT_TYPE], "application/json");
+        let raw = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&raw[..], br#"{"ok":false,"message":"'\ud83d'"}"#);
         let resp = ApiError::LengthRequired("x".into()).into_response();
         assert_eq!(resp.status(), StatusCode::LENGTH_REQUIRED);
         assert_eq!(resp.headers()[CONNECTION], "close");

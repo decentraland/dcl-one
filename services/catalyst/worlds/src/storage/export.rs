@@ -438,28 +438,69 @@ enum Abort {
 
 /// Counts raw bytes against the cap and gzips them into body chunks.
 struct Gzip {
-    encoder: GzEncoder<Vec<u8>>,
+    /// `None` only while a batch compresses on the blocking pool.
+    encoder: Option<GzEncoder<Vec<u8>>>,
+    pending: Vec<u8>,
     raw: u64,
     max: u64,
     tx: mpsc::Sender<Bytes>,
 }
 
 impl Gzip {
+    fn new(max: u64, tx: mpsc::Sender<Bytes>) -> Self {
+        Self {
+            encoder: Some(GzEncoder::new(Vec::new(), Compression::default())),
+            pending: Vec::new(),
+            raw: 0,
+            max,
+            tx,
+        }
+    }
+
     async fn push(&mut self, text: &str) -> Result<(), Abort> {
         self.raw += text.len() as u64;
         if self.raw > self.max {
             return Err(Abort::TooLarge);
         }
-        self.encoder.write_all(text.as_bytes()).map_err(Abort::Io)?;
-        if self.encoder.get_ref().len() >= FLUSH_BYTES {
-            let chunk = std::mem::take(self.encoder.get_mut());
-            send(&self.tx, chunk).await?;
+        self.pending.extend_from_slice(text.as_bytes());
+        if self.pending.len() >= FLUSH_BYTES {
+            self.compress().await?;
         }
         Ok(())
     }
 
-    async fn finish(self) -> Result<(), Abort> {
-        let rest = self.encoder.finish().map_err(Abort::Io)?;
+    /// Deflates the pending text off the runtime workers, as Node's zlib
+    /// runs on its thread pool, and sends the output once it reaches a chunk.
+    async fn compress(&mut self) -> Result<(), Abort> {
+        let mut encoder = self
+            .encoder
+            .take()
+            .expect("the encoder is back after each batch");
+        let input = std::mem::take(&mut self.pending);
+        let mut encoder =
+            tokio::task::spawn_blocking(move || encoder.write_all(&input).map(|()| encoder))
+                .await
+                .map_err(|e| Abort::Io(std::io::Error::other(e)))?
+                .map_err(Abort::Io)?;
+        let chunk = if encoder.get_ref().len() >= FLUSH_BYTES {
+            std::mem::take(encoder.get_mut())
+        } else {
+            Vec::new()
+        };
+        self.encoder = Some(encoder);
+        send(&self.tx, chunk).await
+    }
+
+    async fn finish(mut self) -> Result<(), Abort> {
+        self.compress().await?;
+        let encoder = self
+            .encoder
+            .take()
+            .expect("the encoder is back after each batch");
+        let rest = tokio::task::spawn_blocking(move || encoder.finish())
+            .await
+            .map_err(|e| Abort::Io(std::io::Error::other(e)))?
+            .map_err(Abort::Io)?;
         send(&self.tx, rest).await
     }
 }
@@ -557,12 +598,7 @@ pub(super) fn body(
     let cancel = CancellationToken::new();
     let drop_guard = cancel.clone().drop_guard();
     tokio::spawn(async move {
-        let mut out = Gzip {
-            encoder: GzEncoder::new(Vec::new(), Compression::default()),
-            raw: 0,
-            max: settings.max_size_bytes,
-            tx,
-        };
+        let mut out = Gzip::new(settings.max_size_bytes, tx);
         #[cfg(test)]
         let (after_world_rows, before_rollback) = (
             slot.test_hooks.after_world_rows.take(),

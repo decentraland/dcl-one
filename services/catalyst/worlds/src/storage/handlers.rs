@@ -229,12 +229,13 @@ pub async fn read_upsert_body(
     }
     // The declared length already passed `check_content_length`.
     let limit = usize::try_from(max_value_size + BODY_ENVELOPE_SLACK_BYTES).unwrap_or(usize::MAX);
-    let bytes = axum::body::to_bytes(body, limit)
-        .await
-        .map_err(|e| ApiError::InvalidBody {
-            message: e.to_string(),
-            data: None,
-        })?;
+    // A body past the limit without a declared length is refused as one
+    // with it; a failed read has no client left to answer.
+    let bytes = axum::body::to_bytes(body, limit).await.map_err(|_| {
+        ApiError::PayloadTooLarge(format!(
+            "Request body exceeds the maximum allowed size ({limit} bytes)"
+        ))
+    })?;
     let doc =
         js_json::parse(&js_json::decode_body(&bytes)).map_err(|message| ApiError::InvalidBody {
             message,
@@ -247,7 +248,7 @@ pub async fn read_upsert_body(
     match checked {
         Ok(value) => Ok((doc, value)),
         Err(errors) => Err(ApiError::InvalidBody {
-            message: "Invalid JSON body".to_string(),
+            message: "Invalid JSON body".into(),
             data: Some(errors),
         }),
     }
@@ -975,6 +976,18 @@ mod tests {
         );
         let err = check_content_length(&headers, 100).unwrap_err();
         assert!(matches!(err, ApiError::PayloadTooLarge(_)));
+        assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn an_undeclared_body_past_the_limit_is_413() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let body = axum::body::Body::from(vec![b' '; 101 + BODY_ENVELOPE_SLACK_BYTES as usize]);
+        let err = read_upsert_body(&headers, body, 100, UpsertSchema::Storage)
+            .await
+            .err()
+            .unwrap();
         assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 

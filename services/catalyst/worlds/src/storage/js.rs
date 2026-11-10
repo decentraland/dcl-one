@@ -52,7 +52,7 @@ impl JsString {
         }
     }
 
-    fn units(&self) -> Cow<'_, [u16]> {
+    pub fn units(&self) -> Cow<'_, [u16]> {
         match &self.ill_formed {
             Some(units) => Cow::Borrowed(units),
             None => Cow::Owned(self.text.encode_utf16().collect()),
@@ -74,6 +74,12 @@ impl From<&str> for JsString {
             text: text.to_string(),
             ill_formed: None,
         }
+    }
+}
+
+impl std::fmt::Display for JsString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
     }
 }
 

@@ -45,6 +45,10 @@ pub struct AjvError {
 /// error: the full cascade grows with the square of the depth.
 pub const MAX_ERROR_DEPTH: usize = 128;
 
+/// Nor may the cascade's paths total more than this many bytes: a long
+/// object key repeats in every error below it.
+pub const MAX_ERROR_PATH_BYTES: usize = 1 << 20;
+
 /// The text `JSON.parse` sees: the body as UTF-8 with a leading BOM removed.
 pub fn decode_body(bytes: &[u8]) -> Vec<u16> {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
@@ -52,7 +56,7 @@ pub fn decode_body(bytes: &[u8]) -> Vec<u16> {
 }
 
 /// `JSON.parse(source)`; the error is V8's message.
-pub fn parse(source: &[u16]) -> Result<Doc, String> {
+pub fn parse(source: &[u16]) -> Result<Doc, JsString> {
     Parser {
         s: source,
         pos: 0,
@@ -160,7 +164,7 @@ impl Parser<'_> {
     }
 
     /// `… at position N (line L column C)`, a CR LF counting as one break.
-    fn at(&self, msg: Msg, pos: usize) -> String {
+    fn at(&self, msg: Msg, pos: usize) -> JsString {
         let (mut line, mut line_start, mut i) = (1, 0, 0);
         while i < pos.min(self.s.len()) {
             match self.s[i] {
@@ -184,12 +188,16 @@ impl Parser<'_> {
             msg.text(),
             pos - line_start + 1
         )
+        .as_str()
+        .into()
     }
 
-    /// V8's report for an unexpected token at `pos`, keyed on its class.
-    fn unexpected(&self, pos: usize) -> String {
+    /// V8's report for an unexpected token at `pos`, keyed on its class. The
+    /// token and context are UTF-16 units, so an astral character reports its
+    /// lone high surrogate, as V8 does.
+    fn unexpected(&self, pos: usize) -> JsString {
         let Some(c) = self.s.get(pos).copied() else {
-            return EOS_MESSAGE.to_string();
+            return EOS_MESSAGE.into();
         };
         if is_digit(c) || c == u16::from(b'-') {
             return self.at(Msg::UnexpectedNumber, pos);
@@ -202,32 +210,34 @@ impl Parser<'_> {
             source.as_str(),
             "NaN" | "Infinity" | "undefined" | "[object Object]"
         ) {
-            return format!("\"{source}\" is not valid JSON");
+            return format!("\"{source}\" is not valid JSON").as_str().into();
         }
-        let token = String::from_utf16_lossy(&[c]);
         let len = self.s.len();
-        let slice = |from: usize, to: usize| String::from_utf16_lossy(&self.s[from..to.min(len)]);
-        if len < 2 * CONTEXT_CHARS + 1 {
-            format!("Unexpected token '{token}', \"{source}\" is not valid JSON")
-        } else if pos < CONTEXT_CHARS {
-            format!(
-                "Unexpected token '{token}', \"{}\"... is not valid JSON",
-                slice(0, pos + CONTEXT_CHARS)
-            )
-        } else if pos < len - CONTEXT_CHARS {
-            format!(
-                "Unexpected token '{token}', ...\"{}\"... is not valid JSON",
-                slice(pos - CONTEXT_CHARS, pos + CONTEXT_CHARS)
-            )
+        let (from, to) = if len < 2 * CONTEXT_CHARS + 1 {
+            (0, len)
         } else {
-            format!(
-                "Unexpected token '{token}', ...\"{}\" is not valid JSON",
-                slice(pos - CONTEXT_CHARS, len)
+            (
+                pos.saturating_sub(CONTEXT_CHARS),
+                (pos + CONTEXT_CHARS).min(len),
             )
+        };
+        let mut out: Vec<u16> = "Unexpected token '".encode_utf16().collect();
+        out.push(c);
+        out.extend("', ".encode_utf16());
+        if from > 0 {
+            out.extend("...".encode_utf16());
         }
+        out.push(u16::from(b'"'));
+        out.extend_from_slice(&self.s[from..to]);
+        out.push(u16::from(b'"'));
+        if to < len {
+            out.extend("...".encode_utf16());
+        }
+        out.extend(" is not valid JSON".encode_utf16());
+        JsString::from_units(out)
     }
 
-    fn string(&mut self) -> Result<Vec<u16>, String> {
+    fn string(&mut self) -> Result<Vec<u16>, JsString> {
         self.pos += 1;
         let mut out = Vec::new();
         loop {
@@ -242,7 +252,7 @@ impl Parser<'_> {
                 0x5c => {
                     self.pos += 1;
                     let Some(e) = self.peek() else {
-                        return Err(EOS_MESSAGE.to_string());
+                        return Err(EOS_MESSAGE.into());
                     };
                     let unit = match e {
                         0x22 | 0x5c | 0x2f => e,
@@ -282,7 +292,7 @@ impl Parser<'_> {
         }
     }
 
-    fn number(&mut self) -> Result<f64, String> {
+    fn number(&mut self) -> Result<f64, JsString> {
         let start = self.pos;
         if self.peek() == Some(u16::from(b'-')) {
             self.pos += 1;
@@ -322,7 +332,7 @@ impl Parser<'_> {
         Ok(text.parse::<f64>().unwrap_or(f64::NAN))
     }
 
-    fn literal(&mut self, word: &[u8]) -> Result<(), String> {
+    fn literal(&mut self, word: &[u8]) -> Result<(), JsString> {
         for &b in word {
             match self.peek() {
                 Some(c) if c == u16::from(b) => self.pos += 1,
@@ -333,7 +343,7 @@ impl Parser<'_> {
     }
 
     /// After `{` or `,`: the property name and its `:`.
-    fn property_name(&mut self) -> Result<Vec<u16>, String> {
+    fn property_name(&mut self) -> Result<Vec<u16>, JsString> {
         let key = self.string()?;
         self.skip_ws();
         if self.peek() != Some(u16::from(b':')) {
@@ -344,12 +354,12 @@ impl Parser<'_> {
         Ok(key)
     }
 
-    fn run(mut self) -> Result<Doc, String> {
+    fn run(mut self) -> Result<Doc, JsString> {
         let mut stack: Vec<Frame> = Vec::new();
         self.skip_ws();
         'value: loop {
             let mut done = match self.peek() {
-                None => return Err(EOS_MESSAGE.to_string()),
+                None => return Err(EOS_MESSAGE.into()),
                 Some(0x22) => {
                     let s = self.string()?;
                     self.push(Item::Str(s))
@@ -697,8 +707,11 @@ impl Doc {
         let mut errors = Vec::new();
         let mut unwind: Vec<(String, bool)> = Vec::new();
         let (mut cur, mut path) = (value, "/value".to_string());
+        // Each level copies its path into at most 7 errors, `unwind` included.
+        let mut path_bytes = 0usize;
         loop {
-            if unwind.len() >= MAX_ERROR_DEPTH {
+            path_bytes = path_bytes.saturating_add(path.len().saturating_mul(7));
+            if unwind.len() >= MAX_ERROR_DEPTH || path_bytes > MAX_ERROR_PATH_BYTES {
                 return vec![any_of_error("/value")];
             }
             for t in ["string", "number", "boolean", "null"] {
@@ -782,7 +795,7 @@ fn any_of_error(path: &str) -> AjvError {
 mod tests {
     use super::*;
 
-    fn parse_str(s: &str) -> Result<Doc, String> {
+    fn parse_str(s: &str) -> Result<Doc, JsString> {
         parse(&decode_body(s.as_bytes()))
     }
 
@@ -938,6 +951,22 @@ mod tests {
                 "{input:?}"
             );
         }
+        // An astral token is reported by its high surrogate (`@` below), as
+        // V8 does.
+        for (input, expected) in [
+            ("[😀]", "Unexpected token '@', \"[😀]\" is not valid JSON"),
+            (
+                "[1,2,3,4,5,6,7,8,9,10, 😀 ]",
+                "Unexpected token '@', ...\"7,8,9,10, 😀 ]\" is not valid JSON",
+            ),
+        ] {
+            let err = parse_str(input).err().unwrap();
+            let expected: Vec<u16> = expected
+                .encode_utf16()
+                .map(|u| if u == u16::from(b'@') { 0xd83d } else { u })
+                .collect();
+            assert_eq!(&*err.units(), expected.as_slice(), "{input:?}");
+        }
         // The body decoder drops a leading BOM, as undici's `json()` does.
         assert!(parse_str("\u{feff}{}").is_ok());
     }
@@ -1072,6 +1101,15 @@ mod tests {
             "]".repeat(MAX_ERROR_DEPTH + 1)
         );
         assert_eq!(storage_errors(&deep), json!([any("/value")]));
+        // A long key repeats in every error below it: past the byte budget
+        // only the outermost error is reported.
+        let long_key = format!(
+            "{{\"value\":{{\"{}\":{}1e400{}}}}}",
+            "a".repeat(520_000),
+            "[".repeat(120),
+            "]".repeat(120)
+        );
+        assert_eq!(storage_errors(&long_key), json!([any("/value")]));
 
         let env = parse_str("{\"value\":5}")
             .unwrap()
