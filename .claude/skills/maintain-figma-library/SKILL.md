@@ -22,7 +22,7 @@ For a capture refresh, first point the lock at the new capture: set `revision` a
 pnpm figma port prepare
 ```
 
-It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write`, in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), rerun `node figma/lock-digests.mjs --write`, and commit.
+It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
 
 ## 3. Verify
 

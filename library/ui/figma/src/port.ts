@@ -330,13 +330,21 @@ function prepareStages(run: Run, p: Paths): Record<string, () => Stage> {
       return { name: 'install-components', detail: 'installed the components' }
     },
     'lock-digests': () => {
+      // lock-digests reads the index, so what sync and install just wrote is staged first; otherwise it would pin the
+      // previous bytes and leave new generated files unpinned.
+      const staged = run(
+        'git',
+        ['-C', p.repository, 'add', '-A', '--', path.relative(p.repository, p.ui)],
+        p.ui
+      )
+      if (staged.code !== 0) fail(`git add failed: ${firstLine(staged.stderr)}`)
       const result = run(
         process.execPath,
         [path.join(p.figma, 'lock-digests.mjs'), '--write'],
         p.ui
       )
       if (result.code !== 0) fail(`lock-digests --write failed: ${firstLine(result.stdout)}`)
-      return { name: 'lock-digests', detail: 'rewrote the lock digests' }
+      return { name: 'lock-digests', detail: 'staged library/ui and rewrote the lock digests' }
     }
   }
 }
@@ -372,9 +380,9 @@ function portPrepare(
   return {
     ok: true,
     stages: results,
-    next: 'Record the deviations of changed files in upstream.lock.json, commit, then run `pnpm figma port verify`.'
+    next: 'Record a deviation code for every changed file in upstream.lock.json, stage library/ui again, rerun `node figma/lock-digests.mjs --write` (it reads the index), commit, then run `pnpm figma port verify`.'
   }
 }
 
-export { PREPARE_ORDER, StageError, contentSnapshot, portPrepare, portVerify }
+export { PREPARE_ORDER, StageError, contentSnapshot, portPrepare, portVerify, prepareStages }
 export type { PrepareResult, Run, Stage, VerifyResult }
