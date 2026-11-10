@@ -5,6 +5,7 @@ import { normalizeNodeId, type FigmaSet } from './figma-index.js'
 import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } from './library.js'
 import { readMappingFile, type MappingLocal, type ParsedMapping } from './mapping-file.js'
 import { importSpecifier, validateAgainstFigma, validateAgainstLibrary } from './validate.js'
+import { resolveByName, setsFittingVariantProperties } from './name-identity.js'
 
 type ResolveContext = {
   mappingRoot?: string
@@ -14,6 +15,8 @@ type ResolveContext = {
   // Synced components promotion.include names and promotion has not written yet, with the reasons
   // promotion would skip each one (none when eligible). Any other hand-written mapping is validated.
   loadSyncedComponents?: () => Promise<Map<string, string[]>>
+  // figma.config.json componentNames: the code name of a Figma set name, for name lookups without a capture.
+  componentNames?: Readonly<Record<string, string>>
 }
 
 type ResolveInput = {
@@ -132,9 +135,15 @@ const own = <T>(record: Record<string, T>, key: string): T | undefined =>
 
 function identify(
   ctx: ResolveContext,
-  input: ResolveInput,
-  captureRevision: string | undefined
-): { errors: Diagnostic[]; set?: FigmaSet; setId?: string; variantId?: string } {
+  input: ResolveInput
+): {
+  errors: Diagnostic[]
+  set?: FigmaSet
+  setId?: string
+  variantId?: string
+  // A name to resolve against the mappings, when no capture can identify it.
+  byName?: string
+} {
   if (!input.nodeId && !input.name) {
     return {
       errors: [
@@ -160,7 +169,17 @@ function identify(
     // Without a capture the id can only be matched against mappings.
     return { errors: [], setId: id }
   }
-  const matches = ctx.figmaSets.filter((candidate) => candidate.name === input.name)
+  if (ctx.figmaSets.length === 0) return { errors: [], byName: input.name }
+  // A set captured on two pages is one component; only distinct sets make a name ambiguous.
+  const matches = [
+    ...new Map(
+      ctx.figmaSets
+        .filter((candidate) => candidate.name === input.name)
+        .map((candidate) => [candidate.setId, candidate])
+    ).values()
+  ]
+  const fitting = setsFittingVariantProperties(matches, input.variantProperties)
+  if (fitting.length === 1) return { errors: [], set: fitting[0], setId: fitting[0]!.setId }
   if (matches.length > 1) {
     return {
       errors: [
@@ -178,21 +197,10 @@ function identify(
   if (matches.length === 0) {
     return {
       errors: [
-        ctx.figmaSets.length === 0
-          ? diagnostic(
-              'identity-uncertain',
-              `No Figma capture is available to look up "${input.name}" by name. Pass the nodeId.`,
-              {
-                reason: 'name',
-                name: input.name,
-                ...(captureRevision ? { captureRevision } : {})
-              }
-            )
-          : diagnostic(
-              'identity-not-found',
-              `No captured Figma component is named "${input.name}".`,
-              { reason: 'name', name: input.name }
-            )
+        diagnostic('identity-not-found', `No captured Figma component is named "${input.name}".`, {
+          reason: 'name',
+          name: input.name
+        })
       ]
     }
   }
@@ -347,7 +355,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   }
   const failure = (errors: Diagnostic[]) => fail(errors, warnings, context)
 
-  const identity = identify(ctx, input, captureRevision)
+  const identity = identify(ctx, input)
   if (identity.errors.length) return failure(identity.errors)
 
   // With a capture, a node outside it is not a library component, even if a stale mapping still targets it.
@@ -373,6 +381,25 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
           )
     ])
   }
+  if (identity.byName !== undefined) {
+    const named = resolveByName(
+      mappings,
+      identity.byName,
+      input,
+      ctx.componentNames,
+      library,
+      captureRevision ? { captureRevision } : {}
+    )
+    if ('errors' in named) return failure(named.errors)
+    identity.setId = named.setId
+    warnings.push(named.warning)
+  } else if (input.name !== undefined && identity.set && !input.nodeId)
+    warnings.push(
+      diagnostic('identity-name-match', `Identified "${input.name}" by its captured set name.`, {
+        name: input.name,
+        matchedBy: 'capture'
+      })
+    )
   const candidates = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
   if (candidates.length === 0) {
     // mapping-missing only once identity is established: the node is a captured library component.

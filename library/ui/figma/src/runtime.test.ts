@@ -369,6 +369,33 @@ describe('when resolving with --mapping-only next to a configured capture', () =
     )
   })
 
+  it('should carry the config componentNames aliases for name lookups', async () => {
+    const config = JSON.parse(await readFile(path.join(library.root, 'figma.config.json'), 'utf8'))
+    config.componentNames = { 'Button-Contained-Text': 'Button' }
+    await writeFile(path.join(library.root, 'figma.config.json'), JSON.stringify(config))
+
+    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+    const context = await runtime.resolveContext()
+
+    expect(context.componentNames).toEqual({ 'Button-Contained-Text': 'Button' })
+    expect(
+      await resolveComponent(context, {
+        name: 'Button-Contained-Text',
+        variantProperties: { Kind: 'Primary' }
+      })
+    ).toMatchObject({ ok: true })
+  })
+
+  it('should refuse componentNames that are not a name map', async () => {
+    const config = JSON.parse(await readFile(path.join(library.root, 'figma.config.json'), 'utf8'))
+    config.componentNames = { Button: 7 }
+    await writeFile(path.join(library.root, 'figma.config.json'), JSON.stringify(config))
+
+    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+
+    await expect(runtime.resolveContext()).rejects.toThrow('componentNames must map names to names')
+  })
+
   it.each([
     ['--config', { configPath: 'missing.json', env: {} }],
     ['DCL_FIGMA_CONFIG', { env: { DCL_FIGMA_CONFIG: 'missing.json' } }]
