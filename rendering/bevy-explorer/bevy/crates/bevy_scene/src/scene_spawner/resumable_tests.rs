@@ -212,31 +212,40 @@ fn without_a_deadline_roots_are_attached_once_written_as_stock_does() {
 }
 
 #[test]
-fn an_entity_despawned_by_others_mid_spawn_does_not_stop_the_instance() {
+fn an_unwritten_entity_despawned_by_others_mid_spawn_stays_gone_with_its_subtree() {
     let mut app = app();
     one_entity_per_run(&mut app);
     let scene = add_scene(&mut app, chain(0, 3));
     let parent = app.world_mut().spawn_empty().id();
-    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+    let instance = spawner(&mut app).spawn_as_child(scene.clone(), parent);
     app.update();
-    let unwritten: Vec<Entity> = {
-        let spawner = app.world().resource::<SceneSpawner>();
-        let progress = spawner.scene_in_progress.as_ref().expect("in progress");
-        progress
-            .entity_map
-            .values()
-            .copied()
-            .filter(|entity| app.world().get::<Node>(*entity).is_none())
-            .collect()
-    };
+    // the instance's entity for `Node(1)`, not written yet
+    let source = app
+        .world()
+        .resource::<Assets<Scene>>()
+        .get(&scene)
+        .unwrap()
+        .world
+        .iter_entities()
+        .find(|entity| entity.get::<Node>() == Some(&Node(1)))
+        .unwrap()
+        .id();
+    let unwritten = app
+        .world()
+        .resource::<SceneSpawner>()
+        .scene_in_progress
+        .as_ref()
+        .expect("in progress")
+        .entity_map[&source];
 
-    app.world_mut().entity_mut(unwritten[0]).despawn();
+    app.world_mut().entity_mut(unwritten).despawn();
     for _ in 0..5 {
         app.update();
     }
 
+    // as a whole spawn would be with that entity despawned afterwards: no new one in its place
     assert!(is_ready(&app, instance));
-    assert_eq!(nodes(&mut app), [0, 1, 2]);
+    assert_eq!(nodes(&mut app), [0]);
 }
 
 #[test]
@@ -456,8 +465,9 @@ fn lifting_the_deadline_mid_spawn_finishes_the_instance_in_one_run() {
 }
 
 #[test]
-fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full() {
+fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full_in_slices() {
     let mut app = app();
+    record_writes(&mut app);
     one_entity_per_run(&mut app);
     // the children name their parent, but the parent lists none of them
     let registry = app.world().resource::<AppTypeRegistry>().clone();
@@ -480,6 +490,72 @@ fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full() {
 
     assert!(is_ready(&app, instance));
     assert_eq!(nodes(&mut app), [0, 1, 2]);
+    // each entity written once, one a run: nothing started over or was written whole
+    assert_eq!(written(&app).len(), 3);
+}
+
+#[test]
+fn despawning_a_written_entity_mid_spawn_completes_the_instance_without_its_subtree() {
+    let mut app = app();
+    record_writes(&mut app);
+    one_entity_per_run(&mut app);
+    let scene = add_scene(&mut app, chain(0, 4));
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+    app.update();
+    app.update();
+    let root = children(&app, parent)[0];
+    let written_child = children(&app, root)[0];
+
+    app.world_mut().entity_mut(written_child).despawn();
+    for _ in 0..5 {
+        app.update();
+    }
+
+    // as a whole spawn would be with that entity despawned afterwards
+    assert!(is_ready(&app, instance));
+    assert_eq!(nodes(&mut app), [0]);
+    assert_eq!(written(&app).len(), 2);
+}
+
+#[test]
+fn an_error_in_a_whole_spawn_leaves_nothing_behind() {
+    let mut app = app();
+    let scene = add_scene(&mut app, |world: &mut World| {
+        let root = world.spawn(Node(0)).id();
+        world.spawn((Node(1), Unregistered, ChildOf(root)));
+    });
+    let parent = app.world_mut().spawn_empty().id();
+    let entities_before = app.world().entities().len();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+    let result =
+        app.world_mut()
+            .resource_scope(|world, mut spawner: bevy_ecs::world::Mut<SceneSpawner>| {
+                spawner.spawn_queued_scenes(world)
+            });
+
+    assert!(result.is_err());
+    assert!(!is_ready(&app, instance));
+    assert_eq!(app.world().entities().len(), entities_before);
+    assert!(parent_is_forgotten(&app, instance));
+}
+
+#[test]
+fn the_spawner_reports_what_is_queued_and_what_is_being_written() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    let first = add_scene(&mut app, tree(0, 3));
+    let second = add_scene(&mut app, tree(10, 2));
+    let parent = app.world_mut().spawn_empty().id();
+    spawner(&mut app).spawn_as_child(first, parent);
+    spawner(&mut app).spawn_as_child(second, parent);
+
+    app.update();
+
+    let progress = app.world().resource::<SceneSpawner>().spawn_progress();
+    assert_eq!(progress.queued, 1);
+    assert_eq!(progress.writing, Some((1, 3)));
 }
 
 #[test]

@@ -138,11 +138,21 @@ impl Scene {
         world: &mut World,
         entity_map: &mut EntityHashMap<Entity>,
     ) {
+        self.allocate_entities_with(world, entity_map, |world, _| world.spawn_empty().id());
+    }
+
+    /// [`Self::allocate_entities`], spawning each with `spawn`, given its scene entity.
+    pub(crate) fn allocate_entities_with(
+        &self,
+        world: &mut World,
+        entity_map: &mut EntityHashMap<Entity>,
+        mut spawn: impl FnMut(&mut World, Entity) -> Entity,
+    ) {
         for archetype in self.world.archetypes().iter() {
             for scene_entity in archetype.entities() {
                 entity_map
                     .entry(scene_entity.id())
-                    .or_insert_with(|| world.spawn_empty().id());
+                    .or_insert_with(|| spawn(world, scene_entity.id()));
             }
         }
     }
