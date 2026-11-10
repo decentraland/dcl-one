@@ -12,7 +12,7 @@ The checks that compare generated UI output with the real Figma capture run only
 The record names a hash of the port inputs:
 
 - the whole lock except its provenance text: each source's `license`, `imported`, `changes` and `deviationCodes` (the reasons), and per-file `note`s. Any other field, including one added later, is bound;
-- the bytes of every file tracked under `library/ui/figma`, except tests (`*.test.*`, `*.spec.*`), anything under a `test`, `__tests__` or `fixtures` directory, and Markdown files. A component generation input (`component-generation.mjs`) is never exempt.
+- the bytes of every file tracked under `library/ui/figma`, except `*.test.*` and `*.spec.*` files, anything under `library/ui/figma/test/` or `library/ui/figma/review/test/`, and Markdown files. A component generation input (`component-generation.mjs`) is never exempt, and neither is `port-verification.test.ts`, which holds the scan that keeps the exemption sound. Both scripts read paths from `git -z` listings up to the first tab only as metadata, refuse a path with a control character, a path listed twice, and any mode other than a regular or executable file, so a sibling path or a symlink cannot stand in for a port input.
 
 An exempt file's lock entry stays bound without its own digest and deviation codes. Its FDS counterpart is bound because `fetch-source`, a required check, compares every recorded counterpart with the pinned FDS commit, and `lock-digests.mjs` can only check that the lock agrees with itself. Adding, removing or re-pointing any file therefore needs a new record; editing an existing test, fixture or Markdown file does not.
 

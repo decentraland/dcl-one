@@ -98,6 +98,10 @@ export function pinnedFiles(lock) {
           : `deviation code ${code} has no reason`
       )
   const codeNames = Object.keys(codes)
+  // An integer-like key always sorts first in a JS object, so it could never stay in string order.
+  for (const code of codeNames)
+    if (/^(?:0|[1-9]\d*)$/.test(code))
+      problems.push(`deviation code ${code} is integer-like; use a word id`)
   if (codeNames.some((code, index) => index > 0 && codeNames[index - 1] >= code))
     problems.push('deviation codes are not in sorted order (lock-digests --write sorts them)')
   const digests = {}
@@ -141,6 +145,8 @@ export function pinnedFiles(lock) {
  */
 export function blobDigests(root, listing) {
   if (listing.length === 0) return {}
+  if (new Set(listing.map(({ file }) => file)).size !== listing.length)
+    throw new Error('the listing names a path twice')
   const output = execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
     input: listing.map(({ oid }) => oid).join('\n') + '\n',
     maxBuffer: 1 << 30
@@ -161,21 +167,42 @@ export function blobDigests(root, listing) {
   return digests
 }
 
-/** sha256 of every file the index tracks under the scope, keyed by repository path. */
-export function trackedDigests(root) {
-  const listing = execFileSync('git', ['-C', root, 'ls-files', '-s', '-z', '--', SCOPE], {
-    maxBuffer: 1 << 28
-  })
+/** Modes of the files a port may hold: regular and executable files. Symlinks and submodules are refused. */
+const FILE_MODES = ['100644', '100755']
+
+/**
+ * Parses NUL-separated `git ls-files -s -z` or `git ls-tree -r -z` output into { file, oid }. Git does not quote
+ * paths under -z, so the path is everything after the first tab, and a path with a control character is refused.
+ */
+export function parseListing(output, format) {
+  return output
     .toString('utf8')
     .split('\0')
     .filter(Boolean)
     .map((entry) => {
-      const [meta, file] = entry.split('\t')
-      const [mode, oid] = meta.split(' ')
-      if (mode === '160000') throw new Error(`${file} is a submodule`)
+      const tab = entry.indexOf('\t')
+      if (tab < 0) throw new Error('git returned an unexpected listing')
+      const meta = entry.slice(0, tab).split(' ')
+      const file = entry.slice(tab + 1)
+      if (
+        [...file].some(
+          (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+        )
+      )
+        throw new Error(`${JSON.stringify(file)} has a control character in its path`)
+      const [mode, oid] = format === 'ls-tree' ? [meta[0], meta[2]] : [meta[0], meta[1]]
+      if (!FILE_MODES.includes(mode))
+        throw new Error(`${file} has mode ${mode}; only regular files are allowed`)
       return { file, oid }
     })
-  return blobDigests(root, listing)
+}
+
+/** sha256 of every file the index tracks under the scope, keyed by repository path. */
+export function trackedDigests(root) {
+  const output = execFileSync('git', ['-C', root, 'ls-files', '-s', '-z', '--', SCOPE], {
+    maxBuffer: 1 << 28
+  })
+  return blobDigests(root, parseListing(output, 'ls-files'))
 }
 
 /** Compares pinned and tracked tables; returns { mismatched, missing, unpinned } as sorted path lists. */

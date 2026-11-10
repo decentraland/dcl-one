@@ -200,6 +200,29 @@ describe('when the lock pins every tracked figma file', () => {
     expect(run()).toBe(0)
   })
 
+  it('should refuse an integer-like code id, which a JS object can never keep in string order', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes = {
+        '10': 'Ten.',
+        '9': 'Nine.',
+        'dcl-one-only': 'These files are owned by this tree.',
+        note: null
+      }
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code 9 is integer-like')
+    expect(out).toContain('deviation code 10 is integer-like')
+  })
+
+  it('should refuse a tracked path with a tab, so a sibling cannot hide an edited file', async () => {
+    await annotate()
+    await put('library/ui/figma/a.ts\t.orig', 'export const a = 1\n')
+    await put('library/ui/figma/a.ts', 'export const a = 9\n')
+    git('add', '-A')
+    expect(run()).toBe(1)
+    expect(out).toContain('control character in its path')
+  })
+
   it('should fail closed on a deviation code table that is not an object', async () => {
     await annotate((value) => {
       value.sources[0].deviationCodes = ['dcl-one-only'] as unknown as Record<string, string>

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { blobDigests } from './lock-digests.mjs'
 import {
   REQUIRED_CHECKS,
   isRecordExempt,
@@ -109,6 +110,10 @@ const recordFor = (overrides: Record<string, unknown> = {}) => {
   }
 }
 const run = (base: string) => main(['--base', base], repo)
+const SCAN_EXCLUDED = [
+  'library/ui/figma/port-verification.mjs',
+  'library/ui/figma/port-verification.test.ts'
+]
 // Every single-, double- or back-quoted literal without escapes or interpolation.
 const pathLiterals = (text: string) =>
   [...text.matchAll(/(['"`])((?:(?!\1)[^\\\n$])*)\1/g)].map((match) => match[2]!)
@@ -420,7 +425,39 @@ describe('when reading the files of a commit', () => {
     git('update-index', '--add', '--cacheinfo', `160000,${'e'.repeat(40)},library/ui/figma/vendor`)
     git('commit', '--quiet', '--no-gpg-sign', '-m', 'submodule')
 
-    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('is not a file')
+    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 160000')
+  })
+
+  it('should refuse a symlink, whose target could change without the link changing', async () => {
+    const target = git('hash-object', '-w', '--stdin')
+    git('update-index', '--add', '--cacheinfo', `120000,${target},library/ui/figma/link.mjs`)
+    git('commit', '--quiet', '--no-gpg-sign', '-m', 'symlink')
+
+    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 120000')
+  })
+
+  // A path cut at its first tab used to be filed under the shorter name and overwrite the real file's digest.
+  it('should refuse a tab in a path, so a sibling cannot shadow an edited port input', async () => {
+    await put('library/ui/figma/a.ts\t.orig', 'export const a = 1\n')
+    await put('library/ui/figma/a.ts', 'export const a = 2\n')
+    const head = commit('shadowed edit')
+
+    expect(() => trackedFilesAt(repo, head)).toThrow('control character')
+    expect(run(base)).toBe(1)
+    expect(out).toContain('control character')
+  })
+})
+
+describe('when hashing a listing of blobs', () => {
+  it('should refuse a path listed twice', async () => {
+    await put('library/ui/figma/b.ts', 'export {}\n')
+    const oid = git('hash-object', 'library/ui/figma/b.ts')
+    expect(() =>
+      blobDigests(repo, [
+        { file: 'library/ui/figma/b.ts', oid },
+        { file: 'library/ui/figma/b.ts', oid }
+      ])
+    ).toThrow('names a path twice')
   })
 })
 
@@ -432,6 +469,7 @@ describe('when deciding which files are port inputs', () => {
     'library/ui/figma/test/key-step.ts',
     'library/ui/figma/test/fixtures/synthetic-snapshot/pages.json',
     'library/ui/figma/src/contract/resolve.test.ts',
+    'library/ui/figma/review/test/helpers.ts',
     'library/ui/figma/review/test/check.test.ts'
   ])('should exempt %s', (file) => {
     expect(isRecordExempt(file)).toBe(true)
@@ -446,6 +484,11 @@ describe('when deciding which files are port inputs', () => {
     'library/ui/figma/README.MD',
     'library/ui/figma/src/notes.md',
     'library/ui/figma/src/types.test.d.ts',
+    'library/ui/figma/port-verification.test.ts',
+    'library/ui/figma/review/fixtures/runtime.mjs',
+    'library/ui/figma/review/scripts/test/helper.mjs',
+    'library/ui/figma/src/__tests__/helper.ts',
+    'library/ui/figma/agent-kit/fixtures/kit.json',
     'library/ui/figma/doc.md.ts',
     'library/ui/README.md',
     'library/ui/figma-other/test/a.ts',
@@ -462,7 +505,14 @@ describe('when deciding which files are port inputs', () => {
     const files = execFileSync('git', ['-C', root, 'ls-files', '-z', '--', 'library/ui/figma'])
       .toString('utf8')
       .split('\0')
-      .filter((file) => /\.(?:[cm]?[jt]sx?|mts|cts)$/.test(file) && !isRecordExempt(file))
+      // The validator spells out the exempt roots, and this test names test paths on purpose and reads only its own
+      // temporary repositories; both are bound port inputs.
+      .filter(
+        (file) =>
+          /\.(?:[cm]?[jt]sx?|mts|cts)$/.test(file) &&
+          !isRecordExempt(file) &&
+          !SCAN_EXCLUDED.includes(file)
+      )
     expect(files.length).toBeGreaterThan(100)
     const offenders: string[] = []
     for (const file of files) {
@@ -475,7 +525,7 @@ describe('when deciding which files are port inputs', () => {
 
   it.each([
     ["import './test/setup.ts'", 'a side-effect import'],
-    ["export * from './fixtures'", 'a directory re-export'],
+    ["export * from './test'", 'a directory re-export'],
     ["new URL('../test/data.json', import.meta.url)", 'a URL'],
     ["path.join(root, 'fixtures', 'x.json')", 'a bare directory segment'],
     ['readFile(`notes/README.md`)', 'a Markdown name in a template literal'],

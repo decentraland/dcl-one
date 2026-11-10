@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isComponentModulePath } from './component-generation.mjs'
-import { LOCK, SCOPE, blobDigests, fdsSource } from './lock-digests.mjs'
+import { LOCK, SCOPE, blobDigests, fdsSource, parseListing } from './lock-digests.mjs'
 
 const RECORD = 'library/ui/port-verification.json'
 const SCHEMA = 2
@@ -37,18 +37,23 @@ const CHECK_KEYS = ['result', 'detail']
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
+/** The test directories under library/ui/figma; a test or fixture elsewhere is exempt only by its *.test or *.spec name. */
+const TEST_ROOTS = ['test/', 'review/test/']
+/** Bound although it is a test: it holds the scan that keeps the exemption sound. */
+const BOUND_TESTS = [`${SCOPE}/port-verification.test.ts`]
+
 /**
- * Whether a path under library/ui/figma has its bytes outside the port inputs: a test, a test fixture or Markdown
- * documentation, and never a component generation input (component-generation.mjs). port-verification.test.ts scans
- * the port inputs for path literals that point at an exempt file.
+ * Whether a path under library/ui/figma has its bytes outside the port inputs: a file under TEST_ROOTS, a *.test or
+ * *.spec file, or Markdown, and never a component generation input (component-generation.mjs) or a BOUND_TESTS file.
+ * port-verification.test.ts scans the port inputs for path literals that point at an exempt file.
  */
 export function isRecordExempt(file) {
   if (typeof file !== 'string' || !file.startsWith(`${SCOPE}/`)) return false
-  if (isComponentModulePath(file)) return false
+  if (isComponentModulePath(file) || BOUND_TESTS.includes(file)) return false
   const relative = file.slice(SCOPE.length + 1)
   return (
     /\.md$/.test(relative) ||
-    /(?:^|\/)(?:test|__tests__|fixtures)\//.test(relative) ||
+    TEST_ROOTS.some((root) => relative.startsWith(root)) ||
     /\.(?:test|spec)\.[^/]+$/.test(relative)
   )
 }
@@ -185,17 +190,8 @@ function lockAt(root, commit) {
 
 /** sha256 of every file `commit` tracks under the scope, keyed by repository path. An LFS pointer or submodule throws. */
 export function trackedFilesAt(root, commit) {
-  const listing = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', SCOPE])
-    .toString('utf8')
-    .split('\0')
-    .filter(Boolean)
-    .map((entry) => {
-      const [meta, file] = entry.split('\t')
-      const [, type, oid] = meta.split(' ')
-      if (type !== 'blob') throw new Error(`${file} is not a file`)
-      return { file, oid }
-    })
-  return blobDigests(root, listing)
+  const output = git(root, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', SCOPE])
+  return blobDigests(root, parseListing(output, 'ls-tree'))
 }
 
 /** Command-line entry point. Returns the exit code. */
