@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { renderSettled, fakeSession } from '../harness'
 
-// Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).
+// The nav rail: its buttons, their order and art, and the voice state.
 describe('sidebar parity', () => {
-  it.each(['Gallery', 'Places'])('%s uses the Unity art (mask), not a Material glyph', async (name) => {
+  it.each(['Gallery', 'Places'])('%s uses the rail\'s mask art, not a Material glyph', async (name) => {
     await renderSettled(<Sidebar session={fakeSession()} />)
     const button = screen.getByRole('button', { name })
     expect(button.querySelector('svg')).toBeNull()
