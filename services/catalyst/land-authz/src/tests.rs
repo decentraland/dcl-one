@@ -251,8 +251,12 @@ async fn insert(pool: &PgPool, events: &[AuthzEvent]) -> usize {
     insert_events(&mut conn, events).await.unwrap()
 }
 
+/// The rebuild fold, under the cursor of the configured registries that a
+/// pass always holds before it folds (created here when the test has none).
 async fn fold_all(pool: &PgPool) -> indexer::FoldCounts {
-    fold(pool, &Settings::for_tests(), None).await.unwrap()
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(pool, &settings).await.unwrap();
+    fold(pool, &settings, None).await.unwrap()
 }
 
 async fn token_leg(pool: &PgPool, token: &str, column: &str) -> Option<String> {
@@ -762,6 +766,7 @@ async fn folding_twice_is_idempotent_and_the_incremental_fold_matches_the_rebuil
         return;
     };
     let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     insert(
         &db.pool,
         &[
@@ -2354,6 +2359,16 @@ async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
     .execute(pool)
     .await
     .unwrap();
+    // A pass of the old registries synced that link's event and stopped
+    // before its fold (it resumes below, after the rebind).
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: OLD_ESTATE.to_string(),
+            ..estate_ev(old_last - 1, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
     let links = || async {
         sqlx::query_as::<_, (String, String)>(
             "SELECT land_token_id::text, estate_token_id::text FROM land_authz.estate_land ORDER BY 1",
@@ -2439,6 +2454,92 @@ async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
         token_leg(pool, TOKEN_37_55, "owner").await.as_deref(),
         Some(ALICE)
     );
+    // The decisions at LAND (37, 55), which ALICE holds directly; DANA
+    // manages ALICE's estates, not her LAND. A stale link from it into estate
+    // 500 would turn both into Unknown, locking the owner out.
+    let at_37_55 = || async {
+        let mut verdicts = Vec::new();
+        for actor in [ALICE, DANA] {
+            let decision = can_deploy(&full, (37, 55), actor).await.unwrap();
+            assert!(
+                matches!(decision.source, DecisionSource::Index { .. }),
+                "{:?}",
+                decision.source
+            );
+            verdicts.push(decision.verdict);
+        }
+        verdicts
+    };
+    let decisions = vec![Verdict::Granted(LandRightLeg::Owner), Verdict::Denied];
+    assert_eq!(at_37_55().await, decisions);
+
+    // The old pass resumes its fold: the cursor no longer names its
+    // registries, so it writes nothing, publishes nothing, and the new
+    // authorization stands.
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(at_37_55().await, decisions);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
+    assert!(!mark_folded(pool, &old, old_last as u64).await.unwrap());
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.folded_block, Some((START + 1_000) as i64));
+    db.drop().await;
+}
+
+/// The other order: an old registries' fold already running when a full
+/// replay rebinds the cursor. Its transaction holds the cursor row, so the
+/// rebind waits for it, and the links it wrote are deleted after it.
+#[tokio::test]
+async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dropped() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM land_authz.estate_land")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+
+    let mut folding = pool.begin().await.unwrap();
+    let counts = indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+    assert_eq!(counts.estate_lands, 1);
+    let rebind = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!rebind.is_finished(), "the rebind waits for the fold");
+    folding.commit().await.unwrap();
+    assert!(rebind.await.unwrap().unwrap());
+
+    // The rebind's deletion landed after the old link, and the old
+    // registries can no longer fold.
+    assert_eq!(links().await, 0);
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.estate_registry.as_str()),
+        (LAND, ESTATE)
+    );
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, 0);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
     db.drop().await;
 }
 

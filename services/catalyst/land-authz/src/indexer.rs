@@ -1082,8 +1082,39 @@ pub async fn fold(
     settings: &Settings,
     since: Option<i64>,
 ) -> Result<FoldCounts, sqlx::Error> {
-    let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    let counts = fold_in_tx(&mut tx, settings, since).await?;
+    tx.commit().await?;
+    Ok(counts)
+}
+
+/// [`fold`] inside the caller's transaction. It writes only while the
+/// cursor still names `settings`' registries, and holds that row until the
+/// transaction ends. The estate links carry no registry of their own, so a
+/// pass bound to registries a full replay has since replaced must not write
+/// them. A fold already running when the replay rebinds the cursor makes
+/// [`begin_replay`] (`FOR UPDATE` on the same row) wait, so the replay's
+/// deletion of the old links lands after it. A fold that starts after the
+/// rebind finds no row and writes nothing: `RowNotFound`, as
+/// [`set_cursor`] answers such a pass.
+pub(crate) async fn fold_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    settings: &Settings,
+    since: Option<i64>,
+) -> Result<FoldCounts, sqlx::Error> {
+    let since = since.unwrap_or(-1);
+    let bound: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM land_authz.index_cursor \
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 FOR SHARE",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if bound.is_none() {
+        return Err(sqlx::Error::RowNotFound);
+    }
     // A job, not a request: the pool's 60 s statement_timeout is for the
     // routes. The rebuild fold (since = -1) over the whole registry history
     // is one statement per leg and may outlive it (the first live fold of
@@ -1091,7 +1122,7 @@ pub async fn fold(
     // node's orphaned fold still held the rows, 2026-09-25); a failed fold
     // retries with backoff, so the bound stays generous but finite.
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     // The fold follows the bulk insert of the same pass, before autoanalyze
     // has seen the rows: without column statistics the planner sizes the
@@ -1100,27 +1131,26 @@ pub async fn fold(
     // the same statement hash-joins in 0.5 s, 2026-09-25). One ANALYZE per
     // fold is the price of a plan that matches the data.
     sqlx::query("ANALYZE land_authz.authz_event")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     let tokens = sqlx::query(FOLD_TOKEN_SQL)
         .bind(&settings.land_registry)
         .bind(since)
         .bind(ZERO_ADDRESS)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
     let accounts = sqlx::query(FOLD_ACCOUNT_SQL)
         .bind(since)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
     let estate_lands = sqlx::query(FOLD_ESTATE_SQL)
         .bind(since)
         .bind(&settings.estate_registry)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
-    tx.commit().await?;
     Ok(FoldCounts {
         tokens,
         accounts,
