@@ -307,11 +307,11 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     for (const entry of [...previous.controls, ...previous.files])
       if (entry.lfs) expectedLfs.set(entry.path, entry.lfs)
   }
+  const declaredInputs = previous
+    ? [...previous.controls, ...previous.files].map((entry) => entry.path)
+    : []
   const web = path.join(root, WEB),
-    paths = sourceInventory(
-      root,
-      previous ? [...previous.controls, ...previous.files].map((entry) => entry.path) : []
-    ),
+    paths = sourceInventory(root, declaredInputs),
     roots = rootInventory(paths)
   const controls = new Set([...roots, ...CONTROL_PATHS])
   const candidates = [...paths].filter((file) => shared(file) || file.startsWith(OWNED_SOURCE))
@@ -597,7 +597,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   // Package scopes and compiler controls alongside reachable sources are resolver inputs.
   for (const file of resolverControls(paths, [...files, ...roots])) controls.add(file)
   for (const file of controls) files.delete(file)
-  const afterPaths = sourceInventory(root)
+  const afterPaths = sourceInventory(root, declaredInputs)
   if (JSON.stringify(rootInventory(afterPaths)) !== JSON.stringify(roots))
     throw Error('HUD source inventory changed while resolving imports')
   if (JSON.stringify(resolverRoles(afterPaths)) !== JSON.stringify(beforeResolverRoles))

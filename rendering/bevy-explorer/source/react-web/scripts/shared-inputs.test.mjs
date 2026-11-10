@@ -259,6 +259,12 @@ describe('the actual compiler and Vite shared-source contract', () => {
       assert.equal(hashes()[control], identity.sha256)
       assert.notDeepEqual(hashes(), before)
       assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), updated)
+      rmSync(path.join(root, '.git'), { recursive: true, force: true })
+      assert(readSharedPaths(root).length > 0)
+      assert.deepEqual(
+        JSON.parse(await generateSharedInputs({ root, filteredSource: true })),
+        updated
+      )
     })
   it('refuses ancestor resolver bytes changed during generation without replacing the manifest', async () => {
     const control = 'package.json'
@@ -335,6 +341,48 @@ describe('the actual compiler and Vite shared-source contract', () => {
     await assert.rejects(generateSharedInputs({ root }), /Linked shared input: package.json/)
     assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
   })
+  for (const mutation of ['add', 'delete', 'bytes'])
+    it(
+      'refuses filtered-source ancestor ' +
+        mutation +
+        ' during generation without replacing metadata',
+      async () => {
+        put('package.json', '{"type":"module"}')
+        const config = WEB + '/vite.config.ts'
+        const target = mutation === 'add' ? 'library/tsconfig.json' : 'package.json'
+        const operation =
+          mutation === 'delete'
+            ? 'unlinkSync(target)'
+            : mutation === 'bytes'
+              ? "appendFileSync(target,'\\n')"
+              : "writeFileSync(target,'{}')"
+        put(
+          config,
+          "import {existsSync,writeFileSync,unlinkSync,appendFileSync} from 'node:fs';\n" +
+            readFileSync(path.join(root, config), 'utf8').replace(
+              'build:{',
+              `plugins:[{name:'filtered-resolver-mutation',buildStart(){const repo=path.resolve(here,'../../../..'),target=path.join(repo,${JSON.stringify(target)}),marker=path.join(here,'filtered-mutated');if(process.env.HUD_FILTERED_MUTATION==='yes'&&!existsSync(marker)){${operation};writeFileSync(marker,'done')}}}],build:{`
+            )
+        )
+        git('add', '.')
+        await save()
+        const original = readFileSync(path.join(root, MANIFEST))
+        rmSync(path.join(root, '.git'), { recursive: true, force: true })
+        assert(readSharedPaths(root).length > 0)
+        const before = process.env.HUD_FILTERED_MUTATION
+        try {
+          process.env.HUD_FILTERED_MUTATION = 'yes'
+          await assert.rejects(
+            generateSharedInputs({ root, filteredSource: true }),
+            /HUD resolver control inventory changed|HUD input changed while resolving imports: package.json/
+          )
+        } finally {
+          if (before === undefined) delete process.env.HUD_FILTERED_MUTATION
+          else process.env.HUD_FILTERED_MUTATION = before
+        }
+        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
+      }
+    )
   it('binds actual imported Vite configuration dependencies and refuses their stale identities', async () => {
     const config = WEB + '/vite.config.ts'
     put(config, "import './config-helper.ts';\n" + readFileSync(path.join(root, config)))
