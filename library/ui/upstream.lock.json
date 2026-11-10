@@ -684,7 +684,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7"
+          "sha256": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -808,7 +808,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "20bd213e4ac6c8cfc9ecf4318f9d0859549ff73ea14a61dd705fd907785e610d"
+          "sha256": "ecc882d1995767f005b6cecc9b667409ef4ff106cb244d955b51ea9396769839"
         },
         "library/ui/figma/public-foundations.mjs": {
           "fds": null,
@@ -3495,7 +3495,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "14e05f525bf84705914d262ab28c4f20bdb64c8916809e68249212cb77702285"
+          "sha256": "1f11e320bb034ab234301883a0da453eec9fdb3a24d54173de1bb9d8081fe423"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,

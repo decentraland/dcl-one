@@ -145,6 +145,30 @@ describe('when the offline component guard checks a staged internal plan', () =>
     expect(publicComponentsProblems(root, lock)).toEqual([])
   })
 
+  describe('and a public-only registry omits the optional internal list', () => {
+    beforeEach(() => {
+      files.delete('generation.json')
+      files.set('promotion.json', Buffer.from('{"components":["NavBar"]}\n'))
+      files.set('NavBar/NavBar.figma.ts', Buffer.from('export const mapping = true\n'))
+      metadata = createComponentGeneration({
+        source,
+        files,
+        config: identity(componentConfigPath),
+        modules: componentModulePaths(source).map(identity),
+        dependencies: componentDependencyPaths.map(identity)
+      })
+      files.set('generation.json', metadata)
+      lock.publicComponents.files = Object.fromEntries(
+        componentExpectedFiles(JSON.parse(metadata.toString()), hash(metadata))
+      )
+      for (const [file, bytes] of files) put(scope + file, bytes)
+      git('add', '.')
+    })
+    it('should use the producer registry normalization and retain public mapping integrity', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([])
+    })
+  })
+
   describe('and output bytes change without being staged', () => {
     beforeEach(() => {
       put(scope + 'NavBar/NavBar.tsx', 'changed\n')

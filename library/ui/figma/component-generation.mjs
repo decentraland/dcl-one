@@ -115,7 +115,7 @@ function visibility(registry) {
   }
 }
 
-function registryOf(bytes) {
+export function componentRegistryIdentity(bytes) {
   return {
     path: 'promotion.json',
     sha256: hash(bytes),
@@ -212,7 +212,7 @@ export function createComponentGeneration({ source, modules, config, files, depe
   const verifiedDependencies = identities(dependencies, componentDependencyPaths, 'dependency')
   if (!(files instanceof Map) || !files.size || !Buffer.isBuffer(files.get('promotion.json')))
     throw new Error('Missing emitted component plan')
-  const registry = registryOf(files.get('promotion.json'))
+  const registry = componentRegistryIdentity(files.get('promotion.json'))
   const output = outputIdentities(
     ordered(files).map(([file, bytes]) => {
       if (file === componentGenerationFile || !Buffer.isBuffer(bytes) || !bytes.length)

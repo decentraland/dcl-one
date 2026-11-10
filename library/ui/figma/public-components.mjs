@@ -7,6 +7,7 @@ import {
   componentGenerationFile,
   componentModulePaths,
   componentOutputKind,
+  componentRegistryIdentity,
   isComponentModulePath,
   validateComponentGeneration
 } from './component-generation.mjs'
@@ -70,14 +71,8 @@ export function publicComponentsProblems(root, lock) {
     const manifest = validateComponentGeneration(bytes, source)
     if (manifest.registry.sha256 !== registry.sha256)
       return ['component registry differs from emitted plan']
-    const declaredRegistry = JSON.parse(registryBytes.toString('utf8'))
     if (
-      JSON.stringify(Object.keys(declaredRegistry).sort()) !==
-        JSON.stringify(['components', 'internal']) ||
-      JSON.stringify([...declaredRegistry.components].sort()) !==
-        JSON.stringify(manifest.registry.components) ||
-      JSON.stringify([...declaredRegistry.internal].sort()) !==
-        JSON.stringify(manifest.registry.internal)
+      JSON.stringify(componentRegistryIdentity(registryBytes)) !== JSON.stringify(manifest.registry)
     )
       return ['component visibility differs from emitted plan']
     const inputFiles = new Map(
