@@ -162,6 +162,9 @@ export const NOTIFICATION_GROUPS: Group[] = [
 
 type WriteChannel = { email: boolean; in_app: boolean };
 
+/** The node nests the notifications routes under `/notifications`; nothing serves a root `/subscription`. */
+export const SUBSCRIPTION_PATH = "/notifications/subscription";
+
 const UNREADABLE_SETTINGS_MESSAGE =
   "We couldn't read your current notification settings, so nothing was changed. Try again in a moment.";
 
@@ -172,7 +175,7 @@ export function buildSubscriptionCommit(
     const identity = typeof identitySource === "function" ? identitySource() : identitySource;
     if (!identity) throw new Error("Sign in to manage email notifications.");
 
-    const current = await signedGetJSON<unknown>("/subscription", {
+    const current = await signedGetJSON<unknown>(SUBSCRIPTION_PATH, {
       identity,
       signal,
     });
@@ -208,7 +211,7 @@ export function buildSubscriptionCommit(
       message_type: messageType,
     };
 
-    const res = await signedFetch(identity, `${catalystBase()}/subscription`, {
+    const res = await signedFetch(identity, `${catalystBase()}${SUBSCRIPTION_PATH}`, {
       method: "PUT",
       metadata: {},
       headers: { accept: "application/json", "content-type": "application/json" },
