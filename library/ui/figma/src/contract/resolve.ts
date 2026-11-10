@@ -34,7 +34,11 @@ type PropTranslation = {
 type Resolved = {
   component: { exportName: string; importSpecifier: string; importStatements: string[] }
   usage: string
-  usageFor: { variantProperties: Record<string, string>; basis: 'requested' | 'figma-defaults' }
+  // `unspecified`: no capture and no variant properties, so the usage shows the mapping's empty selection.
+  usageFor: {
+    variantProperties: Record<string, string>
+    basis: 'requested' | 'figma-defaults' | 'unspecified'
+  }
   propTranslation: PropTranslation[]
   interactionStates: string[]
   provenance: {
@@ -117,10 +121,11 @@ function nearestVariants(set: FigmaSet, requested: Record<string, string>) {
     .map((entry) => entry.name)
 }
 
+const TRUE_WORDS = ['true', 'yes', 'on']
+const FALSE_WORDS = ['false', 'no', 'off']
+
 // Only own keys count: a Figma property or variant value named like an Object member ("toString",
 // "__proto__") must not match an inherited member of a parsed record.
-const BOOLEAN_WORDS = ['true', 'yes', 'on', 'false', 'no', 'off']
-
 const own = <T>(record: Record<string, T>, key: string): T | undefined =>
   Object.hasOwn(record, key) ? record[key] : undefined
 
@@ -206,10 +211,7 @@ function renderUsage(
       values.set(local.local, picked !== undefined ? (own(local.values, picked) ?? '') : '')
     } else if (local.kind === 'boolean') {
       const picked = own(selection, local.figmaProperty)?.toLowerCase()
-      values.set(
-        local.local,
-        BOOLEAN_WORDS.slice(0, 3).includes(picked ?? '') ? local.whenTrue : local.whenFalse
-      )
+      values.set(local.local, TRUE_WORDS.includes(picked ?? '') ? local.whenTrue : local.whenFalse)
     } else if (local.kind === 'string') {
       values.set(
         local.local,
@@ -326,7 +328,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
       diagnostic(
         'capture-revision-unknown',
         `The library lock pins no readable capture revision: ${(error as Error).message}`,
-        { lock: path.join(path.basename(library.rootDir), 'upstream.lock.json') }
+        { lock: `${library.name}/upstream.lock.json` }
       )
     )
   }
@@ -340,18 +342,28 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   if (identity.errors.length) return failure(identity.errors)
 
   // With a capture, a node outside it is not a library component, even if a stale mapping still targets it.
-  if (ctx.figmaSets.length > 0 && !identity.set)
-    return failure([
-      diagnostic(
-        'identity-not-found',
-        `Figma node ${identity.setId} is not a component of the captured library.`,
-        {
-          reason: 'node',
-          nodeId: identity.setId
-        }
-      )
-    ])
   const mappings = await loadMappings(library, ctx.mappingRoot)
+  if (ctx.figmaSets.length > 0 && !identity.set) {
+    // A mapping that still targets the node is a stale mapping: a library defect to report, not a retry.
+    const stale = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
+    return failure([
+      stale.length
+        ? diagnostic(
+            'identity-not-found',
+            `Figma node ${identity.setId} is not in the capture, but a mapping still targets it.`,
+            {
+              reason: 'stale-mapping',
+              nodeId: identity.setId,
+              files: stale.map((mapping) => path.relative(library.rootDir, mapping.file))
+            }
+          )
+        : diagnostic(
+            'identity-not-found',
+            `Figma node ${identity.setId} is not a component of the captured library.`,
+            { reason: 'node', nodeId: identity.setId }
+          )
+    ])
+  }
   const candidates = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
   if (candidates.length === 0) {
     // mapping-missing only once identity is established: the node is a captured library component.
@@ -422,7 +434,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   // Variant selection: the variant node, then explicit properties, over the Figma defaults.
   const set = identity.set
   let selection: Record<string, string> = {}
-  let basis: 'requested' | 'figma-defaults' = 'figma-defaults'
+  let basis: 'requested' | 'figma-defaults' | 'unspecified' = set ? 'figma-defaults' : 'unspecified'
   if (set) {
     selection = variantDefaults(set)
     const variant = set.variants.find((candidate) => candidate.id === identity.variantId)
@@ -467,43 +479,36 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     }
   }
 
-  // Without a capture nothing else checks the request: a variant property the mapping does not read, or a
-  // boolean value outside the accepted words, is refused rather than silently dropped.
-  if (!set) {
-    const reads = new Map(
-      mapping.locals.flatMap((local) =>
-        local.kind === 'enum' || local.kind === 'boolean'
-          ? [[local.figmaProperty, local.kind] as const]
-          : []
-      )
+  // A boolean the mapping reads takes only the accepted words, with or without a capture. Without a capture, a
+  // property the mapping does not read is reported the way the capture path reports one: a warning, not a refusal.
+  const reads = new Map(
+    mapping.locals.flatMap((local) =>
+      local.kind === 'enum' || local.kind === 'boolean'
+        ? [[local.figmaProperty, local.kind] as const]
+        : []
     )
-    for (const [property, value] of Object.entries(input.variantProperties ?? {})) {
-      const kind = reads.get(property)
-      if (kind === undefined && !mapping.header.states.includes(property))
-        return failure([
-          diagnostic(
-            'variant-unsupported',
-            `The mapping does not read the property "${property}".`,
-            {
-              property,
-              value,
-              supported: [...reads.keys(), ...mapping.header.states]
-            }
-          )
-        ])
-      if (kind === 'boolean' && !BOOLEAN_WORDS.includes(value.toLowerCase()))
-        return failure([
-          diagnostic(
-            'variant-unsupported',
-            `"${value}" is not a boolean value for "${property}".`,
-            {
-              property,
-              value,
-              supported: BOOLEAN_WORDS
-            }
-          )
-        ])
-    }
+  )
+  for (const [property, value] of Object.entries(input.variantProperties ?? {})) {
+    const kind = reads.get(property)
+    if (kind === 'boolean' && ![...TRUE_WORDS, ...FALSE_WORDS].includes(value.toLowerCase()))
+      return failure([
+        diagnostic('variant-unsupported', `"${value}" is not a boolean value for "${property}".`, {
+          property,
+          value,
+          supported: [...TRUE_WORDS, ...FALSE_WORDS]
+        })
+      ])
+    if (!set && kind === undefined && !mapping.header.states.includes(property))
+      warnings.push(
+        diagnostic(
+          'unmapped-figma-property',
+          `The mapping does not read the property "${property}".`,
+          {
+            property,
+            supported: [...reads.keys(), ...mapping.header.states]
+          }
+        )
+      )
   }
   const textKeys = new Set(
     mapping.locals.flatMap((local) =>
@@ -654,6 +659,23 @@ async function checkMappings(
 // The check-mappings answer for the CLI and the MCP tool. Without a capture the node, drift and
 // supersession checks cannot run, and the report says so instead of passing silently.
 async function checkMappingsReport(ctx: ResolveContext) {
+  // No mapping root, or one outside a package, is a failure here too, never an empty pass.
+  if (!ctx.mappingRoot || !(await loadLibrary(ctx.mappingRoot)))
+    return {
+      ok: false,
+      checked: 0,
+      captureChecked: false,
+      errors: [
+        diagnostic(
+          'mapping-root-not-configured',
+          ctx.mappingRoot
+            ? `${ctx.mappingRoot} is not inside an npm package.`
+            : 'No mapping source configured.'
+        )
+      ],
+      warnings: [],
+      results: []
+    }
   const results = await checkMappings(ctx)
   const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
   const captureChecked = ctx.figmaSets.length > 0
@@ -665,7 +687,7 @@ async function checkMappingsReport(ctx: ResolveContext) {
       ? []
       : [
           diagnostic(
-            'figma-identity-unverified',
+            'capture-unchecked',
             'No Figma capture: mappings were checked against the library only; the capture node, drift and supersession checks did not run.'
           )
         ],

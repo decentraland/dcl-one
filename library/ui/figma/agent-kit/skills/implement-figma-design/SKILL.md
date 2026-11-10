@@ -20,27 +20,27 @@ The library owns the components. Your job is to find the mapped component, impor
    - `ok: true`: import from `component.importSpecifier`, copy the props from `usage` and `propTranslation`. Read `warnings`; they are drift or unverified identity, not noise. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props.
    - `ok: false`: act on the code, never work around it.
 
-   Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The table is checked against the resolver's registry.
+   Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The codes, severities and audiences in this table are checked against the resolver's registry; `action` is the authority on what to do.
 
 <!-- diagnostic-codes -->
 
-| Code                          | Severity | Meaning                                                                              | What you do                                                                   |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `invalid-input`               | error    | Neither a node id nor a name was given                                               | Pass `nodeId` (preferred) or the exact component set name                     |
-| `mapping-root-not-configured` | error    | The resolver cannot find the mapping directory or its package                        | Pass `--mapping-root` or use `--mapping-only`                                 |
-| `mapping-missing`             | error    | A known library component has no public mapping: outside the supported scope         | Do not build a replacement. Report name, variant properties, code, provenance |
-| `identity-not-found`          | error    | The node or name is not a component of the captured library                          | Not a missing mapping. Follow `action` (it depends on `details.reason`)       |
-| `identity-ambiguous`          | error    | Several components share the name, or several mappings claim the node                | Follow `action`; never pick a candidate yourself                              |
-| `identity-uncertain`          | error    | No capture and no mapping: it cannot be established that this is a library component | Not a missing mapping. Follow `action`; do not build a replacement            |
-| `variant-unsupported`         | error    | The design uses a value the mapping does not cover                                   | Report it. Do not pick the closest value                                      |
-| `variant-not-in-figma`        | error    | The combination is not defined by the design                                         | Ask the designer; do not invent the state                                     |
-| `contract-incompatible`       | error    | Library version, contract version, Figma file or export does not match               | Follow `action`, which depends on `details.reason`                            |
-| `unsupported-construct`       | error    | The mapping file uses something this resolver cannot read                            | Report it                                                                     |
-| `unmapped-figma-property`     | warning  | The mapping ignores a Figma property                                                 | Do not emulate it; mention it                                                 |
-| `figma-drift`                 | warning  | Mapping and captured component differ in some options                                | Use only mapped values; mention the drift                                     |
-| `export-unverifiable`         | warning  | The export cannot be confirmed statically                                            | Let the app typecheck confirm the import                                      |
-| `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                  |
-| `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                          |
+| Code                          | Severity | Meaning                                                                              | What you do                                                                     |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `invalid-input`               | error    | Neither a node id nor a name was given                                               | Pass `nodeId` (preferred) or the exact component set name                       |
+| `mapping-root-not-configured` | error    | The resolver cannot find the mapping directory or its package                        | Pass `--mapping-root` or use `--mapping-only`                                   |
+| `mapping-missing`             | error    | A known library component has no public mapping: outside the supported scope         | Do not build a replacement. Report name, variant properties, code and `context` |
+| `identity-not-found`          | error    | The node or name is not a component of the captured library                          | Not a missing mapping. Follow `action` (it depends on `details.reason`)         |
+| `identity-ambiguous`          | error    | Several components share the name, or several mappings claim the node                | Follow `action`; never pick a candidate yourself                                |
+| `identity-uncertain`          | error    | No capture and no mapping: it cannot be established that this is a library component | Not a missing mapping. Follow `action`; do not build a replacement              |
+| `variant-unsupported`         | error    | The mapping does not cover the value, or it is not a value the property takes        | Report it. Do not pick the closest value                                        |
+| `variant-not-in-figma`        | error    | The combination is not defined by the design                                         | Ask the designer; do not invent the state                                       |
+| `contract-incompatible`       | error    | Library version, contract version, Figma file or export does not match               | Follow `action`, which depends on `details.reason`                              |
+| `unsupported-construct`       | error    | The mapping file uses something this resolver cannot read                            | Report it                                                                       |
+| `unmapped-figma-property`     | warning  | The mapping ignores a Figma property or text layer                                   | Do not emulate it; mention it                                                   |
+| `figma-drift`                 | warning  | Mapping and captured component differ in some options                                | Use only mapped values; mention the drift                                       |
+| `export-unverifiable`         | warning  | The export cannot be confirmed statically                                            | Let the app typecheck confirm the import                                        |
+| `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                    |
+| `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                            |
 
 4. **Compose the page** from the resolved components and the library's design tokens (CSS custom properties such as `var(--dcl-space-12)`). No hard-coded colors, spacing or fonts that a token covers. Public imports only: `import { X } from '<importSpecifier>'`, never a deep path.
 5. **Keep business behavior in the app.** The library renders; routing, data, auth and tracking stay in the application.

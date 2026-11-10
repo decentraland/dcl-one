@@ -451,6 +451,13 @@ describe('resolveComponent', () => {
       const result = await resolveComponent(context(mappingRoot), { nodeId: '7:7' })
 
       expect(codes(result)).toEqual(['identity-not-found'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toEqual({
+        reason: 'stale-mapping',
+        nodeId: '7:7',
+        files: ['src/Button.figma.ts']
+      })
+      expect(error!.action).toMatch(/library defect/)
     })
 
     it('should give every failure the library and capture context a report needs', async () => {
@@ -479,7 +486,7 @@ describe('resolveComponent', () => {
 
       const warning = result.warnings.find((w) => w.code === 'capture-revision-unknown')!
       expect(warning.details).toEqual({
-        lock: path.join(path.basename(root), 'upstream.lock.json')
+        lock: 'fixture-library/upstream.lock.json'
       })
     })
 
@@ -505,11 +512,8 @@ describe('resolveComponent', () => {
       expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
     })
 
-    it.each([
-      ['a property the mapping does not read', { Size: 'L' }, 'variant-unsupported'],
-      ['a boolean value outside the accepted words', { Blocked: 'Maybe' }, 'variant-unsupported']
-    ])('should refuse %s without a capture', async (_label, variantProperties, code) => {
-      const { mappingRoot } = await library({
+    const booleanMapping = () =>
+      library({
         mappings: {
           'Button.figma.ts': mappingSource({
             body: "const blocked = instance.getBoolean('Blocked', { true: ' disabled', false: '' })"
@@ -519,12 +523,45 @@ describe('resolveComponent', () => {
         }
       })
 
-      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+    it('should warn, as the capture path does, about a property the mapping does not read', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const withoutCapture = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
         nodeId: '1:1',
-        variantProperties
+        variantProperties: { Kind: 'Primary', Size: 'M' }
       })
 
-      expect(codes(result)).toEqual([code])
+      expect(withoutCapture.ok).toBe(true)
+      expect(
+        withoutCapture.warnings.find((w) => w.code === 'unmapped-figma-property')?.details
+      ).toMatchObject({ property: 'Size' })
+    })
+
+    it.each([
+      ['without a capture', []],
+      [
+        'with a capture',
+        [{ ...buttonSet, properties: { ...buttonSet.properties, Blocked: { type: 'BOOLEAN' } } }]
+      ]
+    ])('should refuse a boolean value outside the accepted words %s', async (_label, figmaSets) => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets }), {
+        nodeId: '1:1',
+        variantProperties: { Blocked: 'Maybe' }
+      })
+
+      expect(codes(result)).toEqual(['variant-unsupported'])
+    })
+
+    it('should say no selection was applied without a capture or variant properties', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1'
+      })
+
+      expect(result.ok && result.resolved.usageFor.basis).toBe('unspecified')
     })
 
     it('should accept a declared state and warn about a text the mapping does not render', async () => {
