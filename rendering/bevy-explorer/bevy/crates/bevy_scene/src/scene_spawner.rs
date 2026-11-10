@@ -83,6 +83,7 @@ impl InstanceId {
 /// those whose parent is written carry a marker until they are written themselves. A partial
 /// instance's top-level entities are attached to its parent and kept [`Visibility::Hidden`] until
 /// it is complete. Without a deadline, instances are written whole, as stock Bevy writes them.
+/// A spawner keeps a query on the world it spawns into, so one spawner serves one [`World`].
 ///
 /// [`Visibility::Hidden`]: https://docs.rs/bevy/0.16.1/bevy/render/view/enum.Visibility.html
 #[derive(Default, Resource)]
@@ -264,6 +265,18 @@ impl SceneInProgress {
         for entity in self.entity_map.values() {
             if let Ok(entity) = world.get_entity_mut(*entity) {
                 entity.despawn();
+            }
+        }
+    }
+
+    /// Despawns the entities never written, which have no components.
+    fn despawn_unwritten(&self, world: &mut World) {
+        for entity in self.entity_map.values() {
+            if world
+                .get_entity(*entity)
+                .is_ok_and(|entity| entity.archetype().component_count() == 0)
+            {
+                world.despawn(*entity);
             }
         }
     }
@@ -723,7 +736,7 @@ impl SceneSpawner {
                             wrote_any = true;
                             continue;
                         }
-                        SceneInProgress::start(world, scene, &type_registry, request)?
+                        self.start(world, scene, &type_registry, request)?
                     }
                 };
 
@@ -738,11 +751,20 @@ impl SceneSpawner {
 
                 let mut stuck = false;
                 while !progress.is_complete() && has_time(wrote_any) {
-                    if !progress.write_next(world, scene, &mut marked, &type_registry)? {
-                        stuck = true;
-                        break;
+                    match progress.write_next(world, scene, &mut marked, &type_registry) {
+                        Ok(true) => wrote_any = true,
+                        Ok(false) => {
+                            stuck = true;
+                            break;
+                        }
+                        Err(error) => {
+                            // nothing of an instance that failed stays behind
+                            let instance_id = progress.instance_id;
+                            progress.despawn(world);
+                            self.forget(instance_id);
+                            return Err(error);
+                        }
                     }
-                    wrote_any = true;
                 }
 
                 if progress.is_complete() {
@@ -758,10 +780,18 @@ impl SceneSpawner {
                     if roots(scene, &progress.entity_map)
                         .any(|(_, root)| world.get_entity(root).is_err())
                     {
-                        // a top-level entity despawned by others: the instance is cancelled
-                        let instance_id = progress.instance_id;
-                        progress.despawn(world);
-                        self.forget(instance_id);
+                        // a top-level entity despawned by others: what was never written goes, and
+                        // the instance completes with what is left, as a whole spawn whose root
+                        // was despawned afterwards would be, so its ready event still fires
+                        progress.despawn_unwritten(world);
+                        let SceneInProgress {
+                            instance_id,
+                            parent,
+                            entity_map,
+                            hidden,
+                            ..
+                        } = progress;
+                        self.finish(world, scene, (instance_id, parent), entity_map, hidden);
                     } else if progress.retried {
                         // stuck again: the hierarchy does not reach every entity, so write it whole
                         let request = progress.restart(world);
@@ -771,8 +801,7 @@ impl SceneSpawner {
                         // an entity despawned by others, or the scene changed in place: start over,
                         // still in slices
                         let request = progress.restart(world);
-                        let mut progress =
-                            SceneInProgress::start(world, scene, &type_registry, request)?;
+                        let mut progress = self.start(world, scene, &type_registry, request)?;
                         progress.retried = true;
                         self.scene_in_progress = Some(progress);
                     }
@@ -788,6 +817,19 @@ impl SceneSpawner {
         });
         self.marked = Some(marked);
         result
+    }
+
+    /// Starts writing a queued instance; one that fails to start is forgotten.
+    fn start(
+        &mut self,
+        world: &mut World,
+        scene: &Scene,
+        type_registry: &TypeRegistry,
+        request: (Handle<Scene>, InstanceId, Option<Entity>),
+    ) -> Result<SceneInProgress, SceneSpawnError> {
+        let instance_id = request.1;
+        SceneInProgress::start(world, scene, type_registry, request)
+            .inspect_err(|_| self.forget(instance_id))
     }
 
     /// Writes a queued instance whole, as stock Bevy does.

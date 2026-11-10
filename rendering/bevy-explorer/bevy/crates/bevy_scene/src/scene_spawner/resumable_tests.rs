@@ -380,8 +380,14 @@ fn despawning_an_instance_queued_behind_another_cancels_it() {
 }
 
 #[test]
-fn despawning_the_root_mid_spawn_cancels_the_instance() {
+fn despawning_the_root_mid_spawn_completes_the_instance_without_it() {
     let mut app = app();
+    app.init_resource::<ReadyEvents>();
+    app.add_observer(
+        |trigger: Trigger<SceneInstanceReady>, mut events: ResMut<ReadyEvents>| {
+            events.0.push(trigger.event().instance_id);
+        },
+    );
     one_entity_per_run(&mut app);
     let scene = add_scene(&mut app, chain(0, 3));
     let parent = app.world_mut().spawn_empty().id();
@@ -395,8 +401,39 @@ fn despawning_the_root_mid_spawn_cancels_the_instance() {
         app.update();
     }
 
-    assert!(!is_ready(&app, instance));
+    // as a whole spawn whose root was despawned afterwards: ready, with nothing left
+    assert!(is_ready(&app, instance));
+    assert_eq!(app.world().resource::<ReadyEvents>().0, [instance]);
     assert!(nodes(&mut app).is_empty());
+    assert_eq!(app.world().entities().len(), entities_before);
+}
+
+/// A component the type registry does not know: writing it fails.
+#[derive(Component)]
+struct Unregistered;
+
+#[test]
+fn an_error_mid_spawn_leaves_nothing_behind() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    let scene = add_scene(&mut app, |world: &mut World| {
+        let root = world.spawn(Node(0)).id();
+        world.spawn((Node(1), Unregistered, ChildOf(root)));
+    });
+    let parent = app.world_mut().spawn_empty().id();
+    let entities_before = app.world().entities().len();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+    let spawn = |app: &mut App| {
+        app.world_mut()
+            .resource_scope(|world, mut spawner: bevy_ecs::world::Mut<SceneSpawner>| {
+                spawner.spawn_queued_scenes(world)
+            })
+    };
+    // the root, then its child, which fails
+    spawn(&mut app).unwrap();
+    assert!(spawn(&mut app).is_err());
+
+    assert!(!is_ready(&app, instance));
     assert_eq!(app.world().entities().len(), entities_before);
     assert!(parent_is_forgotten(&app, instance));
 }
@@ -664,6 +701,43 @@ mod visibility {
         let root = children(&app, parent)[0];
         assert!(app.world().get::<InheritedVisibility>(root).is_some());
         assert!(app.world().get::<ViewVisibility>(root).is_some());
+    }
+
+    #[test]
+    fn every_top_level_entity_stays_hidden_until_the_instance_is_complete() {
+        let mut app = app();
+        one_entity_per_run(&mut app);
+        let scene = add_scene(&mut app, |world: &mut World| {
+            for n in [0, 10] {
+                let root = world.spawn((Node(n), Visibility::Visible)).id();
+                world.spawn((Node(n + 1), Visibility::Inherited, ChildOf(root)));
+            }
+        });
+        let parent = app.world_mut().spawn_empty().id();
+        let instance = spawner(&mut app).spawn_as_child(scene, parent);
+
+        loop {
+            app.update();
+            if is_ready(&app, instance) {
+                break;
+            }
+            // including a root written after the hiding, which writes its own visibility
+            let roots = children(&app, parent);
+            assert_eq!(roots.len(), 2);
+            for root in roots {
+                assert_eq!(
+                    app.world().get::<Visibility>(root),
+                    Some(&Visibility::Hidden)
+                );
+            }
+        }
+
+        for root in children(&app, parent) {
+            assert_eq!(
+                app.world().get::<Visibility>(root),
+                Some(&Visibility::Visible)
+            );
+        }
     }
 
     #[test]
