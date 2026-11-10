@@ -166,17 +166,6 @@ impl v8::ValueSerializerImpl for SceneClone {
         let error = v8::Exception::type_error(scope, message);
         scope.throw_exception(error);
     }
-
-    // V8 aborts if this declines without throwing
-    fn get_shared_array_buffer_id<'s>(
-        &self,
-        scope: &mut v8::HandleScope<'s>,
-        _shared_array_buffer: v8::Local<'s, v8::SharedArrayBuffer>,
-    ) -> Option<u32> {
-        let message = v8::String::new(scope, "SharedArrayBuffer cannot be cloned")?;
-        self.throw_data_clone_error(scope, message);
-        None
-    }
 }
 
 impl v8::ValueDeserializerImpl for SceneClone {}
