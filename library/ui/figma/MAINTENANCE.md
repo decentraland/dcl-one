@@ -51,6 +51,7 @@ The contract is the library's Code Connect template files, read statically (neve
 | `export-unverifiable`         | warning  | consumer             |
 | `capture-revision-unknown`    | warning  | consumer             |
 | `identity-name-match`         | warning  | consumer             |
+| `accepted-limits`             | warning  | consumer             |
 | `figma-identity-unverified`   | warning  | consumer             |
 | `capture-unchecked`           | warning  | maintainer           |
 | `superseded-by-sync`          | warning  | maintainer           |

@@ -8,11 +8,31 @@
   },
   "registry": {
     "path": "promotion.json",
-    "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71",
+    "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3",
     "components": [
       "NavBar"
     ],
-    "internal": []
+    "internal": [],
+    "limits": {
+      "NavBar": [
+        {
+          "id": "signed-in-placeholders",
+          "text": "Signed-in views retain captured mock balances, notification counts and a placeholder avatar."
+        },
+        {
+          "id": "empty-mobile-variants",
+          "text": "Signed-in mobile variants 7 and 8 remain empty."
+        },
+        {
+          "id": "pending-contracts",
+          "text": "Semantic data and avatar props, navigation href and list behavior, notifications, icons and forced-state contracts remain follow-ups."
+        },
+        {
+          "id": "logo-size",
+          "text": "The logo is currently 60px on desktop and 48px on mobile; alignment to the 40px design is pending."
+        }
+      ]
+    }
   },
   "inputs": {
     "config": {
@@ -45,8 +65,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4",
-      "indexBlobSha": "ebd5d81e003ce0ff6b0592472f313fc2a8f70b65"
+      "sha256": "11902ca70028ba557b0d63a140b9e770a24dcfa2662f75c036ad6fb97850c6f6",
+      "indexBlobSha": "45cbf8f2a9c382fa47c05dc1a1c890fd26edeb4a"
     },
     {
       "path": "library/ui/figma/key-guard.d.mts",
@@ -185,8 +205,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/diagnostics.ts",
-      "sha256": "10c7252481b89f5fce0830126913d8bd26469e17639d356a8ecac924d4f3f99e",
-      "indexBlobSha": "3f85ffdaeeb5377d71af5a6f748d843af665c72d"
+      "sha256": "1ba6e433c1468fbbbc5bddb5b794a3343c409272256c23f6714478dba8714efd",
+      "indexBlobSha": "e2075e10e6603a69ab04b049425a97f3ad5dec98"
     },
     {
       "path": "library/ui/figma/src/contract/figma-index.ts",
@@ -210,8 +230,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/resolve.ts",
-      "sha256": "630a6129095e3ce923053b711ab4166fbeac1597f30b52d6c29dc87fbd3a3b60",
-      "indexBlobSha": "a054f8c954815be68ec3bad5a6748b9b38cc2057"
+      "sha256": "8bb0e5f2e2d6026cb0bcc7a2a7919d732b2ca6df689e0405c7dc5e79270f1f05",
+      "indexBlobSha": "6f7a6298d675ec37502cdaf744e282c99a42d53e"
     },
     {
       "path": "library/ui/figma/src/contract/test-fixtures.ts",
@@ -365,8 +385,8 @@
     },
     {
       "path": "library/ui/figma/src/guard/library.ts",
-      "sha256": "030bdfd3116a1c12488ff2d91d033187f6f703c47a7fbd5646258f8e9fcc5489",
-      "indexBlobSha": "49e8040fa038c168fdb98b2b6e415f7435a0b4bc"
+      "sha256": "eafe2b336c770cd01143f1403ff859e0efbee4243a806c2a2d665054a7c8a9f2",
+      "indexBlobSha": "ba162345287c799869d5076891b0d054216b2789"
     },
     {
       "path": "library/ui/figma/src/guard/lifecycle-fixture.ts",
@@ -420,8 +440,8 @@
     },
     {
       "path": "library/ui/figma/src/install-components.ts",
-      "sha256": "8c7e5d851ce23056158c88c0f177ec9cf6db109612d2503e2a4deb1e447451e4",
-      "indexBlobSha": "4c9cc5a4bfc4e0c110748f3c4359b5cf0c7efd93"
+      "sha256": "6e13af089d6b5368bb05914e4789701787da926aeb4142533766f1563e10ec9d",
+      "indexBlobSha": "b987eb2063b48dc2254f23cd182cb7d32374e20f"
     },
     {
       "path": "library/ui/figma/src/install.ts",
@@ -618,7 +638,7 @@
     },
     {
       "path": "promotion.json",
-      "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71"
+      "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3"
     },
     {
       "path": "runtime/figma-interactions.tsx",

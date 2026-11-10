@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "35bd314e3937339005b3c7daa8bf5c0f87a50f87a555d236a98da51072c0aead",
+          "sha256": "70955bd6175886dae0aee6e8b2a5d702b3c1909848e666aa5b7d50f3c7114b38",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -616,7 +616,8 @@
             "resolver-contract",
             "consumer-skill",
             "name-identity",
-            "port-command"
+            "port-command",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -664,7 +665,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "1c614ddb684605c15bb9eca11223e8fc4cdabe48cdb31bd71b4d8c064197cebc",
+          "sha256": "53145260086e85d0f59378162e3c5dde304e6d409d0f529d2177707269b74b2d",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -673,7 +674,8 @@
             "predates",
             "resolver-contract",
             "consumer-skill",
-            "name-identity"
+            "name-identity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
@@ -686,9 +688,10 @@
         "library/ui/figma/component-generation.mjs": {
           "fds": null,
           "deviation": [
-            "component-install-integrity"
+            "component-install-integrity",
+            "accepted-limits"
           ],
-          "sha256": "5d8c82cbfb40dbbfde333a5381b12e7ff5b411486ab98ed1802009a5518e74b4"
+          "sha256": "11902ca70028ba557b0d63a140b9e770a24dcfa2662f75c036ad6fb97850c6f6"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -2501,14 +2504,15 @@
           ]
         },
         "library/ui/figma/src/contract/diagnostics.ts": {
-          "sha256": "10c7252481b89f5fce0830126913d8bd26469e17639d356a8ecac924d4f3f99e",
+          "sha256": "1ba6e433c1468fbbbc5bddb5b794a3343c409272256c23f6714478dba8714efd",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/diagnostics.ts",
             "sha256": "ad74f960ce5ba957ba964bb2e7710261088331cc7a0c16eabfab0ec075cda12a"
           },
           "deviation": [
             "resolver-contract",
-            "name-identity"
+            "name-identity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/contract/figma-index.test.ts": {
@@ -2572,7 +2576,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.test.ts": {
-          "sha256": "ef05694d28cc1f9826162202d9f00582a86ac9489260353e023bb60030ac6264",
+          "sha256": "d9665873d19fb4ef7f6c87ff0ea880e65ed3768938a7063406f25f60bfab512e",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.test.ts",
             "sha256": "d1b50c99ff3cf99f3e7dd425facf4ba9ad171fd8cbe214df0bc3a34bc1ee3bc5"
@@ -2580,11 +2584,12 @@
           "deviation": [
             "predates",
             "resolver-contract",
-            "name-identity"
+            "name-identity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
-          "sha256": "630a6129095e3ce923053b711ab4166fbeac1597f30b52d6c29dc87fbd3a3b60",
+          "sha256": "8bb0e5f2e2d6026cb0bcc7a2a7919d732b2ca6df689e0405c7dc5e79270f1f05",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.ts",
             "sha256": "cac48b26148bef9db5d087d2857a7e9eaf89ae33745125d47957678de71dc596"
@@ -2592,7 +2597,8 @@
           "deviation": [
             "predates",
             "resolver-contract",
-            "name-identity"
+            "name-identity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/contract/test-fixtures.ts": {
@@ -3048,14 +3054,15 @@
           "sha256": "c0a7f5985293655cf0bc21343df05fbabf87d45b203036dd027c94cfe172f4fa"
         },
         "library/ui/figma/src/guard/library.ts": {
-          "sha256": "030bdfd3116a1c12488ff2d91d033187f6f703c47a7fbd5646258f8e9fcc5489",
+          "sha256": "eafe2b336c770cd01143f1403ff859e0efbee4243a806c2a2d665054a7c8a9f2",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/library.ts",
             "sha256": "9e8b27fb597200c12d4a473185c5fadfbdfdc1eafc9e95f9c5f1460251e5e6d7"
           },
           "deviation": [
             "predates",
-            "component-install-integrity"
+            "component-install-integrity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/guard/lifecycle-fixture.ts": {
@@ -3267,20 +3274,22 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "8ad8f0e75dc296a94316e8151ad046d35a31e1d9e26fa21d0a7a5bad0badbf09",
+          "sha256": "8abf50550bb3157360cc0238895677f5d3f5f9b80b91fdc3dec36b5a73118a88",
           "deviation": [
             "local-components-plan",
             "internal-components",
-            "component-install-integrity"
+            "component-install-integrity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/install-components.ts": {
           "fds": null,
-          "sha256": "8c7e5d851ce23056158c88c0f177ec9cf6db109612d2503e2a4deb1e447451e4",
+          "sha256": "6e13af089d6b5368bb05914e4789701787da926aeb4142533766f1563e10ec9d",
           "deviation": [
             "local-components-plan",
             "internal-components",
-            "component-install-integrity"
+            "component-install-integrity",
+            "accepted-limits"
           ]
         },
         "library/ui/figma/src/install.test.ts": {
@@ -3290,7 +3299,8 @@
             "seal-removed",
             "foundation-review",
             "verified-install",
-            "component-install-integrity"
+            "component-install-integrity",
+            "accepted-limits"
           ],
           "sha256": "5ed7a915a2b61a480d32576ee33e35aa2dac02a76f8893b18551b81e9e1fab14"
         },
@@ -3867,6 +3877,13 @@
           "fds": null,
           "deviation": "live-read-restored"
         },
+        "library/ui/figma/test/accepted-limits.test.ts": {
+          "sha256": "d16146b7e8739fbe38a824fdf0a314dce60517285c957617197f7ce1881fcc8f",
+          "fds": null,
+          "deviation": [
+            "accepted-limits"
+          ]
+        },
         "library/ui/figma/test/fixtures/demo-nav-text-roles.json": {
           "sha256": "59bcc587bb92c34b010cdc24d251b9bdd9175b9f75ca0b89547d5313b272347b",
           "fds": null,
@@ -4231,6 +4248,7 @@
         }
       },
       "deviationCodes": {
+        "accepted-limits": "Owner-accepted limits on a public component. A public entry of components/promotion.json may be { name, limits: [{ id, text }] }; one reader (componentRegistryEntries in component-generation.mjs) validates it for the installer, the guard and the generation record: unique kebab-case ids, short plain sentences without links or control characters, and names only for internal entries. The installer writes the limits back and generation.json records them. The resolver returns resolved.limits and the accepted-limits warning; README's NavBar list and the registry are compared by id and text in a test. The NavBar limits are copied from the README, not reopened.",
         "bot-review-279": "Review findings on the capture-free head: port-verification treats a head with no upstream.lock.json (a branch cut before library/ui existed) as no port to verify, and still fails a changed lock without a matching record; retire writes the committed figma/ledger/retirements.json instead of the gitignored cache, where the next fetch-source erased it and nothing committed it: it is dcl-one-only like the orphan ledger, fetch-source overlays it onto the cache's retirements.json (tracked wins, so one ledger is effective), every reader (loadRetirements, the snapshot source, the guard) reads it, and a strict schema admits only node ids, plain-text names and reasons with no link, and repository-relative paths; it starts byte-identical to figma-design-system's copy, so the pinned capture digest is unchanged; the orphan ledger readers and writers use the committed figma/ledger/orphaned-assets.json; sync refuses a config whose snapshotDir is not the figma/figma-snapshot it guards; fetch-source rejects a capture path that is empty, absolute, holds . or .. or a backslash, or resolves outside the snapshot folder, sealed or not; image fills replace an SVG whose <use> draws raster data and trim a quoted url(); the Foundations icon tiles pass active to icons with an active state; key-guard also scans the bytes of an LFS pointer; the url scan reads its allowlist from the pull request head",
         "bot-review-279-b": "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
         "bot-review-279-c": "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment.",
@@ -4606,7 +4624,7 @@
         }
       },
       "promotion.json": {
-        "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71",
+        "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3",
         "origin": {
           "kind": "source",
           "repository": "https://github.com/decentraland/dcl-one"
@@ -4661,7 +4679,7 @@
         }
       },
       "generation.json": {
-        "sha256": "c93018aa4aea6a4885a12158eabf4ea9e9c1ec58358bd08273d79bd73a89a400",
+        "sha256": "bc75393721daced3cd08e908d967749b2bf41a94ebb91414a227d58b612b6c76",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

@@ -756,6 +756,52 @@ describe('resolveComponent', () => {
     })
   })
 
+  describe('when the component registry records accepted limits', () => {
+    const limits = [
+      { id: 'logo-size', text: 'The logo is pending.' },
+      { id: 'mock-data', text: 'Views show mock data.' }
+    ]
+    it('should return every limit and an accepted-limits warning', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({ components: [{ name: 'Button', limits }] })
+      )
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual(limits)
+      expect(result.warnings.find((w) => w.code === 'accepted-limits')?.details).toEqual({
+        ids: ['logo-size', 'mock-data']
+      })
+    })
+
+    it.each([
+      ['a registry entry without limits', JSON.stringify({ components: ['Button'] })],
+      ['no registry', undefined]
+    ])('should return no limits and no warning for %s', async (_label, registry) => {
+      const { mappingRoot } = await library()
+      if (registry) await writeFile(path.join(mappingRoot, 'promotion.json'), registry)
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual([])
+      expect(result.warnings.map((w) => w.code)).not.toContain('accepted-limits')
+    })
+
+    it('should fail closed on a registry with invalid limits', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({ components: [{ name: 'Button', limits: [{ id: 'x', text: '' }] }] })
+      )
+
+      await expect(resolveComponent(context(mappingRoot), { nodeId: '1:1' })).rejects.toThrow(
+        'Invalid library component registry'
+      )
+    })
+  })
+
   describe('when no mapping source is configured', () => {
     it('should report mapping-root-not-configured', async () => {
       const result = await resolveComponent({ figmaSets: [] }, { nodeId: '1:1' })
