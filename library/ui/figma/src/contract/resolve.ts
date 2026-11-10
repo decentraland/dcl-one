@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
 import { normalizeNodeId, type FigmaSet } from './figma-index.js'
-import { findMappingFiles, loadLibrary, type LibraryInfo } from './library.js'
+import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } from './library.js'
 import { readMappingFile, type MappingLocal, type ParsedMapping } from './mapping-file.js'
 import { importSpecifier, validateAgainstFigma, validateAgainstLibrary } from './validate.js'
 
@@ -49,6 +49,8 @@ type Resolved = {
     }
     mapping: { file: string; id?: string; contract: string }
     library: { name: string; version: string }
+    // The capture revision the library's tracked lock pins, in both modes; absent when the library has no lock.
+    capture?: { revision: string }
   }
 }
 
@@ -118,11 +120,7 @@ function identify(
   if (!input.nodeId && !input.name) {
     return {
       errors: [
-        diagnostic(
-          'invalid-input',
-          'error',
-          'Provide a Figma nodeId (preferred) or a component set name.'
-        )
+        diagnostic('invalid-input', 'Provide a Figma nodeId (preferred) or a component set name.')
       ]
     }
   }
@@ -150,7 +148,6 @@ function identify(
       errors: [
         diagnostic(
           'identity-ambiguous',
-          'error',
           `"${input.name}" names ${matches.length} Figma components. Pass the nodeId instead.`,
           { candidates: matches.map((m) => ({ nodeId: m.setId, name: m.name, page: m.page })) }
         )
@@ -160,13 +157,19 @@ function identify(
   if (matches.length === 0) {
     return {
       errors: [
-        diagnostic(
-          'identity-not-found',
-          'error',
-          ctx.figmaSets.length === 0
-            ? `No Figma capture is available to look up "${input.name}" by name. Pass the nodeId.`
-            : `No captured Figma component is named "${input.name}".`
-        )
+        ctx.figmaSets.length === 0
+          ? diagnostic(
+              'identity-uncertain',
+              `No Figma capture is available to look up "${input.name}" by name. Pass the nodeId.`,
+              { name: input.name }
+            )
+          : diagnostic(
+              'identity-not-found',
+              `No captured Figma component is named "${input.name}".`,
+              {
+                name: input.name
+              }
+            )
       ]
     }
   }
@@ -202,7 +205,6 @@ function renderUsage(
       errors.push(
         diagnostic(
           'unsupported-construct',
-          'error',
           `Example uses \${${expression}} which is not a declared local`
         )
       )
@@ -271,7 +273,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     return fail([
       diagnostic(
         'mapping-root-not-configured',
-        'error',
         'No mapping source configured. Set --mapping-root, DCL_FIGMA_MAPPING_ROOT or contract.mappingRoot in figma.config.json.'
       )
     ])
@@ -281,7 +282,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     return fail([
       diagnostic(
         'mapping-root-not-configured',
-        'error',
         `${ctx.mappingRoot} is not inside an npm package, so the library version and name cannot be established.`
       )
     ])
@@ -292,7 +292,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     warnings.push(
       diagnostic(
         'figma-identity-unverified',
-        'warning',
         'No Figma capture available: component identity and variants are checked against the mapping only.'
       )
     )
@@ -301,22 +300,47 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   const identity = identify(ctx, input)
   if (identity.errors.length) return fail(identity.errors, warnings)
 
+  const captureRevision = await readCaptureRevision(library.rootDir)
   const mappings = await loadMappings(library, ctx.mappingRoot)
   const candidates = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
   if (candidates.length === 0) {
-    const sameName = identity.set
-      ? mappings.filter(
-          (m) => m.header.component?.toLowerCase() === identity.set!.name.toLowerCase()
-        )
-      : []
+    // mapping-missing only once identity is established: the node is a captured library component.
+    if (!identity.set) {
+      return fail(
+        [
+          ctx.figmaSets.length === 0
+            ? diagnostic(
+                'identity-uncertain',
+                `No Figma capture is available and no mapping names node ${identity.setId}, so it cannot be established whether it is a library component.`,
+                { nodeId: identity.setId, ...(captureRevision ? { captureRevision } : {}) }
+              )
+            : diagnostic(
+                'identity-not-found',
+                `Figma node ${identity.setId} is not a component of the captured library.`,
+                { nodeId: identity.setId }
+              )
+        ],
+        warnings
+      )
+    }
+    const set = identity.set
+    const sameName = mappings.filter(
+      (m) => m.header.component?.toLowerCase() === set.name.toLowerCase()
+    )
     return fail(
       [
         diagnostic(
           'mapping-missing',
-          'error',
-          `No Figma-to-React mapping for ${identity.set ? `"${identity.set.name}" ` : ''}(${identity.setId}). The MCP does not guess or generate a replacement.`,
+          `No Figma-to-React mapping for "${set.name}" (${identity.setId}). The resolver does not guess or generate a replacement.`,
           {
             nodeId: identity.setId,
+            name: set.name,
+            variantProperties: input.variantProperties ?? {},
+            library: { name: library.name, version: library.version },
+            ...(captureRevision ? { captureRevision } : {}),
+            supported: [
+              ...new Set(mappings.flatMap((m) => (m.header.component ? [m.header.component] : [])))
+            ].sort(),
             sameNameMappings: sameName.map((m) => ({
               file: path.relative(library.rootDir, m.file),
               targets: m.figma?.nodeId
@@ -332,7 +356,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
       [
         diagnostic(
           'identity-ambiguous',
-          'error',
           `${candidates.length} mappings claim Figma node ${identity.setId}.`,
           {
             candidates: candidates.map((m) => path.relative(library.rootDir, m.file))
@@ -378,7 +401,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
           [
             diagnostic(
               'variant-not-in-figma',
-              'error',
               property
                 ? `"${value}" is not a value of Figma property "${name}"`
                 : `"${set.name}" has no Figma property "${name}"`,
@@ -399,7 +421,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
         [
           diagnostic(
             'variant-not-in-figma',
-            'error',
             `Figma "${set.name}" has no variant for ${JSON.stringify(selection)}. The design does not define this combination.`,
             { requested: selection, nearest: nearestVariants(set, selection) }
           )
@@ -417,7 +438,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
         [
           diagnostic(
             'variant-unsupported',
-            'error',
             `The mapping does not support ${local.figmaProperty}="${picked}". Supported: ${Object.keys(local.values).join(', ')}.`,
             { property: local.figmaProperty, value: picked, supported: Object.keys(local.values) }
           )
@@ -459,7 +479,8 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
           id: mapping.id,
           contract: mapping.header.contract!
         },
-        library: { name: library.name, version: library.version }
+        library: { name: library.name, version: library.version },
+        ...(captureRevision ? { capture: { revision: captureRevision } } : {})
       }
     }
   }
@@ -487,13 +508,11 @@ async function checkMappings(
           blockers.length
             ? diagnostic(
                 'superseded-pending',
-                'warning',
                 `${rel}: hand-written ${mapping.header.component} stays until its synced replacement can be promoted: ${blockers.join('; ')}`,
                 { reasons: blockers }
               )
             : diagnostic(
                 'superseded-by-sync',
-                'warning',
                 `${rel}: hand-written ${mapping.header.component} is replaced by the synced component promotion.include names on the next promotion`
               )
         ]
@@ -510,7 +529,6 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-not-found',
-            'error',
             `${rel}: Figma node ${mapping.figma.nodeId} is not in the capture`
           )
         )
@@ -521,7 +539,6 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-ambiguous',
-            'error',
             `${rel} and ${previous} map the same Figma node ${mapping.figma.nodeId}`
           )
         )
@@ -534,7 +551,6 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-ambiguous',
-            'error',
             `${rel} and ${previous} share the template id "${mapping.id}"`
           )
         )

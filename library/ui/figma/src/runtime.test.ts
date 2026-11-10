@@ -1,4 +1,5 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveComponent } from './contract/resolve.js'
@@ -6,7 +7,7 @@ import { makeLibrary } from './contract/test-fixtures.js'
 import type { ComponentSpec } from './ir/components.js'
 import { LfsPointerError } from './lfs.js'
 import { FdsCacheError, MARKER } from './sources/fds-source.js'
-import { createRuntime, supersessionCandidates } from './runtime.js'
+import { LIBRARY_MAPPING_ROOT, createRuntime, supersessionCandidates } from './runtime.js'
 import { copySnapshot, pinTestCapture, testConfig } from '../test/snapshot.js'
 
 // Lets a test make loadSpecsFromSource fail with an arbitrary error; unset, the real loader runs.
@@ -233,5 +234,100 @@ describe('when distinguishing configured capture failures from resolve-only mode
       specsFailure.error = new SyntaxError('Unexpected token } in JSON')
       await expect(context.loadSyncedComponents?.()).rejects.toBeInstanceOf(SyntaxError)
     })
+  })
+})
+
+describe('when resolving with --mapping-only next to a configured capture', () => {
+  let library: Awaited<ReturnType<typeof makeLibrary>>
+  let cache: string
+  // Path, size and sha256 of every entry under the cache, so a read-only run must leave it byte-identical.
+  const digest = async (dir: string): Promise<string> => {
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+    const lines = await Promise.all(
+      entries.map(async (entry) => {
+        const full = path.join(entry.parentPath, entry.name)
+        const rel = path.relative(dir, full)
+        if (!entry.isFile()) return `${rel} ${entry.isDirectory() ? 'dir' : 'other'}`
+        const bytes = await readFile(full)
+        return `${rel} ${createHash('sha256').update(bytes).digest('hex')}`
+      })
+    )
+    return lines.sort().join('\n')
+  }
+  beforeEach(async () => {
+    library = await makeLibrary()
+    const { pages } = await testConfig()
+    cache = path.join(library.root, 'figma-snapshot')
+    await copySnapshot(cache)
+    await writeFile(
+      path.join(library.root, 'figma.config.json'),
+      JSON.stringify({
+        outDir: 'generated',
+        snapshotDir: 'figma-snapshot',
+        pages,
+        contract: { mappingRoot: 'src' }
+      })
+    )
+    await pinTestCapture(library.root)
+    // Corrupt the verified cache: the default mode must refuse it, --mapping-only must not touch it.
+    await writeFile(path.join(cache, MARKER), '{"revision":"tampered"}')
+  })
+  afterEach(async () => {
+    await rm(library.root, { recursive: true, force: true })
+  })
+
+  it('should fail closed without the flag and name both routes', async () => {
+    const runtime = await createRuntime({ cwd: library.root, env: {} })
+    const failure = runtime.resolveContext()
+    await expect(failure).rejects.toBeInstanceOf(FdsCacheError)
+    await expect(failure).rejects.toThrow(/fetch-source.*--mapping-only/)
+  })
+
+  it('should resolve from the mappings without reading, repairing or deleting the cache', async () => {
+    const before = await digest(cache)
+    const runtime = await createRuntime({
+      cwd: library.root,
+      env: {},
+      mappingOnly: true,
+      mappingRoot: library.mappingRoot
+    })
+    const context = await runtime.resolveContext()
+    const result = await resolveComponent(context, { nodeId: '1:1' })
+
+    expect(runtime.app).toBeUndefined()
+    expect(context.figmaSets).toEqual([])
+    expect(context.loadSyncedComponents).toBeUndefined()
+    expect(result).toMatchObject({
+      ok: true,
+      resolved: { provenance: { figma: { identity: 'mapping-only' } } },
+      warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
+    })
+    expect(await digest(cache)).toBe(before)
+  })
+
+  it('should default the mapping root to the library components directory', async () => {
+    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+    expect((await runtime.resolveContext()).mappingRoot).toBe(LIBRARY_MAPPING_ROOT)
+    expect(LIBRARY_MAPPING_ROOT).toBe(path.resolve(import.meta.dirname, '../../components'))
+  })
+
+  it('should prefer an explicit mapping root from the environment', async () => {
+    const runtime = await createRuntime({
+      cwd: library.root,
+      env: { DCL_FIGMA_MAPPING_ROOT: 'src' },
+      mappingOnly: true
+    })
+    expect((await runtime.resolveContext()).mappingRoot).toBe(library.mappingRoot)
+  })
+
+  it('should refuse an explicit Figma config', async () => {
+    await expect(
+      createRuntime({
+        cwd: library.root,
+        env: {},
+        mappingOnly: true,
+        configPath: 'figma.config.json'
+      })
+    ).rejects.toThrow('--mapping-only reads no Figma config')
   })
 })
