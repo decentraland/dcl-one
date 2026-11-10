@@ -614,7 +614,8 @@
             "cache-hardening",
             "port-input-binding",
             "resolver-contract",
-            "consumer-skill"
+            "consumer-skill",
+            "name-identity"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -668,7 +669,8 @@
           "deviation": [
             "predates",
             "resolver-contract",
-            "consumer-skill"
+            "consumer-skill",
+            "name-identity"
           ]
         },
         "library/ui/figma/component-generation.mjs": {
@@ -2418,7 +2420,8 @@
             "port:9c6dfbe6",
             "seal-removed",
             "component-install-integrity",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/component-generation.test.ts": {
@@ -2452,7 +2455,8 @@
             "live-access-removed",
             "capture-removed",
             "live-read-restored",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/contract/config.ts": {
@@ -2476,7 +2480,8 @@
             "sha256": "ad74f960ce5ba957ba964bb2e7710261088331cc7a0c16eabfab0ec075cda12a"
           },
           "deviation": [
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/contract/figma-index.test.ts": {
@@ -2540,7 +2545,8 @@
           },
           "deviation": [
             "predates",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
@@ -2551,7 +2557,8 @@
           },
           "deviation": [
             "predates",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/contract/test-fixtures.ts": {
@@ -3592,7 +3599,8 @@
             "cache-hardening",
             "review-followup-2",
             "component-install-integrity",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/runtime.ts": {
@@ -3605,7 +3613,8 @@
             "capture-removed",
             "review-followup-2",
             "component-install-integrity",
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/server-errors.test.ts": {
@@ -3785,7 +3794,8 @@
             "sha256": "0fd585ba8c1895767b3563571695edd4148c30db3196e0e7d3e0f3b954a2259b"
           },
           "deviation": [
-            "resolver-contract"
+            "resolver-contract",
+            "name-identity"
           ]
         },
         "library/ui/figma/src/tools/icon-export.test.ts": {
@@ -4170,6 +4180,27 @@
             "sha256": "13b3ff75bebd3df24884d6be732189b2df8260d2bcb770ee58b58c501618a47f"
           },
           "deviation": "predates"
+        },
+        "library/ui/figma/src/contract/batch.test.ts": {
+          "sha256": "c08944904a60f8f118e4d9dfc65504a1c78cd1eea3570c2daf6bf273bd7cbbb6",
+          "fds": null,
+          "deviation": [
+            "name-identity"
+          ]
+        },
+        "library/ui/figma/src/contract/batch.ts": {
+          "sha256": "8ac2202966c20fcc1274dcf84559e24847bc629a4f8f7881cf39b9d5763fbaf7",
+          "fds": null,
+          "deviation": [
+            "name-identity"
+          ]
+        },
+        "library/ui/figma/src/contract/name-identity.ts": {
+          "sha256": "68326e13bef96ce4af3e9b392f90435a6952ea79857576dbeb2ac171dd73b742",
+          "fds": null,
+          "deviation": [
+            "name-identity"
+          ]
         }
       },
       "deviationCodes": {
@@ -4192,6 +4223,7 @@
         "live-access-removed": "Live Figma access and capture ingest are removed: figma-design-system owns every read of Figma. Gone are pull-live and its automation modules, the REST source and its mappers, the Figma REST client, probe, the figma_screenshot MCP tool, the --source rest option, the capture-ingest and capture-merge commands with merge-component-chunks and split-icon-frames, the figma/capture plugin scripts and ingest-text-metrics, and their tests. The MCP tools that read the fetch-source cache stay. ingest-chunks and png-decode go too: strip-image-metadata keeps its own copy of the transport checksum, and its test proves byte equality instead of decoding. The key guard is the only reader of FIGMA_FILE_KEY: stripFileKey, stripFileKeyText and the CLI and MCP error text replace fileKey fields and Figma file URLs by pattern and read no environment, which also makes fetch-source's keyless transform independent of the environment. image-metadata-scan and its gate (figma/test/image-metadata.test.ts) stay: they check that no raster under library/ui/figma or in the public component assets carries non-rendering metadata, which covers product assets.",
         "live-read-restored": "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
         "local-components-plan": "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
+        "name-identity": "Component identity across files (owner decision: component keys are never committed). In a design file a library instance carries neither the library node ids nor anything the capture records except its set name and variant properties, so without a capture a set name resolves to exactly one mapping (component header, template id, or the code name componentNames gives it, read with the contract block) and only after the instance's variant properties fit that mapping; an unconfirmed or incompatible name is identity-uncertain, two matches are identity-ambiguous, and every name match carries the identity-name-match warning. With a capture, sets captured on two pages count once and a name shared by distinct sets resolves only when the variant properties fit exactly one. The fallback is marked TODO(figma-identity) in src/contract/name-identity.ts. resolve --batch resolves a JSON list in input order with a summary and exits 1 on any failure.",
         "note": null,
         "port-input-binding": "The port verification record binds the port inputs instead of the whole lock and figma/ tree: the whole lock except its provenance text (license, imported, changes, deviation reasons, per-file notes), plus every tracked file under figma/ except files under figma/test and figma/review/test, *.test and *.spec files and Markdown; exempt files keep their lock entry and FDS counterpart bound (docs/adr/2026-11-10-port-verification-binds-port-inputs.md). Record schema 2 replaces lockHash and figmaTree with portInputHash. port-verification.mjs scans each head for port inputs that name an exempt file and limits its own imports. Both scripts parse git -z listings at the first tab and refuse control characters, duplicate paths and non-regular modes. Deviation codes map to their reasons under stable sorted ids instead of indices into changes.",
         "port:15940fd7": "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header. The public foundations icons and foundations/source.json are regenerated through the supported installer with the ported generator, and the public foundations table records their new digests.",

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { componentOwnerById } from './guard/component-identity.js'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
 import { errorText } from './server-errors.js'
+import { resolveBatch } from './contract/batch.js'
 import { checkMappingsReport, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
@@ -30,6 +31,7 @@ const USAGE = `Usage:
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
   dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--text "Layer=Value"]... [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
@@ -47,6 +49,12 @@ function pairs(flag: string, entries: string[] | undefined): Record<string, stri
     result[key] = entry.slice(split + 1)
   }
   return result
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
@@ -91,6 +99,7 @@ async function main(argv: string[]): Promise<number> {
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
       text: { type: 'string', multiple: true },
+      batch: { type: 'string' },
       'mapping-only': { type: 'boolean' },
       'mapping-root': { type: 'string' },
       'library-range': { type: 'string' },
@@ -101,6 +110,13 @@ async function main(argv: string[]): Promise<number> {
   if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
     throw new Error('--mapping-only applies only to resolve and check-mappings')
   if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
+  if (values.batch !== undefined) {
+    if (command !== 'resolve') throw new Error('--batch applies only to resolve')
+    if (values['node-id'] || values.name || values.variant || values.text)
+      throw new Error(
+        '--batch takes its instances from the file; drop --node-id, --name, --variant and --text'
+      )
+  }
 
   if (command === 'install') {
     if (positionals.length !== 2) throw new Error(USAGE)
@@ -127,6 +143,18 @@ async function main(argv: string[]): Promise<number> {
       variantProperties: pairs('variant', values.variant),
       texts: pairs('text', values.text)
     }
+    let batchEntries: unknown
+    if (values.batch !== undefined) {
+      const text =
+        values.batch === '-'
+          ? await readStdin()
+          : await readFile(path.resolve(values.batch), 'utf8')
+      try {
+        batchEntries = JSON.parse(text)
+      } catch {
+        throw new Error('--batch needs a JSON array of instances')
+      }
+    }
     const runtime = await createRuntime({
       cwd: process.cwd(),
       env: process.env,
@@ -140,6 +168,11 @@ async function main(argv: string[]): Promise<number> {
       const report = await checkMappingsReport(context)
       print(report)
       return report.ok ? 0 : 1
+    }
+    if (batchEntries !== undefined) {
+      const batch = await resolveBatch(context, batchEntries)
+      print(batch)
+      return batch.ok ? 0 : 1
     }
     const result = await resolveComponent(context, input)
     print(result)

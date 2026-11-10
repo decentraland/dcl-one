@@ -262,7 +262,7 @@ describe('resolveComponent', () => {
       )
     })
 
-    it('should report identity-uncertain for a name lookup without a capture', async () => {
+    it('should ask for variant properties when a name alone matches a mapping', async () => {
       const { root } = await library()
       await writeFile(path.join(root, 'upstream.lock.json'), lock('e'.repeat(40)))
       const result = await resolveComponent(context(path.join(root, 'src'), { figmaSets: [] }), {
@@ -272,16 +272,17 @@ describe('resolveComponent', () => {
       expect(codes(result)).toEqual(['identity-uncertain'])
       const [error] = !result.ok ? result.errors : []
       expect(error!.details).toEqual({
-        reason: 'name',
+        reason: 'name-unconfirmed',
+        reads: ['Kind', 'Blocked'],
         name: 'Button',
+        component: 'Button',
         captureRevision: 'e'.repeat(40)
       })
-      // The action sends the caller back for a node id; it is not a missing-component report.
-      expect(error!.action).toMatch(/Resolve again with the component set nodeId/)
+      expect(error!.action).toMatch(/Resolve again with the instance variantProperties/)
       expect(error!.action).not.toMatch(/Report/)
     })
 
-    it('should tell the caller that a variant id needs its set id without a capture', async () => {
+    it('should send the caller to the set name for an unmatched node id without a capture', async () => {
       const { mappingRoot } = await library()
 
       const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
@@ -289,7 +290,7 @@ describe('resolveComponent', () => {
       })
 
       expect(!result.ok && result.errors[0]!.action).toMatch(
-        /resolve again with its component set id/
+        /resolve again with the component set name and variantProperties/
       )
     })
 
@@ -396,6 +397,156 @@ describe('resolveComponent', () => {
         expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
       }
     )
+  })
+
+  describe('when a component is identified by its set name without a capture', () => {
+    const named = (name: string, variantProperties?: Record<string, string>, extra = {}) =>
+      library().then(({ mappingRoot }) =>
+        resolveComponent(context(mappingRoot, { figmaSets: [], ...extra }), {
+          name,
+          variantProperties
+        })
+      )
+
+    it.each([
+      ['the exported component name', 'Button', {}],
+      ['the template id', 'button', {}],
+      [
+        'a componentNames alias',
+        'Button-Contained-Text',
+        { componentNames: { 'Button-Contained-Text': 'Button' } }
+      ]
+    ])('should resolve %s once the variant properties fit', async (_label, name, extra) => {
+      const result = await named(name, { Kind: 'Secondary', Hover: 'No' }, extra)
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.ok && result.resolved.provenance.figma.identity).toBe('mapping-only')
+      expect(result.warnings.map((w) => w.code)).toEqual(
+        expect.arrayContaining(['figma-identity-unverified', 'identity-name-match'])
+      )
+    })
+
+    it('should refuse a property the mapping does not read as incompatible', async () => {
+      const result = await named('Button', { Kind: 'Primary', Size: 'Large' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unknown: ['Size'],
+        unsupported: []
+      })
+    })
+
+    it('should refuse a value the mapping does not support as incompatible, not as a missing variant', async () => {
+      const result = await named('Button', { Kind: 'Tertiary' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unsupported: [{ property: 'Kind', value: 'Tertiary', supported: ['Primary', 'Secondary'] }]
+      })
+    })
+
+    it('should report an unknown name as uncertain identity, never as a missing mapping', async () => {
+      const result = await named('Card', { Kind: 'Primary' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unmatched' })
+    })
+
+    it('should refuse a name two mappings declare', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Other.figma.ts': mappingSource({ nodeId: '2-2', id: 'Button', component: 'Other' })
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        name: 'Button',
+        variantProperties: { Kind: 'Primary' }
+      })
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name',
+        candidates: [
+          { nodeId: '1:1', file: 'src/Button.figma.ts' },
+          { nodeId: '2:2', file: 'src/Other.figma.ts' }
+        ]
+      })
+    })
+
+    it('should resolve a mapping that reads no variant property by name alone', async () => {
+      const source = mappingSource({ kindValues: {} })
+        .replace(/const kind = [\s\S]*?\}\)\n/, '')
+        .replace(/const disabled = [\s\S]*?\}\)\n/, '')
+        .replace(' kind="${kind}"${disabled}', '')
+      const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': source } })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        name: 'Button'
+      })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button>Label</Button>')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
+  })
+
+  describe('when two captured sets share a name', () => {
+    const other = {
+      ...buttonSet,
+      setId: '8:8',
+      page: 'Chat',
+      properties: { Size: { type: 'VARIANT', default: 'S', options: ['S', 'L'] } },
+      variants: [{ id: '8:9', name: 'Size=S', props: { Size: 'S' } }]
+    }
+
+    it('should pick the one set the variant properties fit', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, other] }),
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Secondary' }
+        }
+      )
+
+      expect(result.ok && result.resolved.provenance.figma.setId).toBe('1:1')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
+
+    it.each([
+      ['no variant properties', undefined],
+      ['properties neither set defines', { Theme: 'dark' }],
+      ['a value neither set allows', { Kind: 'Tertiary' }]
+    ])('should stay ambiguous with %s', async (_label, variantProperties) => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, other] }),
+        {
+          name: 'Button',
+          variantProperties
+        }
+      )
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+    })
+  })
+
+  describe('when a set is captured on two pages', () => {
+    it('should resolve its name as one component and say it was identified by name', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, { ...buttonSet, page: 'Other page' }] }),
+        { name: 'Button', variantProperties: { Kind: 'Secondary' } }
+      )
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
   })
 
   describe('when a request names an Object member', () => {

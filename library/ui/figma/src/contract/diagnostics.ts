@@ -64,9 +64,18 @@ const DIAGNOSTICS = {
     severity: 'error',
     audience: 'consumer',
     action: {
-      name: 'Without a capture a component cannot be found by name. Resolve again with the component set nodeId from the design.',
-      node: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Without a capture only a component set id matches a mapping: if you passed a variant id, resolve again with its component set id. Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
+      'name-unmatched': `No mapping declares this component set name, and without a capture it cannot be established whether it is a library component. Check the name is the component set name (not the instance or variant name). Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`,
+      'name-unconfirmed':
+        'A mapping has this name, but a name alone does not identify a component. Resolve again with the instance variantProperties.',
+      'name-incompatible': `A mapping has this name, but the instance variant properties do not fit it (details.unknown, details.unsupported), so it may be another component. Do not pick the mapping. ${REPORT}`,
+      node: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Node ids from a design file usually differ from the library's: resolve again with the component set name and variantProperties. Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
     }
+  },
+  'identity-name-match': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The component was identified by its set name and checked against its variant properties, not by a stable id. Repeat this when you report the result.'
   },
   'capture-revision-unknown': {
     severity: 'warning',
