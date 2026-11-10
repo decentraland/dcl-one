@@ -8,11 +8,11 @@
   },
   "registry": {
     "path": "promotion.json",
-    "sha256": "7b873df319ada58abcc8a2b1fe02e91e1592b33b87b46e6630d89af6fbdabfbb",
-    "components": [],
-    "internal": [
+    "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71",
+    "components": [
       "NavBar"
-    ]
+    ],
+    "internal": []
   },
   "inputs": {
     "config": {
@@ -586,6 +586,10 @@
   ],
   "output": [
     {
+      "path": "NavBar/NavBar.figma.ts",
+      "sha256": "ead9799e44e9b60c8e8dcc697b180f212f8373d0fce24c4309ad4be7e12fb95b"
+    },
+    {
       "path": "NavBar/NavBar.module.css",
       "sha256": "66fbb388dafcb2a1f3f45fee33b6ff10051f8628c23fe63cc2b475f49504d22d"
     },
@@ -599,7 +603,7 @@
     },
     {
       "path": "promotion.json",
-      "sha256": "7b873df319ada58abcc8a2b1fe02e91e1592b33b87b46e6630d89af6fbdabfbb"
+      "sha256": "de93b90ca0a0d7c8d8495a17ce88e22c368d2cf98cc5281e0071ff04880d7f71"
     },
     {
       "path": "runtime/figma-interactions.tsx",
