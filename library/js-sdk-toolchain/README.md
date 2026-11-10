@@ -83,7 +83,13 @@ until a release exists under the scope); the manifests' version is never bumped.
 
 A pull request from this repository publishes the same packages under the shared `pr` dist-tag and
 comments the exact install command on the PR; install that version rather than the tag, which moves
-to the last PR published.
+to the last PR published. `.github/workflows/sdk-preview.yml` does it: it runs `main`'s copy of the
+workflow, takes the tarballs the PR's `SDK / CI` run built and never runs the PR's code, so a
+change to it takes effect once merged. Fork pull requests publish nothing.
+
+Every publish job uses the `npm-release` environment, which only `main` may deploy to, and the npm
+trusted publishers require that environment: a branch or a pull request that edits a workflow
+cannot publish.
 
 Versioned releases ship from the `SDK / Release` workflow
 (`.github/workflows/sdk-release.yml`), run by hand from `main`. The manifests in the tree keep

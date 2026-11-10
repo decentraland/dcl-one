@@ -139,6 +139,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # only main may use it (a repository setting, so a dispatch from a branch cannot lift it); the
+    # npm trusted publishers require it
+    environment: npm-release
     permissions:
       contents: write
       id-token: write # npm OIDC trusted publishing — no token secret

@@ -58,6 +58,7 @@
 # UNASSIGNED /library/js-sdk-toolchain/
 # UNASSIGNED /.github/workflows/sdk.yml
 # UNASSIGNED /.github/workflows/sdk-release.yml
+# UNASSIGNED /.github/workflows/sdk-preview.yml
 
 # database
 /schemas/ @decentraland/apis

@@ -50,8 +50,9 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   published) under the `next` dist-tag as `<latest patch+1>-<run>.commit-<sha>` (oddish derives
   the version from the registry's `latest`; the manifests keep `7.0.0` as upstream does, and
   `npm publish` ships the tarballs through trusted publishing). A pull request from this
-  repository publishes the same way under the shared `pr` dist-tag, one tag for every PR, and a
-  sticky comment names the exact version to install; fork pull requests publish nothing.
+  repository gets the tarballs its run built published under the shared `pr` dist-tag, one tag for
+  every PR, by `.github/workflows/sdk-preview.yml`, and a sticky comment names the exact version to
+  install; fork pull requests publish nothing.
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
 - The packages publish as `@dcl-regenesislabs/*` until the `@dcl` names can be published from here;

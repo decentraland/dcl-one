@@ -96,7 +96,7 @@ jobs:
       - name: Stamp the snapshot version into @dcl/sdk
         # <latest patch+1>-<run>.commit-<sha>, after the tests, which expect the placeholder;
         # make prepare copies it to the other packages.
-        # Fork PRs keep the placeholder: they cannot publish.
+        # Fork PRs keep the placeholder: nothing publishes them.
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:
@@ -122,21 +122,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   publish:
-    # main publishes next; a same-repo PR publishes a preview under the shared pr dist-tag (one tag
-    # for every PR; the comment names the exact version). Fork PRs have no OIDC token.
-    name: Publish ${{ github.event_name == 'push' && 'next' || 'the PR preview' }}
+    # PR previews are published by sdk-preview.yml, which runs from main's copy of the workflow
+    name: Publish next
     needs: [lint, build-test]
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # only main may use it (a repository setting, so a branch cannot lift it); the npm trusted
+    # publishers require it
+    environment: npm-release
     permissions:
       contents: read
-      pull-requests: write
       id-token: write # npm OIDC trusted publishing — no token secret
-    env:
-      DIST_TAG: ${{ github.event_name == 'push' && 'next' || 'pr' }}
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -147,9 +144,7 @@ jobs:
           name: sdk-packages-${{ github.sha }}
           path: dist
       - name: Publish in dependency order
-        id: publish
         # a rerun of this run repeats the snapshot version, so packages already on npm are skipped
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
           manifest() { tar -xOf "$1" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version'; }
@@ -163,36 +158,6 @@ jobs:
             if npm view "$spec" version > /dev/null 2>&1; then
               echo "$spec is already on npm; skipping"
             else
-              npm publish "$tgz" --access public --tag "$DIST_TAG"
+              npm publish "$tgz" --access public --tag next
             fi
           done
-          {
-            echo "scope=$scope"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
-      - name: Report a failed PR preview
-        if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
-        run: echo '::warning::The PR preview did not publish; see the Publish step log.'
-      - name: Comment the install command on the PR
-        if: github.event_name == 'pull_request' && steps.publish.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          VERSION: ${{ steps.publish.outputs.version }}
-          SCOPE: ${{ steps.publish.outputs.scope }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          marker='<!-- sdk-preview -->'
-          fence="\`\`\`"
-          # another scope installs through npm aliases, so scenes keep importing @dcl/sdk
-          if [ "$SCOPE" = "@dcl" ]; then spec=$VERSION; else spec="npm:$SCOPE/sdk@$VERSION"; fi
-          cli_spec=${spec/\/sdk@/\/sdk-commands@}
-          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@%s @dcl/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$SHA" "$fence" "$spec" "$cli_spec" "$fence")
-          id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -f body="$body" > /dev/null
-          else
-            gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" > /dev/null
-          fi

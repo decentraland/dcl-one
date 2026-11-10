@@ -34,10 +34,16 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 
 ## Consequences
 
-- Each SDK package needs trusted publishers naming this repository and both `sdk.yml`
-  (`next` on `main` pushes) and `sdk-release.yml`; until then those runs fail at the first publish.
-  npm checks the calling workflow's filename, so a dispatcher that calls `sdk-release.yml` needs
-  its own entry.
+- npm trusts a publish by repository, workflow filename and environment, not by branch, and a
+  branch can edit a workflow. So every publish job uses the `npm-release` environment, which only
+  `main` may deploy to (a repository setting), and each SDK package's trusted publishers require
+  it: `sdk.yml` (`next`), `sdk-release.yml` and `sdk-preview.yml`. A dispatcher that calls
+  `sdk-release.yml` needs its own entry, since npm checks the calling workflow's filename.
+- PR previews are published by `sdk-preview.yml` on `pull_request_target`: the run uses `main`'s
+  copy of the file and counts as a `main` run, so it passes the environment, while a pull request's
+  edited copy does not. It only downloads the tarballs the PR's unprivileged build produced, checks
+  they are snapshot versions of the SDK's packages and publishes them under `pr`; it never checks
+  out the PR. A fork's pull request is skipped.
 - SDK and Explorer compatibility is by commit, not by a shared protocol version: a scene built
   with `@dcl/sdk` from a commit assumes the components `library/protocol` had there.
 - The Explorer workflows keep their tag prefixes; moving them to `--latest=false` and the image
