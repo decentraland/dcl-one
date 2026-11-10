@@ -1,12 +1,13 @@
 import type { MouseEvent, ReactNode } from 'react'
 import { Button } from '../shared/Button/Button'
-import { GeneralApple, GeneralVerified, GeneralWindows } from '../../../foundations/icons'
+import { GeneralApple, GeneralWindows } from '../../../foundations/icons'
 import appStoreBadge from '../assets/download-on-the-app-store.svg'
 import epicIcon from '../assets/epic_icon.svg'
 import googlePlayBadge from '../assets/google_play_cta.svg'
 import googlePlayIcon from '../assets/google_play_icon.svg'
 import iosIcon from '../assets/ios-logo.svg'
 import styles from './DownloadActions.module.css'
+import { VerifiedIcon } from './VerifiedIcon'
 
 type DownloadAppearance = 'default' | 'source'
 
@@ -110,7 +111,7 @@ function DownloadActions({
                 .filter(Boolean)
                 .join(' ')}
             >
-              <GeneralVerified size={20} aria-hidden="true" />
+              <VerifiedIcon />
               {downloads}
             </p>
           ) : null}
