@@ -1,6 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter/index.css' // self-hosted Inter (matches the Figma type)
+// The shared design system's tokens and fonts (library/ui), loaded once for the whole HUD. Its rules sit in
+// cascade layers, so this app's own unlayered styles keep precedence.
+import '@dcl/one-ui/foundations.css'
 import { App } from './App'
 import { registerCoiServiceWorker } from './lib/coiServiceWorker'
 import { installCefNativeBridge } from './lib/cefNativeBridge'

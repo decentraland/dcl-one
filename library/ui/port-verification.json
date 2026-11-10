@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "lockHash": "3bb2c85dc8a49465f0bfc4cee02276047f323b2a9e90065cf33fda437eb66ad2",
+  "lockHash": "69027f87101b0fbe8ac82af10f7de168a1d09a2f49d0d4cb94d606df5ad56daa",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "7e1bf46247d289dadbe6ff4e38fef602eafa35b6",
+  "figmaTree": "dbffc0195e2a82e9d511dfc6d91c3a8254a27343",
   "checks": {
     "fetch-source": {
       "result": "pass",
@@ -11,7 +11,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "439 tooling files and 39 public foundation files match pinned bytes and origins"
+      "detail": "run on this tree: 440 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",

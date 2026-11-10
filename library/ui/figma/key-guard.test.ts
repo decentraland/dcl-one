@@ -522,6 +522,44 @@ describe('when an untrusted path carries the private key', () => {
     expect(result.stderr).not.toContain('fatal:')
   })
 
+  // The workflow runs a copy of the guard read from TRUSTED_SHA; the summary names that commit, not HEAD.
+  it('should name the revision it was given instead of the checkout HEAD', async () => {
+    const pinned = git('rev-parse', 'base')
+    await put('later.md', 'later\n')
+    commit('later')
+    const result = scanner('--no-worktree', '--no-range', '--revision', 'base')
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${pinned}`)
+    expect(result.stdout).not.toContain(git('rev-parse', 'HEAD'))
+  })
+
+  it('should name the checkout HEAD without --revision', () => {
+    const result = scanner('--no-worktree', '--no-range')
+
+    expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${git('rev-parse', 'HEAD')}`)
+  })
+
+  it.each([
+    [['--revision'], '--revision takes a commit'],
+    [['--revision', '--no-range'], '--revision takes a commit'],
+    [['--revision', ''], '--revision takes a commit'],
+    [['--revision', 'no-such-commit'], 'figma-key-guard: Command failed']
+  ])('should refuse to run with %j', (args, message) => {
+    const result = scanner('--no-worktree', '--no-range', ...args)
+
+    expect(result.status).toBe(2)
+    expect(result.stdout).not.toContain('check key: ran')
+    expect(result.stderr).toContain(message)
+  })
+
+  it('should redact a revision that carries the key', () => {
+    const result = scanner('--no-worktree', '--no-range', '--revision', FAKE_KEY)
+
+    expect(result.status).toBe(2)
+    expectNoKey(result)
+  })
+
   it('should redact an argument it rejects', () => {
     const result = scanner(`--${FAKE_KEY}`)
 
