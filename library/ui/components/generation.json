@@ -55,8 +55,8 @@
     },
     {
       "path": "library/ui/figma/key-guard.mjs",
-      "sha256": "54eced46ca000f50482ae901285c0c59abf62c097590f896953f35f2e22780ad",
-      "indexBlobSha": "dac2253349acedf6c4a8680313169807f6c100ea"
+      "sha256": "0c9e53b33a303a2048cfb793beeacfb0a11d20ef56e27d711736fa48a5ee38a7",
+      "indexBlobSha": "fc75897bda4d356725cbe9d561867e1c492b76f1"
     },
     {
       "path": "library/ui/figma/ledger/retirements.json",
