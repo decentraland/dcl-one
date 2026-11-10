@@ -9,9 +9,10 @@
 // of operations (events and shop.status alike) goes through parseOperationEvent, which refuses a mix of the
 // two. A HUD built before NAMEs reads `items: []` as no operation at all and drops it.
 
-import { MAX_CREDIT_LINES_PER_GROUP } from '../../shop/model/settlement'
-import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '../../shop/names/names'
+import { MAX_CREDIT_LINES_PER_GROUP } from '@shop/model/settlement'
+import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '@shop/names/name'
 import type { WalletKind } from '../../shop/wallet/session'
+import { ShellError } from './shellReply'
 
 export const SHOP_PROTOCOL = 1
 
@@ -25,10 +26,25 @@ export const SHOP_METHODS = {
 } as const
 
 /**
- * The error `shop.buy` and `shop.buyName` answer while another purchase is open. CLAIM NAME leaves that
- * purchase's dialog to say what is going on, rather than send the buyer to the web Shop.
+ * The code `shop.buy` and `shop.buyName` answer with while another purchase is open, or still opening (its
+ * dialog's first step shows before the request that opens it is answered): that purchase's dialog says what
+ * is going on, so the HUD sends the buyer nowhere else. Matched by its code (isShellError), never by its message,
+ * from a shell whose capabilities say `codedErrors`.
  */
-export const SHOP_BUSY = 'a purchase is already open'
+export const SHOP_BUSY = 'shop.busy'
+
+/**
+ * The words of that answer, unchanged since before codes: HUDs from before them still match these words, and a
+ * shell from before them (no `codedErrors`) answers with these words alone. A HUD can outlive its shell page's
+ * version, and the reverse: the HUD reloads in its frame while the page stays (for the rest of the session, if
+ * it is never reloaded). So the HUD takes these exact words as busy from such a shell only, and this adapter goes
+ * when those shells can no longer host this HUD: with the next SHOP_PROTOCOL, whose answers this HUD alone reads
+ * (a release by itself reloads no open tab's page).
+ */
+export const LEGACY_SHOP_BUSY_MESSAGE = 'a purchase is already open'
+
+/** That answer, as the shell throws it. */
+export const shopBusy = (): ShellError => new ShellError(SHOP_BUSY, LEGACY_SHOP_BUSY_MESSAGE)
 
 /** The message the shell posts as an operation moves on. */
 export const SHOP_EVENT = 'bevy-shell:shop'
@@ -60,6 +76,11 @@ export interface ShopCapabilities {
    * signed in, here to sign as it (shop/market/access.tsx). Absent means it may not.
    */
   marketplace?: boolean
+  /**
+   * Whether this shell's refusals carry a code (lib/shellReply), so the HUD tells a busy shell by SHOP_BUSY alone.
+   * Absent from a shell from before codes, which says busy in LEGACY_SHOP_BUSY_MESSAGE's words only.
+   */
+  codedErrors?: boolean
 }
 
 export interface ShopBalance {

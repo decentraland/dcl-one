@@ -7,7 +7,8 @@
 
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
 import type { ShopListing } from "@catalyst-api/market/ShopListing";
-import { shopClient, type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
+import { shopClient } from "../../api/host";
 
 export type CollectionSaleState = {
   isOnSale: boolean;

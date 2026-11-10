@@ -952,13 +952,37 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
+            "--badges-presence-enabled",
+            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
+                && cli.social.badges_presence_enabled
         );
+        assert!(
+            !parse(&["x", "--database-url", "postgres:///catalyst"])
+                .unwrap()
+                .social
+                .badges_presence_enabled
+        );
+    }
+
+    #[test]
+    fn the_badge_processor_runs_only_when_enabled() {
+        let off = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(!off.social.badges_processor_enabled);
+        let on = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--badges-processor-enabled",
+            "true",
+        ])
+        .unwrap();
+        assert!(on.social.badges_processor_enabled);
     }
 
     #[test]

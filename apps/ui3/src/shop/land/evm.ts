@@ -6,11 +6,15 @@
 // node's read-only JSON-RPC relay (`/rpc/{network}`); writes always go through the buyer's wallet,
 // only on the chain the caller names, and never switch it (the buyer does, from a click).
 
-import { decodeFunctionResult, encodeFunctionData, erc20Abi, parseAbi, type Abi, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, parseAbi, type Abi, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { catalystBase } from "../../data/catalyst/client";
 import { requireChain } from "../wallet/chain";
+import { readContract, type ChainReader } from "@shop/land/read";
+
+export { readContract };
+export type { ChainReader };
 
 export const erc721Abi = parseAbi([
   "function ownerOf(uint256 tokenId) view returns (address)",
@@ -20,9 +24,6 @@ export const erc721Abi = parseAbi([
 ]);
 
 export { erc20Abi };
-
-/** Something that answers `eth_call`: the node's relay, or a connected wallet. */
-export type ChainReader = { chainId: number; call(to: string, data: Hex, signal?: AbortSignal): Promise<Hex> };
 
 type RpcResponse = { result?: unknown; error?: { code?: number; message?: string } };
 
@@ -71,20 +72,6 @@ export function walletReader(provider: Eip1193Provider, chainId: number): ChainR
       return result as Hex;
     },
   };
-}
-
-/** One `view` call, ABI-encoded and decoded by viem; `T` is what the function returns. */
-export async function readContract<T>(
-  reader: ChainReader,
-  address: string,
-  abi: Abi,
-  functionName: string,
-  args: readonly unknown[],
-  signal?: AbortSignal,
-): Promise<T> {
-  const data = encodeFunctionData({ abi, functionName, args } as never);
-  const raw = await reader.call(address, data, signal);
-  return decodeFunctionResult({ abi, functionName, data: raw } as never) as T;
 }
 
 export class TxRevertedError extends Error {

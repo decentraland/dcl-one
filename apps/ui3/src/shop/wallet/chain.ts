@@ -5,7 +5,7 @@
 // gesture (-32006 / 4100), and a declined switch (4001) is an answer, not an error to retry around.
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { CHAIN, chainLabel } from "../model/chain";
+import { CHAIN, chainLabel } from "@shop/model/chain";
 
 export const USER_REJECTED = 4001;
 const UNKNOWN_CHAIN = 4902;

@@ -17,6 +17,8 @@ interface SelectProps {
   /** dark (default, on dark panels) or light (white field, e.g. Settings). */
   variant?: 'dark' | 'light'
   'aria-label'?: string
+  /** Shown in the field while no option has the value (a picker that adds rather than selects). */
+  placeholder?: string
 }
 
 /** Roughly how tall the list can get (matches `max-height` in the stylesheet). */
@@ -49,7 +51,8 @@ export function Select({
   onChange,
   disabled = false,
   variant = 'dark',
-  'aria-label': ariaLabel
+  'aria-label': ariaLabel,
+  placeholder
 }: SelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [up, setUp] = useState(false)
@@ -84,7 +87,7 @@ export function Select({
           setOpen((o) => !o)
         }}
       >
-        <span className={styles.value}>{current?.label ?? value}</span>
+        <span className={styles.value}>{current?.label ?? placeholder ?? value}</span>
         <svg className={`${styles.chev} ${open ? styles.chevOpen : ''}`.trim()} viewBox="0 0 12 12" aria-hidden="true">
           <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

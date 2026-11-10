@@ -94,8 +94,10 @@ difference not listed here is a gap, not a decision.
   a fixed 60-second window from the first attempt
   (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
   the secret is checked and the count is cleared by a right secret
-  (upstream also clears it when the owner joins). If the counter cannot be
-  written the mint answers 503.
+  (upstream also clears it when the owner joins). A caller already out of
+  attempts gets 429 before any ban or access check, as upstream; that check
+  charges nothing. If the counter cannot be read or written the mint answers
+  503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and
   `/get-comms-adapter`, 401 `You are banned from world "<name>".`);
@@ -249,7 +251,10 @@ difference not listed here is a gap, not a decision.
 - **Publish forms.** `POST /entities` reads only `multipart/form-data`
   (upstream's parser also reads `application/x-www-form-urlencoded`); a
   body cut short answers busboy's `Unexpected end of form`, any other
-  unreadable body the parser's own text. Its
+  unreadable body the parser's own text. A part name longer than 200 bytes
+  answers 400 `Form field name longer than 200 bytes` (upstream's busboy
+  applies no name limit to multipart parts, only 16 KiB to a part's
+  headers). Its
   uploads take a slot of `MAX_CONCURRENT_UPLOADS` (refused with upstream's
   byte-budget 503, `Server is buffering too many uploads, please retry
   shortly.`) and count files against `MAX_IN_FLIGHT_UPLOAD_FILES` instead of
