@@ -71,9 +71,13 @@ async function contractBlock(
     if (explicit) throw new Error(`Figma config not found: ${configFile}`)
     return undefined
   }
-  const parsed = contractSchema
-    .optional()
-    .safeParse((JSON.parse(await readFile(configFile, 'utf8')) as { contract?: unknown })?.contract)
+  let raw: { contract?: unknown }
+  try {
+    raw = JSON.parse(await readFile(configFile, 'utf8'))
+  } catch (error) {
+    throw new Error(`${configFile}: ${(error as Error).message}`, { cause: error })
+  }
+  const parsed = contractSchema.optional().safeParse(raw?.contract)
   if (!parsed.success)
     throw new Error(
       `${configFile}: contract must hold a string mappingRoot and an optional string libraryRange`
@@ -110,10 +114,10 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
     options.configPath ?? env.DCL_FIGMA_CONFIG ?? 'figma.config.json'
   )
   const explicit = Boolean(options.configPath ?? env.DCL_FIGMA_CONFIG)
-  if (options.mappingOnly) return mappingOnlyRuntime(options, configFile, explicit)
   if (explicit && !existsSync(configFile)) {
     throw new Error(`Figma config not found: ${configFile}`)
   }
+  if (options.mappingOnly) return mappingOnlyRuntime(options, configFile, explicit)
   const app = existsSync(configFile) ? await createApp(cwd, configFile) : undefined
 
   return {

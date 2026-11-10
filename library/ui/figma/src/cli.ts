@@ -6,7 +6,7 @@ import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
 import { errorText } from './server-errors.js'
-import { checkMappings, resolveComponent } from './contract/resolve.js'
+import { checkMappingsReport, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
 import { buildOwnership } from './guard/ownership.js'
@@ -120,6 +120,13 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (command === 'resolve' || command === 'check-mappings') {
+    // Flags are parsed before the runtime, so a malformed flag is reported even when the cache is broken.
+    const input = {
+      nodeId: values['node-id'],
+      name: values.name,
+      variantProperties: pairs('variant', values.variant),
+      texts: pairs('text', values.text)
+    }
     const runtime = await createRuntime({
       cwd: process.cwd(),
       env: process.env,
@@ -130,17 +137,11 @@ async function main(argv: string[]): Promise<number> {
     })
     const context = await runtime.resolveContext()
     if (command === 'check-mappings') {
-      const results = await checkMappings(context)
-      const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
-      print({ ok: failing.length === 0, checked: results.length, results })
-      return failing.length === 0 ? 0 : 1
+      const report = await checkMappingsReport(context)
+      print(report)
+      return report.ok ? 0 : 1
     }
-    const result = await resolveComponent(context, {
-      nodeId: values['node-id'],
-      name: values.name,
-      variantProperties: pairs('variant', values.variant),
-      texts: pairs('text', values.text)
-    })
+    const result = await resolveComponent(context, input)
     print(result)
     return result.ok ? 0 : 1
   }

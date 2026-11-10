@@ -22,14 +22,16 @@ The library owns the components. Your job is to find the mapped component, impor
 
    Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The table is checked against the resolver's registry.
 
+<!-- diagnostic-codes -->
+
 | Code                          | Severity | Meaning                                                                              | What you do                                                                   |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | `invalid-input`               | error    | Neither a node id nor a name was given                                               | Pass `nodeId` (preferred) or the exact component set name                     |
 | `mapping-root-not-configured` | error    | The resolver cannot find the mapping directory or its package                        | Pass `--mapping-root` or use `--mapping-only`                                 |
 | `mapping-missing`             | error    | A known library component has no public mapping: outside the supported scope         | Do not build a replacement. Report name, variant properties, code, provenance |
-| `identity-not-found`          | error    | The node or name is not a component of the captured library                          | Check the instance comes from the library; pass its main component node id    |
-| `identity-ambiguous`          | error    | Several components share the name, or several mappings claim the node                | Call again with a `nodeId` from `details.candidates`                          |
-| `identity-uncertain`          | error    | No capture and no mapping: it cannot be established that this is a library component | Not a missing mapping. Report it; do not build a replacement                  |
+| `identity-not-found`          | error    | The node or name is not a component of the captured library                          | Not a missing mapping. Follow `action` (it depends on `details.reason`)       |
+| `identity-ambiguous`          | error    | Several components share the name, or several mappings claim the node                | Follow `action`; never pick a candidate yourself                              |
+| `identity-uncertain`          | error    | No capture and no mapping: it cannot be established that this is a library component | Not a missing mapping. Follow `action`; do not build a replacement            |
 | `variant-unsupported`         | error    | The design uses a value the mapping does not cover                                   | Report it. Do not pick the closest value                                      |
 | `variant-not-in-figma`        | error    | The combination is not defined by the design                                         | Ask the designer; do not invent the state                                     |
 | `contract-incompatible`       | error    | Library version, contract version, Figma file or export does not match               | Follow `action`, which depends on `details.reason`                            |

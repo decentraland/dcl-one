@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
-import { diagnostic, type Diagnostic } from './diagnostics.js'
+import { diagnostic, type Diagnostic, type ReasonOf } from './diagnostics.js'
 import type { FigmaSet } from './figma-index.js'
 import type { LibraryInfo } from './library.js'
 import { FIGMA_FILE_PLACEHOLDER, SUPPORTED_CONTRACT, type ParsedMapping } from './mapping-file.js'
@@ -12,8 +12,11 @@ type ValidationContext = {
   libraryRange?: string
 }
 
-const incompatible = (reason: string, message: string, details: Record<string, unknown> = {}) =>
-  diagnostic('contract-incompatible', message, { reason, ...details })
+const incompatible = (
+  reason: ReasonOf<'contract-incompatible'>,
+  message: string,
+  details: Record<string, unknown> = {}
+) => diagnostic('contract-incompatible', message, { ...details, reason })
 
 function importSpecifier(mapping: ParsedMapping): string | undefined {
   return mapping.imports

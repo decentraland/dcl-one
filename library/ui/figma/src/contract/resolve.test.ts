@@ -23,7 +23,8 @@ const lock = (revision: string) =>
     sources: [
       {
         repository: 'https://github.com/decentraland/figma-design-system',
-        snapshot: { revision }
+        revision: 'a'.repeat(40),
+        snapshot: { revision, digests: { 'pages.json': 'b'.repeat(64) } }
       }
     ]
   })
@@ -438,6 +439,109 @@ describe('resolveComponent', () => {
       })
 
       expect(result.ok && result.resolved.usage).toBe('<Button kind="">toString</Button>')
+    })
+  })
+
+  describe('when the review follow-up checks apply', () => {
+    it('should refuse a node outside a loaded capture even when a stale mapping targets it', async () => {
+      const { mappingRoot } = await library({
+        mappings: { 'Button.figma.ts': mappingSource({ nodeId: '7-7' }) }
+      })
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '7:7' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+    })
+
+    it('should give every failure the library and capture context a report needs', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('f'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Secondary', Blocked: 'Yes' }
+      })
+
+      expect(result).toMatchObject({
+        ok: false,
+        context: {
+          library: { name: 'fixture-library', version: '1.2.0' },
+          capture: { revision: 'f'.repeat(40) }
+        }
+      })
+    })
+
+    it('should name the unreadable lock in capture-revision-unknown', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), '{}')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      const warning = result.warnings.find((w) => w.code === 'capture-revision-unknown')!
+      expect(warning.details).toEqual({
+        lock: path.join(path.basename(root), 'upstream.lock.json')
+      })
+    })
+
+    it('should not take a revision from a lock the pin reader refuses', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(
+        path.join(root, 'upstream.lock.json'),
+        JSON.stringify({
+          sources: [
+            {
+              repository: 'https://github.com/decentraland/figma-design-system',
+              snapshot: { revision: 'f'.repeat(40) }
+            }
+          ]
+        })
+      )
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1'
+      })
+
+      expect(result.warnings.map((w) => w.code)).toContain('capture-revision-unknown')
+      expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+    })
+
+    it.each([
+      ['a property the mapping does not read', { Size: 'L' }, 'variant-unsupported'],
+      ['a boolean value outside the accepted words', { Blocked: 'Maybe' }, 'variant-unsupported']
+    ])('should refuse %s without a capture', async (_label, variantProperties, code) => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource({
+            body: "const blocked = instance.getBoolean('Blocked', { true: ' disabled', false: '' })"
+          })
+            .replace(/const disabled = [^\n]*\n/, '')
+            .replace('${disabled}', '${blocked}')
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties
+      })
+
+      expect(codes(result)).toEqual([code])
+    })
+
+    it('should accept a declared state and warn about a text the mapping does not render', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary', Hover: 'Yes' },
+        texts: { Caption: 'x' }
+      })
+
+      expect(result.ok).toBe(true)
+      expect(
+        result.warnings.find((w) => w.code === 'unmapped-figma-property')?.details
+      ).toMatchObject({
+        text: 'Caption'
+      })
     })
   })
 

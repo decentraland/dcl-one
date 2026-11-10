@@ -369,14 +369,21 @@ describe('when resolving with --mapping-only next to a configured capture', () =
     )
   })
 
-  it('should refuse an explicit config that does not exist', async () => {
-    const runtime = await createRuntime({
-      cwd: library.root,
-      env: {},
-      mappingOnly: true,
-      configPath: 'missing.json'
-    })
+  it.each([
+    ['--config', { configPath: 'missing.json', env: {} }],
+    ['DCL_FIGMA_CONFIG', { env: { DCL_FIGMA_CONFIG: 'missing.json' } }]
+  ])('should refuse a missing explicit config from %s at startup', async (_label, options) => {
+    await expect(
+      createRuntime({ cwd: library.root, mappingOnly: true, ...options })
+    ).rejects.toThrow('Figma config not found')
+  })
 
-    await expect(runtime.resolveContext()).rejects.toThrow('Figma config not found')
+  it('should name the config file when it is not JSON', async () => {
+    await writeFile(path.join(library.root, 'figma.config.json'), '{not json')
+    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+
+    await expect(runtime.resolveContext()).rejects.toThrow(
+      path.join(library.root, 'figma.config.json') + ':'
+    )
   })
 })
