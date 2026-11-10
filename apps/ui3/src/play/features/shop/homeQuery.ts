@@ -2,10 +2,11 @@
 // Shop's client and fetchers (shop/api, shop/discovery/api) behind TanStack key and options factories.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { isShopApiError } from '../../../shop/api/client'
-import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '../../../shop/discovery/api'
+import { isShopApiError } from '@shop/api/client'
+import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '@shop/discovery/api'
 import { listingTypeFor } from '@shop/market/access-rule'
 import { shopClient } from '../../../shop/api/host'
+import { shopReads } from '../../../shop/discovery/reads'
 
 export const HOME_ROW_SIZE = 12
 
@@ -57,7 +58,7 @@ export const homeQueries = {
     queryOptions({
       // The items are inputs too: an outfit republished under the same id lists others.
       queryKey: ['shop', 'home', 'outfit-items', outfit.id, outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`)] as const,
-      queryFn: ({ signal }) => fetchCatalogByIds(outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`), { client: shopClient(), signal }),
+      queryFn: ({ signal }) => fetchCatalogByIds(outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`), shopReads(signal)),
       staleTime: 60_000
     }),
   /**
@@ -68,13 +69,13 @@ export const homeQueries = {
   trending: ({ creatorSales, marketplace }: Rollouts) =>
     queryOptions({
       queryKey: ['shop', 'home', 'trending', { creatorSales, marketplace }] as const,
-      queryFn: ({ signal }) => fetchTrendingItems({ first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, { client: shopClient(), signal }),
+      queryFn: ({ signal }) => fetchTrendingItems({ first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, shopReads(signal)),
       staleTime: 60_000
     }),
   newest: ({ creatorSales, marketplace }: Rollouts) =>
     queryOptions({
       queryKey: ['shop', 'home', 'newest', { creatorSales, marketplace }] as const,
-      queryFn: async ({ signal }) => (await fetchShopItems({ sortBy: 'newest', onSale: true, first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, { client: shopClient(), signal })).items,
+      queryFn: async ({ signal }) => (await fetchShopItems({ sortBy: 'newest', onSale: true, first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, shopReads(signal))).items,
       staleTime: 60_000
     })
 }

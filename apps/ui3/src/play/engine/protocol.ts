@@ -211,6 +211,7 @@ export type PageToScene =
   | UpdateCommunityRequest
   | GetCommunityPlaceOptionsRequest
   | RemoveCommunityPlaceRequest
+  | CommunityMemberActionRequest
   | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
@@ -1256,7 +1257,20 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace'
+/** What an owner or moderator can do to a member from the card's member menu (unity-explorer's
+ *  MembersListView): promote to moderator, demote to member, hand over ownership, remove, ban. */
+export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
+
+/** A member action from the card's member menu (page → scene → signed social-api write). */
+export interface CommunityMemberActionRequest {
+  kind: 'communityMemberAction'
+  id: string
+  /** The member acted on. */
+  address: string
+  action: CommunityMemberAction
+}
+
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace' | CommunityMemberAction
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1274,8 +1288,6 @@ export interface CommunityMember {
   role: string
   picture?: string
   hasClaimedName?: boolean
-  /** the local user already follows them (hides "Add Friend"). */
-  isFriend?: boolean
 }
 
 /** A place shared by a community (Places tab). */

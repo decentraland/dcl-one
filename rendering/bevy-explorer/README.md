@@ -36,6 +36,8 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
   CEF routes eligible snapshot images when displaying profiles and notifications. Sites uses its
   web service configuration and the snapshot URLs returned by its backend.
+- The shared UI foundations: `react-web` loads `@dcl/one-ui/foundations.css` in `main.tsx`; `/play`
+  does not, as its HUD adaptation stays as it is until Sites migrates (`docs/ui-standards.md`).
 - The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
   client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
   keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.

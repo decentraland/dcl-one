@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { coarseDuration } from "../shop/discovery/freshness";
+import { coarseDuration } from "@shop/discovery/freshness";
 
 export type CopyDomain = "places" | "worlds" | "events" | "communities";
 
