@@ -93,7 +93,8 @@ server holds.
 
 ## 7. The scene editor host
 
-Create (`src/features/editorHost`) hosts the scene editor. Use its checked-in pin, host contract and gates below. Resolve external editor development guidance through authorized task context; keep the target build self-contained. Here:
+Create hosts the scene editor: its pages in `library/ui/apps/hud/features/editorHost`, its config,
+source and host contract in `library/explorer-core/features/editorHost`. Use its checked-in pin, host contract and gates below. Resolve external editor development guidance through authorized task context; keep the target build self-contained. Here:
 
 - The editor arrives through `editorHost/config.ts`. On `PINNED_EDITOR.hosts` (decentraland.org) it
   is one version checked against its `editor.js` hash, with its editor scene pinned and
@@ -110,8 +111,8 @@ Create (`src/features/editorHost`) hosts the scene editor. Use its checked-in pi
   signing go through `lib/shell`.
 - The preview realm (`../deploy/web/PREVIEW_REALM.md`) and the scene server
   (`deploy/web/engine/headless.*`, `src/headless`) are engine-side; prove changes with the `editor`
-  and `preview-realm` gates (`playwright.gate.config.ts`, `e2e/README.md`) and
-  `src/test/editorHost*.test.tsx`.
+  and `preview-realm` gates (`playwright.gate.config.ts`, `e2e/README.md`) and the editor host tests
+  (`src/test/editorHost*.test.tsx`, `library/ui/apps/hud/test/hosted/editorHost*.test.tsx`).
 - When the editor needs the engine to behave differently, change the engine here, in its own PR.
 
 > Rationale: a single, enforced design system is what keeps the HUD consistent,

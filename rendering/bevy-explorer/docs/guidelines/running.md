@@ -260,7 +260,7 @@ The HUD and input:
   world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
   The command is `library/explorer-core/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
-  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
+  session provides the sign-in in `library/ui/apps/hud/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
