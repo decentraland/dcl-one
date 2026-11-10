@@ -1,4 +1,5 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
+// Modified from deno_fetch 0.284.0: `Blob` is loaded rather than read from the global.
 
 (function () {
 const { core, primordials } = __bootstrap;
@@ -42,7 +43,7 @@ const {
   parseFormData,
 } = core.loadExtScript("ext:deno_fetch/21_formdata.js");
 const mimesniff = core.loadExtScript("ext:deno_web/01_mimesniff.js");
-const { BlobPrototype } = core.loadExtScript("ext:deno_web/09_file.js");
+const { Blob, BlobPrototype } = core.loadExtScript("ext:deno_web/09_file.js");
 const {
   createProxy,
   createReadableStream,
