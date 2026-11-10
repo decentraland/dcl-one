@@ -10,11 +10,15 @@ import subprocess
 import tempfile
 
 PLATFORMS = {'apis': ('amd64', 'arm64'), 'sites': ('amd64', 'arm64'), 'gateway': ('amd64', 'arm64'),
-             'bevy-explorer-web': ('amd64', 'arm64'), 'bevy-explorer-headless': ('amd64',)}
+             'bevy-explorer-web': ('amd64', 'arm64'), 'bevy-explorer-headless': ('amd64',),
+             'sites-polygon-credits': ('amd64', 'arm64')}
+# A component built for one deployment (image-sites-polygon-credits): published into its base
+# component's repository under its own tag suffix, never under the base's tags.
+VARIANTS = {'sites-polygon-credits': ('sites', 'polygon-credits')}
 
 
 def archive_path(root, component, arch, sha):
-    if component in ('apis', 'sites'):
+    if component in ('apis', 'sites', *VARIANTS):
         return root / f'apis-sites-images-{arch}' / f'{component}.tar.gz'
     return root / f'{component}-image-linux-{arch}-{sha}' / 'image.tar.gz'
 
@@ -48,15 +52,19 @@ def main():
     args = parser.parse_args()
     sha = args.revision or os.environ.get('GITHUB_SHA', '')
     tags = release_tags(sha, args.ref or os.environ.get('GITHUB_REF', ''))
-    components = (args.component,) if args.component else ('apis', 'sites')
-    configured = [os.environ.get(f'QUAY_{name.upper().replace("-", "_")}_REPOSITORY') for name in PLATFORMS]
+    components = (args.component,) if args.component else ('apis', 'sites', *VARIANTS)
+    configured = [os.environ.get(f'QUAY_{name.upper().replace("-", "_")}_REPOSITORY')
+                  for name in PLATFORMS if name not in VARIANTS]
     configured = [value for value in configured if value]
     if len(set(configured)) != len(configured):
         raise ValueError('Components require different repositories')
-    repositories = {service: repository(os.environ.get(f'QUAY_{service.upper().replace("-", "_")}_REPOSITORY', ''))
+    base = {service: VARIANTS[service][0] if service in VARIANTS else service for service in components}
+    repositories = {service: repository(os.environ.get(f'QUAY_{base[service].upper().replace("-", "_")}_REPOSITORY', ''))
                     for service in components}
-    if len(set(repositories.values())) != len(repositories):
+    own = [repo for service, repo in repositories.items() if service not in VARIANTS]
+    if len(set(own)) != len(own):
         raise ValueError('Components require different repositories')
+    suffix = {service: f'-{VARIANTS[service][1]}' if service in VARIANTS else '' for service in components}
     user, token = (os.environ.get(key, '') for key in ('QUAY_USERNAME', 'QUAY_TOKEN'))
     if not user or not token:
         raise ValueError('Configure the QUAY_USERNAME and QUAY_TOKEN GitHub secrets')
@@ -88,24 +96,25 @@ def main():
                 digestfile = Path(temporary) / f'{service}-{arch}.digest'
                 run('skopeo', 'copy', '--retry-times', '3', '--authfile', str(authfile),
                     '--format', 'oci', '--digestfile', str(digestfile), f'docker-archive:{archive}',
-                    f'docker://{repo}:sha-{sha}-{arch}')
+                    f'docker://{repo}:sha-{sha}{suffix[service]}-{arch}')
                 digest = digestfile.read_text().strip()
                 if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
                     raise ValueError('Registry copy did not return a valid digest')
                 sources.append(f'{repo}@{digest}')
-            tag_args = [item for tag in tags for item in ('--tag', f'{repo}:{tag}')]
+            service_tags = [f'{tag}{suffix[service]}' for tag in tags]
+            tag_args = [item for tag in service_tags for item in ('--tag', f'{repo}:{tag}')]
             run('docker', 'buildx', 'imagetools', 'create', *tag_args, *sources, env=env)
             manifest = json.loads(run('docker', 'buildx', 'imagetools', 'inspect', '--raw',
-                                     f'{repo}:{tags[0]}', env=env, capture_output=True).stdout)
+                                     f'{repo}:{service_tags[0]}', env=env, capture_output=True).stdout)
             platforms = {(m['platform']['os'], m['platform']['architecture']) for m in manifest['manifests']}
             if platforms != {('linux', arch) for arch in PLATFORMS[service]}:
                 raise ValueError(f'Published index has unexpected platforms: {platforms}')
             platform_names = ', '.join(f'linux/{arch}' for arch in PLATFORMS[service])
-            print(f'Published {repo}:{tags[0]} ({platform_names})')
+            print(f'Published {repo}:{service_tags[0]} ({platform_names})')
             summary = os.environ.get('GITHUB_STEP_SUMMARY')
             if summary:
                 with open(summary, 'a') as output:
-                    output.write(f'- `{repo}:{tags[0]}` — {platform_names}\n')
+                    output.write(f'- `{repo}:{service_tags[0]}` — {platform_names}\n')
 
 
 if __name__ == '__main__':

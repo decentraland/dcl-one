@@ -75,21 +75,29 @@ class PublicationTest(unittest.TestCase):
                 patch('sys.stdout', new_callable=io.StringIO):
             publish.main()
         calls = [call.args for call in commands.call_args_list]
+        components = ('apis', 'sites', 'sites-polygon-credits')
         expected_archives = [
             f'docker-archive:/archives/apis-sites-images-{arch}/{component}.tar.gz'
-            for component in ('apis', 'sites') for arch in ('amd64', 'arm64')]
-        self.assertEqual([call[3] for call in calls[:4]], expected_archives)
-        self.assertTrue(all(call[:3] == ('skopeo', 'inspect', '--config') for call in calls[:4]))
+            for component in components for arch in ('amd64', 'arm64')]
+        self.assertEqual([call[3] for call in calls[:6]], expected_archives)
+        self.assertTrue(all(call[:3] == ('skopeo', 'inspect', '--config') for call in calls[:6]))
         copies = [call for call in calls if call[:2] == ('skopeo', 'copy')]
         self.assertEqual([call[-2] for call in copies], expected_archives)
+        # The Polygon credits variant goes to the Sites repository under its own tags only.
         self.assertEqual([call[-1] for call in copies], [
-            f'docker://quay.io/example/dcl-one-{component}:sha-{sha}-{arch}'
-            for component in ('apis', 'sites') for arch in ('amd64', 'arm64')])
+            f'docker://quay.io/example/dcl-one-{repo}:sha-{sha}{suffix}-{arch}'
+            for repo, suffix in (('apis', ''), ('sites', ''), ('sites', '-polygon-credits'))
+            for arch in ('amd64', 'arm64')])
         indexes = [call for call in calls if call[:4] == ('docker', 'buildx', 'imagetools', 'create')]
-        self.assertEqual(len(indexes), 2)
+        self.assertEqual(len(indexes), 3)
         for component, index in zip(('apis', 'sites'), indexes):
             self.assertIn(f'quay.io/example/dcl-one-{component}:main', index)
             self.assertIn(f'quay.io/example/dcl-one-{component}:sha-{sha}', index)
+        variant = indexes[2]
+        self.assertIn('quay.io/example/dcl-one-sites:main-polygon-credits', variant)
+        self.assertIn(f'quay.io/example/dcl-one-sites:sha-{sha}-polygon-credits', variant)
+        self.assertNotIn('quay.io/example/dcl-one-sites:main', variant)
+        self.assertNotIn(f'quay.io/example/dcl-one-sites:sha-{sha}', variant)
 
     def test_bevy_web_validates_both_archives_against_the_source_run_revision(self):
         sha = 'a' * 40
