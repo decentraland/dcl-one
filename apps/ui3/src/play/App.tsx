@@ -240,17 +240,21 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
   // A Windows browser on its integrated GPU: how to move it to the dedicated one, as an ordinary
   // dialog once the player is signed in and in the lobby or the world (never over the sign-in
   // screen), once per device ("Don't show again"; "Later" asks again next launch) and once per
-  // launch. Not where something else owns the UI (the embed) and not on an unattended or
+  // launch. Only the player closes it (or the HUD unmounting): travel that leaves the lobby or the
+  // world keeps it open, which is why the close handle lives in a ref rather than the effect's
+  // cleanup. Not where something else owns the UI (the embed) and not on an unattended or
   // auto-signed-in run (the benchmark, which nobody would close it on; `?guest=1` previews); always
   // when forced for a look.
   const gpuGuideDue = integratedGpu != null && (GPU_GUIDE_FORCED || session.phase === 'lobby' || session.phase === 'world')
+  const gpuGuideClose = useRef<(() => void) | null>(null)
   const gpuGuideOffered = useRef(false)
   useEffect(() => {
     if (integratedGpu == null || !gpuGuideDue || gpuGuideOffered.current || HIDE_HUD) return
     if (!GPU_GUIDE_FORCED && (bootMode().autoLogin != null || getPref(PREF.gpuGuideSeen) === '1')) return
     gpuGuideOffered.current = true
-    return openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
+    gpuGuideClose.current = openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
   }, [gpuGuideDue, integratedGpu])
+  useEffect(() => () => gpuGuideClose.current?.(), [])
 
   // A world that doesn't exist, or a HUD bridge that never answered, isn't a crash — it's an ordinary
   // dialog on the popup layer, so it gets Escape/scrim-click for free and freezes nothing behind it
