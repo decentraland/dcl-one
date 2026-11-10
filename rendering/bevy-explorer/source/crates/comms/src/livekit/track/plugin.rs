@@ -1,9 +1,13 @@
 use bevy::{
-    ecs::{error::debug, relationship::Relationship, system::entity_command},
+    ecs::{
+        error::debug,
+        relationship::Relationship,
+        system::{entity_command, SystemParam},
+    },
     prelude::*,
     render::render_resource::Extent3d,
 };
-use common::{debug_panic, structs::AudioSettings, util::AsH160};
+use common::{access_status::AccessStatus, debug_panic, structs::AudioSettings, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
@@ -11,6 +15,7 @@ use livestream_manager::{
 };
 #[cfg(target_arch = "wasm32")]
 use media::VideoData;
+use wallet::Wallet;
 #[cfg(not(target_arch = "wasm32"))]
 use {
     bevy::ecs::world::OnDespawn,
@@ -47,9 +52,53 @@ use crate::{
         },
         LivekitRuntimeRes,
     },
+    voice_room::{ActiveVoiceRoom, VoiceRoom},
 };
 
 pub struct LivekitTrackPlugin;
+
+/// Voice sessions use the voice setting and personal block contract on both backends.
+#[derive(SystemParam)]
+struct AudioPolicy<'w, 's> {
+    settings: Res<'w, AudioSettings>,
+    access: Res<'w, AccessStatus>,
+    wallet: Res<'w, Wallet>,
+    active_voice: Res<'w, ActiveVoiceRoom>,
+    voice_rooms: Query<'w, 's, (), With<VoiceRoom>>,
+    participants: Query<'w, 's, (&'static LivekitParticipant, &'static HostedBy)>,
+}
+
+impl AudioPolicy<'_, '_> {
+    fn is_voice(&self, publisher: &PublishedBy) -> bool {
+        self.participants
+            .get(publisher.get())
+            .is_ok_and(|(_, room)| self.voice_rooms.contains(room.get()))
+    }
+
+    fn allows_voice_microphone(&self, publisher: &PublishedBy) -> bool {
+        let owner = self.wallet.address();
+        self.participants
+            .get(publisher.get())
+            .is_ok_and(|(participant, room)| {
+                self.active_voice.is_owned_by(room.get(), owner)
+                    && participant
+                        .identity()
+                        .as_str()
+                        .as_h160()
+                        .is_some_and(|address| self.access.allows_voice_from(owner, address))
+            })
+    }
+
+    fn volume(&self, publisher: &PublishedBy, microphone: bool) -> f32 {
+        if !self.is_voice(publisher) {
+            self.settings.scene()
+        } else if microphone && self.allows_voice_microphone(publisher) {
+            self.settings.voice()
+        } else {
+            0.0
+        }
+    }
+}
 
 impl Plugin for LivekitTrackPlugin {
     fn build(&self, app: &mut App) {
@@ -353,7 +402,7 @@ fn subscribe_to_audio_track(
     mut commands: Commands,
     tracks: Query<(&LivekitTrack, &PublishedBy), With<Audio>>,
     participants: Query<&HostedBy>,
-    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
+    non_spatial_rooms: Query<(), Or<(With<crate::private_chat::PrivateChatRoom>, With<VoiceRoom>)>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -377,7 +426,7 @@ fn subscribe_to_audio_track(
     };
     if participants
         .get(publisher.get())
-        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+        .is_ok_and(|room| non_spatial_rooms.contains(room.get()))
     {
         return;
     }
@@ -406,10 +455,16 @@ fn subscribe_to_audio_track(
 fn subscribe_to_track(
     trigger: Trigger<SubscribeToTrack>,
     mut commands: Commands,
-    tracks: Query<(&LivekitTrack, &PublishedBy, AnyOf<(&Audio, &Video)>)>,
+    tracks: Query<(
+        &LivekitTrack,
+        &PublishedBy,
+        AnyOf<(&Audio, &Video)>,
+        Has<Microphone>,
+    )>,
     participants: Query<&HostedBy>,
     data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
+    policy: AudioPolicy,
 ) {
     let entity = trigger.target();
 
@@ -417,13 +472,18 @@ fn subscribe_to_track(
         error!("SubscribeToTrack is an entity event. Call it with 'Commands::trigger_targets'.");
         return;
     }
-    let Ok((track, publisher, audio_or_video)) = tracks.get(entity) else {
+    let Ok((track, publisher, audio_or_video, microphone)) = tracks.get(entity) else {
         error!("Can't subscribe to {} because it is not a track.", entity);
         return;
     };
     if participants
         .get(publisher.get())
         .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
+    if policy.is_voice(publisher)
+        && !(audio_or_video.0.is_some() && microphone && policy.allows_voice_microphone(publisher))
     {
         return;
     }
@@ -509,16 +569,25 @@ fn audio_track_is_now_subscribed(
             Has<Audio>,
             Has<AudioStreamingHandle>,
             Has<OpenAudioSender>,
+            &PublishedBy,
+            Has<Microphone>,
             Option<&AudioTransmitterVolume>,
         ),
         With<Subscribed>,
     >,
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
-    audio_settings: Res<AudioSettings>,
+    policy: AudioPolicy,
 ) {
     let entity = trigger.target();
-    let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender, multiplier)) =
-        tracks.get(entity)
+    let Ok((
+        track,
+        is_audio,
+        has_audio_streaming_sound,
+        has_open_audio_sender,
+        publisher,
+        microphone,
+        multiplier,
+    )) = tracks.get(entity)
     else {
         debug_panic!("Subscribed track did not have LivekitTrack.");
     };
@@ -542,7 +611,7 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    let volume = audio_settings.scene() * multiplier.map_or(1.0, |volume| **volume);
+    let volume = policy.volume(publisher, microphone) * multiplier.map_or(1.0, |volume| **volume);
     let Ok(handle) =
         livekit_audio_manager.play(StreamingSoundData::from_decoder(decoder).volume(volume as f64))
     else {
@@ -832,14 +901,18 @@ fn update_track_volume(
     tracks: Populated<(
         &mut AudioStreamingHandle,
         Option<&AudioTransmitterVolume>,
+        &PublishedBy,
+        Has<Microphone>,
         Has<Subscribed>,
     )>,
-    audio_settings: Res<AudioSettings>,
+    policy: AudioPolicy,
 ) {
     use kira::tween::Tween;
-    for (mut audio_streaming_handle, multiplier, subscribed) in tracks.into_inner() {
+    for (mut audio_streaming_handle, multiplier, publisher, microphone, subscribed) in
+        tracks.into_inner()
+    {
         let volume = if subscribed {
-            audio_settings.scene() * multiplier.map_or(1.0, |volume| **volume)
+            policy.volume(publisher, microphone) * multiplier.map_or(1.0, |volume| **volume)
         } else {
             0.0
         };
@@ -856,20 +929,23 @@ fn update_track_volume(
         (
             &LivekitTrack,
             Option<&AudioTransmitterVolume>,
+            &PublishedBy,
             Has<Microphone>,
         ),
         (With<Audio>, With<Subscribed>),
     >,
-    audio_settings: Res<AudioSettings>,
+    policy: AudioPolicy,
 ) {
-    for (livekit_track, multiplier, microphone) in tracks.into_inner() {
+    for (livekit_track, multiplier, publisher, microphone) in tracks.into_inner() {
         // Proximity microphone panning is owned by locate_foreign_streams.
-        if microphone && multiplier.is_none() {
+        if microphone && multiplier.is_none() && !policy.is_voice(publisher) {
             continue;
         }
         let Some(RemoteTrack::Audio(audio)) = livekit_track.track() else {
             debug_panic!("A subscribed audio track did not have an audio RemoteTrack.");
         };
-        audio.set_volume(multiplier.map_or(1.0, |volume| **volume) * audio_settings.scene());
+        audio.set_volume(
+            multiplier.map_or(1.0, |volume| **volume) * policy.volume(publisher, microphone),
+        );
     }
 }

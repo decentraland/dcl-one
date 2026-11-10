@@ -302,6 +302,11 @@ degradation. Retry is disabled and `aria-busy` while its command is pending. The
 follows engine state through retry, reopening or remaining available when a probe fails.
 Recovery retracts it automatically; Exit follows session sign-out.
 
+The On-demand voice debug section reads `/voice_room`: `active`, `session`, `phase`, `failure`,
+`blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending`. Private voice playback
+waits for `blockStatusReady` for the current wallet. `Leave` uses `/voice_room leave`; room
+credentials never travel on the console. Inspect these values in the native runtime smoke.
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 

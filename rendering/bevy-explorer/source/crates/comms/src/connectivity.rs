@@ -371,6 +371,7 @@ fn monitor_connectivity(
         let scope = match scope.map(|scope| &scope.0) {
             Some(AccessScope::Scene(_)) => "scene",
             Some(AccessScope::PrivateChat) => "private_chat",
+            Some(AccessScope::Voice(_)) => "voice",
             _ if scene_room => "scene",
             _ => "realm",
         };

@@ -72,6 +72,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_interactable_area(),
             op_get_mic_state(),
             op_set_mic_enabled(),
+            op_set_voice_room(),
+            op_leave_voice_room(),
             op_get_voice_stream(),
             op_read_voice_stream(),
             op_get_hover_stream(),
@@ -498,6 +500,20 @@ pub async fn op_get_mic_state(state: Rc<RefCell<OpState>>) -> Result<MicState, a
 #[op2(async)]
 pub async fn op_set_mic_enabled(state: Rc<RefCell<OpState>>, enabled: bool) {
     dcl_js::system_api::op_set_mic_enabled(state, enabled).await;
+}
+
+#[op2(async)]
+pub async fn op_set_voice_room(
+    state: Rc<RefCell<OpState>>,
+    #[string] session: String,
+    #[string] adapter: String,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_set_voice_room(state, session, adapter).await
+}
+
+#[op2(async)]
+pub async fn op_leave_voice_room(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_leave_voice_room(state).await
 }
 
 #[op2(async)]
