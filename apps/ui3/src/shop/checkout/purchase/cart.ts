@@ -7,7 +7,7 @@
 // silently charged; a line whose settlement this cart cannot build (a NAME registration, a rental, a
 // legacy order: single-asset calls) is `unsupported` and finishes on its own page.
 
-import { type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import type { CreditLineRequest } from "@shop/api/types";
 import { tokenRefId } from "@shop/model/asset";
 import { discountedCents, discountedMana, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";

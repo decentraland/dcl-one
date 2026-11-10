@@ -14,7 +14,7 @@ import { CategoryFilter, subCategoryLabel } from "../../discovery/components/Fil
 import Icon from "../../discovery/components/Icon";
 import "../../discovery/components/filters.css";
 import "../../discovery/components/filterbar.css";
-import { CATEGORIES, SUBCAT_MAP } from "../../discovery/lib/categories";
+import { CATEGORIES, SUBCAT_MAP } from "@shop/discovery/lib/categories";
 import { RARITIES, rarityColor } from "@shop/discovery/lib/rarity";
 import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?url";
 import salesEmptyIllustration from "../../components/empty-art/sales-empty.svg?url";

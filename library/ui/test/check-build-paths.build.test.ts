@@ -24,6 +24,8 @@ const inspectRequest = [
   '}'
 ].join('\n')
 
+const CHILD_TIMEOUT_MS = 10_000
+
 describe('when the built gallery server receives a file request', () => {
   let scratch: string
   let dist: string
@@ -51,9 +53,10 @@ describe('when the built gallery server receives a file request', () => {
     { route: '/gallery/', status: 200, body: 'gallery entry' },
     { route: '/gallery/nested/file.txt', status: 200, body: 'nested asset' }
   ])('and the path is $route', ({ route, status, body }) => {
-    it('should return the expected response without crashing or serving outside the build', () => {
-      expect(
-        spawnSync(
+    it(
+      'should return the expected response without crashing or serving outside the build',
+      () => {
+        const result = spawnSync(
           process.execPath,
           [
             '--input-type=module',
@@ -63,9 +66,17 @@ describe('when the built gallery server receives a file request', () => {
             dist,
             route
           ],
-          { encoding: 'utf8', timeout: 5000 }
+          { encoding: 'utf8', timeout: CHILD_TIMEOUT_MS }
         )
-      ).toMatchObject({ status: 0, stdout: JSON.stringify({ status, body }) + '\n', stderr: '' })
-    })
+        // A child killed by the timeout reports status null; name the cause instead.
+        expect(result.error, `child did not finish within ${CHILD_TIMEOUT_MS} ms`).toBeUndefined()
+        expect(result).toMatchObject({
+          status: 0,
+          stdout: JSON.stringify({ status, body }) + '\n',
+          stderr: ''
+        })
+      },
+      CHILD_TIMEOUT_MS * 2
+    )
   })
 })

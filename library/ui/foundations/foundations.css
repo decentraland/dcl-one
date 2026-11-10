@@ -1,0 +1,7 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Shared foundations: every app loads this once from its global entry point. */
+@import './typography/inter.css';
+@import './colors/colors.css';
+@import './spacing/spacing.css';
+@import './layout/layout.css';

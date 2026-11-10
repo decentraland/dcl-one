@@ -105,6 +105,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           lfs: false
+      # Hydrate only library/ui's LFS objects (the foundation fonts), never the whole monorepo's.
       - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
