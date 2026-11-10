@@ -25,7 +25,7 @@ enabled; you rarely need to run it by hand.
 | `--timeout <secs>` | Exit cleanly after N seconds. |
 | `--scene-hosts <shared\|per-scene>` | `shared` (default): one scene host process runs every scene. `per-scene`: each scene runs in its own scene host process, so losing one ends only that scene. |
 | `--scene-host-spares <n>` | `per-scene` only: scene hosts kept started with no scene, so a new scene does not wait for one. Defaults to 1. |
-| `--scene-host-memory-mb <n>` | `per-scene` only: a scene host running a scene whose resident memory goes over this many MiB is ended and reported with reason `memory`; idle spares are not capped. No cap by default. |
+| `--scene-host-memory-mb <n>` | `per-scene` only: a scene host running a scene whose resident memory goes over this many MiB is ended and reported with reason `memory`; idle spares are not capped. Memory is sampled every 2 seconds, so this is not a hard limit. No cap by default. |
 | `--scene-host-sandbox <off\|on\|require>` | The sandbox each scene host applies to itself before it takes a scene, on Linux (see [Scene host sandbox](#scene-host-sandbox)). `on` applies what the kernel offers; `require` also refuses a host that is not sandboxed. Defaults to `require` with `--orchestrated` on Linux, `off` otherwise. |
 
 `--scene-id`, `--private-key` and `--env` are accepted for hammurabi compatibility and ignored.
@@ -47,16 +47,17 @@ the engine ended it over a message it could not accept) ends only its scenes. Th
 
 before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene` for
 the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
-connection, `protocol` when the engine ended it over a message, `memory` when it went over
-`--scene-host-memory-mb`, `spawn` when it could not be started, and `sandbox` when it did not apply
-the sandbox `--scene-host-sandbox require` asks for. The engine exits with status 1 only after
-three host starts in a row fail while no other host is running (`78` when they failed the
-sandbox). A removed scene's host process is ended once the scene's 5-second kill grace period is
-over, and reported to nobody. A per-scene host starts with a fixed pool of two V8 worker threads
-and an environment holding only the variables it reads (logging, the scene log budget, temporary
-files, TLS roots, HTTP proxies, time zone and locale); on Linux it is killed when the engine exits.
-With the default `shared`, losing the one host process exits the engine with status 1, as before.
-The `starting` event names the mode in `sceneHosts`.
+connection, `protocol` when the engine ended it over a message or because it read nothing the
+engine sent for 10 seconds, `memory` when it went over `--scene-host-memory-mb`, `spawn` when it
+could not be started, and `sandbox` when it did not apply the sandbox `--scene-host-sandbox
+require` asks for. The engine exits with status 1 only after three host starts in a row fail
+while no other host is running (`78` when they failed the sandbox). A removed scene's host process
+is ended once the scene's 5-second kill grace period is over, and reported to nobody. A per-scene
+host starts with a fixed pool of two V8 worker threads and an environment holding only the
+variables it reads (logging, the scene log budget, temporary files, TLS roots, HTTP proxies, time
+zone and locale); on Linux it is killed when the engine exits, and the kernel's out-of-memory
+killer picks a host before the engine. With the default `shared`, losing the one host process
+exits the engine with status 1, as before. The `starting` event names the mode in `sceneHosts`.
 
 Orchestrators that manage the process themselves can skip the CLI and resolve the engine
 path programmatically:
