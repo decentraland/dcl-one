@@ -49,12 +49,18 @@ updates supply personal blocking in both directions. Private voice waits for a
 successful snapshot for the current identity, and stays muted after a social
 disconnect until that snapshot is available again. A snapshot raced by a newer
 block update is retried rather than overwriting the update.
+An incomplete snapshot preserves valid DM block entries while voice remains muted
+until a complete snapshot arrives. Subscription and playback share one voice-access
+decision. This is client-side enforcement; preventing a modified peer from receiving
+audio also requires enforcement by the room's token issuer.
 
 One wallet-owned on-demand voice session uses the shared room lifecycle. Trusted
 SystemApi callers activate, replace or leave it. Activation suppresses proximity
 microphone publication immediately and keeps it suppressed during connection,
-failure and recovery. Explicit deactivation restores the prior proximity mute
-preference. Native and browser publication use the same eligibility policy and
+failure and recovery. Explicit deactivation preserves a prior proximity mute and
+never overrides a current mute or unavailable microphone. Identity changes and
+headless cancellation disable capture instead of restoring another session's state.
+Native and browser publication use the same eligibility policy and
 wait for publication cleanup before changing destinations. A failed publication
 retries only after acknowledged cleanup, using the shared backoff capped at five
 seconds. Known native publish denial suppresses attempts until permission returns.

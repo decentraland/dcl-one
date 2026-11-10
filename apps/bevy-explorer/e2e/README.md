@@ -304,7 +304,8 @@ Recovery retracts it automatically; Exit follows session sign-out.
 
 The On-demand voice debug section reads `/voice_room`: `active`, `session`, `phase`, `failure`,
 `blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending`. Private voice playback
-waits for `blockStatusReady` for the current wallet. `Leave` uses `/voice_room leave`; room
+waits for `blockStatusReady` for the current wallet. `Leave` uses `/voice_room leave`, which
+replies `Voice room leave requested`; read `/voice_room` again for the applied state. Room
 credentials never travel on the console. Inspect these values in the native runtime smoke.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A

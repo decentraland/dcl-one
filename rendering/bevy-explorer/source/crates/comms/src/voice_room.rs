@@ -21,10 +21,10 @@ impl<T: Copy + PartialEq> VoiceRouting<T> {
         self.active = Some(room);
     }
 
-    fn leave(&mut self, mic_enabled: &mut bool) {
+    fn leave(&mut self, mic_enabled: &mut bool, can_keep_enabled: bool) {
         self.active = None;
         if let Some(previous) = self.proximity_enabled.take() {
-            *mic_enabled = previous;
+            *mic_enabled &= previous && can_keep_enabled;
         }
     }
 
@@ -70,21 +70,22 @@ mod routing_tests {
         assert!(!route.allows(1, false, false));
         assert!(route.allows(2, false, false));
         let mut microphone = true;
-        route.leave(&mut microphone);
+        route.leave(&mut microphone, true);
         assert!(!microphone);
         assert!(route.allows(3, true, false));
+
+        microphone = true;
+        route.leave(&mut microphone, true);
+        assert!(microphone);
     }
 
     #[test]
-    fn leave_restores_previous_preference_and_is_idempotent() {
+    fn leave_keeps_an_available_microphone_enabled_when_both_preferences_are_on() {
         let mut route = VoiceRouting::default();
         route.activate(1, true);
-        let mut microphone = false;
-        route.leave(&mut microphone);
+        let mut microphone = true;
+        route.leave(&mut microphone, true);
         assert!(microphone);
-        microphone = false;
-        route.leave(&mut microphone);
-        assert!(!microphone);
     }
 
     #[test]
@@ -160,15 +161,27 @@ pub(crate) struct ActiveVoiceRoom {
 }
 
 impl ActiveVoiceRoom {
-    pub(crate) fn is_owned_by(&self, room: Entity, owner: Option<Address>) -> bool {
-        self.routing.active == Some(room) && owner.is_some() && self.owner == owner
+    pub(crate) fn allows_microphone_from(
+        &self,
+        room: Entity,
+        owner: Option<Address>,
+        identity: &str,
+        access: &AccessStatus,
+    ) -> bool {
+        self.routing.active == Some(room)
+            && owner.is_some()
+            && self.owner == owner
+            && identity
+                .as_h160()
+                .is_some_and(|address| access.allows_voice_from(owner, address))
     }
 
-    fn leave(&mut self, commands: &mut Commands, mic: &mut MicState) {
+    fn leave(&mut self, commands: &mut Commands, mic: &mut MicState, restore_proximity: bool) {
         if let Some(room) = self.routing.active {
             commands.entity(room).try_despawn();
         }
-        self.routing.leave(&mut mic.enabled);
+        self.routing
+            .leave(&mut mic.enabled, restore_proximity && mic.available);
         self.session = None;
         self.owner = None;
     }
@@ -189,7 +202,7 @@ pub(crate) fn update_voice_room(
         for publication in &publications {
             publication.revoke();
         }
-        active.leave(&mut commands, &mut mic);
+        active.leave(&mut commands, &mut mic, false);
     }
     for event in events.read() {
         match event {
@@ -242,7 +255,7 @@ pub(crate) fn update_voice_room(
                 for publication in &publications {
                     publication.revoke();
                 }
-                active.leave(&mut commands, &mut mic);
+                active.leave(&mut commands, &mut mic, true);
             }
             _ => {}
         }
@@ -275,12 +288,12 @@ fn subscribe_voice_tracks(
         if Some(room.get()) != active.routing.active {
             continue;
         }
-        let allowed = active.is_owned_by(room.get(), owner)
-            && participant
-                .identity()
-                .as_str()
-                .as_h160()
-                .is_some_and(|address| access.allows_voice_from(owner, address));
+        let allowed = active.allows_microphone_from(
+            room.get(),
+            owner,
+            participant.identity().as_str(),
+            &access,
+        );
         if allowed && !subscribed && !subscribing {
             commands.entity(entity).trigger(SubscribeToTrack);
         } else if !allowed && (subscribed || subscribing) {
@@ -326,6 +339,8 @@ fn voice_room_command(
     };
     if command.action == "leave" {
         events.write(SystemApi::LeaveVoiceRoom);
+        input.reply_ok("Voice room leave requested");
+        return;
     }
     let room = active.routing.active.and_then(|room| rooms.get(room).ok());
     let phase = match room {
@@ -349,7 +364,11 @@ fn voice_room_command(
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    use bevy_console::ConsoleCommandEntered;
     use common::rpc::RpcResultSender;
+    use std::sync::{Arc, Mutex};
+
+    const ADAPTER: &str = "livekit:wss://voice.example/?access_token=test";
 
     fn app() -> App {
         let mut app = App::new();
@@ -373,6 +392,14 @@ mod lifecycle_tests {
         });
         app.update();
         result.try_recv().unwrap()
+    }
+
+    fn start_with_enabled_mic(app: &mut App) {
+        *app.world_mut().resource_mut::<MicState>() = MicState {
+            available: true,
+            enabled: true,
+        };
+        activate(app, ADAPTER).unwrap();
     }
 
     #[test]
@@ -434,7 +461,7 @@ mod lifecycle_tests {
     #[test]
     fn wallet_change_cancels_voice_but_ordinary_updates_preserve_it() {
         let mut app = app();
-        activate(&mut app, "livekit:wss://voice.example/?access_token=test").unwrap();
+        start_with_enabled_mic(&mut app);
         let room = app.world().resource::<ActiveVoiceRoom>().routing.active;
         app.update();
         assert_eq!(
@@ -452,6 +479,117 @@ mod lifecycle_tests {
             .active
             .is_none());
         assert!(app.world().get_entity(room.unwrap()).is_err());
+        assert!(!app.world().resource::<MicState>().enabled);
+    }
+
+    #[test]
+    fn headless_cancellation_disables_mic() {
+        let mut app = app();
+        start_with_enabled_mic(&mut app);
+        app.insert_resource(NoRenderApp);
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_none());
+        assert!(!app.world().resource::<MicState>().enabled);
+    }
+
+    #[test]
+    fn leaving_keeps_a_microphone_muted_during_the_call_off() {
+        let mut app = app();
+        start_with_enabled_mic(&mut app);
+        app.world_mut().resource_mut::<MicState>().enabled = false;
+        app.world_mut().send_event(SystemApi::LeaveVoiceRoom);
+        app.update();
+
+        assert!(!app.world().resource::<MicState>().enabled);
+    }
+
+    #[test]
+    fn leaving_disables_an_unavailable_microphone() {
+        let mut app = app();
+        start_with_enabled_mic(&mut app);
+        app.world_mut().resource_mut::<MicState>().available = false;
+        app.world_mut().send_event(SystemApi::LeaveVoiceRoom);
+        app.update();
+
+        assert!(!app.world().resource::<MicState>().enabled);
+    }
+
+    #[test]
+    fn console_leave_acknowledges_request_and_status_reports_completion() {
+        fn invoke(app: &mut App, args: &[&str]) -> String {
+            let reply = Arc::new(Mutex::new(None));
+            let output = reply.clone();
+            app.world_mut().send_event(ConsoleCommandEntered {
+                command_name: "/voice_room".into(),
+                args: args.iter().map(|arg| arg.to_string()).collect(),
+                responder: Some(Arc::new(move |result| {
+                    *output.lock().unwrap() = Some(result)
+                })),
+            });
+            app.update();
+            let result = reply.lock().unwrap().take().unwrap();
+            result.unwrap()
+        }
+
+        let mut app = app();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .init_resource::<AccessStatus>()
+        .add_console_command::<VoiceRoomCommand, _>(voice_room_command);
+        activate(&mut app, ADAPTER).unwrap();
+
+        let status: serde_json::Value = serde_json::from_str(&invoke(&mut app, &[])).unwrap();
+        assert_eq!(status["active"], true);
+        assert_eq!(status["proximitySuppressed"], true);
+
+        assert_eq!(invoke(&mut app, &["leave"]), "Voice room leave requested");
+        app.update();
+        let status: serde_json::Value =
+            serde_json::from_str(&invoke(&mut app, &["status"])).unwrap();
+        assert_eq!(status["active"], false);
+        assert_eq!(status["phase"], "inactive");
+        assert_eq!(status["proximitySuppressed"], false);
+    }
+
+    #[test]
+    fn voice_microphone_requires_current_room_owner_and_ready_unblocked_wallet() {
+        let mut app = app();
+        activate(&mut app, ADAPTER).unwrap();
+        let active = app.world().resource::<ActiveVoiceRoom>();
+        let room = active.routing.active.unwrap();
+        let owner = app.world().resource::<Wallet>().address().unwrap();
+        let blocked = Address::from([1; 20]);
+        let blocked_by = Address::from([2; 20]);
+        let peer = Address::from([3; 20]);
+        let identity = format!("{peer:#x}");
+        let mut access = AccessStatus::default();
+        access.set_identity(Some(owner));
+        assert!(!active.allows_microphone_from(room, Some(owner), &identity, &access));
+
+        access.replace_blocks(owner, [blocked], [blocked_by]);
+        assert!(active.allows_microphone_from(room, Some(owner), &identity, &access));
+        assert!(!active.allows_microphone_from(room, None, &identity, &access));
+        assert!(!active.allows_microphone_from(room, Some(peer), &identity, &access));
+        assert!(!active.allows_microphone_from(
+            Entity::PLACEHOLDER,
+            Some(owner),
+            &identity,
+            &access
+        ));
+        for identity in [
+            "not-a-wallet".to_owned(),
+            format!("{blocked:#x}"),
+            format!("{blocked_by:#x}"),
+        ] {
+            assert!(!active.allows_microphone_from(room, Some(owner), &identity, &access));
+        }
     }
 
     #[test]

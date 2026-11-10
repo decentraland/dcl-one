@@ -210,7 +210,8 @@ State, in every build:
   and the addresses speaking.
 - `/voice_room [status|leave]`: the on-demand room's `active`, `session`, `phase`, `failure`,
   `blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending` status. The On-demand voice debug section
-  exposes these readings and Leave. Trusted system callers activate or replace credentials with
+  exposes these readings and Leave. `leave` replies `Voice room leave requested`; query status
+  again after the request is applied. Trusted system callers activate or replace credentials with
   `SystemApi.js` `setVoiceRoom(session, adapter)` and deactivate with `leaveVoiceRoom()`; adapters
   are never passed on a console command line. Activation suppresses proximity publication until
   explicit deactivation, including while the voice room connects or recovers. Private voice

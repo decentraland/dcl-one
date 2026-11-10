@@ -80,12 +80,12 @@ impl AudioPolicy<'_, '_> {
         self.participants
             .get(publisher.get())
             .is_ok_and(|(participant, room)| {
-                self.active_voice.is_owned_by(room.get(), owner)
-                    && participant
-                        .identity()
-                        .as_str()
-                        .as_h160()
-                        .is_some_and(|address| self.access.allows_voice_from(owner, address))
+                self.active_voice.allows_microphone_from(
+                    room.get(),
+                    owner,
+                    participant.identity().as_str(),
+                    &self.access,
+                )
             })
     }
 
@@ -945,7 +945,8 @@ fn update_track_volume(
     >,
     policy: AudioPolicy,
 ) {
-    for (livekit_track, multiplier, publisher, microphone, proximity_microphone) in tracks.into_inner()
+    for (livekit_track, multiplier, publisher, microphone, proximity_microphone) in
+        tracks.into_inner()
     {
         let Some(volume) = scene_track_volume(
             proximity_microphone,

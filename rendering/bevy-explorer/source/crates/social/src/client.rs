@@ -15,13 +15,13 @@ use dcl_component::proto_components::social_service::v2::{
     },
     upsert_friendship_response, upsert_social_settings_response, BlockUserPayload,
     ConnectivityStatus, FriendProfile, FriendshipRequestResponse, GetBlockedUsersPayload,
-    GetFriendsPayload, GetFriendshipRequestsPayload, GetMutualFriendsPayload,
-    GetPrivateMessagesSettingsPayload, Pagination, PrivateMessagePrivacySetting,
-    SocialServiceClient, SocialServiceClientDefinition, UnblockUserPayload,
-    UpsertFriendshipPayload, UpsertSocialSettingsPayload, User,
+    GetBlockingStatusResponse, GetFriendsPayload, GetFriendshipRequestsPayload,
+    GetMutualFriendsPayload, GetPrivateMessagesSettingsPayload, Pagination,
+    PrivateMessagePrivacySetting, SocialServiceClient, SocialServiceClientDefinition,
+    UnblockUserPayload, UpsertFriendshipPayload, UpsertSocialSettingsPayload, User,
 };
 use dcl_rpc::{
-    client::RpcClient,
+    client::{ClientResult, RpcClient},
     transports::web_sockets::{Message, WebSocket, WebSocketTransport},
 };
 use futures_util::{pin_mut, select, FutureExt};
@@ -132,6 +132,7 @@ pub type BlockingStatusResult = Result<BlockingStatus, String>;
 struct BlockSnapshot {
     blocked: HashSet<Address>,
     blocked_by: HashSet<Address>,
+    complete: bool,
 }
 
 /// Callback invoked when someone blocks / unblocks the local user.
@@ -232,7 +233,7 @@ impl SocialClientHandler {
     fn apply_block_snapshot(&mut self, snapshot: BlockSnapshot) {
         self.blocked = snapshot.blocked;
         self.blocked_by = snapshot.blocked_by;
-        self.blocks_ready = true;
+        self.blocks_ready = snapshot.complete;
     }
 
     fn make_user(address: Address) -> Option<User> {
@@ -621,6 +622,41 @@ const PAGE_SIZE: i32 = 100;
 const BLOCK_SNAPSHOT_RETRY_DELAY: Duration = Duration::from_secs(5);
 const BLOCK_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn block_snapshot_from_response(
+    result: ClientResult<GetBlockingStatusResponse>,
+) -> Option<BlockSnapshot> {
+    match result {
+        Ok(resp) => {
+            let mut complete = true;
+            let mut parse_addresses = |addresses: Vec<String>| {
+                addresses
+                    .into_iter()
+                    .filter_map(|address| {
+                        let parsed = address.as_h160();
+                        complete &= parsed.is_some();
+                        parsed
+                    })
+                    .collect()
+            };
+            let blocked = parse_addresses(resp.blocked_users);
+            let blocked_by = parse_addresses(resp.blocked_by_users);
+            if !complete {
+                warn!("[social] get_blocking_status returned an invalid address");
+            }
+            // Direct messages use the known blocks. Voice waits for both complete lists.
+            Some(BlockSnapshot {
+                blocked,
+                blocked_by,
+                complete,
+            })
+        }
+        Err(e) => {
+            warn!("[social] get_blocking_status error: {e:?}");
+            None
+        }
+    }
+}
+
 async fn retry_block_snapshot(
     dirty: &AtomicBool,
     events: &UnboundedSender<FriendData>,
@@ -635,8 +671,9 @@ async fn retry_block_snapshot(
     if dirty.load(Ordering::Relaxed) {
         return Ok(false);
     }
+    let complete = snapshot.complete;
     events.send(FriendData::BlockSnapshot(snapshot))?;
-    Ok(true)
+    Ok(complete)
 }
 
 fn forward_block_update(
@@ -901,26 +938,7 @@ async fn run_one_connection(
             async_std::future::timeout(BLOCK_SNAPSHOT_TIMEOUT, service.get_blocking_status())
                 .await
                 .map_err(|_| anyhow!("[social] get_blocking_status timed out"))?;
-        Ok::<_, anyhow::Error>(match result {
-            Ok(resp) => {
-                let blocked = resp.blocked_users.iter().map(|a| a.as_h160()).collect();
-                let blocked_by = resp.blocked_by_users.iter().map(|a| a.as_h160()).collect();
-                match (blocked, blocked_by) {
-                    (Some(blocked), Some(blocked_by)) => Some(BlockSnapshot {
-                        blocked,
-                        blocked_by,
-                    }),
-                    _ => {
-                        warn!("[social] get_blocking_status returned an invalid address");
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("[social] get_blocking_status error: {e:?}");
-                None
-            }
-        })
+        Ok::<_, anyhow::Error>(block_snapshot_from_response(result))
     };
 
     // Subscribe to community member connectivity updates. Unlike the subscriptions above, a
@@ -942,15 +960,15 @@ async fn run_one_connection(
     };
 
     let blocks = load_blocks(service_module.clone()).await?;
-    let mut block_retry = blocks
-        .is_none()
-        .then(|| Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
+    let blocks_ready = blocks.as_ref().is_some_and(|snapshot| snapshot.complete);
+    let mut block_retry =
+        (!blocks_ready).then(|| Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
     debug!(
         "[social] Init complete — friends: {}, received_requests: {}, sent_requests: {}, blocks ready: {}, dm privacy: {dm_privacy:?}",
         friends.len(),
         received_requests.len(),
         sent_requests.len(),
-        blocks.is_some(),
+        blocks_ready,
     );
     response_sx.send(FriendData::Init {
         sent_requests,
@@ -1477,12 +1495,10 @@ mod block_snapshot_tests {
     use bevy::prelude::*;
     use common::access_status::AccessStatus;
 
-    #[test]
-    fn failed_initial_snapshot_can_recover_but_disconnect_invalidates_voice() {
+    fn app() -> (App, UnboundedSender<FriendData>, Address) {
         let mut wallet = wallet::Wallet::default();
         wallet.finalize_as_guest_with_seed([12; 32]);
         let owner = wallet.address().unwrap();
-        let peer = Address::from([3; 20]);
         let (events, friendship_receiver) = mpsc::unbounded_channel();
         let mut app = App::new();
         app.insert_resource(wallet)
@@ -1510,20 +1526,125 @@ mod block_snapshot_tests {
             .init_resource::<AccessStatus>()
             .add_event::<SocialStateChanged>()
             .add_systems(PostUpdate, update_social_client);
+        (app, events, owner)
+    }
 
-        fn allows_voice(app: &App, owner: Address, peer: Address) -> bool {
-            app.world()
-                .resource::<AccessStatus>()
-                .allows_voice_from(Some(owner), peer)
-        }
+    fn allows_voice(app: &App, owner: Address, peer: Address) -> bool {
+        app.world()
+            .resource::<AccessStatus>()
+            .allows_voice_from(Some(owner), peer)
+    }
 
-        let init = |blocks| FriendData::Init {
+    fn init(blocks: Option<BlockSnapshot>) -> FriendData {
+        FriendData::Init {
             sent_requests: Default::default(),
             received_requests: Default::default(),
             friends: Default::default(),
             blocks,
             dm_privacy: Default::default(),
-        };
+        }
+    }
+
+    fn partial_snapshot(blocked: Address, blocked_by: Address) -> Option<BlockSnapshot> {
+        block_snapshot_from_response(Ok(GetBlockingStatusResponse {
+            blocked_users: vec!["invalid".to_owned(), format!("{blocked:#x}")],
+            blocked_by_users: vec![format!("{blocked_by:#x}"), "also-invalid".to_owned()],
+        }))
+    }
+
+    fn assert_dm_blocks_and_no_voice(
+        app: &App,
+        owner: Address,
+        blocked: Address,
+        blocked_by: Address,
+    ) {
+        let handler = app.world().resource::<SocialClient>().0.as_ref().unwrap();
+        assert!(handler.is_initialized);
+        assert!(handler.blocked.contains(&blocked));
+        assert!(handler.blocked_by.contains(&blocked_by));
+        assert!(!app
+            .world()
+            .resource::<AccessStatus>()
+            .blocks_ready_for(Some(owner)));
+        assert!(!allows_voice(app, owner, Address::from([9; 20])));
+    }
+
+    #[test]
+    fn incomplete_initial_snapshot_keeps_dm_blocks_but_voice_waits() {
+        let (mut app, events, owner) = app();
+        let blocked = Address::from([3; 20]);
+        let blocked_by = Address::from([4; 20]);
+        events
+            .send(init(partial_snapshot(blocked, blocked_by)))
+            .unwrap();
+        app.update();
+        app.update();
+
+        assert_dm_blocks_and_no_voice(&app, owner, blocked, blocked_by);
+    }
+
+    #[test]
+    fn incomplete_retry_applies_dm_blocks_and_complete_retry_enables_voice() {
+        let (mut app, events, owner) = app();
+        let blocked = Address::from([3; 20]);
+        let blocked_by = Address::from([4; 20]);
+        events.send(init(None)).unwrap();
+        app.update();
+        let dirty = AtomicBool::new(false);
+
+        let completed = async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
+            Ok(partial_snapshot(blocked, blocked_by))
+        }))
+        .unwrap();
+        assert!(!completed);
+        app.update();
+        assert_dm_blocks_and_no_voice(&app, owner, blocked, blocked_by);
+
+        let newer_block = Address::from([5; 20]);
+        let completed = async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
+            forward_block_update(&dirty, &events, format!("{newer_block:#x}"), true)?;
+            Ok(partial_snapshot(blocked, blocked_by))
+        }))
+        .unwrap();
+        assert!(!completed);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<SocialClient>()
+            .0
+            .as_ref()
+            .unwrap()
+            .blocked_by
+            .contains(&newer_block));
+
+        events
+            .send(FriendData::OwnUnblock { address: blocked })
+            .unwrap();
+        let completed = async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
+            Ok(block_snapshot_from_response(Ok(
+                GetBlockingStatusResponse {
+                    blocked_users: vec![],
+                    blocked_by_users: vec![
+                        format!("{blocked_by:#x}"),
+                        format!("{newer_block:#x}"),
+                        format!("{newer_block:#x}"),
+                    ],
+                },
+            )))
+        }))
+        .unwrap();
+        assert!(completed);
+        app.update();
+        assert!(allows_voice(&app, owner, Address::from([9; 20])));
+        assert!(allows_voice(&app, owner, blocked));
+        assert!(!allows_voice(&app, owner, blocked_by));
+        assert!(!allows_voice(&app, owner, newer_block));
+    }
+
+    #[test]
+    fn failed_initial_snapshot_can_recover_but_disconnect_invalidates_voice() {
+        let (mut app, events, owner) = app();
+        let peer = Address::from([3; 20]);
         events.send(init(None)).unwrap();
         app.update();
         app.update();
@@ -1540,6 +1661,7 @@ mod block_snapshot_tests {
         let empty_snapshot = || BlockSnapshot {
             blocked: HashSet::new(),
             blocked_by: HashSet::new(),
+            complete: true,
         };
         let dirty = AtomicBool::new(false);
         let retried = async_std::task::block_on(async {
@@ -1567,6 +1689,7 @@ mod block_snapshot_tests {
         let blocked_snapshot = BlockSnapshot {
             blocked: HashSet::new(),
             blocked_by: [peer].into_iter().collect(),
+            complete: true,
         };
         assert!(
             async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
