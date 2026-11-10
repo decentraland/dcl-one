@@ -324,7 +324,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "e02f8c23becc3b584170aa218ebae4b24a59fe8f81f5175303a9609b8872b2b0"
+      "sha256": "5658c2112d03b7687de45000075ba4b1a2eaab9af8db73756578c029a9cb1809"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -1412,11 +1412,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/SearchField.module.css",
-      "sha256": "86803a4617f68ecaa07183025971df9a270908a1e5ab9ee41730dfeb493a181a"
+      "sha256": "54fd2b09a13b6a0efba5437d60969a84d10ed32b59b6e327e5dff0243288916f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/SearchField.tsx",
-      "sha256": "047ed042c940acb1cc5226e8c413ef881adf5f3840bd434efb6438510df34d7d"
+      "sha256": "a88cd47709e027bf877e9df06ee368fd0b99027403872b27b63b82206aa26260"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Select.module.css",
@@ -1576,7 +1576,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/mockBridge.ts",
-      "sha256": "ea776ab53e6dc8319e7249b8f4b568768b2e750ea48893060875933315342874"
+      "sha256": "1cdc56a921b11930aefa4faf7edacae2498241c84351f821f4bd3672873898ab"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/nameColor.ts",
@@ -1600,7 +1600,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/protocol.ts",
-      "sha256": "bfc0feb0757b1dd48dac92a6666e6fc6af6107a254f2cebaad901c3c31c4781d"
+      "sha256": "9de1964a5e8900045aaa21caa307a15df251d0aefdb993341b7326008edc7265"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/auth/guest.ts",
@@ -1732,11 +1732,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/communities/CommunitiesPage.module.css",
-      "sha256": "7c18db006dc8fc0414d94e1224d84f2b031e6b19ff2525009130643fc52cdbac"
+      "sha256": "bf2fd905a479e4f994377c014384708fd06382d0e9b79cfcc0fcd9edf17479a1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/communities/CommunitiesPage.tsx",
-      "sha256": "2e38c235643648b6110ac8561e328a4f06ad8f3f392ee0b329e17c4ebb85615d"
+      "sha256": "1f58b02da0143b41a49ad050a8ea55cfe604961f925875c59ba3382585706fcc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/communities/CommunityCreateModal.module.css",
@@ -1752,7 +1752,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/communities/CommunityModal.tsx",
-      "sha256": "e4811f9e3b030393f853ec53c128a3f3d4c7914662bd911e40abe70ed4af8055"
+      "sha256": "1ffe2aac9f195b3a2c76af0f955222819e89cebb47f5505fcb16537d0052a536"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/communities/roles.ts",
@@ -2292,7 +2292,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/useEngineSession.ts",
-      "sha256": "2e064bc8892a973e8061dd732f75eda14a296bed2151eb3b0cb710f39f6c8683"
+      "sha256": "64efab8543c0ade8c9efc2ecd49a64ec17255491c635d44dd726b46d897161e2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.module.css",
@@ -2676,7 +2676,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "7a3c1cce83f51e66a702f446fef6b7a5fb152dfbafc5a221e47e61cbedc6684d"
+      "sha256": "b0107a3cbaf5f77c50419f13102a1b30d052eeeb75b3683537cd7569d60d7602"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -2716,7 +2716,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "bf011605c1a13a80c98df874352c7963b52943fdb9045b73bc1b279e933c1704"
+      "sha256": "65804da1c612e8cb60f3502816011a35e9a031941ced6c182db48f2fd1ed9a95"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/cancelKey.test.ts",
@@ -2756,7 +2756,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/communities.clicks.test.tsx",
-      "sha256": "acdf2f1bed9c9a4ab2f677ad5b2a85c98600eb16e0a6e8b3189ce4ee956ff4fb"
+      "sha256": "dfad34ec67465181722d4ab46539808484cc22f605e8408ae5188bd6e6da9171"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/communities.join.test.tsx",
@@ -2764,7 +2764,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/communities.test.tsx",
-      "sha256": "1e9b2a6ebbabfe2bb52cd77bd6c959df6415377e2df3484319e42820d93ed61e"
+      "sha256": "74c4a96259468afb43909843a2da46272fe37fe3aba8624efa9b9db2ae0b810b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/communityChat.render.test.tsx",
@@ -2880,7 +2880,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/harness.tsx",
-      "sha256": "a7b41f3b1059f5f60b510fba8f739a611991d4a73874bf2ef54d127b339c7866"
+      "sha256": "6ef2677716ca063c4bcf39faed1e5c3a89919c94ef9050a0869f86223687242d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/hudInset.test.tsx",

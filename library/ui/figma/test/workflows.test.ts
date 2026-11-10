@@ -313,8 +313,17 @@ function keyJobViolations(id: string, steps: WorkflowStep[]): string[] {
       )
     for (const step of steps.filter(isDownload)) {
       const target = String(step.with?.path ?? '')
-      if (!template.downloads.includes(target))
+      const download = template.downloads.find((entry) => entry.path === target)
+      if (!download) {
         problems.push(`${id}: downloads an artifact into ${target || 'the workspace'}`)
+        continue
+      }
+      if (step.with?.name !== download.name)
+        problems.push(`${id}: downloads ${String(step.with?.name)} into ${target}`)
+      if (step.with?.['run-id'] !== download.runId)
+        problems.push(
+          `${id}: downloads ${target} from run ${String(step.with?.['run-id'] ?? 'this run')}`
+        )
     }
   }
   return problems
@@ -524,7 +533,7 @@ jobs:
         { uses: SETUP_NODE, with: { 'node-version': 24 } },
         {
           uses: DOWNLOAD,
-          with: { name: 'key-scan-input', path: SCAN.downloads[0] }
+          with: { name: 'key-scan-input', path: SCAN.downloads[0]!.path }
         },
         { id: 'scan', env: keyEnv(SCAN), run: SCAN.run },
         { if: 'always()', env: first(REPORT_TEMPLATE.env), run: REPORT_TEMPLATE.run }
@@ -548,7 +557,11 @@ jobs:
         { uses: SETUP_NODE, with: { 'node-version': 24 } },
         {
           uses: DOWNLOAD,
-          with: { name: 'web-preview-reviewer', path: ROOT_SCAN.downloads[0] }
+          with: {
+            name: 'web-preview-reviewer',
+            path: ROOT_SCAN.downloads[0]!.path,
+            'run-id': '${{ github.event.workflow_run.id }}'
+          }
         },
         { env: keyEnv(ROOT_SCAN), run: ROOT_SCAN.run }
       ]
@@ -1021,6 +1034,36 @@ jobs:
 
   it.each([
     [
+      'the scan inputs from the triggering run',
+      reader((job) => (job.steps[2]!.with!['run-id'] = '${{ github.event.workflow_run.id }}')),
+      `scan: downloads ${SCAN.downloads[0]!.path} from run \${{ github.event.workflow_run.id }}`
+    ],
+    [
+      'another artifact into the scan inputs path',
+      reader((job) => (job.steps[2]!.with!.name = 'ui-review-x')),
+      `scan: downloads ui-review-x into ${SCAN.downloads[0]!.path}`
+    ],
+    [
+      'the scan inputs with no artifact name',
+      reader((job) => delete job.steps[2]!.with!.name),
+      `scan: downloads undefined into ${SCAN.downloads[0]!.path}`
+    ],
+    [
+      'the Review build from this run',
+      reader((job) =>
+        job.steps.splice(3, 0, {
+          uses: DOWNLOAD,
+          with: { name: SCAN.downloads[1]!.name, path: SCAN.downloads[1]!.path }
+        })
+      ),
+      `scan: downloads ${SCAN.downloads[1]!.path} from run this run`
+    ],
+    [
+      'the root template reading the Review build from another run',
+      rootReader((job) => (job.steps[2]!.with!['run-id'] = '${{ github.run_id }}')),
+      'scan: downloads .preview/input from run ${{ github.run_id }}'
+    ],
+    [
       'a checkout of another repository',
       reader(
         (job) =>
@@ -1073,8 +1116,8 @@ jobs:
     ],
     [
       'the root template downloading into runner.temp',
-      rootReader((job) => (job.steps[2]!.with!.path = SCAN.downloads[1])),
-      `scan: downloads an artifact into ${SCAN.downloads[1]}`
+      rootReader((job) => (job.steps[2]!.with!.path = SCAN.downloads[1]!.path)),
+      `scan: downloads an artifact into ${SCAN.downloads[1]!.path}`
     ],
     [
       'an action after the key step',
