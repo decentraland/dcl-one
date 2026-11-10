@@ -616,3 +616,79 @@ describe('when the key-scan job reports its result', () => {
     )
   })
 })
+
+// The CDN publisher's template: a workspace root checkout of the default branch and the Review build downloaded
+// into .preview/input inside it. No workflow runs it yet, so this runs the template text itself with the real
+// guard, the way a job adopting it would.
+describe('when the root checkout template scans a downloaded artifact', () => {
+  const template = KEY_STEP_TEMPLATES.find((entry) => entry.checkout === '')!
+  const git = (...args: string[]) => gitIn(root, ...args)
+  const run = (env: Record<string, string> = {}) =>
+    spawnSync('bash', ['-e', '-o', 'pipefail', '-c', template.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...defaults(),
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_NO_REPLACE_OBJECTS: '1',
+        TRUSTED_SHA: git('rev-parse', 'HEAD'),
+        FIGMA_FILE_KEY: 'SyntheticKeyExample0',
+        RUNNER_TEMP: realpathSync(root),
+        ...env
+      }
+    })
+  const artifact = () => path.join(root, '.preview/input')
+  let committed: Buffer
+  beforeEach(async () => {
+    await mkdir(path.join(root, 'library/ui/figma'), { recursive: true })
+    git('init', '-q', '-b', 'main')
+    committed = await readFile(path.join(repo, 'library/ui/figma/key-guard.mjs'))
+    await writeFile(path.join(root, 'library/ui/figma/key-guard.mjs'), committed)
+    await writeFile(path.join(root, 'library/ui/figma/key-guard-allow.json'), '[]')
+    commitIn(root)
+    await mkdir(artifact(), { recursive: true })
+    await writeFile(path.join(artifact(), 'index.html'), '<p>preview</p>\n')
+  })
+
+  it('should pass a clean artifact with the committed guard and report that the key check ran', () => {
+    const result = run()
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(result.stdout).toContain('check key: ran')
+    expect(result.stdout).toContain(`figma-key-guard at ${git('rev-parse', 'HEAD')}`)
+    expect(result.stdout).toContain('result: PASS')
+  })
+
+  it('should fail an artifact that carries the key without printing it', async () => {
+    await writeFile(path.join(artifact(), 'leak.js'), 'const k = "SyntheticKeyExample0"\n')
+    const result = run()
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).toContain('FAIL key')
+    expect(result.stdout + result.stderr).not.toContain('SyntheticKeyExample0')
+  })
+
+  it('should run the committed guard when the worktree copy was replaced', async () => {
+    await writeFile(
+      path.join(root, 'library/ui/figma/key-guard.mjs'),
+      "import { writeFileSync } from 'node:fs'\n" +
+        "writeFileSync(`${process.env.RUNNER_TEMP}/leak`, process.env.FIGMA_FILE_KEY ?? '')\n" +
+        "console.log('check key: ran')\n"
+    )
+    const result = run()
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(existsSync(path.join(root, 'leak'))).toBe(false)
+    expect(await readFile(path.join(root, path.basename(GUARD_COPY)))).toEqual(committed)
+  })
+
+  it('should fail when the artifact was not downloaded', async () => {
+    await rm(artifact(), { recursive: true, force: true })
+    const result = run()
+    expect(result.status).not.toBe(0)
+  })
+
+  it('should fail without the key rather than report a skipped check as a pass', () => {
+    const result = run({ FIGMA_FILE_KEY: '' })
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).not.toContain('check key: ran')
+  })
+})
