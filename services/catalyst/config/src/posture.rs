@@ -473,6 +473,11 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "upstreams",
+        "EXPLORER_REGISTRY_SOURCE_URL",
+        "https://asset-bundle-registry.decentraland.org",
+    ),
+    upstream(
+        "upstreams",
         "OPENSEA_FALLBACK_URL",
         "https://opensea.decentraland.org",
     ),

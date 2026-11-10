@@ -5,58 +5,66 @@
 
 The Registry surface is composed under `/asset-bundle-registry` in the existing
 Catalyst HTTP server. Profiles use Catalyst's shared entity lookup and profile
-processing directly. Registry operations that need conversion state use the
-existing abgen service. No Registry profile or entity response cache is added.
+processing directly. The remaining Registry reads go through a gateway without
+a response cache. No Registry profile or entity response cache is added.
 
 `POST /profiles` and `POST /profiles/metadata` share the marketplace state, content
 denylist, ownership readers and profile transformations used by Lambdas. They
-accept an empty `ids` array, resolve case-insensitive pointers once, and project
-the processed results into Registry response shapes. Non-profile entities and
-profiles without a usable avatar are omitted. Lookup and ownership processing
-failures are logged; the Registry wrapper returns only available validated
-profiles, or `200 []` when the shared batch cannot produce any. Lambdas retains
-its own failure envelopes. Full profiles use an entity
+accept an empty `ids` array and at most 1000 ids, the Lambdas cap, because each id
+costs an ownership pass; more is a 400 with the Lambdas message in the Registry
+error envelope. They resolve case-insensitive pointers once and project the
+processed results into Registry response shapes, in request order.
+Non-profile entities and profiles without a usable avatar are omitted; an entity
+missing its id, pointer or timestamp is logged and omitted. A failed entity lookup
+or ownership pass returns 500 with the Registry's `{"error":"Internal Server Error"}`
+envelope, never unvalidated metadata or an empty array. Full profiles use an entity
 timestamp string. Snapshots and compact thumbnails point to the configured local
 profile-images service. The Registry projection does not use Lambdas' profile
 response cache, so a subsequent read sees changes in the local entity view.
 
-The Explore Registry facade forwards these explicitly registered routes to abgen:
+The Explore Registry gateway serves these reads from the backend named by
+`EXPLORER_REGISTRY_SOURCE_URL`:
 
 | Method | Paths |
 | --- | --- |
 | POST | `/entities/active`, `/entities/versions` |
-| GET | `/entities/status`, `/entities/status/{id}` |
-| GET | `/worlds/{world_name}/manifest`, `/denylist`, `/queues/status` |
-| POST, DELETE | `/denylist/{entity_id}` |
-| POST | `/queues/retry`, `/queues/pause`, `/queues/resume`, `/registry` |
-| DELETE | `/flush-cache` |
+| GET | `/entities/status`, `/entities/status/{id}`, `/worlds/{world_name}/manifest` |
+| GET | `/denylist`, `/queues/status` |
 
-The facade preserves the HTTP method, raw query, request body, content type,
-bearer credentials and signed-fetch headers. It overwrites `x-original-path`
-with the actual request URI received by Catalyst, which may include a
-gateway-added Registry prefix. The native verifier must bind that path to the
-forwarded route and accept only the canonical service path and its single known
-Registry-prefix alias for signing. Client-supplied path headers do not establish
-authority. Authorization, moderator policy, queue
-controls and conditional admin-route registration belong to native abgen.
+The variable is the only selector; `ABGEN_ADMIN_URL` does not enable the gateway,
+because an abgen build without native Registry state answers these routes
+differently. The source is an `http(s)` base URL without credentials, query or
+fragment, and startup refuses any other value, naming the variable.
 
-The backend is `EXPLORER_REGISTRY_SOURCE_URL`, falling back to `ABGEN_ADMIN_URL`.
-The URL must use HTTP and a loopback/private IP address or the configured service
-names admitted by the facade (`localhost` and `catalyst-abgen`), without credentials,
-query or fragment. It is an operator-configured service boundary, independent of
-mirror posture. An absent backend returns 503; a failed request or response over
-64 MiB returns 502. Requests time out after 60 seconds. Redirects are not followed.
+- A loopback host (`127.0.0.0/8`, `::1`, `localhost`, the `ABGEN_ADMIN_URL` rule)
+  is the local abgen runtime. It must implement the native Registry routes
+  (decentraland/abgen#145 or a compatible release). The gateway forwards the
+  signed-fetch `x-identity-*` headers and overwrites `x-original-path` with the
+  path Catalyst received, without the query. The native verifier binds that path
+  to the forwarded route and accepts only the canonical service path and its single
+  Registry-prefix alias.
+- Any other host is a public Registry, for example the mirror posture default
+  `https://asset-bundle-registry.decentraland.org`. It passes the same SSRF and
+  own-host checks as the other explorer sources, at startup and on each request,
+  and receives no identity or path headers.
+- Empty, the island posture, answers `/entities/active` and `/entities/versions`
+  with `200 []` and the other reads with 503.
+
+Every case forwards the method, raw query, body, content type, `accept` and
+conditional headers, and never `authorization`. Registry writes (`/denylist/{id}`
+POST/DELETE, `/queues/retry|pause|resume`, `/registry`, `/flush-cache`) are not
+routed: the abgen admin bearer stays on the host and those operations remain with
+the ops console, behind its sign-in, write switch and audit log.
+
+At most 16 backend requests run at once; more are refused with 503 and
+`Retry-After: 1`. A request times out after 30 seconds, does not follow redirects
+and buffers at most 64 MiB; a failed request or a larger response returns 502. A
+path the URL parser would normalize, such as an encoded `..`, returns 400.
 Responses preserve status, body, content type, cache directives, validators,
 `Allow` and `Retry-After`. Local `/status` and `/health` describe the Catalyst
-facade; they do not establish native worker readiness.
-
-Deployments require a compatible native Registry implementation in
-`decentraland/abgen`, configured to read this deployment's Catalyst and Worlds
-APIs and to persist its own Registry state. This change does not select a new
-abgen release or provide a converter deployment. A backend exposing only the
-older conversion API cannot satisfy the newly exposed Registry operations.
-The existing gateway routes Registry traffic to Catalyst, so no additional
-Nginx upstream or new service is introduced here.
+gateway; they do not establish native worker readiness. The existing gateway
+routes Registry traffic to Catalyst, so no additional Nginx upstream or new
+service is introduced here, and this change does not select an abgen release.
 
 The alternative of retaining an external Registry cache would duplicate the
 entity/profile view and obscure native worker failures. Reimplementing conversion

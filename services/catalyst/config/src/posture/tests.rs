@@ -383,6 +383,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "TRADES_SYNC_UPSTREAM_URL",
         "RPC_UPSTREAM_MAINNET",
         "ABGEN_UPSTREAM_AB_CDN",
+        "EXPLORER_REGISTRY_SOURCE_URL",
         "OPENSEA_FALLBACK_URL",
         "COINGECKO_URL",
         "ETH_RPC_URL",
@@ -1138,12 +1139,5 @@ fn about_resource_check_is_off_unless_set() {
         assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
         let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
         assert!(on.node.about_resource_check, "{posture}");
-    }
-}
-
-#[test]
-fn registry_backend_is_not_a_posture_upstream() {
-    for posture in [Posture::Island, Posture::Mirror] {
-        assert!(!expanded(posture, &[]).contains_key("EXPLORER_REGISTRY_SOURCE_URL"));
     }
 }

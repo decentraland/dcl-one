@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use super::{
-    Failure, MarketplaceState, SharedState, active_entities, process_profiles_positional,
+    MarketplaceState, PROFILE_IDS_MAX, SharedState, active_entities, process_profiles_positional,
     rewrite_snapshot_urls,
 };
 
@@ -29,19 +29,26 @@ pub fn router(state: SharedState) -> Router {
 fn parse_ids(body: &[u8]) -> Result<Vec<String>, Box<Response>> {
     // The pinned Registry captures define these error envelopes. In contrast,
     // Lambdas rejects an empty ids array; Registry accepts it as an empty read.
-    let body: Value = serde_json::from_slice(body).map_err(|_| {
-        Box::new(
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error":"Internal Server Error"})),
-            )
-                .into_response(),
-        )
-    })?;
+    let body: Value = serde_json::from_slice(body).map_err(|_| Box::new(internal_error()))?;
     let ids = body
         .get("ids")
         .and_then(Value::as_array)
         .ok_or_else(invalid_ids)?;
+    // Each id costs an ownership pass and nothing is cached: the Lambdas cap.
+    if ids.len() > PROFILE_IDS_MAX {
+        return Err(Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Bad request",
+                    "message": format!(
+                        "Too many profile ids were specified. Maximum allowed is {PROFILE_IDS_MAX}"
+                    ),
+                })),
+            )
+                .into_response(),
+        ));
+    }
     let mut seen = std::collections::HashSet::new();
     let mut pointers = Vec::with_capacity(ids.len());
     for id in ids {
@@ -55,6 +62,15 @@ fn parse_ids(body: &[u8]) -> Result<Vec<String>, Box<Response>> {
         }
     }
     Ok(pointers)
+}
+
+/// The Registry's unhandled-error envelope (the captured malformed-JSON answer).
+fn internal_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({"error":"Internal Server Error"})),
+    )
+        .into_response()
 }
 
 fn invalid_ids() -> Box<Response> {
@@ -86,13 +102,13 @@ async fn respond(state: SharedState, body: Bytes, compact: bool) -> Response {
     let entities = match active_entities(&state, &pointers).await {
         Ok(entities) => entities,
         Err(()) => {
-            tracing::warn!("Registry profile lookup failed; returning no profiles");
-            return Json(json!([])).into_response();
+            tracing::warn!("Registry profile lookup failed");
+            return internal_error();
         }
     };
     // Content pointers may resolve scenes or incomplete profile documents.
     // Registry's profile store only admits profiles with usable avatars.
-    let entities: Vec<_> = entities
+    let mut entities: Vec<_> = entities
         .into_iter()
         .filter(|entity| {
             entity.get("type").and_then(Value::as_str) == Some("profile")
@@ -104,84 +120,109 @@ async fn respond(state: SharedState, body: Bytes, compact: bool) -> Response {
                     .is_some_and(Value::is_object)
         })
         .collect();
+    sort_by_request(&mut entities, &pointers);
     match project_profiles(&state, &entities, compact).await {
         Ok(profiles) => Json(profiles).into_response(),
-        Err(_) => {
-            // The Registry retrieval contract returns only results it can
-            // validate. Shared Lambdas retains its own error envelopes.
-            tracing::warn!("Registry profile processing failed; returning no profiles");
-            Json(json!([])).into_response()
-        }
+        // Never unvalidated metadata, and never an empty answer that reads
+        // as "no profiles": a failed ownership pass is an error.
+        Err(()) => internal_error(),
     }
 }
 
+/// Request order: an entity sits at its first requested (lowercased) pointer.
+fn sort_by_request(entities: &mut [Value], pointers: &[String]) {
+    entities.sort_by_cached_key(|entity| {
+        entity
+            .get("pointers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(|p| pointers.iter().position(|q| *q == p.to_lowercase()))
+            .min()
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// The processed profiles in `entities` order. A malformed entity (no id,
+/// pointer, avatar or timestamp) is left out with a warning; only a failed
+/// ownership pass fails the batch.
 async fn project_profiles(
     state: &MarketplaceState,
     entities: &[Value],
     compact: bool,
-) -> Result<Vec<Value>, Failure> {
+) -> Result<Vec<Value>, ()> {
     let processed = process_profiles_positional(state, entities)
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "Registry ownership reader failed");
-            Failure::Reader(error)
-        })?;
-    entities
+        .map_err(|error| tracing::warn!(%error, "Registry ownership reader failed"))?;
+    Ok(entities
         .iter()
         .zip(processed)
         .filter_map(|(entity, profile)| profile.map(|profile| (entity, profile)))
-        .map(|(entity, mut profile)| {
-            let id = entity
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or(Failure::Db)?;
-            // Registry always replaces snapshots. Reuse the shared rewriter,
-            // pointing at this node's existing profile-images routes.
-            rewrite_snapshot_urls(
-                id,
-                &mut profile,
-                Some(&state.settings.profile_images_public_url),
-                &state.settings.profile_images_public_url,
-            );
-            if compact {
-                let pointer = entity
-                    .get("pointers")
-                    .and_then(Value::as_array)
-                    .and_then(|pointers| pointers.first())
-                    .and_then(Value::as_str)
-                    .ok_or(Failure::Db)?;
-                let avatar = profile
-                    .get("avatars")
-                    .and_then(Value::as_array)
-                    .and_then(|avatars| avatars.first())
-                    .and_then(Value::as_object)
-                    .ok_or(Failure::Db)?;
-                let mut result = json!({
-                    "pointer": pointer,
-                    "thumbnailUrl": format!(
-                        "{}/entities/{id}/face.png",
-                        state.settings.profile_images_public_url.trim_end_matches('/'),
-                    ),
-                });
-                for field in ["hasClaimedName", "name", "nameColor"] {
-                    if let Some(value) = avatar.get(field) {
-                        result[field] = value.clone();
-                    }
-                }
-                Ok(result)
-            } else {
-                // Registry's PostgreSQL bigint is serialized as a string in
-                // the pinned integration expectations and September captures,
-                // despite the OpenAPI timestamp schema declaring a number.
-                let timestamp = match entity.get("timestamp") {
-                    Some(Value::String(value)) => value.clone(),
-                    Some(Value::Number(value)) => value.to_string(),
-                    _ => return Err(Failure::Db),
-                };
-                Ok(json!({"timestamp": timestamp, "avatars": profile["avatars"]}))
+        .filter_map(|(entity, profile)| {
+            let projected = project(state, entity, profile, compact);
+            if projected.is_none() {
+                let id = entity.get("id").and_then(Value::as_str).unwrap_or("");
+                tracing::warn!(
+                    entity = id,
+                    "Registry profile entity is malformed; left out"
+                );
             }
+            projected
         })
-        .collect()
+        .collect())
+}
+
+fn project(
+    state: &MarketplaceState,
+    entity: &Value,
+    mut profile: Value,
+    compact: bool,
+) -> Option<Value> {
+    let id = entity.get("id").and_then(Value::as_str)?;
+    // Registry always replaces snapshots. Reuse the shared rewriter,
+    // pointing at this node's existing profile-images routes.
+    rewrite_snapshot_urls(
+        id,
+        &mut profile,
+        Some(&state.settings.profile_images_public_url),
+        &state.settings.profile_images_public_url,
+    );
+    if compact {
+        let pointer = entity
+            .get("pointers")
+            .and_then(Value::as_array)
+            .and_then(|pointers| pointers.first())
+            .and_then(Value::as_str)?;
+        let avatar = profile
+            .get("avatars")
+            .and_then(Value::as_array)
+            .and_then(|avatars| avatars.first())
+            .and_then(Value::as_object)?;
+        let mut result = json!({
+            "pointer": pointer,
+            "thumbnailUrl": format!(
+                "{}/entities/{id}/face.png",
+                state.settings.profile_images_public_url.trim_end_matches('/'),
+            ),
+        });
+        for field in ["hasClaimedName", "name", "nameColor"] {
+            if let Some(value) = avatar.get(field) {
+                result[field] = value.clone();
+            }
+        }
+        Some(result)
+    } else {
+        // Registry's PostgreSQL bigint is serialized as a string in
+        // the pinned integration expectations and September captures,
+        // despite the OpenAPI timestamp schema declaring a number.
+        let timestamp = match entity.get("timestamp") {
+            Some(Value::String(value)) => value.clone(),
+            Some(Value::Number(value)) => value.to_string(),
+            _ => return None,
+        };
+        Some(json!({"timestamp": timestamp, "avatars": profile["avatars"]}))
+    }
 }
 
 #[cfg(test)]
@@ -219,13 +260,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registry_failed_lookup_returns_only_available_profiles() {
+    async fn registry_failed_lookup_is_an_error_not_an_empty_answer() {
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(path, r#"{"ids":["0xmissing"]}"#).await,
-                (StatusCode::OK, json!([]))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({"error":"Internal Server Error"})
+                )
             );
         }
+    }
+
+    #[tokio::test]
+    async fn registry_ids_are_capped_like_lambdas() {
+        let ids: Vec<String> = (0..=PROFILE_IDS_MAX)
+            .map(|i| format!("0x{i:040x}"))
+            .collect();
+        for path in ["/profiles", "/profiles/metadata"] {
+            assert_eq!(
+                call(path, &json!({"ids": ids}).to_string()).await,
+                (
+                    StatusCode::BAD_REQUEST,
+                    json!({
+                        "error": "Bad request",
+                        "message": "Too many profile ids were specified. Maximum allowed is 1000",
+                    })
+                )
+            );
+        }
+        // At the cap the request is admitted (and fails later on the missing DB).
+        let ids = &ids[..PROFILE_IDS_MAX];
+        let (status, _) = call("/profiles", &json!({"ids": ids}).to_string()).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn registry_profiles_follow_request_order() {
+        let mut entities = vec![
+            json!({"id":"a", "pointers":["0xaa"]}),
+            json!({"id":"b", "pointers":["0xBB"]}),
+            json!({"id":"c", "pointers":["0xcc"]}),
+        ];
+        sort_by_request(
+            &mut entities,
+            &["0xcc".into(), "0xbb".into(), "0xaa".into()],
+        );
+        let ids: Vec<_> = entities.iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["c", "b", "a"]);
+    }
+
+    #[tokio::test]
+    async fn registry_malformed_entity_is_left_out_not_the_batch() {
+        let state = state_with_empty_readers(None).await;
+        let mut broken = entity();
+        broken.as_object_mut().unwrap().remove("timestamp");
+        let full = project_profiles(&state, &[broken, entity()], false)
+            .await
+            .unwrap_or_else(|_| panic!("profile processing failed"));
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0]["timestamp"], "1700000000000");
     }
 
     #[tokio::test]
@@ -488,10 +582,10 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(
                 to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
-                b"[]",
+                br#"{"error":"Internal Server Error"}"#,
                 "unvalidated metadata must never be returned when an ownership reader fails"
             );
         }

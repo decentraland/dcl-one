@@ -1,6 +1,6 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the local asset-bundle registry gateway
+//! ([`realm_provider`]), the uncached asset-bundle registry gateway
 //! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
@@ -67,7 +67,9 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// Local abgen runtime for Registry conversion reads; empty returns 503.
+    /// Registry reads without a cache (see [`registry`]): a loopback URL is the
+    /// local abgen runtime, any other a public Registry; empty serves `200 []`
+    /// to the boot reads.
     pub registry: String,
     /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
     pub map: String,
@@ -80,6 +82,7 @@ impl Sources {
     pub const DEFAULT_LISTS: &str = "https://dcl-lists.decentraland.org";
     pub const DEFAULT_DENYLIST: &str = "https://config.decentraland.org/denylist.json";
     pub const DEFAULT_FEATURE_FLAGS: &str = "https://feature-flags.decentraland.org/explorer.json";
+    pub const DEFAULT_REGISTRY: &str = "https://asset-bundle-registry.decentraland.org";
     pub const DEFAULT_MAP: &str = "https://api.decentraland.org";
     pub const DEFAULT_AB_CDN: &str = ab_cdn::DEFAULT_UPSTREAM;
 
@@ -88,7 +91,7 @@ impl Sources {
             lists: Self::DEFAULT_LISTS.into(),
             denylist: Self::DEFAULT_DENYLIST.into(),
             feature_flags: Self::DEFAULT_FEATURE_FLAGS.into(),
-            registry: String::new(),
+            registry: Self::DEFAULT_REGISTRY.into(),
             map: Self::DEFAULT_MAP.into(),
             ab_cdn: Self::DEFAULT_AB_CDN.into(),
         }
@@ -105,10 +108,7 @@ impl Sources {
                 &config.explore.explorer_feature_flags_source_url,
                 String::new(),
             ),
-            registry: value_or(
-                &config.explore.explorer_registry_source_url,
-                Config::non_empty(&config.admin.abgen_admin_url).unwrap_or_default(),
-            ),
+            registry: value_or(&config.explore.explorer_registry_source_url, String::new()),
             map: value_or(&config.explore.explorer_map_source_url, String::new()),
             ab_cdn: value_or(
                 config.ab_cdn.abgen_upstream_ab_cdn.as_deref().unwrap_or(""),
@@ -373,8 +373,14 @@ impl Settings {
             if source.is_empty() {
                 continue;
             }
-            if name == "EXPLORER_REGISTRY_SOURCE_URL" {
-                registry::backend_url(source)?;
+            if name == "EXPLORER_REGISTRY_SOURCE_URL"
+                && matches!(
+                    registry::Backend::parse(source).with_context(|| format!("{name}={source}"))?,
+                    registry::Backend::Native(_)
+                )
+            {
+                // The local abgen runtime: loopback by construction, never an
+                // SSRF target; a public Registry takes the checks below.
                 continue;
             }
             let parsed = self

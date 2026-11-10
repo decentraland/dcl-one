@@ -167,8 +167,11 @@ pub struct ExploreConfig {
     #[arg(long, env = "EXPLORER_FEATURE_FLAGS_SOURCE_URL", default_value = "")]
     pub explorer_feature_flags_source_url: String,
 
-    /// Local abgen backend for Registry conversion operations, without caching.
-    /// Defaults to ABGEN_ADMIN_URL; unset returns 503. Profiles use Catalyst directly.
+    /// The Registry `/asset-bundle-registry/entities/*`, `/worlds/*/manifest`,
+    /// `/denylist` and `/queues/status` reads go to, without a cache: a loopback
+    /// URL is the local abgen runtime with native Registry state, any other a
+    /// public Registry. Empty answers the entity reads `[]`. Profiles are
+    /// always served from this node's own entities.
     #[arg(long, env = "EXPLORER_REGISTRY_SOURCE_URL", default_value = "")]
     pub explorer_registry_source_url: String,
 

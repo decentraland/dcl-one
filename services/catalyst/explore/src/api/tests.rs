@@ -777,8 +777,10 @@ async fn ab_cdn_reads_through_once_and_serves_the_cached_object_after() {
     );
 }
 
-/// Missing native Registry configuration is explicitly unavailable, not an
-/// empty authoritative response; neither it nor the CDN calls an external source.
+/// With no Registry or asset-bundle CDN configured (an island, or a bare
+/// node) neither reader sends a request: the boot entity reads know no
+/// converted entity, the other Registry reads are unavailable and every
+/// object is this node's own.
 #[tokio::test]
 async fn no_registry_or_cdn_source_reads_nothing_upstream() {
     let config = crate::config::Config::parse_for_tests(&[
@@ -814,8 +816,16 @@ async fn no_registry_or_cdn_source_reads_nothing_upstream() {
             Some(json!({"pointers": ["0,0"]})),
         )
         .await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {body}");
+        assert_eq!((status, body), (StatusCode::OK, json!([])), "{path}");
     }
+    let (status, _) = call_json(
+        &app,
+        "GET",
+        "/asset-bundle-registry/entities/status/bafy",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let (status, _, _) = call(&app, "GET", "/ab-cdn/v49/assets/bafy_mac", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(mock.hits.lock().is_empty(), "{:?}", mock.hits.lock());
@@ -1096,10 +1106,70 @@ async fn registry_gateway_preserves_queries_and_never_caches_native_reads() {
 }
 
 #[test]
-fn registry_backend_rejects_external_registry_configuration() {
-    assert!(registry::backend_url("https://asset-bundle-registry.decentraland.org").is_err());
-    assert!(registry::backend_url("http://catalyst-abgen:5147").is_ok());
-    assert!(registry::backend_url("http://127.0.0.1:5147").is_ok());
+fn registry_backend_is_native_only_on_loopback() {
+    use registry::Backend;
+    for native in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.2:5147",
+        "http://[::1]:5147",
+        "http://localhost:5147/",
+    ] {
+        assert!(
+            matches!(Backend::parse(native).unwrap(), Backend::Native(_)),
+            "{native}"
+        );
+    }
+    // Same-network hosts are not the local runtime: they take the source guard.
+    for upstream in [
+        "https://asset-bundle-registry.decentraland.org",
+        "http://10.0.0.5:5147",
+        "http://[fd00::1]:5147",
+        "http://catalyst-abgen:5147",
+    ] {
+        assert!(
+            matches!(Backend::parse(upstream).unwrap(), Backend::Upstream(_)),
+            "{upstream}"
+        );
+    }
+    for bad in [
+        "ftp://127.0.0.1/",
+        "http://user:pw@127.0.0.1/",
+        "http://127.0.0.1/?token=x",
+        "http://127.0.0.1/#x",
+        "not a url",
+    ] {
+        assert!(Backend::parse(bad).is_err(), "{bad}");
+    }
+}
+
+/// Startup validation accepts the local runtime over http or https and a
+/// public Registry, and names the variable when it refuses one.
+#[test]
+fn registry_source_validates_at_startup_and_names_the_variable() {
+    let mut settings = Settings::for_tests(Sources::defaults());
+    settings.allow_private_sources = false;
+    settings.public_url = "https://gateway.example.org".into();
+    for ok in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.1:5147",
+        "http://localhost:5147",
+        "https://asset-bundle-registry.decentraland.org",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = ok.into();
+        s.validate().unwrap_or_else(|e| panic!("{ok}: {e:#}"));
+    }
+    for bad in [
+        "http://10.0.0.5:5147",
+        "http://catalyst-abgen:5147",
+        "http://user:pw@127.0.0.1:5147",
+        "https://gateway.example.org/asset-bundle-registry",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = bad.into();
+        let err = format!("{:#}", s.validate().unwrap_err());
+        assert!(err.contains("EXPLORER_REGISTRY_SOURCE_URL"), "{bad}: {err}");
+    }
 }
 
 #[tokio::test]
@@ -2063,7 +2133,7 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
             Json(json!({
                 "method":method.as_str(), "uri":uri.to_string(),
                 "body":String::from_utf8(body.to_vec()).unwrap(),
-                "authorization":headers.get("authorization").unwrap().to_str().unwrap(),
+                "authorization":headers.get("authorization").is_some(),
                 "identity":headers.get("x-identity-auth-chain-0").unwrap().to_str().unwrap(),
                 "timestamp":headers.get("x-identity-timestamp").unwrap().to_str().unwrap(),
                 "metadata":headers.get("x-identity-metadata").unwrap().to_str().unwrap(),
@@ -2085,14 +2155,7 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
         ("GET", "/entities/status/bafytest"),
         ("GET", "/worlds/Test.dcl.eth/manifest"),
         ("GET", "/denylist"),
-        ("POST", "/denylist/bafytest"),
-        ("DELETE", "/denylist/bafytest"),
         ("GET", "/queues/status"),
-        ("POST", "/queues/retry"),
-        ("POST", "/queues/pause"),
-        ("POST", "/queues/resume"),
-        ("POST", "/registry"),
-        ("DELETE", "/flush-cache"),
     ] {
         let path_and_query = format!("{path}?world_name=A%2Bb.dcl.eth&x=1&x=2");
         let public = format!("/asset-bundle-registry{path_and_query}");
@@ -2124,9 +2187,12 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
         .unwrap();
         assert_eq!(body["method"], method);
         assert_eq!(body["uri"], path_and_query);
-        assert_eq!(body["original"], public);
+        assert_eq!(body["original"], format!("/asset-bundle-registry{path}"));
         assert_eq!(body["body"], r#"{ "unchanged": true }"#);
-        assert_eq!(body["authorization"], "Bearer operator-test");
+        assert_eq!(
+            body["authorization"], false,
+            "the admin bearer never leaves the host"
+        );
         assert_eq!(body["identity"], "signed-chain");
         assert_eq!(body["timestamp"], "1700000000000");
         assert_eq!(body["metadata"], "{}");
@@ -2134,14 +2200,34 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
     }
     let (status, _, _) = call(&app, "POST", "/asset-bundle-registry/not-a-route", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    // Registry writes stay behind the ops console.
+    for (method, path) in [
+        ("POST", "/denylist/bafytest"),
+        ("DELETE", "/denylist/bafytest"),
+        ("POST", "/queues/retry"),
+        ("POST", "/queues/pause"),
+        ("POST", "/queues/resume"),
+        ("POST", "/registry"),
+        ("DELETE", "/flush-cache"),
+    ] {
+        let (status, _, _) =
+            call(&app, method, &format!("/asset-bundle-registry{path}"), None).await;
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{method} {path}: {status}"
+        );
+    }
     // Percent-encoded dot segments must never escape an enumerated route
     // when the outbound URL parser normalizes them.
-    for (method, path) in [
-        ("POST", "/asset-bundle-registry/denylist/%2e%2e"),
-        ("GET", "/asset-bundle-registry/worlds/%2e%2e/manifest"),
+    for path in [
+        "/asset-bundle-registry/entities/status/%2e%2e",
+        "/asset-bundle-registry/worlds/%2e%2e/manifest",
     ] {
-        let (status, _, _) = call(&app, method, path, None).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        let (status, _, _) = call(&app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
     }
     let (status, _, _) = call(
         &app,
@@ -2154,8 +2240,11 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
     server.abort();
 }
 
+/// The Registry gateway is opt-in: `ABGEN_ADMIN_URL` (the ops console's
+/// runtime) does not select it, since an abgen without native Registry
+/// state cannot answer these routes.
 #[test]
-fn registry_source_defaults_to_configured_local_converter() {
+fn registry_source_is_only_the_explicit_variable() {
     let config = crate::config::Config::parse_for_tests(&[
         "catalyst",
         "--database-url",
@@ -2164,10 +2253,7 @@ fn registry_source_defaults_to_configured_local_converter() {
         "http://127.0.0.1:5147",
     ])
     .unwrap();
-    assert_eq!(
-        Sources::from_config(&config).registry,
-        "http://127.0.0.1:5147"
-    );
+    assert_eq!(Sources::from_config(&config).registry, "");
     let config = crate::config::Config::parse_for_tests(&[
         "catalyst",
         "--database-url",
@@ -2175,17 +2261,60 @@ fn registry_source_defaults_to_configured_local_converter() {
         "--abgen-admin-url",
         "http://127.0.0.1:5147",
         "--explorer-registry-source-url",
-        "http://localhost:5150",
+        "http://localhost:5150/",
     ])
     .unwrap();
     assert_eq!(
         Sources::from_config(&config).registry,
         "http://localhost:5150"
     );
-    let mut config = config;
-    config.explore.explorer_registry_source_url.clear();
-    config.admin.abgen_admin_url = Some(" ".into());
-    assert!(Sources::from_config(&config).registry.is_empty());
+}
+
+/// A public Registry receives the request only: no signed-fetch headers, no
+/// asserted original path, no bearer.
+#[tokio::test]
+async fn registry_upstream_gets_no_identity_or_path_assertion() {
+    async fn echo(headers: HeaderMap) -> Json<Value> {
+        let names: Vec<String> = headers.keys().map(|k| k.to_string()).collect();
+        Json(json!(names))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, Router::new().fallback(echo)).into_future());
+    // An IPv4-mapped address is not loopback to the classifier, so this is
+    // the upstream path (tests allow private sources).
+    let sources = Sources {
+        registry: format!("http://[::ffff:127.0.0.1]:{}", addr.port()),
+        ..sources_at(addr)
+    };
+    let node = node_without_db(Settings::for_tests(sources)).await;
+    let app = router(node.state);
+    let response = app
+        .oneshot(
+            Request::get("/asset-bundle-registry/entities/status/bafy")
+                .header("authorization", "Bearer operator-test")
+                .header("x-identity-auth-chain-0", "signed-chain")
+                .header("x-original-path", "/forged")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let names: Vec<String> = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    for header in [
+        "authorization",
+        "x-identity-auth-chain-0",
+        "x-original-path",
+    ] {
+        assert!(!names.iter().any(|n| n == header), "{header}: {names:?}");
+    }
+    server.abort();
 }
 
 #[tokio::test]
