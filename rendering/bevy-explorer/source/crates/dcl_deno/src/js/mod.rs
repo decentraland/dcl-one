@@ -45,6 +45,12 @@ pub mod local_storage;
 pub mod op_wrappers;
 pub mod websocket;
 
+// a smaller heap cap for the runtimes this test thread creates
+#[cfg(test)]
+thread_local! {
+    static TEST_HEAP_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
@@ -153,6 +159,12 @@ pub fn create_runtime(
     // OOM-killing the shared sidecar (and every co-tenant scene with it). The near-limit
     // callback below terminates just that isolate instead of aborting the process.
     const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+    // granted on each near-limit trip while the scene is being terminated
+    const HEAP_LIMIT_MARGIN: usize = 128 * 1024 * 1024;
+    #[cfg(not(test))]
+    let max_heap = MAX_SCENE_HEAP_BYTES;
+    #[cfg(test)]
+    let max_heap = TEST_HEAP_LIMIT.get().unwrap_or(MAX_SCENE_HEAP_BYTES);
 
     // create runtime
     #[allow(unused_mut)]
@@ -161,9 +173,7 @@ pub fn create_runtime(
             webidl, url, console, web, net, fetch, websocket, webstorage, ext,
         ],
         inspector: inspect,
-        create_params: Some(
-            deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
-        ),
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap)),
         ..Default::default()
     });
 
@@ -189,7 +199,9 @@ pub fn create_runtime(
         runtime.add_near_heap_limit_callback(move |current, _initial| {
             let first_trip = !granted.swap(true, std::sync::atomic::Ordering::SeqCst);
             if first_trip {
-                bevy::prelude::error!("scene exceeded its {MAX_SCENE_HEAP_BYTES}-byte heap cap; terminating the scene isolate");
+                bevy::prelude::error!(
+                    "scene exceeded its {max_heap}-byte heap cap; terminating the scene isolate"
+                );
             }
             // termination alone only unwinds the current js: the heap stays rooted by the
             // scene globals and the scene loop keeps ticking through uncaught errors, so it
@@ -197,14 +209,13 @@ pub fn create_runtime(
             // drops the runtime and actually releases the heap.
             kill_flag.kill();
             terminate_handle.terminate_execution();
-            if first_trip {
-                // one-time margin so the termination unwind can run rather than hard-aborting
-                current + 8 * 1024 * 1024
-            } else {
-                // kill already latched: stop re-granting, so a scene that keeps allocating
-                // through termination can't ratchet the cap upward on every callback
-                current
-            }
+            // V8 aborts the process if an allocation in flight still does not fit, and the
+            // termination only runs once it does, so every trip grants a margin. The ceiling
+            // bounds what a scene that keeps allocating through termination can reach.
+            current
+                .saturating_add(HEAP_LIMIT_MARGIN)
+                .min(max_heap.saturating_mul(2))
+                .max(current)
         });
     }
 
@@ -825,6 +836,59 @@ mod tests {
             "#,
         )
         .unwrap();
+    }
+
+    const HEAP_LIMIT_CHILD: &str = "DCL_DENO_HEAP_LIMIT_CHILD";
+
+    /// A scene over its heap limit is terminated, not the process. Large single allocations
+    /// at the cap are the hard case: each must fit before the termination can run. Runs in a
+    /// child process, so a fatal out-of-memory fails this test instead of the whole run.
+    #[test]
+    fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
+        if std::env::var_os(HEAP_LIMIT_CHILD).is_some() {
+            heap_limit_child();
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "js::tests::a_scene_over_its_heap_limit_is_terminated_not_the_process",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HEAP_LIMIT_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "the process did not survive ({}):\n{stdout}\n{stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the child test did not run:\n{stdout}\n{stderr}"
+        );
+    }
+
+    fn heap_limit_child() {
+        super::TEST_HEAP_LIMIT.set(Some(64 * 1024 * 1024));
+        // under the cap: runs to the end
+        run_scene(
+            false,
+            "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
+        )
+        .unwrap();
+        // 24 MB and 40 MB allocations until the cap: terminated
+        for length in ["3e6", "5e6"] {
+            let err = run_scene(
+                false,
+                &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
+            )
+            .expect_err("the scene ran past its heap limit");
+            assert!(err.contains("terminated"), "{length}: {err}");
+        }
     }
 
     /// The seal is scoped to the authoritative server on purpose: the desktop client runs on
