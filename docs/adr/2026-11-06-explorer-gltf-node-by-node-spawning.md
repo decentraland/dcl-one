@@ -64,13 +64,15 @@ next frame, and a model stays hidden until both steps are done.
   hidden or complete, so a despawned parent does not reach them all. Its parent despawned,
   `despawn_instance` and `unregister_instance` despawn every entity the instance allocated, and
   drop it if it is still queued. A scene replaced (another `World`) or removed mid-spawn starts
-  its instance over; a removed one waits for its scene to load again. If no entity is marked while
-  some are still unwritten and a top-level entity was despawned by others, what was never written
-  goes and the instance completes with what is left, so its ready event fires, as a whole spawn
-  whose root was despawned afterwards would. Otherwise (an entity despawned by others, a scene
-  changed in place) it starts over, still in slices, and only if that gets stuck too, which a
-  hierarchy that does not reach every entity does, is it written whole. An instance that fails to
-  write (an unregistered component) is despawned and forgotten before the error is returned.
+  its instance over; a removed one waits for its scene to load again. Every entity not written
+  yet carries a marker, so what is left is known exactly. When none is ready although some are
+  unwritten, an unwritten entity whose parent was despawned by others goes too, as it would with
+  a whole spawn despawned afterwards, and the instance completes with what is left, so its ready
+  event fires; one whose parent is written but does not list it among its children (a hierarchy
+  that does not reach every entity) is made ready and written in slices; in a cycle, every
+  unwritten entity is. Nothing starts over or is written whole. An instance that fails to write
+  (an unregistered component), sliced or whole, is despawned and forgotten before the error is
+  returned.
 - **Hidden until revealed.** `spawn_as_child_hidden` keeps an instance hidden after it has
   spawned, until `reveal_instance_sync`. The Explorer spawns glTF containers that way and reveals
   them when processing is done, so Bevy's own materials and a model's collider meshes never show,
@@ -79,25 +81,26 @@ next frame, and a model stays hidden until both steps are done.
   blocks the player nor takes pointer events. A collider is removed only by the entity that holds
   it: a model's replacement registers its colliders under the same ids (container, mesh name,
   index) while the old model is still shown, and despawning the old one must not remove them.
-- **Resumable processing.** `update_ready_gltfs` processes a model's nodes until the same
-  deadline (`SceneSpawnerPlus::spawn_deadline`). A node is processed once it has a
-  `ContainerEntity`, which processing gives it first, so each frame takes the model's nodes that
-  have none; the model's running state stays on the container (`GltfProcessing`: the collider
+- **Resumable processing.** `update_ready_gltfs` processes a model's nodes until its deadline
+  (`scene_spawn_slice::ProcessingDeadline`). A node is processed once it has a
+  `ContainerEntity`, which processing gives it first; the model's running state stays on the
+  container (`GltfProcessing`: where the next frame resumes in the instance's nodes, the collider
   counter, the animation flag and the named nodes). Models already in progress go first; at least
   one node is processed a frame, and containers with nothing to process finish whatever the
   deadline. Resetting or removing the container drops the progress and despawns a model not
-  processed yet; a container put again with the same value keeps its model. Each resumed frame
-  looks through the model's nodes again for those still to do: a model of n nodes processed over
-  f frames costs about n·f component lookups, tens of microseconds a frame for thousands of nodes,
-  which keeps the progress on the nodes rather than in a cursor.
-- **The Explorer's slice.** `scene_runner::scene_spawn_slice` sets the deadline 4 ms after it runs
-  each frame (`SpawnScene`, before `scene_spawner_system`), shared by spawning and processing, and
-  none while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
+  processed yet; a container put again with the value its model was loaded for keeps the model.
+- **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation 4 ms a frame
+  from when it runs (`SpawnScene`, before `scene_spawner_system`). The spawner stops 1 ms before
+  the end and processing at the end, so processing always has time, even while spawns are queued.
+  There is no slice while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
   unity-explorer's loading screen does) or on headless (`NoRenderApp`), so arrival and servers
   instantiate whole.
-- **Instrumentation.** `spawn_timing` logs, under target `spawn_timing` at debug level, each frame
-  that spends a millisecond or more in the scene spawner or in glTF processing, and the frame's
-  slowest glTF slice: its time, how many nodes and which model.
+- **Diagnostics.** The runtime debug panel's *Instantiation* section (`/instantiation_state`)
+  shows the slice in effect, the spawner's queue and the instance it is writing, and how many glTF
+  models are being processed. `spawn_timing` logs, under target `spawn_timing` at debug level,
+  each frame that spends a millisecond or more in the scene spawner or in glTF processing, and the
+  frame's slowest glTF slice: its time, how many nodes and which model; its systems run only when
+  that target is logged.
 
 ## Rejected
 
@@ -123,15 +126,15 @@ next frame, and a model stays hidden until both steps are done.
   map, and writes in archetype order, which shows children written before their parents.
 - **A cursor over the scene world's archetypes, without the list**: the same walk, done lazily,
   and the same archetype order.
-- **A marker on every allocated entity**: progress on the entities, but the query hands them out
-  in archetype order, not parents first.
+- **Writing the unwritten entities in query order**: the query hands them out in archetype
+  order, not parents first; hence the second, *ready* marker that a written parent passes on.
 - **Reading asset events to notice a replaced scene**: asset events reach readers after
   `PostUpdate`, so the spawner would write one more slice from the new scene with the old
   entities; the scene world's `WorldId` changes when the asset is replaced and is checked before
   every slice.
-- **Separate deadlines for spawning and processing**: one deadline bounds the frame's whole
-  instantiation, which is what a hitch is made of; at least one entity and one node a frame keep
-  both moving.
+- **Separate budgets for spawning and processing**: one slice bounds the frame's whole
+  instantiation, which is what a hitch is made of. Within it the spawner stops early rather than
+  sharing one deadline, which let a queue of spawns leave processing a single node a frame.
 - **Slicing behind the loading backdrop and on headless**: the backdrop hides the hitches, and the
   arrival and the server want the content as soon as possible.
 
@@ -140,8 +143,7 @@ next frame, and a model stays hidden until both steps are done.
 **Measured.** Native release builds were compared with `main` plus the same timing log, Windows,
 60 fps, median of three interleaved autopilot runs per build:
 - **Walking in.** The run arrives on the empty parcel −12,2 and walks 192 m east into Genesis
-  Plaza at 6 m/s while measuring (`--autopilot-walk-to`, added for this). The plaza loads during
-  play:
+  Plaza at 6 m/s while measuring (`--autopilot-walk-to`). The plaza loads during play:
 
   | | `main` | this change |
   |---|---|---|
@@ -159,9 +161,10 @@ next frame, and a model stays hidden until both steps are done.
   that glTF instantiation did not cause (its longest processing was 45 ms). Across the three
   runs, frames over 50 ms went from 85 to 16, and over 200 ms from 5 to 1.
 
-  This ran on 2026-11-09 against `main` `a71ee5602`, with the spawner of the time: it wrote in
-  archetype order from a list of the scene's entities. Writing parents first, with the progress on
-  the entities, changes only the spawner's own cost, measured next; processing is unchanged.
+  The walk-in measures processing, which dominates: commit `a89eb9343` against `main`
+  `a71ee5602`, on 2026-11-09. The spawner's own cost on this change is measured next. The table
+  is to be re-run on the final commit once the walk-in loads content again (scenes that spawn
+  during the walk did not start on `main` at `9be147649`).
 - **The spawner alone** (`scene_spawner/spawn_bench.rs`, an ignored test, release): a 5,051-entity
   hierarchy spawned seven times after a warm-up, medians:
 
