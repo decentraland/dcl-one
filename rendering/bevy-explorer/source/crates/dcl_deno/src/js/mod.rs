@@ -49,10 +49,13 @@ pub mod websocket;
 /// on hosts with memory protection keys; only tests take the unprotected one.
 #[cfg(test)]
 fn test_platform() {
-    deno_core::JsRuntime::init_platform(
-        Some(deno_core::v8::new_unprotected_default_platform(0, false).make_shared()),
-        false,
-    );
+    static PLATFORM: std::sync::Once = std::sync::Once::new();
+    PLATFORM.call_once(|| {
+        deno_core::JsRuntime::init_platform(
+            Some(deno_core::v8::new_unprotected_default_platform(0, false).make_shared()),
+            false,
+        );
+    });
 }
 
 pub fn create_runtime(
