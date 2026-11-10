@@ -177,8 +177,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         source.files[file] = { sha256: hash(bytes) }
       }
       Object.assign(source, {
-        changes: ['Synthetic dependency-free checker fixture.'],
-        deviationCodes: { fixture: 0 }
+        deviationCodes: { fixture: 'Synthetic dependency-free checker fixture.' }
       })
       for (const entry of Object.values(source.files))
         Object.assign(entry, { fds: null, deviation: 'fixture' })
