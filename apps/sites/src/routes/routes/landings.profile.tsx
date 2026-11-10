@@ -1,5 +1,5 @@
 import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
 import StProfileCreationsTab from "@ui/web/pages/StProfileCreationsTab";
@@ -27,11 +27,16 @@ import {
   type OwnedItem,
   type OwnedName,
 } from "@/data/lib/catalyst/marketplace/account";
+import type { ProfileCommunity } from "@/data/lib/catalyst/social/profile-communities";
+import { fetchUserPhotos } from "@/data/lib/catalyst/social/photos";
 import {
-  fetchMyCommunities,
-  type ProfileCommunity,
-} from "@/data/lib/catalyst/social/profile-communities";
-import { fetchUserPhotos, type GalleryImage } from "@/data/lib/catalyst/social/photos";
+  EMPTY_ASSETS,
+  mapAssets,
+  mapPhotos,
+  type PhotoVM,
+  type ProfileAssets,
+} from "@/data/lib/profile/view";
+import { useMyCommunities } from "@/features/profile/hooks";
 import {
   fetchProfilePlaces,
   withContactName,
@@ -83,68 +88,6 @@ function tabModel(own: boolean): { id: string; label: string }[] {
         { id: "places", label: "Places" },
         { id: "photos", label: "Photos" },
       ];
-}
-
-type PhotoVM = {
-  id: string;
-  grad: string;
-  metadata: {
-    userName: string;
-    userAddress: string;
-    dateTime: string;
-    realm: string;
-    scene: { name: string; location: { x: string; y: string } };
-    visiblePeople: {
-      userName: string;
-      userAddress: string;
-      isGuest: boolean;
-      wearables: string[];
-    }[];
-  };
-};
-
-function photoGrad(img: GalleryImage, i: number): string {
-  const src = img.thumbnailUrl || img.url;
-  if (src) return `#000 url("${src.replace(/"/g, "%22")}") center / cover no-repeat`;
-  const h = (i * 47 + 196) % 360;
-  return `linear-gradient(150deg, hsl(${h} 62% 48%) 0%, hsl(${(h + 38) % 360} 55% 26%) 100%)`;
-}
-
-function mapPhotos(images: GalleryImage[]): PhotoVM[] {
-  return images.map((img, i) => {
-    const meta = ((img as { metadata?: Record<string, unknown> }).metadata ??
-      {}) as Record<string, unknown>;
-    const scene = (meta.scene ?? {}) as {
-      name?: unknown;
-      location?: { x?: unknown; y?: unknown };
-    };
-    const loc = (scene.location ?? {}) as { x?: unknown; y?: unknown };
-    const people = Array.isArray(meta.visiblePeople)
-      ? (meta.visiblePeople as Record<string, unknown>[])
-      : [];
-    return {
-      id: img.id,
-      grad: photoGrad(img, i),
-      metadata: {
-        userName: String(meta.userName ?? ""),
-        userAddress: String(meta.userAddress ?? ""),
-        dateTime: String(meta.dateTime ?? img.dateTime ?? ""),
-        realm: String(meta.realm ?? ""),
-        scene: {
-          name: String(scene.name ?? "Decentraland"),
-          location: { x: String(loc.x ?? "0"), y: String(loc.y ?? "0") },
-        },
-        visiblePeople: people.map((p) => ({
-          userName: String(p.userName ?? ""),
-          userAddress: String(p.userAddress ?? ""),
-          isGuest: Boolean(p.isGuest ?? false),
-          wearables: Array.isArray(p.wearables)
-            ? (p.wearables as unknown[]).map(String)
-            : [],
-        })),
-      },
-    };
-  });
 }
 
 const FALLBACK: PageDefaults = {
@@ -207,8 +150,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
             () => [] as ProfilePlace[],
           )
         : Promise.resolve([] as ProfilePlace[]),
-    (async (): Promise<{ wearables: unknown[]; names: unknown[] }> => {
-      if (!wantAssets || !ethAddr) return { wearables: [], names: [] };
+    (async (): Promise<ProfileAssets> => {
+      if (!wantAssets || !ethAddr) return EMPTY_ASSETS;
       const [ownedW, ownedN] = await Promise.all([
         fetchOwnedWearables(address, { first: 48 }, { signal: request.signal }).catch(
           () => ({ elements: [] as OwnedItem[], total: 0 }),
@@ -217,23 +160,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           () => ({ elements: [] as OwnedName[], total: 0 }),
         ),
       ]);
-      return {
-        wearables: ownedW.elements.map((w) => ({
-          id: w.id,
-          name: w.name ?? "Unnamed",
-          rarity: w.rarity ?? "common",
-          price: w.price ?? "",
-          network: w.urn?.includes(":matic:")
-            ? "MATIC"
-            : w.urn?.includes(":ethereum:")
-              ? "ETHEREUM"
-              : "MATIC",
-          category: w.category ?? "wearable",
-          bodyShape: "unisex",
-          isSmart: false,
-        })),
-        names: ownedN.elements.map((n) => ({ id: n.tokenId ?? n.name, stem: n.name })),
-      };
+      return mapAssets(ownedW, ownedN);
     })(),
     (async (): Promise<{ photos: PhotoVM[]; photosFallback: boolean }> => {
       if (!wantPhotos) return { photos: [], photosFallback: false };
@@ -290,7 +217,7 @@ type LoaderData = {
   places: ProfilePlace[];
   photos: PhotoVM[];
   photosFallback: boolean;
-  assets: { wearables: unknown[]; names: unknown[] };
+  assets: ProfileAssets;
 };
 
 export default function LandingsProfile({ loaderData }: Route.ComponentProps) {
@@ -393,46 +320,19 @@ function CommunitiesTab({
   tabs: { id: string; label: string }[];
 }) {
   const { identity } = useAuth();
-  const [rows, setRows] = useState<ProfileCommunity[]>([]);
-  const [loading, setLoading] = useState<boolean>(d.own);
-
+  const communities = useMyCommunities(identity, d.own);
+  const failedAt = useRef(0);
   useEffect(() => {
-    if (!d.own) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
-    if (!identity) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
-
-    const ctrl = new AbortController();
-    let live = true;
-    setLoading(true);
-    fetchMyCommunities(identity, { signal: ctrl.signal })
-      .then((list) => {
-        if (live) setRows(list);
-      })
-      .catch(() => {
-        if (!live) return;
-        setRows([]);
-        track(
-          "profile_communities_load_failed",
-          { address: d.address },
-          { sid: d.sid, story: STORY },
-        );
-      })
-      .finally(() => {
-        if (live) setLoading(false);
-      });
-
-    return () => {
-      live = false;
-      ctrl.abort();
-    };
-  }, [d.own, d.address, d.sid, identity]);
+    if (!communities.isError || failedAt.current === communities.errorUpdatedAt) return;
+    failedAt.current = communities.errorUpdatedAt;
+    track(
+      "profile_communities_load_failed",
+      { address: d.address },
+      { sid: d.sid, story: STORY },
+    );
+  }, [communities.isError, communities.errorUpdatedAt, d.address, d.sid]);
+  const rows: ProfileCommunity[] = d.own && identity ? (communities.data ?? []) : [];
+  const loading = d.own && identity !== null && communities.isPending;
 
   return (
     <StProfileCommunitiesTab
