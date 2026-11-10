@@ -142,7 +142,6 @@ across workers:
     what is left (its ready event fires); those the hierarchy does not reach are written in
     slices. An instance that fails to write, sliced or whole, is despawned and forgotten.
   - `spawn_progress` reports the queue and the instance being written, for diagnostics.
-  - A spawner keeps a query on the world it spawns into: one spawner serves one `World`.
   - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
     `reveal_instance_sync`.
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF

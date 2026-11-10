@@ -42,11 +42,13 @@ next frame, and a model stays hidden until both steps are done.
   after writing. Dynamic scenes and `spawn_sync` always spawn whole.
 - **The progress is on the entities.** Every entity of an instance is allocated when it starts:
   Bevy's entity mapper turns a reference to an entity it has not seen into a dead id, so they must
-  all exist before the first write. The entities to write next carry a sparse-set marker
-  (`SceneEntityToWrite`, with their scene entity). The top-level ones carry it first, and writing
-  an entity passes it on to the entity's children. A cached query finds the next marked entity, so
-  the spawner keeps no list of entities and walks no archetypes after the allocation, which is
-  stock's own loop.
+  all exist before the first write. Each carries a sparse-set `UnwrittenSceneEntity` marker, with
+  its scene entity, until it is written, and a second one, `SceneEntityReady`, once its parent is
+  written: the top-level ones first, and writing an entity passes it on to the entity's children.
+  A cached query finds the next ready entity, so the spawner keeps no list of entities and walks
+  no archetypes after the allocation, which is stock's own loop. When the instance completes,
+  entities despawned before they were written are dropped from their written parent's `Children`,
+  which writes fill without relationship hooks.
 - **A part-written instance is hidden.** When a run leaves an instance part-written, its
   top-level entities are attached to the parent, in the order a whole spawn attaches them, and
   carry `Visibility::Hidden` until the instance is complete, with a `HiddenSceneRoot` component
