@@ -19,10 +19,12 @@ import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
 import { runInstall } from './install.js'
+import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
 
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
+  dcl-figma port prepare | port verify
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
   dcl-figma install foundations|components [--source snapshot] [--out <private-stage>]
@@ -70,6 +72,15 @@ function sourceKind(value: string | undefined): SourceKind {
 async function main(argv: string[]): Promise<number> {
   // The guard has its own flags (--range, --path, ...) and needs no Figma config.
   if (argv[0] === 'key-guard') return keyGuard(argv.slice(1))
+  // The maintainer port: prepare mutates the tree in order and stops at the first failed stage; verify runs the
+  // seven checks on a clean tree and writes the record only when all pass. Maintainers only, never CI.
+  if (argv[0] === 'port') {
+    if (argv.length !== 2 || (argv[1] !== 'prepare' && argv[1] !== 'verify'))
+      throw new Error('port takes prepare or verify')
+    const result = argv[1] === 'prepare' ? portPrepare(process.cwd()) : portVerify(process.cwd())
+    print(result)
+    return result.ok ? 0 : 1
+  }
   // Materializes the figma-design-system capture pinned in upstream.lock.json; maintainers only, never CI.
   if (argv[0] === 'fetch-source') {
     const rest = argv.slice(1)

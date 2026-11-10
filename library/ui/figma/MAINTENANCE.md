@@ -67,12 +67,12 @@ Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthet
 
 ## Refresh workflow
 
-The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit:
+The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit (the `maintain-figma-library` skill walks through it):
 
 1. Bump the pin in `upstream.lock.json`, then `pnpm figma fetch-source --seal`.
-2. `pnpm figma diff` shows what would change (exit 1 if not empty), then `pnpm figma sync`.
-3. Run `sync` a second time: the diff must be empty (idempotency is tested).
-4. `node figma/lock-digests.mjs --write`, then run the real-capture checks and commit their record (`port-verification.mjs`). A deviation reason goes in `deviationCodes` under a new stable id; `--write` keeps the codes sorted.
+2. `pnpm figma port prepare`: fetch-source, diff, sync, a second sync that must change nothing, install foundations and components, and `lock-digests --write` (after staging `library/ui`, since it reads the index), stopping at the first stage that fails. Record a deviation code for every changed file (a stable id in `deviationCodes`; `--write` keeps them sorted), stage `library/ui` again, rerun `node figma/lock-digests.mjs --write`, and commit.
+3. `pnpm figma port verify`: on a clean tree, runs the seven real-capture checks and only when all pass writes `library/ui/port-verification.json` from their own output; a failed check writes nothing. Commit the record. It states what the local run reported, not proof of execution, an attestation or live parity.
+4. A new public Figma URL lands in two pull requests: its `figma/key-guard-allow.json` entry merged to main first, then the URL; the key guard prints this hint when a URL fails.
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
 
