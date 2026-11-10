@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import unittest
@@ -153,6 +154,19 @@ class PublicationTest(unittest.TestCase):
                    if call.args[:4] == ('docker', 'buildx', 'imagetools', 'create')]
         self.assertIn(f'quay.io/example/bevy-headless:main', indexes[0])
         self.assertIn(f'quay.io/example/bevy-headless:sha-{sha}', indexes[0])
+
+    def test_the_polygon_credits_variant_settles_through_the_manager_the_server_guards(self):
+        # One address in two languages: the Sites variant's build input (infra/containers/images.nix)
+        # must be the manager the server guards on Polygon (policy_entry.rs DCL_ONE_POLYGON_MANAGER).
+        root = Path(__file__).parents[2]
+        images = (root / 'infra/containers/images.nix').read_text()
+        policy = (root / 'services/catalyst/shop/src/policy_entry.rs').read_text()
+        built = re.search(r'shopSettlement = \{ chainId = (\d+); creditsManager = "(0x[0-9a-f]{40})"; \}', images)
+        guarded = re.search(r'pub const DCL_ONE_POLYGON_MANAGER: Address =\s*address!\("(0x[0-9a-f]{40})"\)', policy)
+        self.assertIsNotNone(built, 'the variant names no settlement in images.nix')
+        self.assertIsNotNone(guarded, 'policy_entry.rs names no DCL_ONE_POLYGON_MANAGER')
+        self.assertEqual(built.group(1), '137')
+        self.assertEqual(built.group(2), guarded.group(1))
 
     def test_repositories_cannot_redirect_credentials_or_supply_a_tag(self):
         self.assertEqual(publish.repository('quay.io/example/foundation-sites'), 'quay.io/example/foundation-sites')
