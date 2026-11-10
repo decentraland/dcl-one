@@ -47,7 +47,6 @@ fn main() -> Result<()> {
         };
         std::process::exit(sandbox_self_test(mode));
     }
-    let name = name_str.to_fs_name::<GenericFilePath>()?;
     let mut v8_threads = None;
     let mut sandbox = SandboxMode::Off;
     while let Some(arg) = args.next() {
@@ -64,6 +63,8 @@ fn main() -> Result<()> {
             _ => panic!("unknown argument {arg}"),
         }
     }
+
+    let name = name_str.to_fs_name::<GenericFilePath>()?;
 
     info!("IPC scene host initializing");
 
