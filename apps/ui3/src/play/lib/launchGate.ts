@@ -50,12 +50,13 @@ const GATES: Record<string, Gate> = {
     read: () => new URLSearchParams(location.search).get('contentServer'),
     isTrusted: isTrustedContentServer
   },
-  // Swaps scene textures and models for the ones this server lists. Each is checked against the
-  // id the server itself gives it, not against the scene's own file, so the server decides what
-  // those scenes look like. Same rule as the content server.
+  // Swaps the textures and models of scenes, wearables and emotes for the ones this server
+  // lists. They are trusted by their path on this server and rejected only when they fail to
+  // decode: nothing checks them against the original files, so the server decides what scenes
+  // and avatars look like. Same rule as the content server.
   bevyVariants: {
     warning:
-      'Replaces the textures and models of the scenes you visit with versions from this server. Whoever runs it decides what those scenes look like.',
+      'Replaces the textures and models of the scenes you visit and the avatars you see with versions from this server. Whoever runs it decides what they look like.',
     read: () => new URLSearchParams(location.search).get('bevyVariants'),
     isTrusted: isTrustedContentServer
   }

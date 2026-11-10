@@ -511,10 +511,10 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
 }
 
 /// A model whose variant fails stays pending (so an avatar waits instead of giving up) until
-/// its reload reads the original; after that, a failure is final and nothing loops.
+/// its reload is over; after that, a failure is final and nothing loops.
 #[cfg(feature = "meshopt-variants")]
 #[tokio::test]
-async fn a_failed_model_variant_stays_pending_until_its_reload_reads_the_original() {
+async fn a_failed_model_variant_stays_pending_until_its_reload_is_over() {
     let (io, dir) = io_with_cache("pending-model");
     let variant_route = format!("/{}", served_path_of("glb-meshopt", VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
@@ -539,11 +539,15 @@ async fn a_failed_model_variant_stays_pending_until_its_reload_reads_the_origina
     // read from the variant: if the loader now reports a failure, it is not final
     assert_eq!(read_all(&io, &path).await, variant_bytes());
     assert!(io.bevy_variant_fallback_pending(&path));
-    // the failure is handled and a reload asked for: still pending until it reaches the reader
+    // the failure is handled and a reload asked for: pending for the whole reload
     assert!(io.bevy_variants.decode_failed(&path, "invalid glb"));
     assert!(io.bevy_variant_fallback_pending(&path));
-    // the reload reads the original (the variant is bad now), and the path is no longer pending
+    // the reload reads the original (the variant is bad now); the asset server still reports
+    // the handle as failed until the load ends, so the path stays pending past the read
     assert_eq!(read_all(&io, &path).await, b"original glb".to_vec());
+    assert!(io.bevy_variant_fallback_pending(&path));
+    // the reload is over (`track_reloads`): no longer pending
+    io.bevy_variants.reload_finished(&path);
     assert!(!io.bevy_variant_fallback_pending(&path));
     // the original failing too is final: nothing to reload, nothing pending
     assert!(!io.bevy_variants.decode_failed(&path, "invalid glb"));
@@ -736,4 +740,239 @@ fn the_debug_snapshot_reports_state_and_fallbacks() {
 
 fn snapshot_of(variants: &BevyVariants) -> serde_json::Value {
     super::debug_panel::snapshot(variants)
+}
+
+/// `track_reloads` against a real asset server: the handle of a failed variant stays `Failed`
+/// for the whole reload, and the path stays pending until the original loads, fails too, or
+/// nothing holds the asset any more.
+mod reload_tracking {
+    use super::*;
+    use bevy::asset::{
+        io::{
+            memory::{Dir, MemoryAssetReader},
+            AssetSource, AssetSourceId,
+        },
+        AssetLoader, AssetPath, LoadContext, LoadState,
+    };
+    use std::sync::atomic::AtomicBool;
+
+    #[derive(Asset, TypePath)]
+    struct TestModel;
+
+    /// Loads `good` bytes once the gate opens (a slow original), fails on anything else.
+    struct GatedLoader(Arc<AtomicBool>);
+
+    impl AssetLoader for GatedLoader {
+        type Asset = TestModel;
+        type Settings = ();
+        type Error = std::io::Error;
+
+        async fn load(
+            &self,
+            reader: &mut dyn Reader,
+            _: &(),
+            _: &mut LoadContext<'_>,
+        ) -> Result<TestModel, std::io::Error> {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
+            if bytes != b"good" {
+                return Err(std::io::Error::other("bad model"));
+            }
+            while !self.0.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(TestModel)
+        }
+
+        fn extensions(&self) -> &[&str] {
+            &["model"]
+        }
+    }
+
+    struct Harness {
+        app: App,
+        dir: Dir,
+        gate: Arc<AtomicBool>,
+        variants: BevyVariants,
+        reloads: Reloads,
+        /// Failures seen but not yet handed to `track_reloads`, while the test sets up what
+        /// the reload will read.
+        held: Option<Vec<(AssetPath<'static>, String)>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let dir = Dir::default();
+            let gate = Arc::new(AtomicBool::new(false));
+            let mut app = App::new();
+            let root = dir.clone();
+            app.register_asset_source(
+                AssetSourceId::Default,
+                AssetSource::build()
+                    .with_reader(move || Box::new(MemoryAssetReader { root: root.clone() })),
+            );
+            app.add_plugins((
+                bevy::app::TaskPoolPlugin::default(),
+                bevy::asset::AssetPlugin::default(),
+            ));
+            app.init_asset::<TestModel>();
+            app.register_asset_loader(GatedLoader(gate.clone()));
+            Harness {
+                app,
+                dir,
+                gate,
+                variants: BevyVariants::default(),
+                reloads: Reloads::default(),
+                held: None,
+            }
+        }
+
+        fn server(&self) -> AssetServer {
+            self.app.world().resource::<AssetServer>().clone()
+        }
+
+        /// One frame, then `track_reloads` over the failures it reported.
+        fn frame(&mut self) {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.app.update();
+            let failed: Vec<_> = self
+                .app
+                .world_mut()
+                .resource_mut::<Events<AssetLoadFailedEvent<TestModel>>>()
+                .drain()
+                .map(|event| (event.path, event.error.to_string()))
+                .collect();
+            if let Some(held) = self.held.as_mut() {
+                held.extend(failed);
+                return;
+            }
+            let server = self.server();
+            track_reloads(
+                &self.variants,
+                &server,
+                &mut self.reloads,
+                failed.into_iter(),
+            );
+        }
+
+        /// Loads `file` as a variant that fails, then puts `original` in its place before
+        /// the failure is handled, so the reload reads it.
+        fn fail_variant_then_serve(&mut self, file: &str, original: &[u8]) -> Handle<TestModel> {
+            self.held = Some(Vec::new());
+            let handle = self.load_failing_variant(file);
+            let waiting = handle.clone();
+            self.frames_until("the variant failed", |h| {
+                matches!(h.server().load_state(&waiting), LoadState::Failed(_))
+            });
+            self.dir.insert_asset(Path::new(file), original.to_vec());
+            let failed = self.held.take().unwrap();
+            assert_eq!(failed.len(), 1);
+            let server = self.server();
+            track_reloads(
+                &self.variants,
+                &server,
+                &mut self.reloads,
+                failed.into_iter(),
+            );
+            assert_eq!(self.reloads.len(), 1);
+            handle
+        }
+
+        fn frames_until(&mut self, what: &str, done: impl Fn(&Self) -> bool) {
+            for _ in 0..2000 {
+                if done(self) {
+                    return;
+                }
+                self.frame();
+            }
+            panic!("never happened: {what}");
+        }
+
+        /// Loads `file` as if it had been read from a variant (which holds bad bytes).
+        fn load_failing_variant(&mut self, file: &str) -> Handle<TestModel> {
+            self.dir.insert_asset(Path::new(file), b"bad".to_vec());
+            self.variants.served(
+                Path::new(file),
+                ServedVariant {
+                    scene: SCENE.to_owned(),
+                    file: file.to_owned(),
+                    variant: served_path_of("glb-meshopt", VARIANT_CID),
+                    format: "glb-meshopt".to_owned(),
+                },
+                false,
+            );
+            self.server().load(AssetPath::from(file.to_owned()))
+        }
+    }
+
+    #[test]
+    fn a_failed_variant_stays_pending_while_the_handle_reads_failed_until_the_original_loads() {
+        let mut h = Harness::new();
+        let path = Path::new("a.model");
+        // the original is there for the reload, but slow: the gate holds its load open
+        let handle = h.fail_variant_then_serve("a.model", b"good");
+
+        // the whole time the original is loading, the asset server says `Failed`: only the
+        // pending state tells an avatar to wait
+        for _ in 0..20 {
+            h.frame();
+            assert!(matches!(
+                h.server().load_state(&handle),
+                LoadState::Failed(_)
+            ));
+            assert!(h.variants.fallback_pending(path));
+        }
+
+        h.gate.store(true, Ordering::SeqCst);
+        h.frames_until("the original loaded", |h| {
+            h.server().load_state(&handle).is_loaded()
+        });
+        h.frame();
+        assert!(!h.variants.fallback_pending(path));
+        assert!(h.reloads.is_empty());
+        assert!(h
+            .variants
+            .is_bad(&served_path_of("glb-meshopt", VARIANT_CID)));
+    }
+
+    #[test]
+    fn an_original_that_fails_too_is_final() {
+        let mut h = Harness::new();
+        let path = Path::new("b.model");
+        // the reload reads the same bad bytes
+        let handle = h.load_failing_variant("b.model");
+        h.frames_until("the reload was asked for and failed", |h| {
+            h.variants.session.lock().unwrap().fallbacks == 1 && h.reloads.is_empty()
+        });
+        assert!(matches!(
+            h.server().load_state(&handle),
+            LoadState::Failed(_)
+        ));
+        assert!(!h.variants.fallback_pending(path));
+    }
+
+    #[test]
+    fn a_reload_nothing_holds_any_more_stops_being_pending() {
+        let mut h = Harness::new();
+        let path = Path::new("c.model");
+        let handle = h.fail_variant_then_serve("c.model", b"good");
+        assert!(h.variants.fallback_pending(path));
+
+        // every handle goes while the original is still loading: no event will ever come
+        drop(handle);
+        h.frames_until("the dropped path stopped being pending", |h| {
+            !h.variants.fallback_pending(path)
+        });
+        assert!(h.reloads.is_empty());
+        h.gate.store(true, Ordering::SeqCst);
+
+        // a model that was never a variant is never pending, failed or not
+        h.dir.insert_asset(Path::new("d.model"), b"bad".to_vec());
+        let plain: Handle<TestModel> = h.server().load(AssetPath::from("d.model".to_owned()));
+        h.frames_until("the plain model failed", |h| {
+            matches!(h.server().load_state(&plain), LoadState::Failed(_))
+        });
+        h.frame();
+        assert!(!h.variants.fallback_pending(Path::new("d.model")));
+    }
 }

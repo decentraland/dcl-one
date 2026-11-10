@@ -5,8 +5,7 @@
 //! - `Qm…`: the sha-256 of the bytes in a CIDv0 wrapper (decentraland's own scheme, not an ipfs
 //!   file hash).
 //! - `bafkrei…`: CIDv1 of the raw bytes. Deployments use it for files of up to one chunk; a raw
-//!   CID names the sha-256 of all the bytes whatever their size, which is how abgen addresses
-//!   variants (`bevy_variants`) larger than a chunk.
+//!   CID names the sha-256 of all the bytes whatever their size.
 //! - `bafybei…`: CIDv1 of the unixfs file node over 256KiB raw chunks, at most 174 links per
 //!   node. Ipfs allows other chunkings, which give other hashes for the same bytes: those are
 //!   reported as not matching.

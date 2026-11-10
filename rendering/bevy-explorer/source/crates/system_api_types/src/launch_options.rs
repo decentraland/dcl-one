@@ -103,8 +103,8 @@ pub struct ClientOptions {
 
     /// Base url of an abgen Bevy variants service (prototype); absent = off. Textures and
     /// models of scenes, wearables and emotes it has GPU-ready variants of load as those
-    /// variants, each checked against its content id; anything else, or any failure, loads the
-    /// original
+    /// variants, trusted by their path from this service and rejected only when they fail to
+    /// decode; anything else, or any failure, loads the original
     #[arg(long = "bevy-variants-url", value_name = "url", help_heading = SERVICES)]
     pub bevy_variants: Option<String>,
 

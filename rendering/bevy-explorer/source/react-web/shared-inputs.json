@@ -2480,7 +2480,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "4f5749e4105fcbd37fda8615b54f39f8afc248a75e380134cbec78a64cdb47b2"
+      "sha256": "9587166a6fb63a55b1eb4137663f2dc2d8a8c9f65a70cbf0d444c4383a5961df"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/localNetworkFetch.test.ts",

@@ -375,8 +375,8 @@ struct Session {
     transport_failures: u32,
     bad: HashSet<String>,
     served: HashMap<PathBuf, ServedVariant>,
-    /// Paths whose variant failed to load and whose reload from the original has not reached
-    /// the reader yet (`fall_back_from_failed_variants` → `IpfsIo::read`).
+    /// Paths whose variant failed to load and whose reload from the original has not finished
+    /// (`track_reloads`).
     reloading: HashSet<PathBuf>,
     downloaded: u64,
     cached: u64,
@@ -490,19 +490,17 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
-    /// The reload of `path` reached the reader: from here the asset server reports it as
-    /// loading, and then as the original's own outcome.
-    pub(crate) fn reload_started(&self, path: &Path) {
-        let mut session = self.session.lock().unwrap();
-        if !session.reloading.is_empty() {
-            session.reloading.remove(path);
-        }
+    /// The reload of `path` is over: the original loaded, failed for good, or nothing holds the
+    /// asset any more (`track_reloads`).
+    fn reload_finished(&self, path: &Path) {
+        self.session.lock().unwrap().reloading.remove(path);
     }
 
     /// Whether a failed load at `path` is not final yet: it was read from a variant whose
-    /// failure has not been handled, or its reload from the original has not started. Both
-    /// clear on their own (`decode_failed`, then the reload's read), and a variant that fails is
-    /// never selected again, so this cannot keep a path pending.
+    /// failure has not been handled, or its reload from the original has not finished. The
+    /// asset server keeps reporting the handle as failed for the whole reload, so the reload
+    /// is tracked here until it ends (`track_reloads`); a variant that fails is never selected
+    /// again, so this cannot keep a path pending.
     fn fallback_pending(&self, path: &Path) -> bool {
         let session = self.session.lock().unwrap();
         session.served.contains_key(path) || session.reloading.contains(path)
@@ -555,10 +553,10 @@ impl IpfsIo {
         self.bevy_variants.is_served(path)
     }
 
-    /// Whether a load at `path` that the asset server reports as failed will be retried from the
-    /// original: the asset was read from a variant, and the fallback to the original has not
-    /// reached the reader yet. A caller that gives up on a failed asset (avatars) waits while
-    /// this holds; once the reload starts the asset server reports it as loading.
+    /// Whether a load at `path` that the asset server reports as failed is not final: the asset
+    /// was read from a variant, and its reload from the original has not finished. The asset
+    /// server reports the handle as failed until the reload ends, so a caller that gives up on
+    /// a failed asset (avatars) waits while this holds.
     pub fn bevy_variant_fallback_pending(&self, path: &Path) -> bool {
         self.bevy_variants.fallback_pending(path)
     }
@@ -830,23 +828,60 @@ fn detect_gpu_formats(
     let _ = ipfs.bevy_variants.bc.set(bc);
 }
 
+/// A reload from the original that has not finished: its asset path, and when it began.
+type Reloads = HashMap<PathBuf, (bevy::asset::AssetPath<'static>, web_time::Instant)>;
+
+/// A reload that has neither finished nor failed after this long stops holding its path
+/// pending. Downloads time out on their own long before; this only bounds a lost event.
+const RELOAD_DEADLINE: Duration = Duration::from_secs(180);
+
 fn fall_back_from_failed_variants(
     mut images: EventReader<AssetLoadFailedEvent<Image>>,
     mut models: EventReader<AssetLoadFailedEvent<bevy::gltf::Gltf>>,
     ipfs: Res<IpfsResource>,
     server: Res<AssetServer>,
+    mut reloads: Local<Reloads>,
 ) {
     let failed = images
         .read()
-        .map(|event| (&event.path, event.error.to_string()))
+        .map(|event| (event.path.clone(), event.error.to_string()))
         .chain(
             models
                 .read()
-                .map(|event| (&event.path, event.error.to_string())),
+                .map(|event| (event.path.clone(), event.error.to_string())),
         );
-    for (path, error) in failed {
-        if ipfs.bevy_variants.decode_failed(path.path(), &error) {
-            server.reload(path.without_label().into_owned());
+    track_reloads(&ipfs.bevy_variants, &server, &mut reloads, failed);
+}
+
+/// Reloads from its original each asset whose variant failed, and keeps its path pending
+/// (`BevyVariants::fallback_pending`) until the reload is over. The asset server reports the
+/// handle as failed for the whole reload, so the end is read here: the asset loaded, the
+/// original failed too, nothing holds the asset any more, or the deadline passed.
+fn track_reloads(
+    variants: &BevyVariants,
+    server: &AssetServer,
+    reloads: &mut Reloads,
+    failed: impl Iterator<Item = (bevy::asset::AssetPath<'static>, String)>,
+) {
+    for (asset_path, error) in failed {
+        let path = asset_path.path().to_owned();
+        if variants.decode_failed(&path, &error) {
+            let asset_path = asset_path.without_label().into_owned();
+            server.reload(asset_path.clone());
+            reloads.insert(path, (asset_path, web_time::Instant::now()));
+        } else if reloads.remove(&path).is_some() {
+            // the original failed too: final
+            variants.reload_finished(&path);
         }
     }
+    reloads.retain(|path, (asset_path, began)| {
+        let ids = server.get_path_ids(&*asset_path);
+        let over = ids.is_empty()
+            || ids.iter().any(|id| server.load_state(*id).is_loaded())
+            || began.elapsed() > RELOAD_DEADLINE;
+        if over {
+            variants.reload_finished(path);
+        }
+        !over
+    });
 }

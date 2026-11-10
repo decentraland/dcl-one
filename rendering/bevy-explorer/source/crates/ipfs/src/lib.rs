@@ -1907,8 +1907,6 @@ impl IpfsIo {
             };
 
             debug!("request: {:?}", path);
-            // a reload after a failed variant has reached the reader
-            self.bevy_variants.reload_started(path);
 
             let maybe_ipfs_path =
                 ipfs_io_read_state.send_failure(IpfsPath::new_from_path(path).map_err(wrap_err))?;
