@@ -4467,7 +4467,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -4574,7 +4574,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -4681,7 +4681,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -4795,7 +4795,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -4904,7 +4904,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -5013,7 +5013,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -5120,7 +5120,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -5229,7 +5229,7 @@
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
@@ -5332,13 +5332,13 @@
         }
       },
       "generation.json": {
-        "sha256": "ecca8d423160755339009cc660e8470035814275694e2b1a2a17adc59f770cc4",
+        "sha256": "a07f5ffc64bd97f10b4a328d4366d2d6871907fd1168f95c4f0866bce89f0d3d",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "modules": {
-            "library/ui/figma/component-generation.mjs": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
+            "library/ui/figma/component-generation.mjs": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
             "library/ui/figma/ledger/retirements.json": "a96482e17427e330d82b1d34a8e83dbf7237ea0a392214d02d866d6d6bba2d20",
             "library/ui/figma/review/src/components/figma-interactions.tsx": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
             "library/ui/figma/review/src/components/figma-module-runtime.module.css": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",

@@ -40,8 +40,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "bdc99c428ec0599ec7c663292bcedd4aacfbbd6847a934da45989f925ca950b7",
-      "indexBlobSha": "6e2bd9aaeb8045c681598b0e841ffeb011aa2ab7"
+      "sha256": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814",
+      "indexBlobSha": "d0014643cd8f709a423d1291307d3e32db9591de"
     },
     {
       "path": "library/ui/figma/ledger/retirements.json",
