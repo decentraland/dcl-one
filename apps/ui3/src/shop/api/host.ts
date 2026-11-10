@@ -8,10 +8,10 @@
 import type { AuthIdentity } from "../../data/auth/identity";
 import { signAuthChain } from "../../data/auth/signerCore";
 import { catalystBase, signedFetch } from "../../data/catalyst/client";
-import type { ShopPeers, UrnNetwork } from "../detail/lib/urn";
-import type { ShopApiMode, ShopApiOptions } from "./client";
-import { createShopClient, type ShopClient } from "./shop";
-import type { ShopSigner, ShopTransport } from "./signer";
+import type { ShopPeers, UrnNetwork } from "@shop/detail/lib/urn";
+import type { ShopApiMode, ShopApiOptions } from "@shop/api/client";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { ShopSigner, ShopTransport } from "@shop/api/signer";
 
 type ShopWindow = Window &
   typeof globalThis & { __SHOP_API_MODE__?: string; __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };
@@ -38,7 +38,7 @@ export function fetchTransport(fetchImpl: typeof fetch = (...a) => fetch(...a)):
   };
 }
 
-export type HostApiOptions = Partial<Omit<ShopApiOptions, "base">> & { base?: string; fetchImpl?: typeof fetch };
+export type HostApiOptions = Partial<ShopApiOptions> & { fetchImpl?: typeof fetch };
 
 /** The client's options with this host's defaults: the configured base (normalized) and mode, and fetch. */
 export function hostApiOptions(opts: HostApiOptions = {}): ShopApiOptions {
@@ -113,10 +113,7 @@ export async function storedIdentitySigner(now: () => number = Date.now): Promis
  */
 export function bridgeTransport(fetchImpl: typeof fetch = (...a) => fetch(...a)): ShopTransport {
   return async (req) => {
-    if (!req.signed) {
-      const res = await fetchImpl(req.url, { method: req.method, headers: req.headers, body: req.body, signal: req.signal });
-      return { status: res.status, body: res.status === 204 ? "" : await res.text() };
-    }
+    if (!req.signed) return fetchTransport(fetchImpl)(req);
     return signedFetch(req.url, { method: req.method, body: req.body });
   };
 }

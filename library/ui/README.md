@@ -12,6 +12,8 @@ The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standard
 
 The public `@dcl/one-ui` entry exports colors, icons, typography, responsive layouts and spacing, including semantic CSS references through `theme`. Load `@dcl/one-ui/foundations.css` once from the consumer's global stylesheet; it provides the shared CSS variables and bundled Inter fonts. Import typography classes from `@dcl/one-ui/text-styles.module.css` as a CSS Module. Components and the CLI remain separate from these browser exports.
 
+NavBar is generated for internal development and tests only. It is not exported by `@dcl/one-ui` or any package subpath. Its public export is deferred until mobile variants 7 and 8 contain the real controls and notification count, balances and avatar can be supplied through semantic props.
+
 The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five families use four source pages: Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
 
 `semantic` exposes resolved Dark-mode values for inspection. Use `theme.color` for semantic CSS references. A text style's `fontSize` references the responsive CSS variable; `fontSizePx` is the captured tablet-and-larger value for responsive headings, not the current viewport measurement. Use the generated CSS classes for rendering and computed styles for viewport-specific pixel measurements.

@@ -4,7 +4,7 @@
 // can run in the Explorer, in sites, or against fakes in a test with the same code.
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ShopClient } from "../../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import type { WalletKind } from "../../wallet/session";
 import type { ChainReader } from "../chain/rpc";
 

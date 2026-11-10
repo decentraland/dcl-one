@@ -75,7 +75,9 @@
         "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "Key scan repair: the privileged key-scan job reads FIGMA_FILE_KEY from the repository secret with no environment, mapped only into the scan step env, and the Review artifact check counts matching artifacts with a gh call gh accepts (one id per line, counted with wc) instead of --slurp with --jq, which gh rejects before calling the API; a test runs the real jq filter over a sample page. The secret policy test finds readers by any reference form (any case, toJSON(secrets), secrets[...]), allows only the key scan and the web preview publisher, limits their triggers to workflow_run and push to main (deployment events run the deployed commit's workflow file), counts secrets: inherit and secrets maps naming the key as reads, reports reusable-workflow calls by key readers, and requires every key-holding job to declare no environment outside an empty allowlist, check out only the default branch or workflow_sha without persisted credentials, use only SHA-pinned allowlisted actions, have no container, services or defaults, run only an allowlisted command set in the key step, run no package manager or pull request script elsewhere, and never print the key. Key-holding jobs may not rewrite a checkout with git, may pass only allowlisted action inputs (same repository, no parent paths, artifacts only under runner.temp or a workspace dot directory), may not map the key into an action step, interpolate expressions in the key step, write GITHUB_ENV or GITHUB_PATH, or use parent path segments or loader assignments in the key step.",
         "Port of figma-design-system 15940fd7 (#110): a mask's paints keep their original value in a monochrome icon, since a mask works by luminance, and only paint outside every mask follows currentColor; an icon that declares svg ids scopes them per rendered instance with useId, its separators stripped so each id stays a plain fragment identifier, so a url(#...), href or xlink:href never resolves to another copy of the icon; the icon registry is keyed by the generated names, with IconComponentName, activeIconComponents, isIconComponentName and isActiveIconComponentName, and IconMeta.component is typed IconComponentName. The Review runtime and the Foundations icon tiles look icons up through the typed registry and the guards instead of a string index; the Foundations tile test masks the per-instance id segment. Adapted: the keyless header and the identifier checks this tree's icon generator already had, and a keyless context in the ported runtime test. FDS's IconGallery change is not taken: this tree has no icon gallery. Generated icons regenerated with sync --developer, identical to FDS's output apart from the keyless header. The public foundations icons and foundations/source.json are regenerated through the supported installer with the ported generator, and the public foundations table records their new digests.",
-        "Key guard integrity: the key step runs a fresh copy of key-guard.mjs read by object id from TRUSTED_SHA (github.sha) into RUNNER_TEMP, so a step that rewrote the working tree, HEAD, the index or refs before it cannot change the program that reads the key; the policy test requires that copy in every key step and rejects any step before the key step that writes into a checkout (cp, mv, install, rsync, ln, dd, sed -i, tee, tar -x, unzip, redirects). The copy is read with --no-replace-objects, every parsed command of the key step is validated (the fresh copy is the only node command), writes to any spelling of the copy path are rejected, earlier steps may not create replace refs, rewrite refs or git config, or write into .git or .github, and FIGMA_TOKEN is a guarded secret no workflow may read. The url allowlist is read from TRUSTED_SHA too, and the guard names TRUSTED_SHA (--revision) in its summary. Key-holding jobs may not change directory or write to HOME, other variables or absolute paths, and the import check covers export from and dynamic loads. The policy requires every key step to set GIT_NO_REPLACE_OBJECTS, GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL to their hardening values and to pass --allowlist-from and --revision only TRUSTED_SHA; it rejects git config, HOME, XDG_CONFIG_HOME and GIT_EXEC_PATH overrides, reads checkout writes past redirects, background and grouping operators and command prefixes (timeout, env, time, sudo), and also rejects curl, wget and gh downloads into a checkout, inline node, perl or ruby code, git lfs install and fetch refspecs that can cover refs/replace before the key step."
+        "Key guard integrity: the key step runs a fresh copy of key-guard.mjs read by object id from TRUSTED_SHA (github.sha) into RUNNER_TEMP, so a step that rewrote the working tree, HEAD, the index or refs before it cannot change the program that reads the key; the policy test requires that copy in every key step and rejects any step before the key step that writes into a checkout (cp, mv, install, rsync, ln, dd, sed -i, tee, tar -x, unzip, redirects). The copy is read with --no-replace-objects, every parsed command of the key step is validated (the fresh copy is the only node command), writes to any spelling of the copy path are rejected, earlier steps may not create replace refs, rewrite refs or git config, or write into .git or .github, and FIGMA_TOKEN is a guarded secret no workflow may read. The url allowlist is read from TRUSTED_SHA too, and the guard names TRUSTED_SHA (--revision) in its summary. Key-holding jobs may not change directory or write to HOME, other variables or absolute paths, and the import check covers export from and dynamic loads. The policy requires every key step to set GIT_NO_REPLACE_OBJECTS, GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL to their hardening values and to pass --allowlist-from and --revision only TRUSTED_SHA; it rejects git config, HOME, XDG_CONFIG_HOME and GIT_EXEC_PATH overrides, reads checkout writes past redirects, background and grouping operators and command prefixes (timeout, env, time, sudo), and also rejects curl, wget and gh downloads into a checkout, inline node, perl or ruby code, git lfs install and fetch refspecs that can cover refs/replace before the key step.",
+        "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
+        "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -685,9 +687,12 @@
           "deviation": "port:7ade025b"
         },
         "library/ui/figma/image-metadata-allow.json": {
-          "sha256": "f75c858c860a51f42d9078a50a25eb1e189301d804891949454f4afcd2203fed",
+          "sha256": "22d8202bfeaf950da1f7c2875391bd12fe8fc8fc92be178fa16c2f7b16fd0bc8",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "local-components-plan"
+          ]
         },
         "library/ui/figma/key-guard-allow.json": {
           "sha256": "9e5e54389442a3e87443683c0d245596335319de69a33af05b2e76e36495d781",
@@ -3130,6 +3135,22 @@
           ],
           "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
+        "library/ui/figma/src/install-components.test.ts": {
+          "fds": null,
+          "sha256": "1411d6bb14a9a4a7215b364ac05a2c7e2af7c352fe1921b0f563f79fdfec6a9c",
+          "deviation": [
+            "local-components-plan",
+            "internal-components"
+          ]
+        },
+        "library/ui/figma/src/install-components.ts": {
+          "fds": null,
+          "sha256": "0c41b8c62ec0d51fb269730c761ec685ec47c38df00cc32720c9171d06374227",
+          "deviation": [
+            "local-components-plan",
+            "internal-components"
+          ]
+        },
         "library/ui/figma/src/install.test.ts": {
           "fds": null,
           "deviation": [
@@ -3952,9 +3973,13 @@
           }
         },
         "library/ui/figma/test/image-metadata.test.ts": {
-          "sha256": "c558bfacf61a71361ada73cbdb57a8ee9713789fd87e9f1c20b4fcfa198fa68c",
+          "sha256": "e2aaa470f7076f2801b6ac39c4074730ce4db9ce0e5d2cd3d51aea9892fab2f8",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "local-components-plan",
+            "internal-components"
+          ]
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
           "sha256": "881e95efe10caecdccfe4fe7feb036b99d2806465c2cba404bbf50f0000ff97c",
@@ -4040,7 +4065,9 @@
         "review-followup-3": 54,
         "key-scan-repair": 55,
         "port:15940fd7": 56,
-        "key-guard-integrity": 57
+        "key-guard-integrity": 57,
+        "local-components-plan": 58,
+        "internal-components": 59
       }
     }
   ],

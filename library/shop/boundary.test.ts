@@ -4,7 +4,7 @@
 // - it is TypeScript modules only (no components, scripts or styles);
 // - its modules import only the core itself, the catalyst server's DTOs (@catalyst-api) and viem; its
 //   tests may also import vitest and node builtins;
-// - it reaches for no host: it compiles under library/shop/tsconfig.json, ES only plus the two globals in
+// - it reaches for no host: it compiles under library/shop/tsconfig.json, ES only plus the globals in
 //   globals.d.ts, so window, document, fetch, storage, location, WebSocket, process or import.meta.env
 //   do not compile (apps/ui3's typecheck runs that profile). Tests run in node and are not held to it;
 // - every module loads in node, with no DOM.
@@ -78,13 +78,13 @@ describe("library/shop", () => {
     expect(outside(file, (spec) => corePackage(spec) || spec === "vitest" || spec.startsWith("node:"))).toEqual([]);
   });
 
-  it("compiles its modules against ES and the two shared globals alone", () => {
+  it("compiles its modules against ES and the shared globals alone", () => {
     expect(profile.compilerOptions.lib).toEqual(["ES2023"]);
     expect(profile.compilerOptions.types).toEqual([]);
     expect(profile.include).toEqual(["."]);
     expect(profile.exclude).toEqual(["**/*.test.ts"]);
     const declared = [...readFileSync(join(ROOT, "globals.d.ts"), "utf8").matchAll(/^declare\s+\w+\s+(\w+)/gm)];
-    expect(declared.map((m) => m[1])).toEqual(["console", "TextEncoder"]);
+    expect(declared.map((m) => m[1])).toEqual(["console", "TextEncoder", "URL", "URLSearchParams", "AbortSignal"]);
   });
 
   // This project runs in node, with no DOM: a module that touched one while loading would throw here.

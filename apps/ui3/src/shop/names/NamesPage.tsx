@@ -12,7 +12,7 @@ import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { creditsCeil } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { presentPayment } from "@shop/payment/present";
@@ -23,12 +23,12 @@ import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LE
 import { useOfferSource } from "../detail/offers";
 import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, quoteNameCredits, seamNameOffer, type NameOfferSource } from "./offer";
 import { takeNameResume } from "./resume";
+import { shopClient } from "../api/host";
 import "./names.css";
 import "./namespage.css";
 import identityIcon from "./icons/identity-icon.svg?url";
 import worldIcon from "./icons/world-icon.svg?url";
 import inviteIcon from "./icons/invite-icon.svg?url";
-import { shopClient } from "../api/host";
 
 export type NamesNavState = { resumeName?: string };
 
